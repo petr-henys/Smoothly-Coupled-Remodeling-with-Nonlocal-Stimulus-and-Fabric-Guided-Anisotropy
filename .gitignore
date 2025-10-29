@@ -1,0 +1,64 @@
+# Ignore everything by default
+/*
+
+# Allow specific directories
+!/simulation/
+!/tests/
+!/manuscript/
+!/analysis/
+
+# Allow root-level files
+!/.gitignore
+!/README.md
+!/parametrizer.py
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+.conda/
+venv/
+env/
+ENV/
+
+# Results and data
+results/
+*/data/
+*.npz
+*.h5
+*.xdmf
+
+# LaTeX
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.synctex.gz
+*.toc
+*.spl
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Compiled extensions
+*.so
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/

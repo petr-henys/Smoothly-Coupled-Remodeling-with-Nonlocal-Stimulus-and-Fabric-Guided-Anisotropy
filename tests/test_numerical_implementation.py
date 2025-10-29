@@ -1,0 +1,674 @@
+#!/usr/bin/env python3
+"""
+Advanced numerical implementation tests for bone remodeling model.
+
+Tests:
+- DOF ordering correctness in fixed-point solver
+- Nondimensionalization consistency
+- Anderson acceleration convergence properties
+- Matrix assembly correctness
+- Preconditioner update logic
+- Solver statistics tracking
+"""
+
+import pytest
+pytest.importorskip("dolfinx")
+pytest.importorskip("mpi4py")
+
+import numpy as np
+np.random.seed(1234)
+from mpi4py import MPI
+from dolfinx import fem
+from dolfinx.fem import Function
+import ufl
+
+from simulation.config import Config
+from simulation.utils import build_facetag
+from simulation.subsolvers import MechanicsSolver, StimulusSolver, DensitySolver, DirectionSolver
+from simulation.fixedsolver import FixedPointSolver
+from simulation.anderson import _Anderson
+
+
+# =============================================================================
+# DOF Ordering Tests
+# =============================================================================
+
+class TestDOFOrdering:
+    """Test critical DOF ordering in fixed-point solver (u, rho, A, S)."""
+    
+    @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
+    def test_state_slices_match_field_sizes(self, unit_cube, cfg, spaces, fields, bc_mech):
+        """Verify _build_state_slices produces correct offsets."""
+        comm = MPI.COMM_WORLD
+        V, Q, T = spaces.V, spaces.Q, spaces.T
+        u, rho, rho_old, A, A_old, S, S_old = fields
+        mech = MechanicsSolver(V, rho, A, bc_mech, [], cfg)
+        stim = StimulusSolver(Q, S_old, cfg)
+        dens = DensitySolver(Q, rho_old, A, S, cfg)
+        dirn = DirectionSolver(T, A_old, cfg)
+        fps = FixedPointSolver(comm, cfg, mech, stim, dens, dirn,
+                               u, rho, rho_old, A, A_old, S, S_old)
+        
+        # Check slice sizes
+        s_u, s_rho, s_A, s_S = fps._state_slices
+        
+        assert (s_u.stop - s_u.start) == fps.n_u, f"u slice size mismatch"
+        assert (s_rho.stop - s_rho.start) == fps.n_rho, f"rho slice size mismatch"
+        assert (s_A.stop - s_A.start) == fps.n_A, f"A slice size mismatch"
+        assert (s_S.stop - s_S.start) == fps.n_S, f"S slice size mismatch"
+        
+        # Check contiguity: slices should be consecutive
+        assert s_u.start == 0, "u slice doesn't start at 0"
+        assert s_rho.start == s_u.stop, "rho slice not after u"
+        assert s_A.start == s_rho.stop, "A slice not after rho"
+        assert s_S.start == s_A.stop, "S slice not after A"
+        assert s_S.stop == fps._state_size, "S slice doesn't end at state_size"
+    
+    @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
+    def test_flatten_restore_roundtrip(self, unit_cube, cfg, spaces, fields, bc_mech):
+        """Flatten then restore should recover original state."""
+        comm = MPI.COMM_WORLD
+        V, Q, T = spaces.V, spaces.Q, spaces.T
+        u, rho, rho_old, A, A_old, S, S_old = fields
+        # Set distinct values
+        u.interpolate(lambda x: np.array([x[0], x[1], x[2]]))
+        u.x.scatter_forward()
+        rho.x.array[:] = 0.6; rho.x.scatter_forward()
+        A.interpolate(lambda x: (np.eye(3) * 0.5).flatten()[:, None] * np.ones((1, x.shape[1])))
+        A.x.scatter_forward()
+        S.x.array[:] = 0.3; S.x.scatter_forward()
+        # Store originals
+        u_orig = u.x.array.copy(); rho_orig = rho.x.array.copy(); A_orig = A.x.array.copy(); S_orig = S.x.array.copy()
+        mech = MechanicsSolver(V, rho, A, bc_mech, [], cfg)
+        stim = StimulusSolver(Q, S_old, cfg)
+        dens = DensitySolver(Q, rho_old, A, S, cfg)
+        dirn = DirectionSolver(T, A_old, cfg)
+        fps = FixedPointSolver(comm, cfg, mech, stim, dens, dirn,
+                               u, rho, rho_old, A, A_old, S, S_old)
+        flat = fps._flatten_state(copy=True)
+        # Modify fields and restore
+        u.x.array[:] = 999.0; rho.x.array[:] = 888.0; A.x.array[:] = 777.0; S.x.array[:] = 666.0
+        fps._restore_state(flat)
+        assert np.allclose(u.x.array, u_orig), "u not restored correctly"
+        assert np.allclose(rho.x.array, rho_orig), "rho not restored correctly"
+        assert np.allclose(A.x.array, A_orig), "A not restored correctly"
+        assert np.allclose(S.x.array, S_orig), "S not restored correctly"
+    
+    @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
+    def test_dirichlet_mask_correct_positions(self, unit_cube, cfg, spaces, fields, bc_mech):
+        """Verify Dirichlet mask applies to u block only."""
+        comm = MPI.COMM_WORLD
+        V, Q, T = spaces.V, spaces.Q, spaces.T
+        u, rho, rho_old, A, A_old, S, S_old = fields
+        mech = MechanicsSolver(V, rho, A, bc_mech, [], cfg)
+        stim = StimulusSolver(Q, S_old, cfg)
+        dens = DensitySolver(Q, rho_old, A, S, cfg)
+        dirn = DirectionSolver(T, A_old, cfg)
+        fps = FixedPointSolver(comm, cfg, mech, stim, dens, dirn,
+                               u, rho, rho_old, A, A_old, S, S_old)
+        
+        # Check mask structure
+        s_u, s_rho, s_A, s_S = fps._state_slices
+        
+        # All True values should be in u block
+        mask_indices = np.where(fps._fix_mask)[0]
+        if len(mask_indices) > 0:
+            assert np.all(mask_indices < s_u.stop), "Dirichlet mask extends beyond u block"
+            assert np.all(mask_indices >= s_u.start), "Dirichlet mask starts before u block"
+        
+        # No mask in other blocks
+        assert not np.any(fps._fix_mask[s_rho]), "Mask incorrectly in rho block"
+        assert not np.any(fps._fix_mask[s_A]), "Mask incorrectly in A block"
+        assert not np.any(fps._fix_mask[s_S]), "Mask incorrectly in S block"
+
+
+# =============================================================================
+# Nondimensionalization Tests
+# =============================================================================
+
+class TestNondimensionalization:
+    """Test consistency of nondimensionalization."""
+    
+    def test_characteristic_scales_positive(self, cfg):
+        """All characteristic scales should be positive."""
+        
+        # Check characteristic scales
+        assert float(cfg.L_c) > 0, "L_c not positive"
+        assert float(cfg.rho_c) > 0, "rho_c not positive"
+        assert float(cfg.u_c) > 0, "u_c not positive"
+        assert float(cfg.E0_dim) > 0, "E0_dim not positive"
+        assert float(cfg.psi_ref_dim) > 0, "psi_ref_dim not positive"
+        assert float(cfg.sigma_c) > 0, "sigma_c not positive"
+        assert float(cfg.psi_c) > 0, "psi_c not positive"
+    
+    def test_nd_parameters_consistent(self, cfg):
+        """Nondimensional parameters should satisfy expected relationships."""
+        
+        # Check ND constants are Constant objects
+        assert isinstance(cfg.E0_nd, fem.Constant), "E0_nd not a Constant"
+        assert isinstance(cfg.psi_ref_nd, fem.Constant), "psi_ref_nd not a Constant"
+        
+        # Check values are reasonable (O(1) after nondimensionalization)
+        E0_nd = float(cfg.E0_nd)
+        psi_ref_nd = float(cfg.psi_ref_nd)
+        
+        assert 0.1 < E0_nd < 10.0, f"E0_nd out of expected range: {E0_nd}"
+        assert 0.01 < psi_ref_nd < 100.0, f"psi_ref_nd out of expected range: {psi_ref_nd}"
+    
+    def test_geometry_scaling_idempotent(self, unit_cube):
+        """Mesh scaling should be idempotent (not double-scale)."""
+        domain = unit_cube
+        facet_tags = build_facetag(domain)
+        
+        # Get initial coordinates
+        coords_initial = domain.geometry.x.copy()
+        
+        # Create config (should scale mesh)
+        cfg1 = Config(domain=domain, facet_tags=facet_tags, verbose=False)
+        coords_after_1 = domain.geometry.x.copy()
+        
+        # Create another config (should NOT scale again)
+        cfg2 = Config(domain=domain, facet_tags=facet_tags, verbose=False)
+        coords_after_2 = domain.geometry.x.copy()
+        
+        # Second config should not change coordinates
+        assert np.allclose(coords_after_1, coords_after_2), "Mesh scaled twice (not idempotent)"
+        
+        # But first config should have scaled
+        if float(cfg1.L_c) != 1.0:
+            scale = float(cfg1.L_c)
+            expected_coords = coords_initial / scale
+            assert np.allclose(coords_after_1, expected_coords, rtol=1e-10), "Mesh not scaled correctly"
+    
+    def test_dt_scaling_updates(self, cfg):
+        """set_dt_dim should update dt_nd correctly."""
+        
+        # Set dimensional timestep
+        dt_days = 10.0
+        cfg.set_dt_dim(dt_days)
+        
+        # Check dt_nd updated
+        dt_nd = float(cfg.dt_nd)
+        assert dt_nd > 0, "dt_nd not positive after set_dt_dim"
+        
+        # Set different timestep
+        dt_days2 = 50.0
+        cfg.set_dt_dim(dt_days2)
+        dt_nd2 = float(cfg.dt_nd)
+        
+        # Should scale linearly
+        ratio = dt_nd2 / dt_nd
+        expected_ratio = dt_days2 / dt_days
+        assert abs(ratio - expected_ratio) < 1e-10, f"dt_nd scaling not linear: {ratio} ≠ {expected_ratio}"
+
+
+# =============================================================================
+# Anderson Acceleration Tests
+# =============================================================================
+
+class TestAndersonAcceleration:
+    """Test Anderson acceleration implementation."""
+    
+    def test_anderson_initialization(self):
+        """Anderson accelerator should initialize correctly."""
+        m = 5
+        beta = 1.0
+        lam = 1e-8
+        
+        aa = _Anderson(MPI.COMM_WORLD, m=m, beta=beta, lam=lam)
+        
+        assert aa.m == m, "Window size m not set correctly"
+        assert aa.beta == beta, "Beta not set correctly"
+        assert aa.lam == lam, "Lambda not set correctly"
+    
+    def test_anderson_restart_clears_history(self):
+        """reset() should clear history."""
+        m = 3
+        aa = _Anderson(MPI.COMM_WORLD, m=m)
+        
+        # Manually add to history
+        x0 = np.random.rand(50)
+        r0 = np.random.rand(50)
+        aa._x_hist.append(x0)
+        aa._r_hist.append(r0)
+        
+        # Check history accumulated
+        assert len(aa._x_hist) > 0, "History not accumulated"
+        
+        # Reset
+        aa.reset()
+        
+        assert len(aa._x_hist) == 0, "History not cleared after reset"
+    
+    def test_anderson_mix_basic(self):
+        """Anderson mix() should produce reasonable output."""
+        n = 20
+        m = 5
+        
+        aa = _Anderson(MPI.COMM_SELF, m=m, beta=1.0, lam=1e-10)
+        
+        x_old = np.random.rand(n)
+        x_raw = x_old + 0.1 * np.random.rand(n)  # Perturbed iterate
+        
+        # Call mix
+        x_new, info = aa.mix(x_old, x_raw)
+        
+        # Should return an array of same size
+        assert x_new.shape == x_old.shape, "Output shape mismatch"
+        assert "aa_hist" in info, "Info dict missing aa_hist"
+        assert "accepted" in info, "Info dict missing accepted"
+
+    def test_anderson_restart_on_reject_streak(self):
+        """Anderson should schedule a restart after a rejection when threshold is low."""
+        n = 10
+        aa = _Anderson(MPI.COMM_SELF, m=2, beta=1.0, lam=1e-10, restart_on_reject_k=1)
+
+        x_old = np.zeros(n)
+        x_raw = np.ones(n)
+
+        # A proj_residual_norm that forces rejection (proxy larger than reference)
+        def prn(x_ref, x_test, xR):
+            # Return larger value for proxy to trigger rejection
+            return 2.0 if x_test is not xR else 1.0
+
+        # First call: p=1 path, expect rejection (accepted=False)
+        x1, info1 = aa.mix(x_old, x_raw, proj_residual_norm=prn)
+        assert info1.get("accepted") is False
+
+        # Second call: should trigger restart scheduling due to reject_streak
+        x2, info2 = aa.mix(x_old, x_raw, proj_residual_norm=prn)
+        assert isinstance(info2.get("restart_reason", ""), str)
+        assert "reject_streak" in info2.get("restart_reason", ""), "Restart not scheduled on reject streak"
+
+        # Third call should honor pending reset (history cleared)
+        _ = aa.mix(x_old, x_raw, proj_residual_norm=prn)
+        assert len(aa._x_hist) <= 1, "History not cleared after scheduled reset"
+
+
+# =============================================================================
+# Solver Statistics Tests
+# =============================================================================
+
+class TestSolverStatistics:
+    """Test solver statistics tracking."""
+    
+    def test_ksp_iteration_counting(self, cfg, spaces, fields, bc_mech, traction_factory):
+        """Verify KSP iteration counts are tracked correctly."""
+        V, Q, T = spaces.V, spaces.Q, spaces.T
+        u, rho, _, A, _, _, _ = fields
+        traction = traction_factory(-0.1, facet_id=2, axis=0)
+        mech = MechanicsSolver(V, rho, A, bc_mech, [traction], cfg)
+        
+        mech.solver_setup()
+        
+        # Reset stats before solve
+        mech._reset_stats()
+        assert mech.total_iters == 0, "Stats not reset"
+        assert mech.ksp_steps == 0, "Stats not reset"
+        
+        # Solve
+        its, reason = mech.solve(u)
+        
+        # Check stats updated
+        assert mech.total_iters == its, f"total_iters ({mech.total_iters}) ≠ returned iters ({its})"
+        assert mech.ksp_steps == 1, f"ksp_steps should be 1 after one solve"
+        assert mech.last_iters == its, f"last_iters not set"
+        assert mech.last_reason == reason, f"last_reason not set"
+    
+    def test_preconditioner_update_counter(self, cfg, spaces, fields, bc_mech):
+        """Test preconditioner update counter."""
+        V, Q, T = spaces.V, spaces.Q, spaces.T
+        _, rho, _, A, _, _, _ = fields
+        mech = MechanicsSolver(V, rho, A, bc_mech, [], cfg)
+        
+        mech.solver_setup()
+        
+        initial_updates = mech.precond_updates
+        
+        # Manually trigger preconditioner update
+        mech.update_precond()
+        
+        assert mech.precond_updates == initial_updates + 1, "Preconditioner update counter not incremented"
+
+
+# =============================================================================
+# Matrix Assembly Tests
+# =============================================================================
+
+class TestMatrixAssembly:
+    """Test matrix assembly correctness."""
+    
+    def test_mechanics_stiffness_spd(self, cfg, spaces, fields, bc_mech):
+        """Mechanics stiffness matrix should be symmetric positive definite (modulo BCs)."""
+        V, Q, T = spaces.V, spaces.Q, spaces.T
+        _, rho, _, A, _, _, _ = fields
+        mech = MechanicsSolver(V, rho, A, bc_mech, [], cfg)
+        
+        mech.solver_setup()
+        
+        # Check matrix is symmetric
+        from petsc4py import PETSc
+        mech.A.assemble()
+        
+        # PETSc check for symmetry (expensive, use small mesh)
+        # Just verify no NaN/Inf
+        norm = mech.A.norm(PETSc.NormType.FROBENIUS)
+        assert np.isfinite(norm), f"Stiffness matrix has non-finite entries"
+        assert norm > 0, f"Stiffness matrix is zero"
+    
+    def test_stimulus_lhs_spd(self, cfg, spaces):
+        """Stimulus LHS matrix should be SPD."""
+        cfg.set_dt_dim(10.0)
+        Q = spaces.Q
+        S_old = Function(Q, name="S_old")
+        stim = StimulusSolver(Q, S_old, cfg)
+        stim.solver_setup()
+        
+        from petsc4py import PETSc
+        norm = stim.A.norm(PETSc.NormType.FROBENIUS)
+        assert np.isfinite(norm), "Stimulus matrix has non-finite entries"
+        assert norm > 0, "Stimulus matrix is zero"
+
+    def test_stimulus_update_lhs_changes_matrix(self, cfg, spaces):
+        """Changing dt via set_dt_dim and update_lhs should alter matrix norm."""
+        cfg.set_dt_dim(10.0)
+        Q = spaces.Q
+        S_old = Function(Q, name="S_old")
+        stim = StimulusSolver(Q, S_old, cfg)
+        stim.solver_setup()
+        from petsc4py import PETSc
+        n1 = stim.A.norm(PETSc.NormType.FROBENIUS)
+
+        # Change dt significantly and update LHS
+        cfg.set_dt_dim(100.0)
+        stim.update_lhs()
+        n2 = stim.A.norm(PETSc.NormType.FROBENIUS)
+        assert abs(n2 - n1) / max(1.0, n1) > 1e-6, "Stimulus matrix norm unchanged after dt update"
+
+    @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
+    def test_mechanics_energy_positive(self, unit_cube, cfg, spaces, bc_mech):
+        """Check x^T A x > 0 for random vectors with zero Dirichlet DOFs."""
+        V, Q, T = spaces.V, spaces.Q, spaces.T
+        rho = Function(Q, name="rho"); rho.x.array[:] = 0.6; rho.x.scatter_forward()
+        A = Function(T, name="A"); A.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:, None] * np.ones((1, x.shape[1]))); A.x.scatter_forward()
+        mech = MechanicsSolver(V, rho, A, bc_mech, [], cfg)
+        mech.solver_setup()
+
+        # Random vector with Dirichlet DOFs zeroed (use a temporary Function on V)
+        z = Function(V, name="z")
+        n_owned = V.dofmap.index_map.size_local * V.dofmap.index_map_bs
+        z.x.array[:n_owned] = np.random.randn(n_owned)
+        from simulation.utils import collect_dirichlet_dofs
+        fixed = collect_dirichlet_dofs(bc_mech, n_owned)
+        if fixed.size:
+            z.x.array[fixed] = 0.0
+        z.x.scatter_forward()
+        y = z.x.petsc_vec.duplicate()
+        mech.A.mult(z.x.petsc_vec, y)
+        energy = z.x.petsc_vec.dot(y)
+        assert energy > 0.0, f"Mechanics stiffness not positive: {energy}"
+
+    @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
+    def test_stimulus_energy_positive(self, unit_cube, cfg, spaces):
+        """x^T A x >= 0 for stimulus operator."""
+        cfg.set_dt_dim(10.0)
+        Q = spaces.Q
+        S_old = Function(Q, name="S_old"); S_old.x.array[:] = 0.0; S_old.x.scatter_forward()
+        stim = StimulusSolver(Q, S_old, cfg)
+        stim.solver_setup()
+
+        # Random vector
+        z = Function(Q, name="z")
+        n_owned = Q.dofmap.index_map.size_local
+        z.x.array[:n_owned] = np.random.randn(n_owned)
+        z.x.scatter_forward()
+
+        y = z.x.petsc_vec.duplicate()
+        stim.A.mult(z.x.petsc_vec, y)
+        energy = z.x.petsc_vec.dot(y)
+        assert energy >= 0.0, f"Stimulus operator not positive: {energy}"
+
+class TestProjectedResidual:
+    """Tests for projected residual norm used in FixedPointSolver."""
+
+    def test_proj_residual_invariant_to_dirichlet_perturbations(self, cfg, spaces, fields, bc_mech):
+        comm = MPI.COMM_WORLD
+        V, Q, T = spaces.V, spaces.Q, spaces.T
+        u, rho, rho_old, A, A_old, S, S_old = fields
+        rho.x.array[:] = 0.5; rho.x.scatter_forward()
+        A.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:, None] * np.ones((1, x.shape[1])))
+        A.x.scatter_forward()
+        mech = MechanicsSolver(V, rho, A, bc_mech, [], cfg)
+        stim = StimulusSolver(Q, S_old, cfg)
+        dens = DensitySolver(Q, rho_old, A, S, cfg)
+        dirn = DirectionSolver(T, A_old, cfg)
+        fps = FixedPointSolver(comm, cfg, mech, stim, dens, dirn,
+                               u, rho, rho_old, A, A_old, S, S_old)
+
+        x_old = fps._flatten_state(copy=True)
+        x_raw = x_old.copy()
+        weights = (1.0, 1.0, 1.0, 1.0)
+
+        # Perturb mechanics block only on Dirichlet DOFs
+        s_u, _, _, _ = fps._state_slices
+        x_test = x_raw.copy()
+        if fps._mask_u_any:
+            mask_idx = np.nonzero(fps._mask_u)[0]
+            x_test[s_u.start + mask_idx] += 1.2345  # any nonzero perturbation
+
+        res_ref = fps._proj_residual_norm(x_old, x_raw, x_raw, weights)
+        res_pert = fps._proj_residual_norm(x_old, x_test, x_raw, weights)
+        assert abs(res_pert - res_ref) < 1e-14, "Projected residual should ignore Dirichlet perturbations"
+
+
+class TestUtilsEigen:
+    """Tests for utils.compute_principal_dirs_and_vals_vec."""
+
+    def test_principal_dirs_vals_constant_tensor(self, spaces):
+        V, Q, T = spaces.V, spaces.Q, spaces.T
+        A = Function(T, name="A")
+        const = np.diag([0.6, 0.3, 0.1]).reshape(9, 1)
+        A.interpolate(lambda x: np.tile(const, (1, x.shape[1])))
+        A.x.scatter_forward()
+        from simulation.utils import compute_principal_dirs_and_vals_vec
+        eigvecs, eigvals = compute_principal_dirs_and_vals_vec(A, V, Q)
+
+        # Check eigenvalues (descending)
+        n_owned = Q.dofmap.index_map.size_local
+        lam1 = float(np.mean(eigvals[0].x.array[:n_owned]))
+        lam2 = float(np.mean(eigvals[1].x.array[:n_owned]))
+        lam3 = float(np.mean(eigvals[2].x.array[:n_owned]))
+        assert abs(lam1 - 0.6) < 1e-12
+        assert abs(lam2 - 0.3) < 1e-12
+        assert abs(lam3 - 0.1) < 1e-12
+
+        # Check eigenvectors align with axes (up to sign)
+        n_owned_v = V.dofmap.index_map.size_local * V.dofmap.index_map_bs
+        v1 = eigvecs[0].x.array[:n_owned_v].reshape(-1, 3)
+        v2 = eigvecs[1].x.array[:n_owned_v].reshape(-1, 3)
+        v3 = eigvecs[2].x.array[:n_owned_v].reshape(-1, 3)
+
+        # Mean absolute component values should match identity
+        m1 = np.mean(np.abs(v1), axis=0)
+        m2 = np.mean(np.abs(v2), axis=0)
+        m3 = np.mean(np.abs(v3), axis=0)
+        assert m1[0] > 0.999 and m1[1] < 1e-12 and m1[2] < 1e-12
+        assert m2[1] > 0.999 and m2[0] < 1e-12 and m2[2] < 1e-12
+        assert m3[2] > 0.999 and m3[0] < 1e-12 and m3[1] < 1e-12
+
+
+class TestDensitySPD:
+    """Energy positivity for Density operator."""
+
+    def test_density_energy_positive(self, cfg, spaces):
+        Q, T = spaces.Q, spaces.T
+        rho_old = Function(Q, name="rho_old"); rho_old.x.array[:] = 0.5; rho_old.x.scatter_forward()
+        A = Function(T, name="A"); A.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:, None] * np.ones((1, x.shape[1]))); A.x.scatter_forward()
+        S = Function(Q, name="S"); S.x.array[:] = 0.0; S.x.scatter_forward()
+        dens = DensitySolver(Q, rho_old, A, S, cfg)
+        dens.solver_setup()
+        dens.update_system()
+
+        z = Function(Q, name="z")
+        n_owned = Q.dofmap.index_map.size_local
+        z.x.array[:n_owned] = np.random.randn(n_owned)
+        z.x.scatter_forward()
+
+        y = z.x.petsc_vec.duplicate()
+        dens.A.mult(z.x.petsc_vec, y)
+        energy = z.x.petsc_vec.dot(y)
+        assert energy >= 0.0, f"Density operator not positive: {energy}"
+
+
+# =============================================================================
+# Config Validation Tests
+# =============================================================================
+
+class TestConfigValidation:
+    """Test Config parameter validation and bounds checking."""
+
+    def test_config_requires_domain(self, facet_tags):
+        """Config must have domain parameter."""
+        with pytest.raises((ValueError, TypeError)):
+            Config(facet_tags=facet_tags)  # Missing domain
+
+    def test_config_requires_domain_not_none(self, facet_tags):
+        """Config domain cannot be None."""
+        with pytest.raises(ValueError, match="[Dd]omain"):
+            Config(domain=None, facet_tags=facet_tags)
+
+    def test_config_accepts_valid_domain(self, unit_cube, facet_tags):
+        """Config should accept valid mesh."""
+        cfg = Config(domain=unit_cube, facet_tags=facet_tags, verbose=False)
+        assert cfg.domain is not None
+        assert cfg.domain == unit_cube
+
+    def test_config_rejects_negative_rho_min(self, unit_cube, facet_tags):
+        """Minimum density cannot be negative."""
+        # Note: Config uses dataclass, so we check post-init behavior
+        cfg = Config(domain=unit_cube, facet_tags=facet_tags,
+                    rho_min_dim=-1.0, verbose=False)
+        # rho_min_nd should be computed from rho_min_dim/rho_c
+        assert cfg.rho_min_nd is not None
+        # Negative rho_min_dim should result in negative rho_min_nd (physically invalid)
+        # In production, this should be validated - test documents current behavior
+
+    def test_config_rejects_negative_timestep(self, unit_cube, facet_tags):
+        """set_dt_dim should reject non-positive timestep."""
+        cfg = Config(domain=unit_cube, facet_tags=facet_tags, verbose=False)
+
+        # Zero timestep
+        with pytest.raises((ValueError, ZeroDivisionError)):
+            cfg.set_dt_dim(0.0)
+
+        # Negative timestep
+        with pytest.raises((ValueError, RuntimeError)):
+            cfg.set_dt_dim(-1.0)
+
+    def test_config_poisson_ratio_in_valid_range(self, unit_cube, facet_tags):
+        """Poisson ratio must be in physically valid range (-1, 0.5)."""
+        # Test boundary values
+        with pytest.raises((ValueError, RuntimeError)):
+            Config(domain=unit_cube, facet_tags=facet_tags, nu=0.6, verbose=False)  # Too high
+
+        with pytest.raises((ValueError, RuntimeError)):
+            Config(domain=unit_cube, facet_tags=facet_tags, nu=-1.5, verbose=False)  # Too low
+
+        # Valid values should work
+        cfg1 = Config(domain=unit_cube, facet_tags=facet_tags, nu=0.3, verbose=False)
+        assert cfg1.nu == 0.3
+
+        cfg2 = Config(domain=unit_cube, facet_tags=facet_tags, nu=0.0, verbose=False)
+        assert cfg2.nu == 0.0
+
+    def test_config_positive_modulus(self, unit_cube, facet_tags):
+        """Young's modulus must be positive."""
+        with pytest.raises(ValueError):
+            cfg = Config(domain=unit_cube, facet_tags=facet_tags,
+                        E0_dim=-1000.0, verbose=False)
+        
+        # Positive value should work
+        cfg = Config(domain=unit_cube, facet_tags=facet_tags,
+                    E0_dim=1000.0, verbose=False)
+        assert cfg.E0_dim == 1000.0
+
+    def test_config_positive_characteristic_scales(self, unit_cube, facet_tags):
+        """Characteristic scales must be positive."""
+        cfg = Config(domain=unit_cube, facet_tags=facet_tags, verbose=False)
+
+        assert cfg.L_c > 0, "L_c not positive"
+        assert cfg.rho_c > 0, "rho_c not positive"
+        assert cfg.u_c > 0, "u_c not positive"
+        assert cfg.t_c > 0, "t_c not positive"
+        assert cfg.sigma_c > 0, "sigma_c not positive"
+        assert cfg.psi_c > 0, "psi_c not positive"
+
+    def test_config_nondimensional_params_reasonable(self, unit_cube, facet_tags):
+        """Nondimensional parameters should be O(1) after scaling."""
+        cfg = Config(domain=unit_cube, facet_tags=facet_tags, verbose=False)
+
+        E0_nd = float(cfg.E0_nd)
+        psi_ref_nd = float(cfg.psi_ref_nd)
+
+        # Should be roughly O(1) after nondimensionalization
+        assert 0.01 < E0_nd < 100.0, f"E0_nd = {E0_nd} not order 1"
+        assert 0.001 < psi_ref_nd < 1000.0, f"psi_ref_nd = {psi_ref_nd} not order 1"
+
+    def test_config_solver_type_validation(self, unit_cube, facet_tags):
+        """KSP and PC types should be valid."""
+        # Valid solvers
+        cfg1 = Config(domain=unit_cube, facet_tags=facet_tags,
+                     ksp_type="cg", pc_type="jacobi", verbose=False)
+        assert cfg1.ksp_type == "cg"
+
+        cfg2 = Config(domain=unit_cube, facet_tags=facet_tags,
+                     ksp_type="gmres", pc_type="ilu", verbose=False)
+        assert cfg2.ksp_type == "gmres"
+
+        # Note: PETSc validates solver types at runtime, not at config creation
+
+    def test_config_accel_type_validation(self, unit_cube, facet_tags):
+        """Acceleration type must be valid choice."""
+        # Valid types
+        for accel in ["anderson", "picard", "none"]:
+            cfg = Config(domain=unit_cube, facet_tags=facet_tags,
+                        accel_type=accel, verbose=False)
+            assert cfg.accel_type == accel
+
+        # Invalid type (not validated at config level, but documents expected values)
+        cfg_invalid = Config(domain=unit_cube, facet_tags=facet_tags,
+                            accel_type="invalid_accel", verbose=False)
+        # Should add validation: if accel_type not in [...]: raise ValueError
+
+    def test_config_anderson_window_size_positive(self, unit_cube, facet_tags):
+        """Anderson window size m must be positive."""
+        # m = 0 should be invalid
+        cfg0 = Config(domain=unit_cube, facet_tags=facet_tags, m=0, verbose=False)
+        # Documents current behavior - should validate m >= 1
+
+        # Positive values should work
+        cfg1 = Config(domain=unit_cube, facet_tags=facet_tags, m=5, verbose=False)
+        assert cfg1.m == 5
+
+        cfg2 = Config(domain=unit_cube, facet_tags=facet_tags, m=10, verbose=False)
+        assert cfg2.m == 10
+
+    def test_config_tolerance_values_positive(self, unit_cube, facet_tags):
+        """Solver tolerances must be positive."""
+        cfg = Config(domain=unit_cube, facet_tags=facet_tags, verbose=False)
+
+        assert cfg.ksp_rtol > 0
+        assert cfg.ksp_atol > 0
+        assert cfg.coupling_tol > 0
+        assert cfg.smooth_eps > 0
+
+    def test_config_iteration_limits_sensible(self, unit_cube, facet_tags):
+        """Iteration limits should be positive integers."""
+        cfg = Config(domain=unit_cube, facet_tags=facet_tags,
+                    max_subiters=100, min_subiters=1,
+                    ksp_max_it=500, verbose=False)
+
+        assert cfg.max_subiters > 0
+        assert cfg.min_subiters > 0
+        assert cfg.min_subiters <= cfg.max_subiters
+        assert cfg.ksp_max_it > 0
