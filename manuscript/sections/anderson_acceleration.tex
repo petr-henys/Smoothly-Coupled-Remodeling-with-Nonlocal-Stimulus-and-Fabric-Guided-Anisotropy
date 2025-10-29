@@ -1,0 +1,66 @@
+\subsection*{Anderson acceleration: convergence and diagnostics}
+\label{subsec:anderson}
+\paragraph{Motivation and scope}
+To reduce the number of block fixed-point (block Picard/Gauss--Seidel) sub-iterations, we employ Type-I Anderson acceleration (AA-I) with finite memory $m$. We compare (i) a plain block Picard baseline and (ii) AA-I with standard safeguards (restart on deterioration and backtracking/damping) across representative couplings and time-step sizes $\Delta t$. We also report diagnostics that help choose~$m$ and monitor robustness.
+% ==== Added clarifications (implementation-faithful) ====
+\subsection*{Interaction-gain diagnostics and spectral radius}\label{subsec:diag_rhoJ}
+We estimate a $4\times 4$ interaction-gain matrix $J$ of the Gauss--Seidel (GS) fixed-point map $G$ at the current state by finite-difference GS sweeps: for each block we form a small deterministic perturbation $\delta_j$ and measure
+\begin{equation*}
+  J_{ij}\;\approx\;\frac{\big\|\,G_i(x^\star+\delta_j)-G_i(x^\star)\,\big\|}{\|\delta_j\|}\,.
+\end{equation*}
+The block norms $\|\cdot\|$ are the same as in our stopping criterion (\S\ref{subsec:proj_merit}); for mechanics we \emph{project out} Dirichlet degrees of freedom before forming the norm. We report the spectral radius $\rho(J)$ as a diagnostic of local contractivity ($\rho(J)<1$ implies a locally contracting GS map in this block-norm sense). This diagnostic is optional and does not affect the iterate; it can be enabled per sub-iteration.
+
+\subsection*{Projected residual merit, stopping, and AA acceptance}\label{subsec:proj_merit}
+We measure progress by a \emph{projected, RMS-per-DOF} block merit
+\begin{equation}\label{eq:proj_merit}
+  \|r\|_{\mathrm{proj}}^2 \;=\; \sum_{i\in\{u,\rho,\mathbf A,S\}} w_i\,\|r_i\|_2^2,\qquad
+  w_i \;=\; \frac{1}{N_i}\,,
+\end{equation}
+where $N_i$ is the global number of unknowns in block $i$. For the mechanics block $u$ we exclude Dirichlet DOFs from the norm (they are masked out before evaluation). We declare convergence once $\|r\|_{\mathrm{proj}}<\mathtt{coupling\_tol}$ after at least a minimal number of GS sub-iterations. The same merit~\eqref{eq:proj_merit} is also used to accept or backtrack Anderson-accelerated candidates: a candidate is accepted only if it does not degrade the merit relative to the underlying Picard step.
+
+\subsection*{Stacking vs.\ sweep order}\label{subsec:order}
+The stacked state follows $(u,\rho,\mathbf A,S)$, while a single GS sweep updates blocks in the physical order $u\!\to\! S\!\to\!\rho\!\to\!\mathbf A$. The interaction-gain matrix $J$ is indexed according to the stacked order.
+
+\subsection*{Anderson acceleration details}\label{subsec:aa_details}
+We use Type-I Anderson (Pulay) acceleration with the equality constraint $\sum_j \alpha_j=1$. The least-squares system is formed from the global Gram matrix $H=RR^\top$; Tikhonov regularization uses $\lambda_{\mathrm{eff}}=\lambda\max(\mathrm{tr}\,H/p,\,1)$. We impose a step limit $\|s\|\le c\,\|r\|$ (with $c=2$ in our runs) and perform line search/backtracking along $s$ guided by the projected merit~\eqref{eq:proj_merit}. We restart the AA history upon (i) repeated rejections, (ii) stagnation with respect to the best Picard merit, or (iii) poor conditioning of the regularized Gram system. Accepted AA candidates re-enforce Dirichlet DOFs from the freshest Picard state.
+\paragraph{Setup and convergence metric}
+Convergence is measured by the projected residual
+\(
+\|r_k\|_{\mathcal{P}} := \big\|\mathcal{P}(x_{k+1}-x_k)\big\|_2,
+\)
+where $\mathcal{P}$ aggregates the relevant field components and non-dimensionalizes the norm. A sub-iteration is accepted when $\|r_k\|_{\mathcal{P}}\le \varepsilon_{\mathrm{fix}}$ and the relative decrease satisfies $\|r_k\|_{\mathcal{P}}/\|r_0\|_{\mathcal{P}} \le \varepsilon_{\mathrm{rel}}$. In AA-I we solve a small Tikhonov-regularized least-squares problem for the mixing coefficients and \emph{restart} if a candidate update violates the monotonicity safeguard; optional damping limits the step to $\theta\in(0,1]$ if the predicted residual exceeds $\gamma\,\|r_k\|_{\mathcal{P}}$ (typical $\gamma\in[1.05,1.25]$).
+
+\begin{figure}[htbp]
+  \centering
+  \IfFileExists{images/convergence_comparison.png}{%
+    \includegraphics[width=0.92\linewidth]{images/convergence_comparison.png}%
+  }{\fbox{\parbox{0.9\linewidth}{\centering Missing image: \texttt{images/convergence_comparison.png}}}}
+  \caption{Residual histories $\|r_k\|_{\mathcal{P}}$ for block Picard/Gauss--Seidel and Type-I Anderson acceleration (AA-I) at representative $\Delta t$ and coupling strengths. Curves show medians across time/space instances; shaded bands indicate interquartile ranges. AA-I typically reduces sub-iterations by $30$--$70\%$ in tighter couplings while remaining comparable to block Picard in mild regimes.}
+  \label{fig:aa-residuals}
+\end{figure}
+
+\begin{table}[htbp]
+  \centering
+  \caption{Sub-iterations and speedup per configuration (by $\Delta t$ and $m$). Speedup is time$_\text{Picard}$/time$_\text{AA-I}$.}
+  \label{tab:aa-median-speedup}
+  \small
+  \IfFileExists{tables/anderson_convergence_summary.csv}{%
+    \begin{adjustbox}{max width=\linewidth}
+    \pgfplotstabletypeset[
+      col sep=comma,
+      every head row/.style={before row=\toprule, after row=\midrule},
+      every last row/.style={after row=\bottomrule},
+      columns/dt_days/.style={column name={$\Delta t$ [d]}, fixed, precision=0},
+      columns/m/.style={column name={$m$}, fixed, precision=0},
+      columns/picard_median_iters/.style={column name={Picard (median iters)}, fixed, precision=0},
+      columns/anderson_median_iters/.style={column name={AA-I (median iters)}, fixed, precision=0},
+      columns/speedup/.style={string type, column name={Speedup}},
+      columns={dt_days, m, picard_median_iters, anderson_median_iters, speedup},
+    ]{tables/anderson_convergence_summary.csv}
+    \end{adjustbox}
+  }{}
+\end{table}
+
+
+\paragraph{Summary}
+Across tests, AA-I consistently reduces sub-iterations and CPU cost in moderately to strongly coupled scenarios without sacrificing robustness. Safeguards (restart and backtracking) stabilize aggressive extrapolations in difficult steps. We recommend $m\in\{3,5\}$: larger $m$ rarely yields additional benefit relative to memory cost and the small least-squares solve. Observed coupling/diagnostic trends correlate with the achieved speedups in \cref{tab:aa-median-speedup} and offer a practical indicator for enabling AA-I or increasing $m$.

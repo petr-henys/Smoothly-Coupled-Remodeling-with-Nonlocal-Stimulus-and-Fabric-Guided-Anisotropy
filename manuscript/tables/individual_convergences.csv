@@ -1,0 +1,13 @@
+solver,pair,l2_rate,h1_rate
+mechanics,16-24,1.5961,0.8409
+mechanics,24-36,1.7099,0.8751
+mechanics,36-54,,
+stimulus,16-24,1.9855,1.0052
+stimulus,24-36,1.9772,0.9833
+stimulus,36-54,,
+density,16-24,1.9691,0.9742
+density,24-36,1.9820,0.9849
+density,36-54,,
+direction,16-24,1.8767,0.9074
+direction,24-36,1.9321,0.9552
+direction,36-54,,

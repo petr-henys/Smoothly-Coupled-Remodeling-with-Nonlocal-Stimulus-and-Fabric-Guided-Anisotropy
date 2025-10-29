@@ -96,7 +96,7 @@ if __name__ == "__main__":
     comm = MPI.COMM_WORLD
     sweep = ParameterSweep(
         params={
-            "N": [36],
+            "N": [24],
             "dt_days": [25.0, 50.0, 100.0],
             "accel_type": ["picard", "anderson"],
             "m": [4, 8, 12],

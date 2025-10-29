@@ -9,8 +9,18 @@
 \usepackage{amsthm}
 \usepackage{titlesec}
 
+\usepackage{booktabs}
+\usepackage{pgfplotstable}
+\pgfplotsset{compat=1.18}
+
+% Volitelné: desetinné zarovnání (hezčí čísla ve sloupcích)
+\pgfplotstableset{
+  % obecné styly
+  every head row/.style={before row=\toprule, after row=\midrule},
+  every last row/.style={after row=\bottomrule},
+}
+
 \usepackage{bm}
-\usepackage{booktabs} 
 \usepackage{units}
 \usepackage{mathtools}
 \usepackage{lineno}
@@ -376,7 +386,7 @@ with the product inner product
 \alpha_u\,(\boldsymbol{\varepsilon}(\mathbf{u}),\boldsymbol{\varepsilon}(\mathbf{v})) \;+\;
 \alpha_S\,(S,q) \;+\; \alpha_\rho\,(\rho,p) \;+\; \alpha_A\,(\mathbf{A},\mathbf{Q}) ,
 \end{equation}
-for $\mathbf{y}=(\mathbf{v},q,p,\mathbf{Q})$ and positive weights $\alpha_\bullet$. In the implementation, the \emph{merit/stopping} metric is a weighted, projected 2--norm on the flattened state (uniform block weights by default) that projects out Dirichlet DOFs in mechanics; the flattened state order for norms and mixing is $(\mathbf{u},\rho,\mathbf{A},S)$.
+for $\mathbf{y}=(\mathbf{v},q,p,\mathbf{Q})$ and positive weights $\alpha_\bullet$. In the implementation, the \emph{merit/stopping} metric is a projected 2--norm on the flattened state with RMS-per-DOF block weights (i.e., $w_i=1/N_i$) that projects out Dirichlet DOFs in mechanics; the flattened state order for norms and mixing is $(\mathbf{u},\rho,\mathbf{A},S)$.
 
 \paragraph{Block map.}
 Define the block Gauss--Seidel map $\mathcal{G}:\mathcal{X}\to\mathcal{X}$ by
@@ -429,7 +439,7 @@ The accelerated candidate is then assembled as
 with a \emph{step limiter} enforcing $\|\mathbf{s}\|_2 \le \mathrm{factor}\,\|r^{(m+1)}\|_2$ (user parameter). The mixed iterate is $\mathbf{x}^{(m)}+\mathbf{s}$, after which mechanics Dirichlet DOFs are overwritten by the fresh GS values.
 
 \paragraph{Projected-residual merit, safeguard, and backtracking.}
-The acceptance test uses a \emph{projected, block-weighted} 2--norm on the flattened state: let $\mathsf{P}_u$ zero mechanics Dirichlet DOFs and use uniform block weights $(w_u,w_\rho,w_A,w_S)\equiv(1,1,1,1)$ by default. Denote by $\|\cdot\|_{\mathrm{proj}}$ the resulting norm. With
+The acceptance test uses a \emph{projected, RMS-per-DOF block-weighted} 2--norm on the flattened state: let $\mathsf{P}_u$ zero mechanics Dirichlet DOFs and choose weights $w_i=1/N_i$ for each block. Denote by $\|\cdot\|_{\mathrm{proj}}$ the resulting norm. With
 \(
 r_{\mathrm{Pic}}^{(m+1)} := \|x_{\mathrm{raw}}^{(m+1)}-\mathbf{x}^{(m)}\|_{\mathrm{proj}}
 \)
@@ -487,26 +497,26 @@ with \(E_{\mathrm{tiss}}=18\,\mathrm{GPa}\) and \(n\in[1.7,2.2]\) as a defensibl
 \paragraph{Trabecular fabric and anisotropy control.}
 Directionality is characterized by a unit-trace orientation/fabric tensor \(\widehat{\mathbf A}\). We introduce a scalar gain \(\xi_{\mathrm{aniso}}\) that multiplies a rank-one stiffness contribution aligned with \(\widehat{\mathbf A}\), thereby tuning the ratio \(E_{\max}/E_{\min}\). Mid-density human trabecular bone typically exhibits moderate elastic anisotropy \(E_{\max}/E_{\min}\approx 1.7\text{--}2.0\); we target this range during calibration. \cite*{Hollister1994,vanRietbergen1995}
 
-\paragraph{Mechanoregulation window and reference SED.}
-We anchor remodeling to a physiologic window centered on strain amplitudes of order \(10^{-3}\) (mechanostat). Using \(\psi=\tfrac12 E\,\varepsilon^2\), these strains correspond to reference strain--energy densities in the \(10\text{--}20\,\mathrm{kJ\,m^{-3}}\) range for trabecular tissue stiffness; we set \(\psi_{\mathrm{ref}}=15\,\mathrm{kJ\,m^{-3}}\) with a narrow, symmetric lazy zone. \cite*{Robling2006}
+\paragraph{Reference SED for mechanoregulation.}
+We anchor remodeling to a physiologic reference centered on strain amplitudes of order \(10^{-3}\) (mechanostat). Using \(\psi=\tfrac12 E\,\varepsilon^2\), these strains correspond to reference strain--energy densities in the \(10\text{--}20\,\mathrm{kJ\,m^{-3}}\) range for trabecular tissue stiffness; we set \(\psi_{\mathrm{ref}}=15\,\mathrm{kJ\,m^{-3}}\). \cite*{Robling2006}
 
 \paragraph{Stimulus transport and kinetics: roles of \(\boldsymbol{\kappa_S}\), \(\boldsymbol{\tau_S}\), and \(\boldsymbol{c_S}\).}
 Osteocyte mechanotransduction combines rapid fluid-shear sensing and strain amplification at cell processes with solute transport through the lacunar--canalicular system (LCS). This motivates a diffusive--relaxing field \(S\) driven by local mechanical energy:
 \((c_S/\Delta t+\tau_S)S-\kappa_S\nabla^2 S=(c_S/\Delta t)S^{\mathrm{old}}+r_S(\psi-\psi_{\mathrm{ref}})\).
-Here, \(\kappa_S\) (\(\mathrm{m^2\,s^{-1}}\)) controls spatial spread, \(\tau_S\) (\(\mathrm{s^{-1}}\)) sets the intrinsic relaxation rate (\(t_c=1/\tau_S\)), and \(c_S\) (dimensionless) is a \emph{capacity} that lumps fast receptor/second-messenger kinetics, effectively low-pass filtering the stimulus at time step \(\Delta t\). We recommend \(c_S\in[10,40]\) (nominal \(20\)) to provide robust smoothing without overdamping; choose \(t_c\sim\) hours to separate fast stimulus equilibration from slow morphological updates; and set \(\kappa_S\) anisotropic and aligned with fabric, consistent with FRAP measurements in LCS (effective small-solute diffusion \(D\sim 10^{-10}\,\mathrm{m^2\,s^{-1}}\)) and strain-amplification/flow models. \cite*{Wang2005PNAS,Price2011JBMR,Weinbaum1994,Robling2006}
+Here, \(\kappa_S\) (\(\mathrm{m^2\,s^{-1}}\)) controls spatial spread, \(\tau_S\) (\(\mathrm{s^{-1}}\)) sets the intrinsic relaxation rate (\(t_c=1/\tau_S\)), and \(c_S\) (dimensionless) is a \emph{capacity} that lumps fast receptor/second-messenger kinetics, effectively low-pass filtering the stimulus at time step \(\Delta t\). We recommend \(c_S\in[10,40]\) (nominal \(20\)) to provide robust smoothing without overdamping; choose \(t_c\sim\) hours to separate fast stimulus equilibration from slow morphological updates. In the present implementation \(\kappa_S\) is \emph{isotropic}. \cite*{Wang2005PNAS,Price2011JBMR,Weinbaum1994,Robling2006}
 
 \paragraph{From apparent modulus to load prescription.}
 For uniaxial tests we prescribe the traction magnitude \(t_p = E_{\mathrm{app}}\,\varepsilon_{\mathrm{app}}\). In convergence studies we therefore: (i) compute \(E_{\mathrm{app}}\) by homogenization on the \(5\,\mathrm{mm}\) cube under PMUBC; (ii) select \(\varepsilon_{\mathrm{app}}=10^{-3}\) (and optionally \(1.5\times 10^{-3}\)); and (iii) set \(t_p\) accordingly, keeping boundary conditions identical across mesh refinements. \cite*{Hollister1994,vanRietbergen1995,Pahr2008}
 
 \paragraph{Calibration protocol (single pass).}
-(i) Fix \(L=5\,\mathrm{mm}\) and the sample's apparent density; (ii) set \(E_{\mathrm{tiss}}=18\,\mathrm{GPa}\), \(\nu=0.30\), and \(n=2.0\), then run the six canonical homogenization cases to obtain \(\mathbb{C}_{\mathrm{app}}\) and principal \(E_i\); (iii) tune \(\xi_{\mathrm{aniso}}\) to match \(E_{\max}/E_{\min}\) in the fabric axes; (iv) set \(\psi_{\mathrm{ref}}=15\,\mathrm{kJ\,m^{-3}}\) with a \(\pm 15\%\) lazy band; (v) choose \(t_c=1\,\mathrm{h}\), \(c_S=20\) (test \(10\text{--}40\)), and \(\kappa_S\) within LCS-consistent orders of magnitude. \cite*{Helgason2008,Pahr2008,Wang2005PNAS,Robling2006}
+(i) Fix \(L=5\,\mathrm{mm}\) and the sample's apparent density; (ii) set \(E_{\mathrm{tiss}}=18\,\mathrm{GPa}\), \(\nu=0.30\), and \(n=2.0\), then run the six canonical homogenization cases to obtain \(\mathbb{C}_{\mathrm{app}}\) and principal \(E_i\); (iii) tune \(\xi_{\mathrm{aniso}}\) to match \(E_{\max}/E_{\min}\) in the fabric axes; (iv) set \(\psi_{\mathrm{ref}}=15\,\mathrm{kJ\,m^{-3}}\); (v) choose \(t_c=1\,\mathrm{h}\), \(c_S=20\) (test \(10\text{--}40\)), and \(\kappa_S\) within LCS-consistent orders of magnitude. \cite*{Helgason2008,Pahr2008,Wang2005PNAS,Robling2006}
 
 \paragraph{Baseline parameter set for spatial convergence (fixed across meshes).}
 \emph{Geometry:} \(L=5\,\mathrm{mm}\). \
 \emph{Elasticity:} \(E_{\mathrm{tiss}}=18\,\mathrm{GPa}\), \(n=2.0\), \(\nu=0.30\). \
 \emph{Anisotropy:} \(\xi_{\mathrm{aniso}}=0.20\) (to be refined to match \(E_{\max}/E_{\min}\)). \
-\emph{Mechanoregulation:} \(\psi_{\mathrm{ref}}=15\,\mathrm{kJ\,m^{-3}}\) with a \(\pm 15\%\) lazy zone. \
-\emph{Stimulus transport/kinetics:} \(t_c=1/\tau_S=1\,\mathrm{h}\), \(c_S=20\) (sensitivity \(10\text{--}40\)); \(\kappa_S\) aligned with fabric and chosen within FRAP-based orders. \
+\emph{Mechanoregulation:} \(\psi_{\mathrm{ref}}=15\,\mathrm{kJ\,m^{-3}}\). \
+\emph{Stimulus transport/kinetics:} \(t_c=1/\tau_S=1\,\mathrm{h}\), \(c_S=20\) (sensitivity \(10\text{--}40\)); \(\kappa_S\) isotropic and chosen within FRAP-based orders. \
 \emph{Loading:} \(t_p=E_{\mathrm{app}}\times 10^{-3}\) (and \(1.5\times 10^{-3}\) for the higher level), using identical PMUBC across refinements.
 
 \paragraph{KUBC homogenization under the adopted nondimensionalization.}
@@ -560,107 +570,12 @@ Thus \emph{all} reported elastic moduli scale linearly with $E_0$, while ratios 
 \paragraph{Penalty scaling in nondimensional form.}
 In \eqref{eq:kubc-nitsche-weak} the penalty enters as $(\gamma/h)\langle\cdot,\cdot\rangle_{\partial\Omega}$ and must be comparable to a representative shear/Young modulus to guarantee coercivity. In dimensional variables one would set $\gamma^{\mathrm{dim}}=\alpha\,E_{\mathrm{ref}}^{\mathrm{dim}}$. Under our scaling, $h=h^{\mathrm{dim}}/L_c$ and $E_{\mathrm{ref}}^{\mathrm{nd}}=E_{\mathrm{ref}}^{\mathrm{dim}}/E_0$, so $(\gamma/h)$ remains dimensionless if $\gamma=\alpha\,E_{\mathrm{ref}}^{\mathrm{nd}}$. A robust choice is $E_{\mathrm{ref}}^{\mathrm{nd}}\approx \sup_{\Omega}E(\rho)$ (or a safe upper percentile) so that a mesh-independent $\alpha=\mathcal{O}(10^2)$ suffices; using $E_{\mathrm{ref}}^{\mathrm{nd}}\equiv 1$ is consistent provided $\alpha$ is chosen large enough to dominate the largest $E(\rho)$ realized by the current $(\rho,\mathbf{A})$ field. This keeps the KUBC bilinear form uniformly coercive in the nondimensional setting while preserving the expected dimensional scaling \eqref{eq:kubc-scale}.
 
-\subsection*{Convergence and grid–sensitivity analysis}
-We verify spatial consistency by combining (i) field–norm error estimates on nested meshes with non-matching transfer, and (ii) \emph{quantity–of–interest} (QoI) Richardson analysis with Roache’s grid–convergence index (GCI). All quantities are nondimensional under the scaling in \S\ref{sec:strong-forms-nd}; averages are normalized by $|\Omega|$.
-
-\paragraph{Meshes and notation.}
-Let $\{\mathcal{T}_i\}_{i=1}^L$ be a family of tetrahedral meshes on $\Omega$ obtained by uniform refinement, with characteristic sizes $h_i=1/N_i$ (we report $h_i=1/N_i$ explicitly). On each $\mathcal{T}_i$ we solve the fully coupled problem to a fixed time $T$ with \emph{the same} $\Delta t$ and model parameters; this avoids additional time–discretization bias from remounting left–hand sides. Denote by
-\[
-\mathbf{u}_i,\quad S_i,\quad \rho_i,\quad \mathbf{A}_i
-\]
-the discrete fields on level $i$ in their conforming $H^1$ spaces $V_{h_i},Q_{h_i},Q_{h_i},T_{h_i}$. Because the solution can exhibit sharp internal layers (bone/void fronts), we do not assume high regularity.
-
-\paragraph{Field–norm pair errors on the finer mesh.}
-For two consecutive levels $(H,h)=(i,i{+}1)$ we evaluate errors on the finer mesh in a \emph{higher–order observation space} to avoid inverse crimes. Concretely, for any field $X\in\{\mathbf{u},S,\rho,\mathbf{A}\}$ we construct $W_{h}^{(X)}$ by raising the polynomial degree by $\Delta p$ (we use $\Delta p=4$), transfer $X_H$ to $W_{h}^{(X)}$ by non-matching interpolation, and lift $X_h$ into $W_{h}^{(X)}$ by an $L^2$ projection. With $\mathcal{I}_{H\to h}$ denoting the non-matching interpolation and $\widetilde X_h$ the lifted fine solution, the pair error reads
-\[
-e_{H\to h}^{X,\;L^2} \;=\; \big\| \widetilde X_h - \mathcal{I}_{H\to h} X_H \big\|_{L^2(\Omega)},
-\qquad
-e_{H\to h}^{X,\;H^1\text{-semi}} \;=\; \big\| \nabla(\widetilde X_h - \mathcal{I}_{H\to h} X_H) \big\|_{L^2(\Omega)} .
-\]
-Vector/tensor seminorms use the canonical componentwise sum. All integrals are evaluated with quadrature of order $2(p{+}\Delta p)+1$ on $\mathcal{T}_h$. For a sequence of pairs we obtain $\{(h_{i+1},e_{i\to i+1}^{X,\bullet})\}_{i=1}^{L-1}$ and estimate an experimental order of convergence (EOC) $p$ from the log–log fit
-\[
-\log e \approx p\,\log h + \mathrm{const},\qquad
-p \;=\; \arg\min_{p} \sum_{i} \big(\log e_{i\to i+1}^{X,\bullet} - p\log h_{i+1} - c\big)^2 ,
-\]
-reported for both $L^2$ and $H^1$–semi norms. When only three levels are available, we also quote the two–ratio estimate $p \approx \log(e_{H\to h}/e_{h\to h/2})/\log(r)$ with $r=h_H/h_h$.
-
-\paragraph{QoIs and TV–$\boldsymbol\varepsilon$ for rough gradients.}
-Alongside field norms we track scalar QoIs that are more stable for sharp solutions. We use
-\[
-\overline{\psi} \;=\; \frac{1}{|\Omega|}\int_\Omega \tfrac12\,\boldsymbol{\sigma}(\mathbf{u},\rho,\mathbf{A}):\boldsymbol{\varepsilon}(\mathbf{u})\,\mathrm{d}x,\quad
-\overline{S} \;=\; \frac{1}{|\Omega|}\int_\Omega S\,\mathrm{d}x,\quad
-\overline{\rho} \;=\; \frac{1}{|\Omega|}\int_\Omega \rho\,\mathrm{d}x,
-\]
-and, instead of the sensitive gradient–energy $\int|\nabla(\cdot)|^2\,\mathrm{d}x$, we adopt \emph{total-variation with $\varepsilon$} (TV–$\varepsilon$)
-\[
-\mathrm{TV}_{\varepsilon}(S) \;=\; \frac{1}{|\Omega|}\int_\Omega \sqrt{|\nabla S|^2 + \varepsilon_{\mathrm{tv}}^2}\,\mathrm{d}x,\qquad
-\mathrm{TV}_{\varepsilon}(\rho) \;=\; \frac{1}{|\Omega|}\int_\Omega \sqrt{|\nabla \rho|^2 + \varepsilon_{\mathrm{tv}}^2}\,\mathrm{d}x.
-\]
-Here $\varepsilon_{\mathrm{tv}}$ is nondimensional and fixed across meshes; we take $\varepsilon_{\mathrm{tv}}=\kappa\,h_{\min}$ with $\kappa=0.5$ referenced to the finest level. This regularized TV functional is far less sensitive to mesh-scale oscillations yet remains consistent as $h\to0$.
-
-\paragraph{QoI–based Richardson and GCI.}
-Let $Q(h)$ be any scalar QoI from the set above. Using the last three levels $h_1>h_2>h_3$ (coarse$\to$fine) we form
-\[
-r_{21}=\frac{h_1}{h_2},\quad r_{32}=\frac{h_2}{h_3},\quad
-d_{12}=Q(h_1)-Q(h_2),\quad d_{23}=Q(h_2)-Q(h_3).
-\]
-Assuming smooth asymptotics $Q(h)=Q_\infty + C h^p + o(h^p)$, the order and extrapolated limit are
-\[
-p \;=\; \bigg|\frac{\log|d_{12}/d_{23}|}{\log r_{21}}\bigg|,\qquad
-Q_\infty \;\approx\; Q(h_3) + \frac{Q(h_3)-Q(h_2)}{r_{32}^{\,p}-1}.
-\]
-Following Roache, the (relative) GCIs between the last two spacings are
-\[
-\mathrm{GCI}_{21} \;=\; F_s\,\frac{|d_{12}|}{|Q(h_2)|}\,\frac{1}{|r_{21}^{\,p}-1|},\qquad
-\mathrm{GCI}_{32} \;=\; F_s\,\frac{|d_{23}|}{|Q(h_3)|}\,\frac{1}{|r_{32}^{\,p}-1|},
-\]
-with safety factor $F_s=1.25$. We also report a monotonicity flag $\mathsf{mono}=\mathbb{1}[d_{12}d_{23}\ge 0]$ and the asymptoticity indicator
-\[
-\beta \;=\; \frac{\mathrm{GCI}_{32}}{\mathrm{GCI}_{21}\,r_{21}^{\,p}},
-\]
-which tends to $1$ when the last three levels are in the asymptotic range. For strongly localized solutions (as in our remodeling front), $p<1$ and $\beta\ll 1$ may legitimately occur; in that case TV–$\varepsilon$ QoIs and averages ($\overline{\psi},\overline{\rho},\overline{S}$) provide the most informative trend.
-
-\paragraph{Implementation notes.}
-Errors use DOLFINx non-matching transfer (creation of interpolation data on the fine grid and cell-wise interpolation), and all integrals are assembled with MPI reductions after updating ghost values. The same set of converged solutions $\{(\mathbf{u}_i,S_i,\rho_i,\mathbf{A}_i)\}$ is reused for field-norm and QoI analysis to avoid duplicating runs. Quadrature is set high enough ($2(p{+}\Delta p){+}1$) to suppress aliasing from nonlinear forms. Because we keep $\Delta t$ fixed across $h$ (no $h$-dependent remounting of left–hand sides), the study isolates \emph{spatial} sensitivity; in a posteriori checks on the finest mesh, halving $\Delta t$ changed the reported QoIs by less than our print precision, confirming that temporal error is subdominant in the regimes shown.
-
-\paragraph{Reporting.}
-We show (i) $h$ per level and per pair, (ii) EOC from the log–log fit for $L^2$ and $H^1$–semi norms of $(\mathbf{u},S,\rho,\mathbf{A})$, and (iii) for each QoI: $(p,Q_\infty,\mathrm{GCI}_{32},\beta,\mathsf{mono})$. Where relevant we additionally provide absolute GCIs (without normalization by $|Q(h)|$) to disambiguate small denominators.
-
-
-
-% ==== Added clarifications (implementation-faithful) ====
-\subsection{Interaction-gain diagnostics and spectral radius}\label{subsec:diag_rhoJ}
-We estimate a $4\times 4$ interaction-gain matrix $J$ of the Gauss--Seidel (GS) fixed-point map $G$ at the current state by finite-difference GS sweeps: for each block we form a small deterministic perturbation $\delta_j$ and measure
-\begin{equation*}
-  J_{ij}\;\approx\;\frac{\big\|\,G_i(x^\star+\delta_j)-G_i(x^\star)\,\big\|}{\|\delta_j\|}\,.
-\end{equation*}
-The block norms $\|\cdot\|$ are the same as in our stopping criterion (Sec.~\ref{subsec:proj_merit}); for mechanics we \emph{project out} Dirichlet degrees of freedom before forming the norm. We report the spectral radius $\rho(J)$ as a diagnostic of local contractivity ($\rho(J)<1$ implies a locally contracting GS map in this block-norm sense). This diagnostic is optional and does not affect the iterate; it can be enabled per sub-iteration.
-
-\subsection{Projected residual merit, stopping, and AA acceptance}\label{subsec:proj_merit}
-We measure progress by a \emph{projected, RMS-per-DOF} block merit
-\begin{equation}\label{eq:proj_merit}
-  \|r\|_{\mathrm{proj}}^2 \;=\; \sum_{i\in\{u,\rho,\mathbf A,S\}} w_i\,\|r_i\|_2^2,\qquad
-  w_i \;=\; \frac{1}{N_i}\,,
-\end{equation}
-where $N_i$ is the global number of unknowns in block $i$. For the mechanics block $u$ we exclude Dirichlet DOFs from the norm (they are masked out before evaluation). We declare convergence once $\|r\|_{\mathrm{proj}}<\mathtt{coupling\_tol}$ after at least a minimal number of GS sub-iterations. The same merit~\eqref{eq:proj_merit} is also used to accept or backtrack Anderson-accelerated candidates: a candidate is accepted only if it does not degrade the merit relative to the underlying Picard step.
-
-\subsection{Stacking vs.\ sweep order}\label{subsec:order}
-The stacked state follows $(u,\rho,\mathbf A,S)$, while a single GS sweep updates blocks in the physical order $u\!\to\! S\!\to\!\rho\!\to\!\mathbf A$. The interaction-gain matrix $J$ is indexed according to the stacked order.
-
-\subsection{Anderson acceleration details}\label{subsec:aa_details}
-We use Type-I Anderson (Pulay) acceleration with the equality constraint $\sum_j \alpha_j=1$. The least-squares system is formed from the global Gram matrix $H=RR^\top$; Tikhonov regularization uses $\lambda_{\mathrm{eff}}=\lambda\max(\mathrm{tr}\,H/p,\,1)$. We impose a step limit $\|s\|\le c\,\|r\|$ (with $c=2$ in our runs) and perform line search/backtracking along $s$ guided by the projected merit~\eqref{eq:proj_merit}. We restart the AA history upon (i) repeated rejections, (ii) stagnation with respect to the best Picard merit, or (iii) poor conditioning of the regularized Gram system. Accepted AA candidates re-enforce Dirichlet DOFs from the freshest Picard state.
-\subsection{Linear solver defaults and preconditioner maintenance}\label{subsec:ksp_defaults}
+\subsection*{Linear solver defaults and preconditioner maintenance}\label{subsec:ksp_defaults}
 Unless stated otherwise, each linear block solve uses PETSc MINRES with GAMG preconditioning. Preconditioner maintenance is decoupled from the AA/GS logic and is triggered only when the previous Krylov solve exceeded a given iteration threshold; otherwise the preconditioner is reused.
 
-\subsection{Anisotropy index (QoI)}\label{subsec:anis_qoi}
-For the fabric tensor $\mathbf A$ (symmetric, positive semidefinite, unit trace) we report the domain-average
-\begin{equation*}
-  \overline{\mathcal A} \;=\; \frac{1}{|\Omega|}\int_\Omega \mathrm{tr}\!\left(\mathbf A^{\!\top}\mathbf A\right)\,\mathrm d x,
-\end{equation*}
-i.e.\ the mean squared Frobenius norm of $\mathbf A$, which increases with anisotropy when $\mathrm{tr}\,\mathbf A=1$.
 % ==== End of clarifications ====
-
-
+\input{sections/convergence_performance}
+\input{sections/anderson_acceleration}
 \section*{Conflict of interest statement}
 The authors declare no conflict of interest.
 

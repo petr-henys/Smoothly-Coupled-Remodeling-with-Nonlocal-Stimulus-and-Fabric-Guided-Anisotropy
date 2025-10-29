@@ -545,7 +545,7 @@ if __name__ == "__main__":
     # Programmatic demonstration run (no CLI)
     comm = MPI.COMM_WORLD
     m = mesh.create_unit_cube(
-        comm, 33, 33, 33,
+        comm, 36, 36, 36,
         cell_type=mesh.CellType.tetrahedron,
         ghost_mode=mesh.GhostMode.shared_facet
     )
