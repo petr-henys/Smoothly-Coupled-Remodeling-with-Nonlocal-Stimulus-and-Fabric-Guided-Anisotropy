@@ -1,15 +1,14 @@
 """
 Utilities for convergence-analysis post-processing.
 
-Provides MPI-aware NPZ I/O, cross-mesh interpolation, error norms, and
+Provides MPI-independent NPZ I/O, cross-mesh interpolation, error norms, and
 Richardson/GCI helpers used by the convergence scripts and plotting.
 
 Note on NPZ snapshots
 ---------------------
-Vectors are stored in global DOF order which is partition-dependent in
-DOLFINx. Loading must use the same MPI size and compatible partitioning.
-We validate MPI size, block size and global DOF count to prevent obvious
-mismatches.
+Fields are stored with DOF coordinates and element metadata. Loading uses
+KDTree matching to handle MPI-partition reordering, making snapshots fully
+MPI-independent (any rank count can load).
 """
 
 from __future__ import annotations
@@ -23,6 +22,7 @@ from mpi4py import MPI
 from dolfinx import mesh, fem
 import basix.ufl
 import ufl
+from scipy.spatial import cKDTree
 
 
 # ============================================================================
@@ -44,94 +44,150 @@ BETA_DENOM_REL_TOL = 1e-8
 
 
 # ============================================================================
-# NPZ I/O (MPI-aware)
+# NPZ I/O (MPI-independent with coordinate matching)
 # ============================================================================
 
 def save_function_npz(func: fem.Function, path: Path, comm: MPI.Comm) -> None:
-    """Collect owned DOF values and save to NPZ file (rank-0 writes).
-
-    Warning: Global DOF order in DOLFINx is partition-dependent. Snapshots must
-    be loaded with the same MPI size and compatible partitioning.
+    """Save function to NPZ with DOF coordinates and element metadata.
+    
+    Stores:
+    - DOF coordinates (for KDTree matching on load)
+    - DOF values
+    - Element family, degree, shape
+    - Block size
+    
+    Rank 0 gathers all data and writes single NPZ file.
+    Loading is MPI-independent via coordinate-based DOF matching.
     """
     space = func.function_space
+    element = space.element
     index_map = space.dofmap.index_map
     bs = space.dofmap.index_map_bs
-
+    
+    # Get DOF coordinates for owned DOFs
     owned_dofs = index_map.size_local
-    owned_values = func.x.array[: owned_dofs * bs].copy()
-    local_range = tuple(index_map.local_range)
-
-    gathered_ranges = comm.gather(local_range, root=0)
-    gathered_values = comm.gather(owned_values, root=0)
-
+    dof_coords = space.tabulate_dof_coordinates()[:owned_dofs]
+    owned_values = func.x.array[:owned_dofs * bs].copy()
+    
+    # Gather to rank 0
+    all_coords = comm.gather(dof_coords, root=0)
+    all_values = comm.gather(owned_values, root=0)
+    
     if comm.rank != 0:
         return
-
-    total_size = index_map.size_global * bs
-    data = np.empty(total_size, dtype=owned_values.dtype)
-    for (start, end), values in zip(gathered_ranges, gathered_values):
-        start_bs = start * bs
-        end_bs = end * bs
-        data[start_bs:end_bs] = values
-
+    
+    # Concatenate all gathered data
+    global_coords = np.vstack(all_coords)
+    global_values = np.concatenate(all_values)
+    
+    # Extract element metadata
+    basix_element = element.basix_element
+    family_int = basix_element.family
+    degree = basix_element.degree
+    value_shape = element.value_shape
+    
+    # Save everything
     path.parent.mkdir(parents=True, exist_ok=True)
     np.savez(
         path,
-        values=data,
+        coords=global_coords,
+        values=global_values,
         bs=np.int32(bs),
-        global_dofs=np.int64(index_map.size_global),
-        local_ranges=np.asarray(gathered_ranges, dtype=np.int64),
-        mpi_size=np.int32(comm.size),
+        family=np.int32(family_int),
+        degree=np.int32(degree),
+        value_shape=np.array(value_shape, dtype=np.int32),
     )
 
 
 def load_npz_field(comm: MPI.Comm, npz_file: Path, target: fem.Function) -> None:
-    """Load NPZ snapshot into ``target`` function (MPI broadcast).
-
-    Validates MPI size, block size and global DOF count to prevent obvious
-    mismatches that would silently corrupt data mapping.
+    """Load NPZ snapshot into target function using coordinate matching.
+    
+    Uses KDTree to match stored DOF coordinates with target space DOFs,
+    making loading MPI-independent (works with any rank count/partition).
+    
+    Validates element compatibility (family, degree, shape).
     """
+    # Rank 0 loads data
     if comm.rank == 0:
         with np.load(npz_file) as data:
-            global_values = data["values"]
+            stored_coords = data["coords"]
+            stored_values = data["values"]
             stored_bs = int(data["bs"])
-            total_dofs = int(data["global_dofs"])
-            stored_mpi_size = int(data["mpi_size"])
+            stored_family = int(data["family"])
+            stored_degree = int(data["degree"])
+            stored_shape = tuple(data["value_shape"])
     else:
-        global_values = stored_bs = total_dofs = stored_mpi_size = None
-
-    global_values = comm.bcast(global_values, root=0)
+        stored_coords = stored_values = None
+        stored_bs = stored_family = stored_degree = stored_shape = None
+    
+    # Broadcast metadata
     stored_bs = comm.bcast(stored_bs, root=0)
-    total_dofs = comm.bcast(total_dofs, root=0)
-    stored_mpi_size = comm.bcast(stored_mpi_size, root=0)
-
-    # Basic validations
-    if stored_mpi_size != comm.size:
-        raise RuntimeError(
-            f"\n{'='*70}\n"
-            f"MPI SIZE MISMATCH DETECTED!\n"
-            f"{'='*70}\n"
-            f"NPZ file saved with {stored_mpi_size} ranks, loading with {comm.size} ranks.\n"
-            f"File: {npz_file}\n\n"
-            f"DOLFINx global DOF ordering is MPI-partition dependent.\n"
-            f"Loading with different MPI size produces SILENTLY WRONG results!\n\n"
-            f"Fix: Re-run analysis with: mpirun -np {stored_mpi_size} python3 ...\n"
-            f"{'='*70}\n"
-        )
-
-    index_map = target.function_space.dofmap.index_map
-    bs = target.function_space.dofmap.index_map_bs
+    stored_family = comm.bcast(stored_family, root=0)
+    stored_degree = comm.bcast(stored_degree, root=0)
+    stored_shape = comm.bcast(stored_shape, root=0)
+    
+    # Validate element compatibility
+    space = target.function_space
+    element = space.element
+    basix_element = element.basix_element
+    bs = space.dofmap.index_map_bs
+    
     if bs != stored_bs:
         raise RuntimeError(f"Block size mismatch: stored={stored_bs}, target={bs}")
-    if total_dofs != index_map.size_global:
+    if basix_element.family != stored_family:
         raise RuntimeError(
-            f"Global DOF mismatch: stored={total_dofs}, target={index_map.size_global}"
+            f"Element family mismatch: stored={stored_family}, target={basix_element.family}"
         )
-
-    start, end = index_map.local_range
-    start *= bs
-    end *= bs
-    target.x.array[: index_map.size_local * bs] = global_values[start:end]
+    if basix_element.degree != stored_degree:
+        raise RuntimeError(
+            f"Element degree mismatch: stored={stored_degree}, target={basix_element.degree}"
+        )
+    
+    # Compare value shapes (handle tuples with arrays)
+    target_shape = element.value_shape
+    if len(target_shape) != len(stored_shape):
+        raise RuntimeError(
+            f"Element shape mismatch: stored={stored_shape}, target={target_shape}"
+        )
+    for i, (s_stored, s_target) in enumerate(zip(stored_shape, target_shape)):
+        if s_stored != s_target:
+            raise RuntimeError(
+                f"Element shape mismatch: stored={stored_shape}, target={target_shape}"
+            )
+    
+    # Get local DOF coordinates
+    index_map = space.dofmap.index_map
+    owned_dofs = index_map.size_local
+    local_coords = space.tabulate_dof_coordinates()[:owned_dofs]
+    
+    # Build KDTree on rank 0 and query all ranks' coordinates
+    if comm.rank == 0:
+        kdtree = cKDTree(stored_coords)
+    else:
+        kdtree = None
+    
+    # Broadcast stored data to all ranks (needed for querying)
+    stored_coords = comm.bcast(stored_coords, root=0)
+    stored_values = comm.bcast(stored_values, root=0)
+    
+    # Query KDTree for each local DOF
+    distances, indices = cKDTree(stored_coords).query(local_coords)
+    
+    # Validate matching (should be exact up to floating-point tolerance)
+    max_dist = np.max(distances)
+    if max_dist > 1e-10:
+        raise RuntimeError(
+            f"DOF coordinate matching failed: max distance = {max_dist:.2e} > 1e-10\n"
+            f"Stored and target meshes may be incompatible."
+        )
+    
+    # Map values using matched indices
+    for local_dof_idx in range(owned_dofs):
+        stored_dof_idx = indices[local_dof_idx]
+        for component in range(bs):
+            target.x.array[local_dof_idx * bs + component] = stored_values[stored_dof_idx * bs + component]
+    
+    target.x.scatter_forward()
 
 
 # ============================================================================

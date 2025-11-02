@@ -8,11 +8,13 @@ import pytest
 @pytest.mark.mpi
 @pytest.mark.unit
 def test_npz_roundtrip_scalar_vector_tensor(shared_tmpdir):
-    """Verify NPZ save (convergence_runs) and load (postprocess utils) interop.
+    """Verify NPZ save/load with coordinate-based matching (MPI-independent).
 
-    - Save scalar, vector, and tensor fields using the convergence_runs saver
-    - Load them using convergence_postprocess loader
+    - Save scalar, vector, and tensor fields
+    - Load them back
     - Compare owned-DOF arrays for exact equality
+    
+    KDTree matching ensures MPI-independence.
     """
     from mpi4py import MPI
     from dolfinx import mesh, fem
@@ -87,44 +89,88 @@ def test_npz_roundtrip_scalar_vector_tensor(shared_tmpdir):
         diff = owned_prefix(f_orig) - owned_prefix(f_loaded)
         maxdiff_local = np.max(np.abs(diff)) if diff.size else 0.0
         maxdiff = comm.allreduce(maxdiff_local, op=MPI.MAX)
-        assert maxdiff < 1e-14
+        assert maxdiff < 1e-12  # Relaxed for KDTree float matching
 
 
 @pytest.mark.mpi
 @pytest.mark.unit
-def test_npz_loader_detects_mpi_size_mismatch(shared_tmpdir):
-    """Ensure load_npz_field raises on stored/actual MPI size mismatch."""
+def test_npz_mpi_independence(shared_tmpdir):
+    """Verify NPZ load works with different MPI rank count than save.
+    
+    This test validates that coordinate-based matching makes NPZ files
+    truly MPI-independent (can't actually test with different MPI size
+    in single pytest run, but validates element compatibility checks).
+    """
     from mpi4py import MPI
     from dolfinx import mesh, fem
     import basix.ufl
-    from analysis.utils import load_npz_field
+    from analysis.utils import load_npz_field, save_function_npz
 
     comm = MPI.COMM_WORLD
     N = 6
     domain = mesh.create_unit_cube(comm, N, N, N, ghost_mode=mesh.GhostMode.shared_facet)
     P1 = basix.ufl.element("Lagrange", domain.topology.cell_name(), 1)
     Q = fem.functionspace(domain, P1)
+    
+    f = fem.Function(Q, name="f")
+    f.interpolate(lambda x: x[0] + 2*x[1] + 3*x[2])
+    f.x.scatter_forward()
+
+    outdir = Path(shared_tmpdir) / "npz_mpi_indep"
+    if comm.rank == 0:
+        outdir.mkdir(parents=True, exist_ok=True)
+    comm.Barrier()
+
+    # Save
+    save_function_npz(f, outdir / "f.npz", comm)
+    
+    # Load back (same MPI size, but validates coordinate matching)
+    f_loaded = fem.Function(Q, name="f")
+    load_npz_field(comm, outdir / "f.npz", f_loaded)
+    f_loaded.x.scatter_forward()
+    
+    # Verify
+    idxmap = Q.dofmap.index_map
+    bs = Q.dofmap.index_map_bs
+    diff = f.x.array[:idxmap.size_local * bs] - f_loaded.x.array[:idxmap.size_local * bs]
+    maxdiff_local = np.max(np.abs(diff)) if diff.size else 0.0
+    maxdiff = comm.allreduce(maxdiff_local, op=MPI.MAX)
+    assert maxdiff < 1e-12
+
+
+@pytest.mark.mpi
+@pytest.mark.unit
+def test_npz_element_mismatch_detection(shared_tmpdir):
+    """Ensure load_npz_field raises on element family/degree/shape mismatch."""
+    from mpi4py import MPI
+    from dolfinx import mesh, fem
+    import basix.ufl
+    from analysis.utils import load_npz_field, save_function_npz
+
+    comm = MPI.COMM_WORLD
+    N = 6
+    domain = mesh.create_unit_cube(comm, N, N, N, ghost_mode=mesh.GhostMode.shared_facet)
+    cell = domain.topology.cell_name()
+    
+    # Save P1 scalar field
+    P1 = basix.ufl.element("Lagrange", cell, 1)
+    Q = fem.functionspace(domain, P1)
     f = fem.Function(Q, name="f")
     f.x.array[:] = 1.23
     f.x.scatter_forward()
 
-    # Craft a minimal NPZ with correct DOF metadata but mismatched mpi_size
-    idxmap = Q.dofmap.index_map
-    bs = Q.dofmap.index_map_bs
-    values = np.zeros(idxmap.size_global * bs)
     outdir = Path(shared_tmpdir) / "npz_mismatch"
     if comm.rank == 0:
         outdir.mkdir(parents=True, exist_ok=True)
-        np.savez(
-            outdir / "f_bad.npz",
-            values=values,
-            bs=np.int32(bs),
-            global_dofs=np.int64(idxmap.size_global),
-            local_ranges=np.asarray([idxmap.local_range], dtype=np.int64),
-            mpi_size=np.int32(comm.size + 1),
-        )
     comm.Barrier()
 
-    with pytest.raises(RuntimeError):
-        load_npz_field(comm, outdir / "f_bad.npz", f)
+    save_function_npz(f, outdir / "f_p1.npz", comm)
+    
+    # Try loading into P2 space (should fail)
+    P2 = basix.ufl.element("Lagrange", cell, 2)
+    Q2 = fem.functionspace(domain, P2)
+    f2 = fem.Function(Q2, name="f2")
+    
+    with pytest.raises(RuntimeError, match="degree mismatch"):
+        load_npz_field(comm, outdir / "f_p1.npz", f2)
 

@@ -402,9 +402,10 @@ class Remodeller:
 
         if self.telemetry is not None:
             fields = self._collect_field_stats()
-            dofs_V = self.V.dofmap.index_map.size_global
-            dofs_Q = self.Q.dofmap.index_map.size_global
-            dofs_T = self.T.dofmap.index_map.size_global
+            dofs_V = self.V.dofmap.index_map.size_global * self.V.dofmap.index_map_bs
+            dofs_Q = self.Q.dofmap.index_map.size_global * self.Q.dofmap.index_map_bs
+            dofs_T = self.T.dofmap.index_map.size_global * self.T.dofmap.index_map_bs
+
             num_dofs_total = int(dofs_V + dofs_Q + dofs_T)
 
             rss_mb_local = current_memory_mb()

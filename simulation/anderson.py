@@ -67,14 +67,6 @@ class _Anderson:
         self.best_picard_res = np.inf
         self.pending_reset = False
 
-    def reset(self) -> None:
-        """Clear history and reset tracking."""
-        self.x_hist.clear()
-        self.r_hist.clear()
-        self.reject_streak = 0
-        self.best_picard_res = np.inf
-        self.pending_reset = False
-
     def _build_gram(self, r_list: Sequence[np.ndarray]) -> np.ndarray:
         """Global Gram matrix H = R R^T (MPI collective)."""
         if len(r_list) == 0:
@@ -163,11 +155,8 @@ class _Anderson:
 
         # Insufficient history → damped Picard
         if p == 1:
-            return self._picard_step(x_old, x_raw, r, mask_fixed, proj_residual_norm, gamma, use_safeguard, info)
-
-        # Insufficient history → damped Picard
-        if p == 1:
-            return self._picard_step(x_old, x_raw, r, mask_fixed, proj_residual_norm, gamma, use_safeguard, info)
+            return self._picard_step(x_old, x_raw, r, mask_fixed, proj_residual_norm, 
+                                     gamma, use_safeguard, info)
 
         # Anderson acceleration
         H = self._build_gram(list(self.r_hist))
