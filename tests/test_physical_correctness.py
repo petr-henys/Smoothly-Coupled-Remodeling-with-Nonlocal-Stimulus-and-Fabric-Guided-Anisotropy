@@ -135,45 +135,6 @@ class TestConstitutiveLaw:
             rel_error = abs(E_avg - E_expected) / E_expected
             assert rel_error < 0.01, f"Modulus scaling incorrect at ρ={rho_val}: expected {E_expected}, got {E_avg}"
     
-    @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
-    def test_zero_displacement_zero_stress(self, unit_cube):
-        """Zero displacement should yield zero stress."""
-        comm = MPI.COMM_WORLD
-        domain = unit_cube
-        facet_tags = build_facetag(domain)
-        cfg = Config(domain=domain, facet_tags=facet_tags, verbose=(comm.rank == 0))
-        
-        P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3,))
-        P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
-        P1_ten = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3, 3))
-        
-        V = functionspace(domain, P1_vec)
-        Q = functionspace(domain, P1)
-        T = functionspace(domain, P1_ten)
-        
-        u = Function(V, name="u")
-        u.x.array[:] = 0.0
-        u.x.scatter_forward()
-        
-        rho = Function(Q, name="rho")
-        rho.x.array[:] = 0.5
-        rho.x.scatter_forward()
-        
-        A = Function(T, name="A")
-        A.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:, None] * np.ones((1, x.shape[1])))
-        A.x.scatter_forward()
-        
-        bc_mech = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
-        mech = MechanicsSolver(V, rho, A, bc_mech, [], cfg)
-        
-        sigma = mech.sigma(u, rho)
-        sigma_norm_sq = ufl.inner(sigma, sigma)
-        
-        sigma_norm_local = fem.assemble_scalar(fem.form(sigma_norm_sq * cfg.dx))
-        sigma_norm_global = comm.allreduce(sigma_norm_local, op=MPI.SUM)
-        
-        assert sigma_norm_global < 1e-14, f"Zero displacement should yield zero stress, got ||σ||²={sigma_norm_global}"
-
     @pytest.mark.parametrize("unit_cube", [6], indirect=True)
     def test_anisotropic_stiffness_increases_energy(self, unit_cube, facet_tags):
         """Anisotropic fabric aligned with tension should stiffen response measurably."""

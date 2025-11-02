@@ -72,9 +72,7 @@ def test_richardson_extrapolation():
     qoi_values = [exact_value + C * h**p_true for h in h_values]
     
     # Apply Richardson extrapolation
-    richardson_data = compute_richardson_triplets_qoi(
-        h_values, qoi_values, safety_factor=GCI_SAFETY_FACTOR
-    )
+    richardson_data = compute_richardson_triplets_qoi(h_values, qoi_values)
     
     assert len(richardson_data) == 2, "Should have 2 Richardson triplets"
     
@@ -118,3 +116,5 @@ def test_gci_computation():
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+    

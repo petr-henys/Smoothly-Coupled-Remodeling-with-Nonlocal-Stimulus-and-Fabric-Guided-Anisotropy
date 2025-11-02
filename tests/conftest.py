@@ -69,6 +69,7 @@ def pytest_configure(config: pytest.Config) -> None:
     
     # Register markers
     for marker, desc in [
+        ("smoke", "fast sanity checks for basic functionality"),
         ("mpi", "tests that are intended for MPI environments"),
         ("slow", "tests that may take longer to run"),
         ("performance", "tests focused on performance characteristics"),
@@ -76,20 +77,6 @@ def pytest_configure(config: pytest.Config) -> None:
         ("unit", "fast unit-level tests"),
     ]:
         config.addinivalue_line("markers", f"{marker}: {desc}")
-
-
-def pytest_runtest_setup(item):
-    """Disable pytest.skip() during test discovery for VS Code compatibility.
-    
-    VS Code Test Explorer runs discovery with --collect-only, but tests that call
-    pytest.skip() during setup still get marked as skipped. We prevent this by
-    making pytest.skip() a no-op during collection phase.
-    """
-    if item.config.option.collectonly:
-        # Replace pytest.skip with a no-op during discovery
-        import pytest as pytest_module
-        pytest_module.skip = lambda msg="", allow_module_level=False: None
-
 
 
 # Add repository root to sys.path

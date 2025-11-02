@@ -9,7 +9,7 @@ import ufl
 
 
 if TYPE_CHECKING:
-    from telemetry import Telemetry
+    from simulation.telemetry import Telemetry
 
 
 @dataclass
@@ -49,7 +49,6 @@ class Config:
     rho0: float = 1000.0
 
     # --- numerics / I-O ---
-    precond_threshold_update: float = 10.
     quadrature_degree: int = 6
     saving_interval: int = 1
     results_dir: str = ".results"
@@ -61,7 +60,7 @@ class Config:
     ksp_type: str = "minres"
     pc_type: str = "gamg"
     ksp_rtol: float = 1e-9
-    ksp_atol: float = 1e-12
+    ksp_atol: float = 1e-11
     ksp_max_it: int = 100
 
     # Convergence acceleration (Anderson/Picard)
@@ -211,7 +210,7 @@ class Config:
         Executed only when ``enable_telemetry=True``.
         Rank 0 performs I/O; other ranks no-op.
         """
-        from .telemetry import Telemetry
+        from simulation.telemetry import Telemetry
 
         # Telemetry writes into results_dir directly
         outdir = self.results_dir

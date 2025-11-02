@@ -6,47 +6,41 @@ from typing import List, Tuple
 from mpi4py import MPI
 import resource
 
+from ufl import FunctionSpace
+
 dtype = PETSc.ScalarType
 
-def build_nullspace(V: fem.FunctionSpace) -> PETSc.NullSpace:
-    """Build PETSc near-nullspace for 3D linear elasticity (6 RBMs).
+def build_nullspace(V: FunctionSpace):
+    """Build PETSc nullspace for 3D elasticity"""
 
-    Strictly 3D: 3 translations + 3 rotations.
-    """
-    gdim = V.mesh.geometry.dim
-    if gdim != 3:
-        raise NotImplementedError("Nullspace is implemented for 3D only.")
-
-    index_map = V.dofmap.index_map
+    # Create vectors that will span the nullspace
     bs = V.dofmap.index_map_bs
-    length0 = index_map.size_local
+    length0 = V.dofmap.index_map.size_local
+    basis = [la.vector(V.dofmap.index_map, bs=bs, dtype=dtype) for i in range(6)]
+    b = [b.array for b in basis]
 
-    basis = [la.vector(index_map, bs=bs, dtype=dtype) for _ in range(6)]
-    b = [vec.array for vec in basis]
-
-    # Component dofs (parent indices)
+    # Get dof indices for each subspace (x, y and z dofs)
     dofs = [V.sub(i).dofmap.list.flatten() for i in range(3)]
 
-    # Translations
+    # Set the three translational rigid body modes
     for i in range(3):
         b[i][dofs[i]] = 1.0
 
-    # Rotations
+    # Set the three rotational rigid body modes
     x = V.tabulate_dof_coordinates()
     dofs_block = V.dofmap.list.flatten()
     x0, x1, x2 = x[dofs_block, 0], x[dofs_block, 1], x[dofs_block, 2]
     b[3][dofs[0]] = -x1
-    b[3][dofs[1]] = +x0
-    b[4][dofs[0]] = +x2
+    b[3][dofs[1]] = x0
+    b[4][dofs[0]] = x2
     b[4][dofs[2]] = -x0
-    b[5][dofs[2]] = +x1
+    b[5][dofs[2]] = x1
     b[5][dofs[1]] = -x2
 
     la.orthonormalize(basis)
 
     basis_petsc = [
-        PETSc.Vec().createWithArray(bi[: bs * length0], bsize=bs, comm=V.mesh.comm)
-        for bi in b
+        PETSc.Vec().createWithArray(x[: bs * length0], bsize=3, comm=V.mesh.comm) for x in b
     ]
     return PETSc.NullSpace().create(vectors=basis_petsc)
 

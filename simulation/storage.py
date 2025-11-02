@@ -15,7 +15,6 @@ from __future__ import annotations
 import csv
 import gzip
 from collections import defaultdict
-from contextlib import suppress
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, TYPE_CHECKING, Union
 
@@ -186,13 +185,8 @@ class FieldStorage(_BaseStorage):
         self.comm.Barrier()
         
         # Close all writers (VTXWriter.close() is COLLECTIVE)
-        exceptions = []
         for key, writer in list(self._writers.items()):
-            try:
-                writer.close()
-            except Exception as e:
-                exceptions.append((key, e))
-                self.logger.error("Failed to close writer '{0}': {1}", key, e)
+            writer.close()
         
         # Log statistics
         for key, path in self._writer_paths.items():
@@ -205,11 +199,6 @@ class FieldStorage(_BaseStorage):
         self._write_counts.clear()
         
         self.comm.Barrier()
-        
-        # Propagate first exception if any occurred
-        if exceptions:
-            key, exc = exceptions[0]
-            raise RuntimeError(f"VTXWriter.close() failed for '{key}': {exc}") from exc
 
     def __enter__(self) -> "FieldStorage":
         return self
@@ -301,8 +290,7 @@ class MetricsStorage(_BaseStorage):
         self.flush_all()
         if self.is_root:
             for name, handle in list(self._files.items()):
-                with suppress(Exception):
-                    handle.close()
+                handle.close()
                 self.logger.debug(lambda n=name: f"Closed metrics CSV '{n}'")
         self._files.clear()
         self._writers.clear()

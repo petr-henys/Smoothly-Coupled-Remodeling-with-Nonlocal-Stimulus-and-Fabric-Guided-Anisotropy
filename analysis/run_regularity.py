@@ -35,18 +35,16 @@ def run_regularity(param_point: Dict[str, Any], output_path: Path, comm: MPI.Com
     """Execute a single simulation for a regularity parameter point.
 
     Expected keys in param_point:
-      - N, dt_days, smooth_eps
-      - Optional: ell_dim, kappaS_dim, beta_par_dim, beta_perp_dim
+      - N, dt_days, smooth_eps, ell_dim, kappaS_dim, beta_par_dim, beta_perp_dim, total_time_days
     """
     N = int(param_point["N"])
     dt_days = float(param_point["dt_days"])
     smooth_eps = float(param_point["smooth_eps"])
-
-    # Optional controls
-    ell_dim = float(param_point["ell_dim"]) if "ell_dim" in param_point else None
-    kappaS_dim = float(param_point["kappaS_dim"]) if "kappaS_dim" in param_point else None
-    beta_par_dim = float(param_point["beta_par_dim"]) if "beta_par_dim" in param_point else None
-    beta_perp_dim = float(param_point["beta_perp_dim"]) if "beta_perp_dim" in param_point else None
+    ell_dim = float(param_point["ell_dim"])
+    kappaS_dim = float(param_point["kappaS_dim"])
+    beta_par_dim = float(param_point["beta_par_dim"])
+    beta_perp_dim = float(param_point["beta_perp_dim"])
+    total_time_days = float(param_point["total_time_days"])
 
     # Mesh
     domain = mesh.create_unit_cube(
@@ -56,7 +54,7 @@ def run_regularity(param_point: Dict[str, Any], output_path: Path, comm: MPI.Com
     facet_tags = build_facetag(domain)
 
     # Config (Anderson default; tight tolerance to highlight convergence trends)
-    cfg_kwargs: Dict[str, Any] = dict(
+    cfg = Config(
         domain=domain,
         facet_tags=facet_tags,
         results_dir=str(output_path),
@@ -72,20 +70,12 @@ def run_regularity(param_point: Dict[str, Any], output_path: Path, comm: MPI.Com
         saving_interval=5,
         coupling_each_iter=False,
         coupling_eps=1e-3,
+        ell_dim=ell_dim,
+        kappaS_dim=kappaS_dim,
+        beta_par_dim=beta_par_dim,
+        beta_perp_dim=beta_perp_dim,
     )
-    if ell_dim is not None:
-        cfg_kwargs["ell_dim"] = ell_dim
-    if kappaS_dim is not None:
-        cfg_kwargs["kappaS_dim"] = kappaS_dim
-    if beta_par_dim is not None:
-        cfg_kwargs["beta_par_dim"] = beta_par_dim
-    if beta_perp_dim is not None:
-        cfg_kwargs["beta_perp_dim"] = beta_perp_dim
 
-    cfg = Config(**cfg_kwargs)
-
-    # Runtime horizon
-    total_time_days = 500.0
     with Remodeller(cfg) as remodeller:
         remodeller.simulate(dt=dt_days, total_time=total_time_days)
         # NPZ snapshots
@@ -106,6 +96,7 @@ if __name__ == "__main__":
             "kappaS_dim": [1e-5, 1e-4],
             "beta_par_dim": [1e-6, 1e-5, 1e-4],
             "beta_perp_dim": [1e-6, 1e-5, 1e-4],
+            "total_time_days": [500.0],
         },
         base_output_dir=BASE_DIR,
         metadata={"analysis": "regularity", "description": "smoothing + physics sweep"},

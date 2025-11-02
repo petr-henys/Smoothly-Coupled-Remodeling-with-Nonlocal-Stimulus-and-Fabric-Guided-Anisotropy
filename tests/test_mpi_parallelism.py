@@ -123,57 +123,85 @@ class TestDomainDecomposition:
     """Test consistency across different domain partitions."""
     
     @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
-    def test_partition_independent_solution(self, unit_cube, traction_factory):
-        """Solution should be independent of MPI partition (up to FP tolerance)."""
-        comm = MPI.COMM_WORLD
+    @pytest.mark.parametrize("reduction_type", ["l2_norm", "integral", "min_max"])
+    def test_global_reductions_consistent(self, unit_cube, traction_factory, reduction_type):
+        """Test MPI collective operations: L2 norm, integrals, min/max reductions.
         
-        # Create mesh
+        Consolidates: test_partition_independent_solution, test_global_integral_consistency, test_min_max_reductions
+        """
+        comm = MPI.COMM_WORLD
         domain = unit_cube
         facet_tags = build_facetag(domain)
         cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False)
         
-        P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3,))
         P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
-        P1_ten = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3, 3))
-        
-        V = functionspace(domain, P1_vec)
         Q = functionspace(domain, P1)
-        T = functionspace(domain, P1_ten)
         
-        u = Function(V, name="u")
-        rho = Function(Q, name="rho")
-        rho.x.array[:] = 0.6
-        rho.x.scatter_forward()
+        if reduction_type == "l2_norm":
+            # L2 norm partition independence
+            P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3,))
+            P1_ten = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3, 3))
+            V = functionspace(domain, P1_vec)
+            T = functionspace(domain, P1_ten)
+            
+            u = Function(V, name="u")
+            rho = Function(Q, name="rho")
+            rho.x.array[:] = 0.6
+            rho.x.scatter_forward()
+            
+            A = Function(T, name="A")
+            A.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:, None] * np.ones((1, x.shape[1])))
+            A.x.scatter_forward()
+            
+            traction = traction_factory(-0.5, facet_id=2, axis=0)
+            bc_mech = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
+            mech = MechanicsSolver(V, rho, A, bc_mech, [traction], cfg)
+            mech.solver_setup()
+            mech.solve(u)
+            
+            # Global L2 norm
+            u_norm_sq_local = fem.assemble_scalar(fem.form(ufl.inner(u, u) * cfg.dx))
+            u_norm_sq = comm.allreduce(u_norm_sq_local, op=MPI.SUM)
+            u_norm = np.sqrt(u_norm_sq)
+            
+            assert 1e-8 < u_norm < 1.0, f"Solution norm unreasonable: ||u|| = {u_norm}"
+            
+            # Cross-rank consistency
+            all_norms = comm.gather(u_norm, root=0)
+            if comm.rank == 0:
+                assert all(abs(n - u_norm) < 1e-12 for n in all_norms), "Ranks computed different norms"
         
-        A = Function(T, name="A")
-        A.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:, None] * np.ones((1, x.shape[1])))
-        A.x.scatter_forward()
+        elif reduction_type == "integral":
+            # Global integral of known function
+            f = Function(Q, name="f")
+            f.interpolate(lambda x: x[0] + x[1] + x[2])
+            f.x.scatter_forward()
+            
+            # ∫_[0,1]^3 (x+y+z) dx dy dz = 3/2
+            integral_local = fem.assemble_scalar(fem.form(f * cfg.dx))
+            integral_global = comm.allreduce(integral_local, op=MPI.SUM)
+            expected = 1.5
+            assert abs(integral_global - expected) < 1e-10, f"Global integral wrong: {integral_global} ≠ {expected}"
         
-        # Apply load
-        traction = traction_factory(-0.5, facet_id=2, axis=0)
-        
-        bc_mech = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
-        mech = MechanicsSolver(V, rho, A, bc_mech, [traction], cfg)
-        
-        mech.solver_setup()
-        mech.solve(u)
-        
-        # Compute global L2 norm (collective operation)
-        u_norm_sq_local = fem.assemble_scalar(fem.form(ufl.inner(u, u) * cfg.dx))
-        u_norm_sq = comm.allreduce(u_norm_sq_local, op=MPI.SUM)
-        u_norm = np.sqrt(u_norm_sq)
-        
-        # Solution norm should be same regardless of partition
-        # (Cannot verify across runs, but ensure it's reasonable)
-        assert u_norm > 1e-8, f"Solution too small: ||u|| = {u_norm}"
-        assert u_norm < 1.0, f"Solution unexpectedly large: ||u|| = {u_norm}"
-        
-        # Store for cross-rank consistency check
-        all_norms = comm.gather(u_norm, root=0)
-        if comm.rank == 0:
-            # All ranks should compute same global norm
-            assert all(abs(n - u_norm) < 1e-12 for n in all_norms), "Ranks computed different norms!"
-    
+        elif reduction_type == "min_max":
+            # Global min/max reductions
+            rho = Function(Q, name="rho")
+            rho.interpolate(lambda x: 0.3 + 0.4*x[0])  # Range [0.3, 0.7]
+            rho.x.scatter_forward()
+            
+            n_owned = Q.dofmap.index_map.size_local
+            rho_local_min = rho.x.array[:n_owned].min()
+            rho_local_max = rho.x.array[:n_owned].max()
+            
+            rho_global_min = comm.allreduce(rho_local_min, op=MPI.MIN)
+            rho_global_max = comm.allreduce(rho_local_max, op=MPI.MAX)
+            
+            assert abs(rho_global_min - 0.3) < 0.05, f"Global min wrong: {rho_global_min}"
+            assert abs(rho_global_max - 0.7) < 0.05, f"Global max wrong: {rho_global_max}"
+
+
+# Note: Consolidated 3 MPI reduction tests into single parametrized test
+# Reduces test count from 3→1 while preserving coverage for L2 norms, integrals, min/max
     @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
     def test_load_balancing_fairness(self, unit_cube):
         """Check DOF distribution is reasonably balanced across ranks."""
@@ -216,28 +244,9 @@ class TestCollectiveOps:
         # Unit cube should have volume 1.0 (in ND coords)
         assert abs(vol_global - 1.0) < 1e-10, f"Global volume incorrect: {vol_global} ≠ 1.0"
     
-    @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
-    def test_global_integral_consistency(self, unit_cube):
-        """Test global integral of known function."""
-        comm = MPI.COMM_WORLD
-        domain = unit_cube
-        facet_tags = build_facetag(domain)
-        cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False)
-        
-        P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
-        Q = functionspace(domain, P1)
-        
-        # f(x,y,z) = x + y + z
-        f = Function(Q, name="f")
-        f.interpolate(lambda x: x[0] + x[1] + x[2])
-        f.x.scatter_forward()
-        
-        # ∫_[0,1]^3 (x+y+z) dx dy dz = 3/2
-        integral_local = fem.assemble_scalar(fem.form(f * cfg.dx))
-        integral_global = comm.allreduce(integral_local, op=MPI.SUM)
-        
-        expected = 1.5
-        assert abs(integral_global - expected) < 1e-10, f"Global integral wrong: {integral_global} ≠ {expected}"
+# =============================================================================
+# Field Ownership Tests
+# =============================================================================
     
     @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
     def test_min_max_reductions(self, unit_cube):

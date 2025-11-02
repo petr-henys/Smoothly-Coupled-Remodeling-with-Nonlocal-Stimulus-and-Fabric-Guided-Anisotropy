@@ -116,7 +116,6 @@ class _BaseLinearSolver:
         self.last_iters = None
 
     def _solve(self, x: fem.Function) -> Tuple[int, int]:
-        assert self.ksp is not None and self.b is not None
         self.ksp.solve(self.b, x.x.petsc_vec)
         x.x.scatter_forward()
         its = self.ksp.getIterationNumber()
@@ -137,15 +136,6 @@ class _BaseLinearSolver:
         if reason < 0:
             self.logger.warning(f"{label} solver failed to converge (reason: {reason})")
 
-    def update_precond(self):
-        assert self.ksp is not None and self.A is not None
-        pc = self.ksp.getPC()
-        pc.setReusePreconditioner(False)
-        self.ksp.setOperators(self.A)
-        self.ksp.setUp()
-        pc.setReusePreconditioner(True)
-        self.precond_updates += 1
-
     def create_ksp(self, prefix: str, ksp_options: Dict[str, object]) -> PETSc.KSP:
         self.ksp = PETSc.KSP().create(self.comm)
         self.ksp.setOptionsPrefix(prefix + "_")
@@ -158,10 +148,8 @@ class _BaseLinearSolver:
         opts[f"{prefix}_ksp_max_it"] = self.cfg.ksp_max_it
 
         pc = self.ksp.getPC()
-        pc.setReusePreconditioner(True)
         self.ksp.setInitialGuessNonzero(True)
-        if self.A is not None:
-            self.ksp.setOperators(self.A)
+        self.ksp.setOperators(self.A)
 
         self.ksp.setFromOptions()
         self.ksp.setUp()
@@ -238,15 +226,27 @@ class MechanicsSolver(_BaseLinearSolver):
         assemble_matrix(self.A, self.a_form, bcs=self.bcs)
         self.A.assemble()
 
+
         self.b = assemble_vector(self.L_form)
         apply_lifting(self.b, [self.a_form], bcs=[self.bcs])
         self.b.ghostUpdate(PETSc.InsertMode.ADD, PETSc.ScatterMode.REVERSE)
         set_bc(self.b, self.bcs)
         self.b.ghostUpdate(PETSc.InsertMode.INSERT, PETSc.ScatterMode.FORWARD)
 
+        # Validate Dirichlet boundary conditions
+        from simulation.utils import collect_dirichlet_dofs
+        owned_fix = collect_dirichlet_dofs(self.bcs, self.V.dofmap.index_map.size_local)
+        n_fix_local = int(owned_fix.size)
+        n_fix = self.comm.allreduce(n_fix_local, op=MPI.SUM)
+        if n_fix == 0:
+            if self.comm.rank == 0:
+                self.logger.error("No mechanics Dirichlet DOFs found (facet tag 'fixed' missing/empty).")
+            raise RuntimeError("Mechanics has zero Dirichlet DOFs (collective).")
+
         ns = build_nullspace(self.V)
         self.A.setBlockSize(self.gdim)
         self.A.setNearNullSpace(ns)
+        self.A.setOption(PETSc.Mat.Option.SPD, True)
 
         ksp_options = {"ksp_type": self.cfg.ksp_type, "pc_type": self.cfg.pc_type}
         self.create_ksp(prefix="mechanics", ksp_options=ksp_options)
@@ -275,19 +275,15 @@ class MechanicsSolver(_BaseLinearSolver):
         self._maybe_warn(reason, "Mechanics")
         return its, reason
 
-    def average_strain_energy(self, u_func: fem.Function, dx_custom: Optional[ufl.Measure] = None) -> float:
+    def average_strain_energy(self, u_func: fem.Function) -> float:
         """Average strain-energy density in physical units."""
         u_func.x.scatter_forward()
         self.rho.x.scatter_forward()
         self.A_dir.x.scatter_forward()
 
         strain_energy_nd = 0.5 * ufl.inner(self.sigma(u_func, self.rho), self.eps(u_func))
-        if dx_custom is None:
-            dx = self.dx
-            vol_local = fem.assemble_scalar(fem.form(1.0 * dx))
-        else:
-            dx = dx_custom
-            vol_local = fem.assemble_scalar(fem.form(1.0 * dx))
+        dx = self.dx
+        vol_local = fem.assemble_scalar(fem.form(1.0 * dx))
         vol = self.comm.allreduce(vol_local, op=MPI.SUM)
 
         psi_local_nd = fem.assemble_scalar(fem.form(strain_energy_nd * dx))
@@ -354,8 +350,6 @@ class StimulusSolver(_BaseLinearSolver):
         its, reason = self._solve(S_func)
         self._maybe_warn(reason, "Stimulus")
         return its, reason
-
-
 
 
 # --------------------------- Density rho -------------------------------------
@@ -445,9 +439,6 @@ class DensitySolver(_BaseLinearSolver):
         self._maybe_warn(reason, "Density")
         rho_func.x.scatter_forward()
         return its, reason
-
-
-
 
 
 # --------------------------- Direction tensor A -------------------------------

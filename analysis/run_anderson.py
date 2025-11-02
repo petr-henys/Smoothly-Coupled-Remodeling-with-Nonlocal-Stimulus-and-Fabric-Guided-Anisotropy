@@ -35,23 +35,16 @@ def run_anderson(param_point: Dict[str, Any], output_path: Path, comm: MPI.Comm)
     """Execute a single simulation for an Anderson parameter point.
 
     Expected keys in param_point:
-      - N: mesh resolution (int)
-      - dt_days: timestep in days (float)
-      - accel_type: "anderson", "picard", or "none" (str)
-      - m: Anderson window size (int, ignored if accel_type != "anderson")
-      - beta: Anderson damping (float, ignored if accel_type != "anderson")
-      - Optional: total_time_days, coupling_tol, max_subiters
+      - N, dt_days, accel_type, m, beta, total_time_days, coupling_tol, max_subiters
     """
     N = int(param_point["N"])
     dt_days = float(param_point["dt_days"])
     accel_type = str(param_point["accel_type"])
     m = int(param_point["m"])
     beta = float(param_point["beta"])
-    
-    # Optional controls
-    total_time_days = float(param_point.get("total_time_days", 500.0))
-    coupling_tol = float(param_point.get("coupling_tol", 1e-8))
-    max_subiters = int(param_point.get("max_subiters", 100))
+    total_time_days = float(param_point["total_time_days"])
+    coupling_tol = float(param_point["coupling_tol"])
+    max_subiters = int(param_point["max_subiters"])
 
     # Mesh
     domain = mesh.create_unit_cube(

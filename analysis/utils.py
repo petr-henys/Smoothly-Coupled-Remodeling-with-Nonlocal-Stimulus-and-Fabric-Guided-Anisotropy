@@ -96,7 +96,7 @@ def load_npz_field(comm: MPI.Comm, npz_file: Path, target: fem.Function) -> None
             global_values = data["values"]
             stored_bs = int(data["bs"])
             total_dofs = int(data["global_dofs"])
-            stored_mpi_size = int(data["mpi_size"]) if "mpi_size" in data else None
+            stored_mpi_size = int(data["mpi_size"])
     else:
         global_values = stored_bs = total_dofs = stored_mpi_size = None
 
@@ -106,7 +106,7 @@ def load_npz_field(comm: MPI.Comm, npz_file: Path, target: fem.Function) -> None
     stored_mpi_size = comm.bcast(stored_mpi_size, root=0)
 
     # Basic validations
-    if stored_mpi_size is not None and stored_mpi_size != comm.size:
+    if stored_mpi_size != comm.size:
         raise RuntimeError(
             f"\n{'='*70}\n"
             f"MPI SIZE MISMATCH DETECTED!\n"
@@ -155,9 +155,11 @@ def transfer_function_to_space(source: fem.Function, target_space: fem.FunctionS
 
 
 def mpi_scalar_integral(
-    integrand: ufl.core.expr.Expr, domain: mesh.Mesh, quadrature_degree: int = QUADRATURE_DEGREE
+    integrand: ufl.core.expr.Expr, 
+    domain: mesh.Mesh,
 ) -> float:
     """MPI-parallel integral of a scalar UFL expression on ``domain``."""
+    quadrature_degree = QUADRATURE_DEGREE
     dx = ufl.Measure("dx", domain=domain, metadata={"quadrature_degree": quadrature_degree})
     form = fem.form(integrand * dx)
     local_val = fem.assemble_scalar(form)
@@ -172,16 +174,17 @@ def solve_order_from_ratios(
     R: float,
     r21: float,
     r32: float,
-    p_lo: float = 0.1,
-    p_hi: float = 10.0,
-    tol: float = 1e-12,
-    max_iter: int = 200,
 ) -> float:
     """Solve for order ``p`` from non-uniform three-grid relation.
 
     Relation: ``R = (r21**p - 1) / (r32**p - 1)``, where ``R`` is the ratio of
     successive errors (or QoI differences) and ``r21 = h1/h2``, ``r32 = h2/h3``.
     """
+    p_lo = 0.1
+    p_hi = 10.0
+    tol = 1e-12
+    max_iter = 200
+    
     if R <= 0 or not np.isfinite(R):
         return np.nan
     if r21 <= 1.0 or r32 <= 1.0:
@@ -197,19 +200,16 @@ def solve_order_from_ratios(
 
     def f(p: float) -> float:
         """Residual with basic overflow protection."""
-        try:
-            log_r21, log_r32 = np.log(r21), np.log(r32)
-            if p * log_r21 > 700 or p * log_r32 > 700:
-                return np.inf if p > 0 else -np.inf
-            num = (r21**p - 1.0)
-            den = (r32**p - 1.0)
-            if abs(den) < 1e-15:
-                return np.inf
-            return num / den - R
-        except (OverflowError, FloatingPointError):
+        log_r21, log_r32 = np.log(r21), np.log(r32)
+        if p * log_r21 > 700 or p * log_r32 > 700:
+            return np.inf if p > 0 else -np.inf
+        num = (r21**p - 1.0)
+        den = (r32**p - 1.0)
+        if abs(den) < 1e-15:
             return np.inf
+        return num / den - R
 
-    lo, hi = float(p_lo), float(p_hi)
+    lo, hi = p_lo, p_hi
     flo, fhi = f(lo), f(hi)
 
     # Expand interval if root not bracketed
@@ -245,11 +245,11 @@ def _compute_gci_and_beta(
     r32: float,
     p: float,
     safety_factor: float,
-    use_extrapolation: bool = True,
-    p_for_beta: Optional[float] = None,
-    h1: Optional[float] = None,
-    h2: Optional[float] = None,
-    h3: Optional[float] = None,
+    use_extrapolation: bool,
+    p_for_beta: float,
+    h1: float,
+    h2: float,
+    h3: float,
 ) -> Tuple[float, float, float]:
     """Compute GCI (fine/coarse) and asymptotic indicator ``beta``.
 
@@ -278,33 +278,33 @@ def _compute_gci_and_beta(
         GCI21 = safety_factor * (abs(d21) / (abs(Q2) + 1e-16))
 
     # Beta computation
-    p_beta = p_for_beta if (p_for_beta is not None and np.isfinite(p_for_beta)) else p
+    p_beta = p_for_beta if np.isfinite(p_for_beta) else p
     beta = np.nan
-    try:
-        # Oscillatory triplet -> not asymptotic
-        if d21 * d32 <= 0:
-            return GCI32, GCI21, np.nan
-        # Saturated denominator
-        scale = max(abs(Q2), abs(Q3), 1.0)
-        if abs(d32) <= (BETA_DENOM_ABS_TOL + BETA_DENOM_REL_TOL * scale):
-            return GCI32, GCI21, np.nan
+    
+    # Oscillatory triplet -> not asymptotic
+    if d21 * d32 <= 0:
+        return GCI32, GCI21, np.nan
+    
+    # Saturated denominator
+    scale = max(abs(Q2), abs(Q3), 1.0)
+    if abs(d32) <= (BETA_DENOM_ABS_TOL + BETA_DENOM_REL_TOL * scale):
+        return GCI32, GCI21, np.nan
 
-        eps = 1e-300
-        raw = abs(d21) / (abs(d32) + eps)
+    eps = 1e-300
+    raw = abs(d21) / (abs(d32) + eps)
 
-        expected = np.nan
-        if (h1 is not None) and (h2 is not None) and (h3 is not None) and np.isfinite(p_beta):
-            if (h1 > 0) and (h2 > 0) and (h3 > 0):
-                num = abs((h2 ** p_beta) - (h1 ** p_beta))
-                den = abs((h3 ** p_beta) - (h2 ** p_beta))
-                if den > 0:
-                    expected = num / den
-        if not np.isfinite(expected) and np.isfinite(r32) and np.isfinite(p_beta) and (r32 > 0):
-            expected = r32 ** p_beta  # uniform fallback
-        if np.isfinite(expected) and expected > 0:
-            beta = raw / expected
-    except Exception:
-        beta = np.nan
+    expected = np.nan
+    if np.isfinite(p_beta) and (h1 > 0) and (h2 > 0) and (h3 > 0):
+        num = abs((h2 ** p_beta) - (h1 ** p_beta))
+        den = abs((h3 ** p_beta) - (h2 ** p_beta))
+        if den > 0:
+            expected = num / den
+    
+    if not np.isfinite(expected) and np.isfinite(r32) and np.isfinite(p_beta) and (r32 > 0):
+        expected = r32 ** p_beta
+    
+    if np.isfinite(expected) and expected > 0:
+        beta = raw / expected
 
     return GCI32, GCI21, beta
 
@@ -354,7 +354,18 @@ def load_field_from_npz(
     field_name: str,
     field_type: str,
 ) -> Tuple[mesh.Mesh, fem.Function]:
-    """Load a field NPZ into a freshly created mesh and space."""
+    """Load a field NPZ from a hash-named output directory into a freshly created mesh and space.
+    
+    Args:
+        run_dir: Path to the hash-named output directory (e.g., results/convergence_sweep/407c0bfb)
+        comm: MPI communicator
+        N: Mesh resolution (number of cells per dimension)
+        field_name: Field name (e.g., "u", "rho", "S", "A")
+        field_type: Field type ("scalar", "vector", or "tensor")
+    
+    Returns:
+        Tuple of (domain, field) where domain is the mesh and field is the loaded Function
+    """
     npz_file = run_dir / f"{field_name}.npz"
     if not npz_file.exists():
         raise FileNotFoundError(f"NPZ not found: {npz_file}")
@@ -384,33 +395,25 @@ def load_field_from_npz(
 
 def load_sweep_records(
     base_dir: Path,
-    dt_value: float,
     comm: MPI.Comm,
-) -> Tuple[List[Dict[str, Any]], np.ndarray, np.ndarray]:
-    """Load sweep CSV and filter by ``dt_days`` (MPI-aware).
+) -> List[Dict[str, Any]]:
+    """Load sweep CSV records (MPI-aware).
 
-    Returns filtered records and derived ``N``/``h`` arrays sorted from
-    coarse to fine.
+    Returns all sweep records sorted by N and dt_days.
     """
-    csv_file = base_dir / "sweep_results.csv"
+    csv_file = base_dir / "sweep_summary.csv"
     if not csv_file.exists():
-        raise FileNotFoundError(f"Sweep results not found: {csv_file}")
+        raise FileNotFoundError(f"Sweep summary not found: {csv_file}")
 
     if comm.rank == 0:
         df_sweep = pd.read_csv(csv_file)
-        if "dt_days" not in df_sweep.columns:
-            raise KeyError("Expected column 'dt_days' in sweep_results.csv")
-        df_filtered = df_sweep[df_sweep["dt_days"] == dt_value].sort_values("N")
-        if len(df_filtered) < 3:
-            raise ValueError(f"Need ≥3 mesh sizes, got {len(df_filtered)}")
-        records = df_filtered.to_dict("records")
+        df_sorted = df_sweep.sort_values(["N", "dt_days"])
+        records = df_sorted.to_dict("records")
     else:
         records = None
 
     records = comm.bcast(records, root=0)
-    N_values = np.array([r["N"] for r in records])
-    h_values = 1.0 / N_values
-    return records, N_values, h_values
+    return records
 
 
 def analyze_solver_convergence(
@@ -420,14 +423,24 @@ def analyze_solver_convergence(
     field_name: str,
 ) -> pd.DataFrame:
     """Generic field-error analysis across meshes for fixed ``dt_days``."""
-    records, N_values, h_values = load_sweep_records(base_dir, dt_days, comm)
+    all_records = load_sweep_records(base_dir, comm)
+    records = [r for r in all_records if abs(r["dt_days"] - dt_days) < 1e-6]
+    records = sorted(records, key=lambda r: r["N"])
+    
+    if len(records) < 3:
+        raise ValueError(f"Need ≥3 mesh sizes for dt={dt_days}, got {len(records)}")
+    
+    N_values = np.array([r["N"] for r in records])
+    h_values = 1.0 / N_values
 
     l2_errors: List[float] = []
     h1_errors: List[float] = []
-    prev_field: Optional[fem.Function] = None
+    prev_field = None
 
     for record in records:
-        run_dir = Path(record["output_path"])
+        # Use output_dir from sweep_summary.csv to construct path
+        output_dir = record["output_dir"]
+        run_dir = base_dir / output_dir
         N = int(record["N"])
 
         if field_name in ("rho", "S"):
@@ -508,13 +521,13 @@ def build_error_dataframe(
 def compute_richardson_triplets(
     h_values: np.ndarray,
     qoi_pair_errors: List[float],
-    safety_factor: float = GCI_SAFETY_FACTOR,
 ) -> List[Dict[str, Any]]:
     """Three-grid analysis for pairwise error sequences.
 
     Uses relative-change indicators (no extrapolation) suitable for error norms
     where an exact solution is unavailable.
     """
+    safety_factor = GCI_SAFETY_FACTOR
     rows: List[Dict[str, Any]] = []
     E = [float(e) for e in qoi_pair_errors]
     nE = len(E)
@@ -575,14 +588,16 @@ def save_convergence_results_to_excel(
         # QoI summary
         summary_data = []
         for dt_val, df_rich in richardson_results.items():
+            monotone_series = df_rich.get("monotone", pd.Series(dtype=int))
+            all_monotone = int(monotone_series.fillna(0).astype(bool).all()) if len(df_rich) else np.nan
             summary_data.append(
                 {
                     "dt": dt_val,
                     "num_triplets": len(df_rich),
-                    "mean_p": df_rich["p"].mean() if "p" in df_rich else np.nan,
-                    "mean_GCI32_percent": df_rich["GCI32_percent"].mean() if "GCI32_percent" in df_rich else np.nan,
-                    "mean_beta": df_rich["beta"].mean() if "beta" in df_rich else np.nan,
-                    "all_monotone": int(df_rich.get("monotone", pd.Series(dtype=int)).fillna(0).astype(bool).all()) if len(df_rich) else np.nan,
+                    "mean_p": df_rich["p"].mean(),
+                    "mean_GCI32_percent": df_rich["GCI32_percent"].mean(),
+                    "mean_beta": df_rich["beta"].mean(),
+                    "all_monotone": all_monotone,
                 }
             )
         pd.DataFrame(summary_data).to_excel(writer, sheet_name="Summary_QoI", index=False)
@@ -617,13 +632,14 @@ def compute_global_pref(h_values: List[float], q_values: List[float]) -> float:
 def compute_richardson_triplets_qoi(
     h_values: List[float],
     q_values: List[float],
-    safety_factor: float = GCI_SAFETY_FACTOR,
 ) -> List[Dict[str, Any]]:
     """Richardson extrapolation and Roache GCI for QoI sequences.
 
     For each consecutive triplet (h1,h2,h3) with QoIs (Q1,Q2,Q3), estimate
     order p, extrapolate Q_ext, compute GCI21/GCI32 and beta.
     """
+    safety_factor = GCI_SAFETY_FACTOR
+    
     if len(h_values) != len(q_values):
         raise ValueError("h_values and q_values must have the same length")
     if len(h_values) < 3:

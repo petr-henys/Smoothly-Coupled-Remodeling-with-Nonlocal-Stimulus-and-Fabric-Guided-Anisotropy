@@ -47,7 +47,7 @@ class Remodeller:
         # Unified storage system
         self.storage = UnifiedStorage(cfg)
 
-        self.telemetry = getattr(self.cfg, "telemetry", None)
+        self.telemetry = getattr(self.cfg, "telemetry")
         if self.telemetry is not None:
             self.telemetry.register_csv(
                 "steps",
@@ -62,7 +62,6 @@ class Remodeller:
                     "dens_time_s",
                     "dir_time_s",
                     "solve_time_s_total",
-                    "rel_change_last",
                     "proj_res_last",
                     "rhoJ_last",
                 ],
@@ -176,11 +175,11 @@ class Remodeller:
         # Destroy PETSc/KSP/Mat/Vec held by linear solvers
         for attr in ("mechsolver", "stimsolver", "densolver", "dirsolver"):
             solver = getattr(self, attr, None)
-            if solver is not None and hasattr(solver, "destroy"):
+            if solver is not None:
                 solver.destroy()
 
         # Close unified storage (collective operation)
-        if hasattr(self, "storage") and self.storage is not None:
+        if self.storage is not None:
             self.storage.close()
 
         # Close telemetry resources
@@ -402,9 +401,6 @@ class Remodeller:
             if time_days is not None:
                 payload["time_days"] = float(time_days)
             if last_rec is not None:
-                rel_val = last_rec.get("rel_change")
-                if rel_val is not None:
-                    payload["rel_change_last"] = float(rel_val)
                 proj_val = last_rec.get("proj_res")
                 if proj_val is not None:
                     payload["proj_res_last"] = float(proj_val)
@@ -545,8 +541,8 @@ if __name__ == "__main__":
     # Programmatic demonstration run (no CLI)
     comm = MPI.COMM_WORLD
     m = mesh.create_unit_cube(
-        comm, 36, 36, 36,
-        cell_type=mesh.CellType.tetrahedron,
+        comm, 33, 33, 33,
+        cell_type=mesh.CellType.hexahedron,
         ghost_mode=mesh.GhostMode.shared_facet
     )
 

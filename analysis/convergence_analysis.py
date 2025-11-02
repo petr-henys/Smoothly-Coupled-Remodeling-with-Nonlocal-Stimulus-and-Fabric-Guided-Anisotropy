@@ -1,7 +1,7 @@
 """Convergence analysis for spatial and temporal refinement.
 
 Phase 2 script: Loads convergence sweep results, computes L2/H1 errors,
-and generates convergence plots for spatial (fixed dt) and temporal (fixed N) refinement.
+and exports detailed XLSX tables for spatial (fixed dt) and temporal (fixed N) refinement.
 """
 
 import sys
@@ -13,77 +13,7 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 import numpy as np
-from mpi4py import MPI
-
-# Import matplotlib only on rank 0 to avoid MPI issues
-comm = MPI.COMM_WORLD
-if comm.rank == 0:
-    import matplotlib
-    matplotlib.use('Agg')  # Non-interactive backend
-    import matplotlib.pyplot as plt
-
-from analysis.utils import (
-    load_sweep_records,
-    load_field_from_npz,
-    compute_l2_h1_errors,
-)
-
-
-def analyze_field_errors(
-    records: List[Dict[str, Any]],
-    field_name: str,
-    field_type: str,
-    comm: MPI.Comm,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Compute L2/H1 errors for a single field across all sweep points.
-    
-    Returns N_values, h_values, l2_errors, h1_errors arrays.
-    """
-    N_values = []
-    h_values = []
-    l2_errors = []
-    h1_errors = []
-    
-    prev_field = None
-    prev_N = None
-    
-    for record in records:
-        run_dir = Path(record["output_path"])
-        N = int(record["N"])
-        
-        domain, field = load_field_from_npz(
-            run_dir, comm, N, field_name, field_type
-        )
-        
-        if prev_field is not None:
-            # Compute errors on finer mesh
-            l2_err, h1_err = compute_l2_h1_errors(prev_field, field, domain)
-            N_values.append(prev_N)
-            h_values.append(1.0 / prev_N)
-            l2_errors.append(l2_err)
-            h1_errors.append(h1_err)
-        
-        prev_field = field
-        prev_N = N
-    
-    return (
-        np.array(N_values),
-        np.array(h_values),
-        np.array(l2_errors),
-        np.array(h1_errors),
-    )
-
-import sys
-from pathlib import Path
-from typing import Dict, List, Any
-
-project_root = Path(__file__).resolve().parent.parent
-if str(project_root) not in sys.path:
-    sys.path.insert(0, str(project_root))
-
-import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 from mpi4py import MPI
 
 from analysis.utils import (
@@ -98,6 +28,7 @@ def analyze_field_errors(
     field_name: str,
     field_type: str,
     comm: MPI.Comm,
+    base_dir: Path,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Compute L2/H1 errors for a single field across all sweep points.
     
@@ -112,7 +43,8 @@ def analyze_field_errors(
     prev_N = None
     
     for record in records:
-        run_dir = Path(record["output_path"])
+        output_dir = record["output_dir"]
+        run_dir = base_dir / output_dir
         N = int(record["N"])
         
         domain, field = load_field_from_npz(
@@ -154,18 +86,21 @@ def filter_records_by_N(
     return sorted(filtered, key=lambda r: r["dt_days"])
 
 
-def create_spatial_convergence_plot(
+def compute_spatial_convergence_data(
     base_dir: Path,
-    dt_fixed: float,
-    output_file: Path,
+    dt_value: float,
     comm: MPI.Comm,
-) -> None:
-    """Create spatial convergence plot (varying N, fixed dt)."""
+) -> Dict[str, pd.DataFrame]:
+    """Compute spatial convergence data for a specific dt (varying N, fixed dt).
+    
+    Returns dictionary mapping field names to DataFrames with columns:
+    N, h, L2_error, H1_error
+    """
     records = load_sweep_records(base_dir, comm)
-    records_filtered = filter_records_by_dt(records, dt_fixed)
+    records_filtered = filter_records_by_dt(records, dt_value)
     
     if comm.rank == 0:
-        print(f"Spatial convergence: dt={dt_fixed}, {len(records_filtered)} meshes")
+        print(f"Spatial convergence: dt={dt_value}, {len(records_filtered)} meshes")
     
     # Field definitions
     fields = [
@@ -179,75 +114,35 @@ def create_spatial_convergence_plot(
     results = {}
     for field_name, field_type, field_label in fields:
         N_vals, h_vals, l2_errs, h1_errs = analyze_field_errors(
-            records_filtered, field_name, field_type, comm
+            records_filtered, field_name, field_type, comm, base_dir
         )
-        results[field_name] = {
+        
+        df = pd.DataFrame({
             "N": N_vals,
             "h": h_vals,
-            "l2": l2_errs,
-            "h1": h1_errs,
-            "label": field_label,
-        }
+            "L2_error": l2_errs,
+            "H1_error": h1_errs,
+        })
+        results[field_name] = df
     
-    if comm.rank != 0:
-        return
-    
-    # Create plot
-    fig, axes = plt.subplots(2, 4, figsize=(16, 8))
-    fig.suptitle(f"Spatial Convergence (dt = {dt_fixed} days)", fontsize=14)
-    
-    for idx, (field_name, _, _) in enumerate(fields):
-        data = results[field_name]
-        h = data["h"]
-        l2 = data["l2"]
-        h1 = data["h1"]
-        label = data["label"]
-        
-        # L2 norm
-        ax_l2 = axes[0, idx]
-        ax_l2.loglog(h, l2, "o-", label=f"{label} L2", linewidth=2, markersize=6)
-        # Reference slopes
-        if len(h) > 1:
-            ax_l2.loglog(h, l2[0] * (h / h[0]) ** 1, "--", alpha=0.5, label="O(h)")
-            ax_l2.loglog(h, l2[0] * (h / h[0]) ** 2, ":", alpha=0.5, label="O(h²)")
-        ax_l2.set_xlabel("h")
-        ax_l2.set_ylabel("L2 Error")
-        ax_l2.set_title(f"{label} - L2 Norm")
-        ax_l2.legend()
-        ax_l2.grid(True, alpha=0.3)
-        
-        # H1 seminorm
-        ax_h1 = axes[1, idx]
-        ax_h1.loglog(h, h1, "s-", label=f"{label} H1", linewidth=2, markersize=6)
-        # Reference slopes
-        if len(h) > 1:
-            ax_h1.loglog(h, h1[0] * (h / h[0]) ** 1, "--", alpha=0.5, label="O(h)")
-            ax_h1.loglog(h, h1[0] * (h / h[0]) ** 2, ":", alpha=0.5, label="O(h²)")
-        ax_h1.set_xlabel("h")
-        ax_h1.set_ylabel("H1 Error")
-        ax_h1.set_title(f"{label} - H1 Seminorm")
-        ax_h1.legend()
-        ax_h1.grid(True, alpha=0.3)
-    
-    plt.tight_layout()
-    output_file.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(output_file, dpi=300, bbox_inches="tight")
-    print(f"Spatial convergence plot saved to {output_file}")
-    plt.close()
+    return results
 
 
-def create_temporal_convergence_plot(
+def compute_temporal_convergence_data(
     base_dir: Path,
-    N_fixed: int,
-    output_file: Path,
+    N_value: int,
     comm: MPI.Comm,
-) -> None:
-    """Create temporal convergence plot (varying dt, fixed N)."""
+) -> Dict[str, pd.DataFrame]:
+    """Compute temporal convergence data for a specific N (varying dt, fixed N).
+    
+    Returns dictionary mapping field names to DataFrames with columns:
+    dt_days, L2_error, H1_error
+    """
     records = load_sweep_records(base_dir, comm)
-    records_filtered = filter_records_by_N(records, N_fixed)
+    records_filtered = filter_records_by_N(records, N_value)
     
     if comm.rank == 0:
-        print(f"Temporal convergence: N={N_fixed}, {len(records_filtered)} timesteps")
+        print(f"Temporal convergence: N={N_value}, {len(records_filtered)} timesteps")
     
     # Field definitions
     fields = [
@@ -260,85 +155,100 @@ def create_temporal_convergence_plot(
     # Compute errors for all fields
     results = {}
     for field_name, field_type, field_label in fields:
-        N_vals, _, l2_errs, h1_errs = analyze_field_errors(
-            records_filtered, field_name, field_type, comm
+        N_vals, h_vals, l2_errs, h1_errs = analyze_field_errors(
+            records_filtered, field_name, field_type, comm, base_dir
         )
         # For temporal, use dt values not h
         dt_vals = np.array([r["dt_days"] for r in records_filtered[:-1]])
-        results[field_name] = {
-            "dt": dt_vals,
-            "l2": l2_errs,
-            "h1": h1_errs,
-            "label": field_label,
-        }
-    
-    if comm.rank != 0:
-        return
-    
-    # Create plot
-    fig, axes = plt.subplots(2, 4, figsize=(16, 8))
-    fig.suptitle(f"Temporal Convergence (N = {N_fixed})", fontsize=14)
-    
-    for idx, (field_name, _, _) in enumerate(fields):
-        data = results[field_name]
-        dt = data["dt"]
-        l2 = data["l2"]
-        h1 = data["h1"]
-        label = data["label"]
         
-        # L2 norm
-        ax_l2 = axes[0, idx]
-        ax_l2.loglog(dt, l2, "o-", label=f"{label} L2", linewidth=2, markersize=6)
-        # Reference slopes
-        if len(dt) > 1:
-            ax_l2.loglog(dt, l2[0] * (dt / dt[0]) ** 1, "--", alpha=0.5, label="O(dt)")
-            ax_l2.loglog(dt, l2[0] * (dt / dt[0]) ** 2, ":", alpha=0.5, label="O(dt²)")
-        ax_l2.set_xlabel("dt (days)")
-        ax_l2.set_ylabel("L2 Error")
-        ax_l2.set_title(f"{label} - L2 Norm")
-        ax_l2.legend()
-        ax_l2.grid(True, alpha=0.3)
-        
-        # H1 seminorm
-        ax_h1 = axes[1, idx]
-        ax_h1.loglog(dt, h1, "s-", label=f"{label} H1", linewidth=2, markersize=6)
-        # Reference slopes
-        if len(dt) > 1:
-            ax_h1.loglog(dt, h1[0] * (dt / dt[0]) ** 1, "--", alpha=0.5, label="O(dt)")
-            ax_h1.loglog(dt, h1[0] * (dt / dt[0]) ** 2, ":", alpha=0.5, label="O(dt²)")
-        ax_h1.set_xlabel("dt (days)")
-        ax_h1.set_ylabel("H1 Error")
-        ax_h1.set_title(f"{label} - H1 Seminorm")
-        ax_h1.legend()
-        ax_h1.grid(True, alpha=0.3)
+        df = pd.DataFrame({
+            "dt_days": dt_vals,
+            "L2_error": l2_errs,
+            "H1_error": h1_errs,
+        })
+        results[field_name] = df
     
-    plt.tight_layout()
+    return results
+
+
+def save_convergence_xlsx(
+    all_spatial_data: Dict[float, Dict[str, pd.DataFrame]],
+    all_temporal_data: Dict[int, Dict[str, pd.DataFrame]],
+    output_file: Path,
+) -> None:
+    """Save all spatial and temporal convergence data to XLSX with multiple sheets.
+    
+    Args:
+        all_spatial_data: Dict mapping dt_value -> {field_name -> DataFrame}
+        all_temporal_data: Dict mapping N_value -> {field_name -> DataFrame}
+        output_file: Output XLSX path
+    """
     output_file.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(output_file, dpi=300, bbox_inches="tight")
-    print(f"Temporal convergence plot saved to {output_file}")
-    plt.close()
+    
+    with pd.ExcelWriter(output_file, engine="openpyxl") as writer:
+        # Spatial sheets (one per dt × field combination)
+        for dt_value, spatial_data in all_spatial_data.items():
+            for field_name, df in spatial_data.items():
+                sheet_name = f"spatial_{field_name}_dt{dt_value}"
+                df.to_excel(writer, sheet_name=sheet_name, index=False)
+        
+        # Temporal sheets (one per N × field combination)
+        for N_value, temporal_data in all_temporal_data.items():
+            for field_name, df in temporal_data.items():
+                sheet_name = f"temporal_{field_name}_N{N_value}"
+                df.to_excel(writer, sheet_name=sheet_name, index=False)
+    
+    print(f"Convergence data saved to {output_file}")
 
 
 if __name__ == "__main__":
     comm = MPI.COMM_WORLD
     
     base_dir = Path("results/convergence_sweep")
+    output_dir = Path("analysis/convergence_analysis")
     
-    # Spatial convergence (fixed dt=25.0 days, varying N)
-    create_spatial_convergence_plot(
-        base_dir=base_dir,
-        dt_fixed=25.0,
-        output_file=Path("manuscript/images/spatial_convergence.png"),
-        comm=comm,
-    )
+    # Load all sweep records
+    all_records = load_sweep_records(base_dir, comm)
     
-    # Temporal convergence (fixed N=36, varying dt)
-    create_temporal_convergence_plot(
-        base_dir=base_dir,
-        N_fixed=36,
-        output_file=Path("manuscript/images/temporal_convergence.png"),
-        comm=comm,
-    )
+    # Extract unique dt and N values
+    dt_values = sorted(set(r["dt_days"] for r in all_records))
+    N_values = sorted(set(r["N"] for r in all_records))
     
     if comm.rank == 0:
+        print(f"Found {len(dt_values)} unique dt values: {dt_values}")
+        print(f"Found {len(N_values)} unique N values: {N_values}")
+    
+    # Compute spatial convergence for all dt values
+    all_spatial_data = {}
+    for dt_val in dt_values:
+        if comm.rank == 0:
+            print(f"\n=== Processing spatial convergence for dt={dt_val} ===")
+        spatial_data = compute_spatial_convergence_data(
+            base_dir=base_dir,
+            dt_value=dt_val,
+            comm=comm,
+        )
+        all_spatial_data[dt_val] = spatial_data
+    
+    # Compute temporal convergence for all N values
+    all_temporal_data = {}
+    for N_val in N_values:
+        if comm.rank == 0:
+            print(f"\n=== Processing temporal convergence for N={N_val} ===")
+        temporal_data = compute_temporal_convergence_data(
+            base_dir=base_dir,
+            N_value=N_val,
+            comm=comm,
+        )
+        all_temporal_data[N_val] = temporal_data
+    
+    # Save all data to XLSX (rank 0 only)
+    if comm.rank == 0:
+        save_convergence_xlsx(
+            all_spatial_data=all_spatial_data,
+            all_temporal_data=all_temporal_data,
+            output_file=output_dir / "convergence_data.xlsx",
+        )
         print("\nConvergence analysis complete!")
+        print(f"Generated {len(dt_values)} spatial convergence datasets")
+        print(f"Generated {len(N_values)} temporal convergence datasets")

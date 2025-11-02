@@ -77,12 +77,8 @@ class _Anderson:
             K[p, :p] = 1.0
             rhs = np.zeros(p + 1, dtype=float)
             rhs[p] = 1.0
-            try:
-                sol = np.linalg.solve(K, rhs)
-                alpha = sol[:p]
-            except np.linalg.LinAlgError:
-                self.logger.warning("Anderson system ill-conditioned, falling back to uniform weights.")
-                alpha.fill(1.0 / p)
+            sol = np.linalg.solve(K, rhs)
+            alpha = sol[:p]
         self.comm.Bcast(alpha, root=0)
         return alpha
 
@@ -91,15 +87,12 @@ class _Anderson:
         p = H.shape[0]
         if p == 0:
             return 1.0
-        try:
-            w = np.linalg.eigvalsh(H + lam_eff * np.eye(p))
-            w = np.clip(w, 0.0, None)
-            wmax = float(np.max(w))
-            wmin = float(np.min(w))
-            eps = 1e-30
-            return wmax / max(wmin, eps)
-        except np.linalg.LinAlgError:
-            return np.inf
+        w = np.linalg.eigvalsh(H + lam_eff * np.eye(p))
+        w = np.clip(w, 0.0, None)
+        wmax = float(np.max(w))
+        wmin = float(np.min(w))
+        eps = 1e-30
+        return wmax / max(wmin, eps)
 
     # -- main entry point --
 

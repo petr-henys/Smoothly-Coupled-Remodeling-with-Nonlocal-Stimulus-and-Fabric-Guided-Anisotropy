@@ -275,27 +275,25 @@ class PeriodicReducer:
 # MPI-marked isotropy test
 @pytest.mark.mpi
 @pytest.mark.parametrize("n", [3, 4])
-def test_kubc_isotropic(n):
+@pytest.mark.parametrize("method", ["KUBC", "SUBC"])
+def test_homogenizer_isotropic(n, method):
+    """Test isotropic material homogenization for KUBC and SUBC methods."""
     domain = mesh.create_unit_cube(MPI.COMM_WORLD, n, n, n)
-    E, nu = 10.0, 0.25
+    E, nu = (10.0, 0.25) if method == "KUBC" else (15.0, 0.3)
     cfg = _make_config(domain, E, nu)
     rho, A_dir = _make_fields(domain)
-    out = _run_homogenizer(KUBCHomogenizer, rho, A_dir, cfg, eps_mag=1e-4)
+    
+    HomogenizerClass = KUBCHomogenizer if method == "KUBC" else SUBCHomogenizer
+    kwargs = {"eps_mag": 1e-4} if method == "KUBC" else {"sigma_mag": 1.0}
+    
+    out = _run_homogenizer(HomogenizerClass, rho, A_dir, cfg, **kwargs)
     C_num = out["C_voigt"]
     C_th = _theoretical_C(E, nu)
     assert np.allclose(C_num, C_th, rtol=5e-4, atol=5e-6)
 
-@pytest.mark.mpi
-@pytest.mark.parametrize("n", [3, 4])
-def test_subc_isotropic(n):
-    domain = mesh.create_unit_cube(MPI.COMM_WORLD, n, n, n)
-    E, nu = 15.0, 0.3
-    cfg = _make_config(domain, E, nu)
-    rho, A_dir = _make_fields(domain)
-    out = _run_homogenizer(SUBCHomogenizer, rho, A_dir, cfg, sigma_mag=1.0)
-    C_num = out["C_voigt"]
-    C_th = _theoretical_C(E, nu)
-    assert np.allclose(C_num, C_th, rtol=5e-4, atol=5e-6)
+
+# Note: Consolidated test_kubc_isotropic and test_subc_isotropic into single parametrized test
+# Reduces test count from 2→1 while preserving coverage for both methods
 
 @pytest.mark.mpi
 @pytest.mark.parametrize("n", [3, 4])
