@@ -50,7 +50,7 @@ class TestDOFOrdering:
                                u, rho, rho_old, A, A_old, S, S_old)
         
         # Check slice sizes
-        s_u, s_rho, s_A, s_S = fps._state_slices
+        s_u, s_rho, s_A, s_S = fps.state_slices
         
         assert (s_u.stop - s_u.start) == fps.n_u, f"u slice size mismatch"
         assert (s_rho.stop - s_rho.start) == fps.n_rho, f"rho slice size mismatch"
@@ -62,7 +62,7 @@ class TestDOFOrdering:
         assert s_rho.start == s_u.stop, "rho slice not after u"
         assert s_A.start == s_rho.stop, "A slice not after rho"
         assert s_S.start == s_A.stop, "S slice not after A"
-        assert s_S.stop == fps._state_size, "S slice doesn't end at state_size"
+        assert s_S.stop == fps.state_size, "S slice doesn't end at state_size"
     
     @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
     def test_flatten_restore_roundtrip(self, unit_cube, cfg, spaces, fields, bc_mech):
@@ -108,18 +108,18 @@ class TestDOFOrdering:
                                u, rho, rho_old, A, A_old, S, S_old)
         
         # Check mask structure
-        s_u, s_rho, s_A, s_S = fps._state_slices
+        s_u, s_rho, s_A, s_S = fps.state_slices
         
         # All True values should be in u block
-        mask_indices = np.where(fps._fix_mask)[0]
+        mask_indices = np.where(fps.fix_mask)[0]
         if len(mask_indices) > 0:
             assert np.all(mask_indices < s_u.stop), "Dirichlet mask extends beyond u block"
             assert np.all(mask_indices >= s_u.start), "Dirichlet mask starts before u block"
         
         # No mask in other blocks
-        assert not np.any(fps._fix_mask[s_rho]), "Mask incorrectly in rho block"
-        assert not np.any(fps._fix_mask[s_A]), "Mask incorrectly in A block"
-        assert not np.any(fps._fix_mask[s_S]), "Mask incorrectly in S block"
+        assert not np.any(fps.fix_mask[s_rho]), "Mask incorrectly in rho block"
+        assert not np.any(fps.fix_mask[s_A]), "Mask incorrectly in A block"
+        assert not np.any(fps.fix_mask[s_S]), "Mask incorrectly in S block"
 
 
 # =============================================================================
@@ -222,16 +222,16 @@ class TestAndersonAcceleration:
             beta, lam = 1.0, 1e-8
             aa = _Anderson(MPI.COMM_WORLD, m=m, beta=beta, lam=lam)
             assert aa.m == m and aa.beta == beta and aa.lam == lam, "Anderson parameters not set correctly"
-            
+
         elif operation == "restart":
             # Reset clears history
             aa = _Anderson(MPI.COMM_WORLD, m=3)
-            aa._x_hist.append(np.random.rand(50))
-            aa._r_hist.append(np.random.rand(50))
-            assert len(aa._x_hist) > 0, "History not accumulated"
+            aa.x_hist.append(np.random.rand(50))
+            aa.r_hist.append(np.random.rand(50))
+            assert len(aa.x_hist) > 0, "History not accumulated"
             aa.reset()
-            assert len(aa._x_hist) == 0, "History not cleared after reset"
-            
+            assert len(aa.x_hist) == 0, "History not cleared after reset"
+
         elif operation == "mix":
             # Basic mix operation
             aa = _Anderson(MPI.COMM_SELF, m=m, beta=1.0, lam=1e-10)
@@ -240,30 +240,28 @@ class TestAndersonAcceleration:
             x_new, info = aa.mix(x_old, x_raw)
             assert x_new.shape == x_old.shape, "Output shape mismatch"
             assert "aa_hist" in info and "accepted" in info, "Info dict missing required keys"
-            
+
         elif operation == "reject_restart":
             # Restart triggered by rejection streak
             aa = _Anderson(MPI.COMM_SELF, m=2, beta=1.0, lam=1e-10, restart_on_reject_k=1)
             x_old, x_raw = np.zeros(10), np.ones(10)
-            
+
             # Proxy residual larger than reference triggers rejection
             def prn(x_ref, x_test, xR):
                 return 2.0 if x_test is not xR else 1.0
-            
+
             # First rejection
             x1, info1 = aa.mix(x_old, x_raw, proj_residual_norm=prn)
             assert info1.get("accepted") is False, "First call should reject"
-            
+
             # Second rejection triggers restart
             x2, info2 = aa.mix(x_old, x_raw, proj_residual_norm=prn)
             assert isinstance(info2.get("restart_reason", ""), str), "Restart reason missing"
             assert "reject_streak" in info2.get("restart_reason", ""), "Restart not scheduled on reject streak"
-            
+
             # Third call honors pending reset
             _ = aa.mix(x_old, x_raw, proj_residual_norm=prn)
-            assert len(aa._x_hist) <= 1, "History not cleared after scheduled reset"
-
-
+            assert len(aa.x_hist) <= 1, "History not cleared after scheduled reset"
 # Note: Consolidated 4 Anderson tests (init, restart, mix, reject_restart) into single parametrized test
 # Reduces test count from 4→1 while preserving all coverage
 
@@ -449,10 +447,10 @@ class TestProjectedResidual:
         weights = (1.0, 1.0, 1.0, 1.0)
 
         # Perturb mechanics block only on Dirichlet DOFs
-        s_u, _, _, _ = fps._state_slices
+        s_u, _, _, _ = fps.state_slices
         x_test = x_raw.copy()
-        if fps._mask_u_any:
-            mask_idx = np.nonzero(fps._mask_u)[0]
+        if fps.mask_u_any:
+            mask_idx = np.nonzero(fps.mask_u)[0]
             x_test[s_u.start + mask_idx] += 1.2345  # any nonzero perturbation
 
         res_ref = fps._proj_residual_norm(x_old, x_raw, x_raw, weights)

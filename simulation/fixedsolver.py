@@ -1,5 +1,6 @@
-from __future__ import annotations
+"""Fixed-point solver orchestrating four coupled PDE subsolvers via Anderson acceleration or Picard iteration."""
 
+from __future__ import annotations
 from typing import Sequence, Optional
 
 import numpy as np
@@ -15,10 +16,6 @@ from simulation.utils import _global_dot, current_memory_mb
 from simulation.logger import get_logger
 from simulation.anderson import _Anderson
 
-
-# -----------------------------------------------------------------------------
-# Fixed-point orchestrator
-# -----------------------------------------------------------------------------
 
 class FixedPointSolver:
     def __init__(self, comm: MPI.Comm, cfg: Config,
@@ -46,11 +43,10 @@ class FixedPointSolver:
         self.S = S
         self.S_old = S_old
 
-        # public counters for outer statistics
         self.total_gs_iters = 0
         self.gs_steps = 0
 
-        # Determine local sizes (order: u, rho, A, S)
+        # Local DOF counts
         self.n_u  = get_owned_size(u)
         self.n_rho = get_owned_size(rho)
         self.n_A  = get_owned_size(A)
@@ -58,36 +54,30 @@ class FixedPointSolver:
 
         self._build_state_slices()
 
-        # Reusable buffer for current local state
-        self._state_buffer = np.empty(self._state_size, dtype=self.u.x.array.dtype)
+        self.state_buffer = np.empty(self.state_size, dtype=self.u.x.array.dtype)
 
-        # Dirichlet mask for mechanics block (local)
+        # Dirichlet mask for mechanics block
         self.dirichlet_dofs_u = collect_dirichlet_dofs(self.mech.bcs, n_owned=self.n_u)
-        self._mask_u = np.zeros(self.n_u, dtype=bool)
+        self.mask_u = np.zeros(self.n_u, dtype=bool)
         if self.dirichlet_dofs_u.size:
-            self._mask_u[self.dirichlet_dofs_u] = True
-        # cache boolean to avoid repeated .any() scans on a large boolean array
-        self._mask_u_any = bool(self.dirichlet_dofs_u.size)
+            self.mask_u[self.dirichlet_dofs_u] = True
+        self.mask_u_any = bool(self.dirichlet_dofs_u.size)
 
         # Global fix mask (same length as flattened state)
-        self._fix_mask = np.zeros(self._state_size, dtype=bool)
-        s_u, _, _, _ = self._state_slices
-        # BUGFIX: chained boolean indexing creates a copy; write via absolute indices instead
-        if self._mask_u_any:
-            idx_u = np.nonzero(self._mask_u)[0]
-            self._fix_mask[s_u.start + idx_u] = True
+        self.fix_mask = np.zeros(self.state_size, dtype=bool)
+        s_u, _, _, _ = self.state_slices
+        if self.mask_u_any:
+            idx_u = np.nonzero(self.mask_u)[0]
+            self.fix_mask[s_u.start + idx_u] = True
 
-        # cumulative timings for the last external step (one call to run())
+        # Cumulative timings per timestep
         self.mech_time_total = 0.0
         self.stim_time_total = 0.0
         self.dens_time_total = 0.0
         self.dir_time_total  = 0.0
-        # Per-subiteration metrics (filled by run when enabled)
         self.subiter_metrics: list[dict] = []
-        # Average memory per timestep (computed from subiter_metrics)
         self.avg_memory_mb: Optional[float] = None
 
-        # Logger controlled by cfg.verbose
         self.logger = get_logger(self.comm, verbose=bool(getattr(self.cfg, "verbose", True)), name="FixedPoint")
         self.telemetry = getattr(self.cfg, "telemetry", None)
         if self.telemetry is not None:
@@ -125,24 +115,25 @@ class FixedPointSolver:
                 filename="subiterations.csv",
             )
 
-    # -- packing/unpacking state --
-
     def _build_state_slices(self) -> None:
+        """Build slice indices for flattened state vector (u, rho, A, S)."""
         offs = [0]
         offs.append(offs[-1] + self.n_u)
         offs.append(offs[-1] + self.n_rho)
         offs.append(offs[-1] + self.n_A)
         offs.append(offs[-1] + self.n_S)
-        self._state_size = offs[-1]
-        self._state_slices = (slice(offs[0], offs[1]),   # u
-                              slice(offs[1], offs[2]),   # rho
-                              slice(offs[2], offs[3]),   # A
-                              slice(offs[3], offs[4]))   # S
+        self.state_size = offs[-1]
+        self.state_slices = (
+            slice(offs[0], offs[1]),  # u
+            slice(offs[1], offs[2]),  # rho
+            slice(offs[2], offs[3]),  # A
+            slice(offs[3], offs[4])   # S
+        )
 
     def _flatten_state(self, copy: bool = True) -> np.ndarray:
-        """Flatten current fields to a 1D numpy array (local part only)."""
-        s_u, s_rho, s_A, s_S = self._state_slices
-        buf = self._state_buffer
+        """Flatten current fields to 1D array (local DOFs only)."""
+        s_u, s_rho, s_A, s_S = self.state_slices
+        buf = self.state_buffer
         buf[s_u]  = self.u.x.array[:self.n_u]
         buf[s_rho] = self.rho.x.array[:self.n_rho]
         buf[s_A]  = self.A.x.array[:self.n_A]
@@ -150,26 +141,19 @@ class FixedPointSolver:
         return buf.copy() if copy else buf
 
     def _restore_state(self, flat: np.ndarray) -> None:
-        s_u, s_rho, s_A, s_S = self._state_slices
+        """Unpack flattened state back to field functions."""
+        s_u, s_rho, s_A, s_S = self.state_slices
         assign(self.u, flat[s_u])
         assign(self.rho, flat[s_rho])
         assign(self.A, flat[s_A])
         assign(self.S, flat[s_S])
 
-    # -- timing helper --
     def _elapsed_max(self, t0: float) -> float:
+        """Max wall time across ranks since t0."""
         return self.comm.allreduce(MPI.Wtime() - t0, op=MPI.MAX)
 
-    # -- one GS sweep over the four fields --
     def _gauss_seidel_sweep(self) -> tuple[float, float, float, float, int, int, int, int, int, int, int, int]:
-        """
-        Perform one Gauss-Seidel sweep over all fields.
-        
-        Returns:
-            (mech_time, stim_time, dens_time, dir_time, 
-             mech_reason, stim_reason, dens_reason, dir_reason,
-             mech_iters, stim_iters, dens_iters, dir_iters)
-        """
+        """One Gauss-Seidel sweep: solve mechanics → stimulus → density → direction."""
         mech_time_total = stim_time_total = dens_time_total = dir_time_total = 0.0
 
         # Mechanics
@@ -185,13 +169,11 @@ class FixedPointSolver:
         stim_iters, stim_reason = self.stim.solve(self.S)
         stim_time_total += self._elapsed_max(t0)
 
-
         # Density
         t0 = MPI.Wtime()
         self.den.update_system()
         dens_iters, dens_reason = self.den.solve(self.rho)
         dens_time_total += self._elapsed_max(t0)
-
 
         # Direction
         t0 = MPI.Wtime()
@@ -203,17 +185,10 @@ class FixedPointSolver:
                 mech_reason, stim_reason, dens_reason, dir_reason,
                 mech_iters, stim_iters, dens_iters, dir_iters)
 
-    # -- norms & stopping --
-
-    def _proj_residual_norm(self, x_old: np.ndarray, x_test: np.ndarray, 
+    def _proj_residual_norm(self, x_old: np.ndarray, x_test: np.ndarray,
                            x_raw: np.ndarray, weights: Sequence[float]) -> float:
-        """
-        Weighted projected-residual norm ||P (x_test - x_base)||_W.
-        - If x_test is x_raw: Picard residual (base = x_old)
-        - Otherwise: AA proxy residual (base = x_raw)
-        P projects out Dirichlet DOFs in mechanics block.
-        """
-        s_u, s_rho, s_A, s_S = self._state_slices
+        """Weighted projected-residual norm ||P (x_test - x_base)||_W, where P projects out Dirichlet DOFs."""
+        s_u, s_rho, s_A, s_S = self.state_slices
         w_u, w_rho, w_A, w_S = weights
         
         is_picard = (x_test is x_raw)
@@ -221,9 +196,9 @@ class FixedPointSolver:
         # Mechanics block
         base_u = x_old[s_u] if is_picard else x_raw[s_u]
         diff_u = x_test[s_u] - base_u
-        if self._mask_u_any:
+        if self.mask_u_any:
             diff_u = diff_u.copy()
-            diff_u[self._mask_u] = 0.0
+            diff_u[self.mask_u] = 0.0
         norm_u_sq = w_u * _global_dot(self.comm, diff_u, diff_u)
         
         # Other blocks
@@ -240,9 +215,7 @@ class FixedPointSolver:
         return self.comm.rank == 0
 
     def _one_sweep_map(self, flat_in: np.ndarray) -> np.ndarray:
-        """
-        Perform exactly ONE Gauss–Seidel sweep on a COPY of the state and return the flattened result.
-        """
+        """Perform one GS sweep on copy of state, return flattened result."""
         x_backup = self._flatten_state(copy=True)
         self._restore_state(flat_in)
         self._gauss_seidel_sweep()
@@ -251,35 +224,34 @@ class FixedPointSolver:
         return out
 
     def _block_norm(self, vec: np.ndarray, block: int, project_u_dirichlet: bool = True) -> float:
-        """Compute global L2 norm of a block. Optionally projects out Dirichlet DOFs from mechanics block."""
-        s_u, s_rho, s_A, s_S = self._state_slices
+        """Global L2 norm of a block. Optionally projects out Dirichlet DOFs from mechanics."""
+        s_u, s_rho, s_A, s_S = self.state_slices
         slices = (s_u, s_rho, s_A, s_S)
         part = vec[slices[block]].copy()
         
-        if project_u_dirichlet and block == 0 and self._mask_u_any:
-            part[self._mask_u] = 0.0
+        if project_u_dirichlet and block == 0 and self.mask_u_any:
+            part[self.mask_u] = 0.0
         
         return float((_global_dot(self.comm, part, part)) ** 0.5)
 
     def compute_interaction_gains(self, eps: float = 1e-3, project_u_dirichlet: bool = True
                                   ) -> tuple[np.ndarray, float]:
-        """
-        Empirically estimate the 4x4 block interaction-gain matrix J for the GS map G at current state x*.
-        Returns (J, rho), where J[i,j] ≈ || G_i(x* + δ_j) - G_i(x*) || / ||δ_j|| and rho is spectral radius(J).
-        Uses one base sweep + 4 perturbed sweeps. Leaves solver state unchanged. Deterministic in MPI.
+        """Estimate 4×4 block interaction-gain matrix J for GS map G at current state.
+        
+        Returns (J, rho) where J[i,j] ≈ ||G_i(x + δ_j) - G_i(x)|| / ||δ_j|| and rho is spectral radius.
         """
         x0 = self._flatten_state(copy=True)
         Gx0 = self._one_sweep_map(x0)
 
         J = np.zeros((4, 4), dtype=float)
-        s_u, s_rho, s_A, s_S = self._state_slices
+        s_u, s_rho, s_A, s_S = self.state_slices
         slices = (s_u, s_rho, s_A, s_S)
 
         for j, sj in enumerate(slices):
             dloc = x0[sj].copy()
             
-            if project_u_dirichlet and j == 0 and self._mask_u_any:
-                dloc[self._mask_u] = 0.0
+            if project_u_dirichlet and j == 0 and self.mask_u_any:
+                dloc[self.mask_u] = 0.0
 
             base_norm = float((_global_dot(self.comm, dloc, dloc)) ** 0.5)
 
@@ -308,37 +280,27 @@ class FixedPointSolver:
 
         return J, rho
 
-    # -- main loop --
-
-    def run(
-        self,
-        *,
-        time_days: Optional[float] = None,
-        step_index: Optional[int] = None,
-    ) -> None:
-        """
-        Execute the inner fixed-point Gauss–Seidel + acceleration loop.
-        All parameters are read from Config (cfg).
-        """
+    def run(self, *, time_days: Optional[float] = None, step_index: Optional[int] = None) -> None:
+        """Execute inner fixed-point loop (Gauss-Seidel + Anderson acceleration)."""
         # Read configuration
         accel_type = str(self.cfg.accel_type).lower()
         m = int(self.cfg.m)
         beta = float(self.cfg.beta)
         lam = float(self.cfg.lam)
 
-        # Use global DOF counts to balance contributions across blocks (mechanics uses *free* DOFs)
-        n_u_free_loc = self.n_u - int(self._mask_u.sum()) if self._mask_u_any else self.n_u
+        # Compute global DOF counts for weight balancing (mechanics uses free DOFs only)
+        n_u_free_loc = self.n_u - int(self.mask_u.sum()) if self.mask_u_any else self.n_u
         n_u_free = self.comm.allreduce(n_u_free_loc, op=MPI.SUM)
         n_rho_g = self.comm.allreduce(self.n_rho, op=MPI.SUM)
         n_A_g = self.comm.allreduce(self.n_A, op=MPI.SUM)
         n_S_g = self.comm.allreduce(self.n_S, op=MPI.SUM)
-        # The merit uses sqrt(sum_i w_i * ||diff_i||^2); choosing w_i = 1/N_i yields an RMS-per-DOF scaling
         weights = (
             1.0 / max(int(n_u_free), 1),
             1.0 / max(int(n_rho_g), 1),
             1.0 / max(int(n_A_g), 1),
             1.0 / max(int(n_S_g), 1),
         )
+        
         tol = float(self.cfg.coupling_tol)
         gamma = float(self.cfg.gamma)
         safeguard = bool(self.cfg.safeguard)
@@ -372,7 +334,6 @@ class FixedPointSolver:
         if accelerator is not None:
             accelerator.reset()
 
-        # Pack current state
         x_k = self._flatten_state(copy=True)
 
         # Reset per-step cumulative timings
@@ -386,7 +347,7 @@ class FixedPointSolver:
         self.subiter_metrics = []
 
         for itr in range(1, max_subiters + 1):
-            # Perform one GS sweep to get x_raw = G(x_k)
+            # Perform one GS sweep: x_raw = G(x_k)
             (mech_t, stim_t, dens_t, dir_t, 
              mech_reason, stim_reason, dens_reason, dir_reason,
              mech_iters, stim_iters, dens_iters, dir_iters) = self._gauss_seidel_sweep()
@@ -395,13 +356,12 @@ class FixedPointSolver:
             self.dens_time_total += dens_t
             self.dir_time_total  += dir_t
 
-            # Measure memory (MPI-aware: sum across all ranks for total consumed)
             memory_mb_local = current_memory_mb()
             memory_mb = self.comm.allreduce(memory_mb_local, op=MPI.SUM)
 
             x_raw = self._flatten_state(copy=True)
 
-            # Decide on mixed iterate
+            # Mix iterate (Anderson or Picard)
             if accelerator is None:
                 x_next = x_raw
                 info = {
@@ -414,7 +374,7 @@ class FixedPointSolver:
                 }
             else:
                 x_next, info = accelerator.mix(
-                    x_old=x_k, x_raw=x_raw, mask_fixed=self._fix_mask,
+                    x_old=x_k, x_raw=x_raw, mask_fixed=self.fix_mask,
                     proj_residual_norm=lambda x_ref, x_test, xR: self._proj_residual_norm(x_ref, x_test, xR, weights),
                     gamma=gamma, use_safeguard=safeguard, backtrack_max=backtrack_max
                 )
@@ -430,7 +390,7 @@ class FixedPointSolver:
                 proj_norm = self._proj_residual_norm(x_k, x_next, x_raw, weights)
             used_iters = itr
 
-            # Optional per-subiteration coupling diagnostics
+            # Optional coupling diagnostics
             J_gs = None
             rhoJ = None
             if getattr(self.cfg, "coupling_each_iter", False):
@@ -461,7 +421,7 @@ class FixedPointSolver:
 
                 self.logger.info("   " + " | ".join(msg_parts))
 
-            # Store per-subiteration metrics
+            # Store metrics
             rec = {
                 "iter": itr,
                 "proj_res": float(proj_norm),
@@ -504,7 +464,7 @@ class FixedPointSolver:
             if self.telemetry is not None:
                 self.telemetry.record("subiterations", rec, csv_event=True)
 
-            # Stopping by projected residual
+            # Stopping criterion
             if proj_norm < tol and itr >= min_subiters:
                 break
 
@@ -513,7 +473,7 @@ class FixedPointSolver:
         self.total_gs_iters += used_iters
         self.gs_steps += 1
 
-        # Compute average memory for this timestep
+        # Compute average memory
         memory_values = [m["memory_mb"] for m in self.subiter_metrics if "memory_mb" in m]
         if memory_values:
             self.avg_memory_mb = float(np.mean(memory_values))

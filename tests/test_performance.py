@@ -297,8 +297,8 @@ class TestMemoryUsage:
         )
         
         expected_size = fps.n_u + fps.n_rho + fps.n_A + fps.n_S
-        assert fps._state_size == expected_size, f"State buffer size mismatch: {fps._state_size} ≠ {expected_size}"
-        assert len(fps._state_buffer) == expected_size, f"State buffer allocation wrong"
+        assert fps.state_size == expected_size, f"State buffer size mismatch: {fps.state_size} ≠ {expected_size}"
+        assert len(fps.state_buffer) == expected_size, f"State buffer allocation wrong"
     
     @pytest.mark.parametrize("m", [3, 5])
     def test_anderson_history_bounded(self, m):
@@ -315,7 +315,7 @@ class TestMemoryUsage:
             _ = aa.mix(x, f)
         
         # History length should not exceed m+1 (deque maxlen)
-        hist_len = len(aa._r_hist)
+        hist_len = len(aa.r_hist)
         assert hist_len <= m + 1, f"Anderson history exceeded window size: len={hist_len} > m+1={m+1}"
 
 
