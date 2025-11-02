@@ -199,8 +199,8 @@ class TestStorage:
             cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False, results_dir=tmpdir)
             storage = UnifiedStorage(cfg)
             
-            # Check via _BaseStorage property
-            assert storage.fields.root_dir.exists(), f"Results directory not created on rank {comm.rank}"
+            # Check directory exists
+            assert storage.fields.output_dir.exists(), f"Results directory not created on rank {comm.rank}"
             comm.Barrier()
     
     @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)

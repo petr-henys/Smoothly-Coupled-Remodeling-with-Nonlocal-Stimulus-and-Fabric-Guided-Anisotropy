@@ -53,29 +53,29 @@ class TestFieldStorage:
 
         storage.close()
 
-    def test_register_group_creates_writer(self, shared_tmpdir, unit_cube, facet_tags, spaces, fields):
-        """register_group should create VTX writer."""
+    def test_register_creates_writer(self, shared_tmpdir, unit_cube, facet_tags, spaces, fields):
+        """register should create VTX writer."""
         cfg = Config(domain=unit_cube, facet_tags=facet_tags,
                     results_dir=shared_tmpdir / "test_register", verbose=False)
         storage = FieldStorage(cfg, comm)
 
         # Register writer (collective operation)
-        storage.register_group("test_field", [fields.rho], filename="test.bp")
+        storage.register("test_field", [fields.rho], filename="test.bp")
 
         # Check writer was created
         assert "test_field" in storage._writers
-        assert "test_field" in storage._writer_paths
 
         storage.close()
 
-    def test_write_displacement_creates_file(self, shared_tmpdir, unit_cube, facet_tags, spaces, fields):
-        """write_displacement should create VTX output file."""
+    def test_write_creates_displacement_file(self, shared_tmpdir, unit_cube, facet_tags, spaces, fields):
+        """write should create VTX output file for displacement."""
         cfg = Config(domain=unit_cube, facet_tags=facet_tags,
                     results_dir=shared_tmpdir / "test_u", verbose=False)
         storage = FieldStorage(cfg, comm)
 
-        # Write displacement
-        storage.write_displacement(fields.u, t=0.0)
+        # Register and write displacement
+        storage.register("u", [fields.u])
+        storage.write("u", t=0.0)
         storage.close()
 
         comm.Barrier()
@@ -85,8 +85,8 @@ class TestFieldStorage:
             output_path = Path(shared_tmpdir) / "test_u" / "u.bp"
             assert output_path.exists(), f"Displacement output not created at {output_path}"
 
-    def test_write_scalars_creates_file(self, shared_tmpdir, unit_cube, facet_tags, spaces, fields):
-        """write_scalars should create VTX output for density and stimulus."""
+    def test_write_creates_scalars_file(self, shared_tmpdir, unit_cube, facet_tags, spaces, fields):
+        """write should create VTX output for density and stimulus."""
         cfg = Config(domain=unit_cube, facet_tags=facet_tags,
                     results_dir=shared_tmpdir / "test_scalars", verbose=False)
         storage = FieldStorage(cfg, comm)
@@ -97,8 +97,9 @@ class TestFieldStorage:
         fields.S.x.array[:] = 0.1
         fields.S.x.scatter_forward()
 
-        # Write scalars
-        storage.write_scalars(fields.rho, fields.S, t=0.0)
+        # Register and write scalars
+        storage.register("scalars", [fields.rho, fields.S])
+        storage.write("scalars", t=0.0)
         storage.close()
 
         comm.Barrier()
@@ -107,8 +108,8 @@ class TestFieldStorage:
             output_path = Path(shared_tmpdir) / "test_scalars" / "scalars.bp"
             assert output_path.exists(), "Scalars output not created"
 
-    def test_write_tensor_creates_file(self, shared_tmpdir, unit_cube, facet_tags, spaces, fields):
-        """write_tensor should create VTX output for orientation tensor."""
+    def test_write_creates_tensor_file(self, shared_tmpdir, unit_cube, facet_tags, spaces, fields):
+        """write should create VTX output for orientation tensor."""
         cfg = Config(domain=unit_cube, facet_tags=facet_tags,
                     results_dir=shared_tmpdir / "test_tensor", verbose=False)
         storage = FieldStorage(cfg, comm)
@@ -117,8 +118,9 @@ class TestFieldStorage:
         fields.A.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:, None] * np.ones((1, x.shape[1])))
         fields.A.x.scatter_forward()
 
-        # Write tensor
-        storage.write_tensor(fields.A, t=0.0)
+        # Register and write tensor
+        storage.register("A", [fields.A])
+        storage.write("A", t=0.0)
         storage.close()
 
         comm.Barrier()
@@ -127,8 +129,8 @@ class TestFieldStorage:
             output_path = Path(shared_tmpdir) / "test_tensor" / "A.bp"
             assert output_path.exists(), "Tensor output not created"
 
-    def test_write_all_creates_all_files(self, shared_tmpdir, unit_cube, facet_tags, spaces, fields):
-        """write_all should create outputs for all fields."""
+    def test_write_all_fields_at_once(self, shared_tmpdir, unit_cube, facet_tags, spaces, fields):
+        """Writing multiple field groups should work correctly."""
         cfg = Config(domain=unit_cube, facet_tags=facet_tags,
                     results_dir=shared_tmpdir / "test_all", verbose=False)
         storage = FieldStorage(cfg, comm)
@@ -141,8 +143,14 @@ class TestFieldStorage:
         fields.A.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:, None] * np.ones((1, x.shape[1])))
         fields.A.x.scatter_forward()
 
-        # Write all
-        storage.write_all(fields.u, fields.rho, fields.S, fields.A, t=0.0)
+        # Register and write all fields
+        storage.register("u", [fields.u])
+        storage.register("scalars", [fields.rho, fields.S])
+        storage.register("A", [fields.A])
+        
+        storage.write("u", t=0.0)
+        storage.write("scalars", t=0.0)
+        storage.write("A", t=0.0)
         storage.close()
 
         comm.Barrier()
@@ -159,9 +167,10 @@ class TestFieldStorage:
                     results_dir=shared_tmpdir / "test_multi", verbose=False)
         storage = FieldStorage(cfg, comm)
 
-        # Write multiple times
+        # Register and write multiple times
+        storage.register("u", [fields.u])
         for t in [0.0, 1.0, 2.0]:
-            storage.write_displacement(fields.u, t=t)
+            storage.write("u", t=t)
 
         # Check counter
         assert storage._write_counts["u"] == 3, f"Expected 3 writes, got {storage._write_counts['u']}"
@@ -174,12 +183,12 @@ class TestFieldStorage:
                     results_dir=shared_tmpdir / "test_ctx", verbose=False)
 
         with FieldStorage(cfg, comm) as storage:
-            storage.write_displacement(fields.u, t=0.0)
+            storage.register("u", [fields.u])
+            storage.write("u", t=0.0)
             assert "u" in storage._writers
 
         # After context exit, writers should be cleared
         assert len(storage._writers) == 0
-        assert len(storage._writer_paths) == 0
 
     @pytest.mark.parametrize("unit_cube", [4, 6], indirect=True)
     def test_write_works_with_different_mesh_sizes(self, shared_tmpdir, unit_cube, facet_tags, spaces, fields):
@@ -189,7 +198,13 @@ class TestFieldStorage:
                     verbose=False)
         storage = FieldStorage(cfg, comm)
 
-        storage.write_all(fields.u, fields.rho, fields.S, fields.A, t=0.0)
+        # Register and write all fields
+        storage.register("u", [fields.u])
+        storage.register("scalars", [fields.rho, fields.S])
+        storage.register("A", [fields.A])
+        storage.write("u", t=0.0)
+        storage.write("scalars", t=0.0)
+        storage.write("A", t=0.0)
         storage.close()
 
         comm.Barrier()
@@ -374,6 +389,11 @@ class TestUnifiedStorage:
 
         storage = UnifiedStorage(cfg)
 
+        # Register field groups BEFORE write_step
+        storage.fields.register("u", [fields.u])
+        storage.fields.register("scalars", [fields.rho, fields.S])
+        storage.fields.register("A", [fields.A])
+
         # Set field values
         fields.rho.x.array[:] = 0.7
         fields.rho.x.scatter_forward()
@@ -423,7 +443,8 @@ class TestUnifiedStorage:
                     results_dir=shared_tmpdir / "test_ctx_unified", verbose=False)
 
         with UnifiedStorage(cfg) as storage:
-            storage.fields.write_displacement(fields.u, t=0.0)
+            storage.fields.register("u", [fields.u])
+            storage.fields.write("u", t=0.0)
             assert len(storage.fields._writers) > 0
 
         # After context exit, storage should be closed
@@ -444,7 +465,7 @@ class TestUnifiedStorage:
         storage = UnifiedStorage(cfg)
 
         # Storage should NOT create its own steps CSV
-        assert storage._steps_metrics_enabled is False
+        assert storage._metrics_enabled is False
 
         storage.close()
         tel.flush_all()
@@ -463,8 +484,9 @@ class TestErrorHandling:
                     results_dir=shared_tmpdir / "test_no_close", verbose=False)
         storage = FieldStorage(cfg, comm)
 
-        # Write without calling close
-        storage.write_displacement(fields.u, t=0.0)
+        # Register and write without calling close
+        storage.register("u", [fields.u])
+        storage.write("u", t=0.0)
         
         # Note: In a real scenario, not calling close() may result in incomplete data
         # For this test, we just verify the writer was created

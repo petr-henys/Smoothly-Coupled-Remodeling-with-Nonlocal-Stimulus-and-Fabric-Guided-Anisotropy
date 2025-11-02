@@ -1,19 +1,16 @@
-from __future__ import annotations
-
 """
-Lightweight MPI-aware logging utilities.
+MPI-aware logging - rank 0 only output via PETSc.Sys.Print.
 
-This module centralises rank-aware logging so user code does not need to call
-``PETSc.Sys.Print`` directly. Loggers expose a small API compatible with the
-common ``logging.Logger`` subset that is currently used across the project.
+Simple, explicit design:
+- Only rank 0 prints (MPI-safe by default)
+- Lazy message evaluation via callables
+- Standard levels: DEBUG < INFO < WARNING < ERROR
+- No environment variables, no fallbacks
 
-Key features compared to the previous helper:
-  * Lazy message evaluation: pass a callable to defer expensive string formatting.
-  * Structured levels with ``is_enabled_for`` to gate heavy computations.
-  * Cheap child logger creation to keep consistent prefixes per submodule.
-
-The default ``get_logger`` uses the provided ``verbose`` flag; no environment
-variables are consulted.
+Usage:
+    logger = get_logger(comm, verbose=True, name="Solver")
+    logger.info("Iteration {0}", iter_count)
+    logger.debug(lambda: f"Expensive: {compute_stats()}")
 """
 
 from enum import IntEnum
@@ -23,9 +20,6 @@ from mpi4py import MPI
 from petsc4py import PETSc
 
 
-MessageFactory = Union[str, Callable[[], str]]
-
-
 class Level(IntEnum):
     DEBUG = 10
     INFO = 20
@@ -33,72 +27,46 @@ class Level(IntEnum):
     ERROR = 40
 
 
- 
-
-
 class Logger:
-    """Minimal rank-aware logger."""
+    """Rank-0 only logger with lazy evaluation."""
 
-    __slots__ = ("_comm", "_level", "_name", "_prefix")
+    __slots__ = ("comm", "level", "name", "prefix")
 
-    def __init__(self, comm: MPI.Comm, level: Level = Level.INFO, name: str = ""):
-        self._comm = comm
-        self._level = Level(int(level))
-        self._name = name.strip()
-        self._prefix = f"[{self._name}] " if self._name else ""
-
-    # ------------------------------------------------------------------
-    # Introspection helpers
-    # ------------------------------------------------------------------
-    @property
-    def level(self) -> Level:
-        return self._level
-
-    @level.setter
-    def level(self, lvl: Level) -> None:
-        self._level = Level(int(lvl))
-
-    @property
-    def name(self) -> str:
-        return self._name
+    def __init__(self, comm: MPI.Comm, level: Level, name: str):
+        self.comm = comm
+        self.level = level
+        self.name = name
+        self.prefix = f"[{name}] " if name else ""
 
     def is_enabled_for(self, lvl: Level) -> bool:
-        return lvl >= self._level
+        """Check if level is enabled."""
+        return lvl >= self.level
 
-    def child(self, suffix: str) -> "Logger":
-        name = f"{self._name}.{suffix}" if self._name else suffix
-        return Logger(self._comm, level=self._level, name=name)
+    def _format(self, msg: Union[str, Callable[[], str]], args: tuple) -> str:
+        """Evaluate message (lazy if callable) and format with args."""
+        text = msg() if callable(msg) else str(msg)
+        return self.prefix + (text.format(*args) if args else text)
 
-    # ------------------------------------------------------------------
-    # Core emission logic
-    # ------------------------------------------------------------------
-    def _coerce_message(self, msg: MessageFactory, args: tuple[Any, ...]) -> str:
-        if callable(msg):
-            msg = msg()
-        text = str(msg)
-        if args:
-            text = text.format(*args)
-        return self._prefix + text
+    def log(self, lvl: Level, msg: Union[str, Callable[[], str]], *args: Any) -> None:
+        """Log message if level enabled. Rank-0 only output."""
+        if self.is_enabled_for(lvl):
+            PETSc.Sys.Print(self._format(msg, args), comm=self.comm)
 
-    def log(self, lvl: Level, msg: MessageFactory, *args: Any) -> None:
-        if not self.is_enabled_for(lvl):
-            return
-        PETSc.Sys.Print(self._coerce_message(msg, args), comm=self._comm)
-
-    def debug(self, msg: MessageFactory, *args: Any) -> None:
+    def debug(self, msg: Union[str, Callable[[], str]], *args: Any) -> None:
         self.log(Level.DEBUG, msg, *args)
 
-    def info(self, msg: MessageFactory, *args: Any) -> None:
+    def info(self, msg: Union[str, Callable[[], str]], *args: Any) -> None:
         self.log(Level.INFO, msg, *args)
 
-    def warning(self, msg: MessageFactory, *args: Any) -> None:
+    def warning(self, msg: Union[str, Callable[[], str]], *args: Any) -> None:
         self.log(Level.WARNING, msg, *args)
 
-    def error(self, msg: MessageFactory, *args: Any) -> None:
+    def error(self, msg: Union[str, Callable[[], str]], *args: Any) -> None:
         self.log(Level.ERROR, msg, *args)
 
 
-def get_logger(comm: MPI.Comm, verbose: bool = True, name: str = "") -> Logger:
-    """Factory using only the verbose flag (no env overrides)."""
+def get_logger(comm: MPI.Comm, verbose: bool, name: str = "") -> Logger:
+    """Create logger. verbose=True → INFO, verbose=False → WARNING."""
     level = Level.INFO if verbose else Level.WARNING
-    return Logger(comm=comm, level=level, name=name)
+    return Logger(comm, level, name)
+

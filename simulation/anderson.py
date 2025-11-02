@@ -23,12 +23,13 @@ class _Anderson:
                  restart_on_cond: float = 1e12,
                  step_limit_factor: float = 2.0,
                  safeguard_abs_floor: float = 1e-10,
-                 gamma_decay_p: float = 0.5):
+                 gamma_decay_p: float = 0.5,
+                 verbose: bool = True):
         self.comm = comm
         self.m = int(m)
         self.beta = float(beta)   # mixing for the *newest* Picard residual
         self.lam = float(lam)
-        self.logger = get_logger(self.comm, name="Anderson")
+        self.logger = get_logger(self.comm, verbose=verbose, name="Anderson")
 
         self._x_hist: deque[np.ndarray] = deque(maxlen=self.m + 1)
         self._r_hist: deque[np.ndarray] = deque(maxlen=self.m + 1)

@@ -118,9 +118,9 @@ class Remodeller:
         self._scatter_fields = (self.u, self.rho, self.A, self.S)
 
         # Register field output groups with unified storage
-        self.storage.fields.register_group("u", [self.u], filename="u.bp")
-        self.storage.fields.register_group("scalars", [self.rho, self.S], filename="scalars.bp")
-        self.storage.fields.register_group("A", [self.A], filename="A.bp")
+        self.storage.fields.register("u", [self.u], filename="u.bp")
+        self.storage.fields.register("scalars", [self.rho, self.S], filename="scalars.bp")
+        self.storage.fields.register("A", [self.A], filename="A.bp")
 
         # left fixed
         bc_mech = build_dirichlet_bcs(self.V, self.cfg.facet_tags, id_tag=1, value=0.0)

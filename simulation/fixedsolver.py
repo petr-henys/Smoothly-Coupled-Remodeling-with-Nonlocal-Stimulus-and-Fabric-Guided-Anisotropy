@@ -363,7 +363,8 @@ class FixedPointSolver:
                                     restart_on_reject_k=restart_on_reject_k,
                                     restart_on_stall=restart_on_stall,
                                     restart_on_cond=restart_on_cond,
-                                    step_limit_factor=step_limit_factor)
+                                    step_limit_factor=step_limit_factor,
+                                    verbose=self.verbose)
         elif accel_type not in ("none", "picard"):
             raise ValueError(f"Unknown accel_type={accel_type!r}")
 
