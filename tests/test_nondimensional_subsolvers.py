@@ -1,0 +1,310 @@
+#!/usr/bin/env python3
+"""
+Nondimensionalization consistency tests for subsolvers.
+
+Focus: physics invariance or expected scaling across changes of
+characteristic scales when parameters are transformed consistently.
+
+Covered solvers:
+- Mechanics: energy invariance for physically equivalent scaling and
+  proportional scaling with psi_c when ND load is unchanged.
+- Stimulus: invariance under E0/psi_c changes with rS_dim and psi_ref_dim
+  adjusted to maintain the same ND problem.
+- Density: invariance under joint scaling of L_c and t_c with dt_nd and
+  diffusion groups held constant.
+- Direction: invariance under joint scaling that preserves all ND groups
+  (cA_c/dt_nd, tauA_c, cA_c*ell_c^2).
+"""
+
+import numpy as np
+import pytest
+
+pytest.importorskip("dolfinx")
+pytest.importorskip("mpi4py")
+
+from dolfinx import fem
+import basix
+import ufl
+from mpi4py import MPI
+
+from simulation.config import Config
+from simulation.subsolvers import MechanicsSolver, StimulusSolver, DensitySolver, DirectionSolver
+from simulation.utils import build_dirichlet_bcs
+
+
+def _constant_scalar(Q, value: float) -> fem.Function:
+    f = fem.Function(Q)
+    f.x.array[:] = float(value)
+    f.x.scatter_forward()
+    return f
+
+
+def _constant_tensor(T, val_matrix: np.ndarray) -> fem.Function:
+    A = fem.Function(T)
+    gdim = T.mesh.geometry.dim
+    assert val_matrix.shape == (gdim, gdim)
+    flat = val_matrix.astype(np.float64).flatten()
+    # Interpolate constant tensor
+    A.interpolate(lambda x: np.tile(flat[:, None], (1, x.shape[1])))
+    A.x.scatter_forward()
+    return A
+
+
+def _build_spaces(domain):
+    gdim = domain.geometry.dim
+    P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(gdim,))
+    P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
+    P1_ten = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(gdim, gdim))
+    V = fem.functionspace(domain, P1_vec)
+    Q = fem.functionspace(domain, P1)
+    T = fem.functionspace(domain, P1_ten)
+    return V, Q, T
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("unit_cube", [4], indirect=True)
+def test_mechanics_energy_invariant_under_Lu_scale(unit_cube, facet_tags):
+    """Changing L_c and u_c by the same factor keeps physical energy invariant.
+
+    Keep E0_dim, nu, n_power fixed; choose identical physical traction
+    applied via dimensionless t = t_dim/sigma_c for each configuration.
+    """
+    domain = unit_cube
+    V, Q, T = _build_spaces(domain)
+
+    # Common fields: rho=1, A=I/d
+    rho = _constant_scalar(Q, 1.0)
+    gdim = domain.geometry.dim
+    A_iso = _constant_tensor(T, np.eye(gdim) / gdim)
+    uA = fem.Function(V)  # solution storage
+
+    # Fixed Dirichlet on face id=1; Neumann on face id=2
+    bcs = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
+
+    # Config A
+    cfgA = Config(domain=domain, facet_tags=facet_tags,
+                  L_c=1.0, u_c=1.0e-3, E0_dim=6.0e9, verbose=False)
+    # Config B: scale L and u equally; psi_c and sigma_c unchanged
+    cfgB = Config(domain=domain, facet_tags=facet_tags,
+                  L_c=2.0, u_c=2.0e-3, E0_dim=6.0e9, verbose=False)
+
+    # Physical traction (Pa); apply as dimensionless using each cfg.sigma_c
+    t_dim = 2.5e6
+
+    def solve_and_energy(cfg):
+        tvec = np.zeros(gdim, dtype=np.float64)
+        tvec[0] = -t_dim / cfg.sigma_c
+        traction = (fem.Constant(cfg.domain, tvec), 2)
+        mech = MechanicsSolver(V, rho, A_iso, bcs, [traction], cfg)
+        mech.solver_setup()
+        its, reason = mech.solve(uA)
+        assert reason >= 0, "Mechanics KSP did not converge"
+        return mech.average_strain_energy(uA)
+
+    E_A = solve_and_energy(cfgA)
+    E_B = solve_and_energy(cfgB)
+
+    assert E_A == pytest.approx(E_B, rel=5e-5, abs=5e-5)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("unit_cube", [4], indirect=True)
+def test_mechanics_energy_scales_with_psi_c_for_equal_nd_load(unit_cube, facet_tags):
+    """With identical ND traction, physical energy scales with psi_c.
+
+    Keep ND load fixed (same numeric traction vector) and compare energies
+    for configs with different E0_dim (thus psi_c).
+    """
+    domain = unit_cube
+    V, Q, T = _build_spaces(domain)
+    rho = _constant_scalar(Q, 1.0)
+    gdim = domain.geometry.dim
+    A_iso = _constant_tensor(T, np.eye(gdim) / gdim)
+    uA = fem.Function(V)
+    bcs = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
+
+    # Two configs differing only by E0_dim (psi_c scales proportionally)
+    cfg1 = Config(domain=domain, facet_tags=facet_tags,
+                  E0_dim=5.0e9, verbose=False)
+    cfg2 = Config(domain=domain, facet_tags=facet_tags,
+                  E0_dim=12.5e9, verbose=False)
+
+    # Same numeric ND traction for both
+    t_nd = -0.2
+
+    def energy(cfg):
+        tvec = np.zeros(gdim, dtype=np.float64)
+        tvec[0] = t_nd
+        mech = MechanicsSolver(V, rho, A_iso, bcs, [(fem.Constant(cfg.domain, tvec), 2)], cfg)
+        mech.solver_setup()
+        its, reason = mech.solve(uA)
+        assert reason >= 0
+        return mech.average_strain_energy(uA)
+
+    E1 = energy(cfg1)
+    E2 = energy(cfg2)
+    assert (E2 / E1) == pytest.approx(cfg2.psi_c / cfg1.psi_c, rel=5e-5)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("unit_cube", [4], indirect=True)
+def test_mechanics_energy_matches_direct_nd_assembly(unit_cube, facet_tags):
+    """average_strain_energy equals ND assembly times psi_c (no double scaling)."""
+    domain = unit_cube
+    V, Q, T = _build_spaces(domain)
+    rho = _constant_scalar(Q, 1.0)
+    gdim = domain.geometry.dim
+    A_iso = _constant_tensor(T, np.eye(gdim) / gdim)
+    u = fem.Function(V)
+    bcs = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
+
+    cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False)
+    tvec = np.zeros(gdim, dtype=np.float64); tvec[0] = -0.15
+    mech = MechanicsSolver(V, rho, A_iso, bcs, [(fem.Constant(domain, tvec), 2)], cfg)
+    mech.solver_setup(); its, reason = mech.solve(u); assert reason >= 0
+
+    # Direct ND assembly -> physical units
+    strain_energy_nd_expr = 0.5 * ufl.inner(mech.sigma(u, rho), mech.eps(u))
+    psi_local_nd = fem.assemble_scalar(fem.form(strain_energy_nd_expr * cfg.dx))
+    psi_nd = mech.comm.allreduce(psi_local_nd, op=MPI.SUM)
+    psi_dim_direct = float((psi_nd / max(mech.total_vol, 1e-300)) * cfg.psi_c)
+
+    assert mech.average_strain_energy(u) == pytest.approx(psi_dim_direct, rel=5e-6, abs=5e-8)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("unit_cube", [4], indirect=True)
+def test_stimulus_invariance_under_E0_scaling_compensated(unit_cube, facet_tags):
+    """Stimulus solution invariant when E0 scaling is compensated.
+
+    Scale E0_dim by k, set psi_ref_dim -> k * psi_ref_dim and rS_dim -> rS_dim / k,
+    leaving all other dimensional parameters the same. The ND problem is identical.
+    """
+    k = 2.3
+    domain = unit_cube
+    V, Q, T = _build_spaces(domain)
+
+    # Base parameters
+    base_kwargs = dict(L_c=1.2, u_c=1.1e-3, E0_dim=7.0e9, tauS_dim=1.5,
+                       cS_dim=10.0, kappaS_dim=8.0e-5, rS_dim=6.0e-5, psi_ref_dim=250.0)
+    cfgA = Config(domain=domain, facet_tags=facet_tags, verbose=False, **base_kwargs)
+
+    scaled_kwargs = base_kwargs.copy()
+    scaled_kwargs.update(E0_dim=k * base_kwargs["E0_dim"],
+                         rS_dim=base_kwargs["rS_dim"] / k,
+                         psi_ref_dim=k * base_kwargs["psi_ref_dim"])
+    cfgB = Config(domain=domain, facet_tags=facet_tags, verbose=False, **scaled_kwargs)
+
+    # Same dt_nd (defaults to 1); psi_expr dimensionless constant
+    psi_nd = fem.Constant(domain, float(0.37))
+    S_old_A = _constant_scalar(Q, 0.1)
+    S_old_B = _constant_scalar(Q, 0.1)
+
+    S_A = fem.Function(Q)
+    S_B = fem.Function(Q)
+
+    solA = StimulusSolver(Q, S_old_A, cfgA)
+    solA.solver_setup()
+    solA.update_rhs(psi_nd)
+    itsA, reasonA = solA.solve(S_A)
+    assert reasonA >= 0
+
+    solB = StimulusSolver(Q, S_old_B, cfgB)
+    solB.solver_setup()
+    solB.update_rhs(psi_nd)
+    itsB, reasonB = solB.solve(S_B)
+    assert reasonB >= 0
+
+    assert np.allclose(S_A.x.array, S_B.x.array, rtol=5e-6, atol=5e-8)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("unit_cube", [4], indirect=True)
+def test_density_invariance_under_Lc_tc_scaling(unit_cube, facet_tags):
+    """Density solution invariant when t_c/L_c^2 and dt_nd are held constant.
+
+    Scale L_c -> a L_c and tauS_dim -> tauS_dim / a^2 so that t_c -> a^2 t_c and
+    t_c/L_c^2 stays unchanged. With dt_nd constant and S=0, the assembled system
+    is identical.
+    """
+    a = 1.7
+    domain = unit_cube
+    V, Q, T = _build_spaces(domain)
+    gdim = domain.geometry.dim
+    A_iso = _constant_tensor(T, np.eye(gdim) / gdim)
+    S_zero = _constant_scalar(Q, 0.0)
+    rho_old_A = _constant_scalar(Q, 0.55)
+    rho_old_B = _constant_scalar(Q, 0.55)
+    rho_A = fem.Function(Q)
+    rho_B = fem.Function(Q)
+
+    cfgA = Config(domain=domain, facet_tags=facet_tags,
+                  L_c=1.0, tauS_dim=1.0, verbose=False)
+    cfgB = Config(domain=domain, facet_tags=facet_tags,
+                  L_c=a * 1.0, tauS_dim=cfgA.tauS_dim / (a * a), verbose=False)
+
+    # dt_nd defaults to 1 in both, ensuring equality; set S field into solver
+    densA = DensitySolver(Q, rho_old_A, A_iso, S_zero, cfgA)
+    densA.solver_setup(); densA.update_system();
+    itsA, reasonA = densA.solve(rho_A)
+    assert reasonA >= 0
+
+    densB = DensitySolver(Q, rho_old_B, A_iso, S_zero, cfgB)
+    densB.solver_setup(); densB.update_system();
+    itsB, reasonB = densB.solve(rho_B)
+    assert reasonB >= 0
+
+    assert np.allclose(rho_A.x.array, rho_B.x.array, rtol=5e-6, atol=5e-8)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("unit_cube", [4], indirect=True)
+def test_direction_invariance_under_joint_scaling(unit_cube, facet_tags):
+    """Direction solver invariant under joint scaling preserving ND groups.
+
+    Choose scaling L_c -> a L_c and tauS_dim -> tauS_dim / a^2 (so t_c -> a^2 t_c),
+    with cA_dim -> a^2 cA_dim, tauA_dim -> tauA_dim / a^2, ell_dim -> a * ell_dim.
+    Keep dt_nd equal (default 1). With u=0 and A_old=I/d, the LHS and RHS match.
+    """
+    a = 1.6
+    domain = unit_cube
+    V, Q, T = _build_spaces(domain)
+    gdim = domain.geometry.dim
+    A_old_A = _constant_tensor(T, np.eye(gdim) / gdim)
+    A_old_B = _constant_tensor(T, np.eye(gdim) / gdim)
+    A_sol_A = fem.Function(T)
+    A_sol_B = fem.Function(T)
+
+    # Mechanics solver only used to compute eps(u) inside update_rhs; use u=0
+    rho = _constant_scalar(Q, 1.0)
+    A_iso = _constant_tensor(T, np.eye(gdim) / gdim)
+    bcs = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
+    u_zero = fem.Function(V)
+
+    cfgA = Config(domain=domain, facet_tags=facet_tags,
+                  L_c=1.0, tauS_dim=1.0, cA_dim=1.2, tauA_dim=0.75, ell_dim=0.35,
+                  verbose=False)
+
+    cfgB = Config(domain=domain, facet_tags=facet_tags,
+                  L_c=a * 1.0,
+                  tauS_dim=cfgA.tauS_dim / (a * a),
+                  cA_dim=a * a * cfgA.cA_dim,
+                  tauA_dim=cfgA.tauA_dim / (a * a),
+                  ell_dim=a * cfgA.ell_dim,
+                  verbose=False)
+
+    mechA = MechanicsSolver(V, rho, A_iso, bcs, [], cfgA)
+    mechA.solver_setup()
+    dirA = DirectionSolver(T, A_old_A, cfgA)
+    dirA.solver_setup(); dirA.update_rhs(mechA, u_zero)
+    itsA, reasonA = dirA.solve(A_sol_A)
+    assert reasonA >= 0
+
+    mechB = MechanicsSolver(V, rho, A_iso, bcs, [], cfgB)
+    mechB.solver_setup()
+    dirB = DirectionSolver(T, A_old_B, cfgB)
+    dirB.solver_setup(); dirB.update_rhs(mechB, u_zero)
+    itsB, reasonB = dirB.solve(A_sol_B)
+    assert reasonB >= 0
+
+    assert np.allclose(A_sol_A.x.array, A_sol_B.x.array, rtol=5e-6, atol=5e-8)
