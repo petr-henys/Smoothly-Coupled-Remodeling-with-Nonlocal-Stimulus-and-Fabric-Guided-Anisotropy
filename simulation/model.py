@@ -151,6 +151,7 @@ class Remodeller:
 
         self.cfg.update_config_json()
 
+        self._current_dt: float | None = None
     def close(self):
         """Free PETSc resources and close I/O."""
         if getattr(self, "closed", False):
@@ -324,6 +325,14 @@ class Remodeller:
             self.dirsolver.solver_setup()
             self.solvers_initialized = True
 
+
+        # Update nondimensional dt and reassemble LHS for time-dependent solvers if dt changed
+        if self._current_dt is None or float(dt) != float(self._current_dt):
+            self.cfg.set_dt_dim(float(dt))
+            if self.solvers_initialized:
+                self.stimsolver.update_lhs()
+                self.dirsolver.update_lhs()
+            self._current_dt = float(dt)
         self.fixedsolver.run(time_days=time_days, step_index=step_index)
 
         metrics = list(self.fixedsolver.subiter_metrics)

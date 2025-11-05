@@ -398,9 +398,15 @@ class KUBCHomogenizer(_HomogCommon):
         h = self._cell_diam
 
         alpha = float(getattr(self.cfg, "nitsche_alpha", 100.0))
-        E_ref = float(getattr(self.cfg, "E_ref", 1.0))
         theta = float(getattr(self.cfg, "nitsche_theta", 1.0))
-        gamma_over_h = (alpha * E_ref) / h
+        # Local penalty scaling: gamma/h ~ alpha*(2*mu+lambda)/h (robust across heterogeneity)
+        rho_eff = smooth_max(self.rho, self.cfg.rho_min_nd, self.cfg.smooth_eps)
+        E_nd = self.cfg.E0_nd * (rho_eff ** self.cfg.n_power_c)
+        nu = self.cfg.nu_c
+        lmbda = E_nd * nu / ((1 + nu) * (1 - 2 * nu))
+        mu = E_nd / (2 * (1 + nu))
+        Kpen = 2 * mu + lmbda
+        gamma_over_h = (alpha * Kpen) / h
 
         u, v = self.mech.u, self.mech.v
         sigma_u = self.mech.sigma(u, self.rho)
@@ -587,5 +593,4 @@ class SUBCHomogenizer(_HomogCommon):
         )
 
         return out
-
 

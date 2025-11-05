@@ -75,25 +75,32 @@ class _Anderson:
         H_loc = R_loc @ R_loc.T     # (p, p)
         return self.comm.allreduce(H_loc, op=MPI.SUM)
 
+    
     def _solve_kkt(self, H: np.ndarray, lam_eff: float) -> np.ndarray:
-        """Solve min ||alpha||_{H+lam I} s.t. 1^T alpha = 1."""
+        """Solve min ||alpha||_{H+lam I} s.t. 1^T alpha = 1 using closed-form.
+        
+        alpha = (H+lam I)^{-1} 1 / (1^T (H+lam I)^{-1} 1)
+        """
         p = H.shape[0]
         if p == 0:
             return np.zeros(0, dtype=float)
-
-        alpha = np.zeros(p, dtype=float)
-        if self.comm.rank == 0:
-            # KKT system: [H+lam*I, 1; 1^T, 0] [alpha; nu] = [0; 1]
-            K = np.zeros((p + 1, p + 1), dtype=float)
-            K[:p, :p] = H + lam_eff * np.eye(p)
-            K[:p, p] = 1.0
-            K[p, :p] = 1.0
-            rhs = np.zeros(p + 1)
-            rhs[p] = 1.0
-            sol = np.linalg.solve(K, rhs)
-            alpha = sol[:p]
-        self.comm.Bcast(alpha, root=0)
+        # Solve (H+lam I) y = 1
+        Hp = H + lam_eff * np.eye(p)
+        one = np.ones(p, dtype=float)
+        try:
+            y = np.linalg.solve(Hp, one)
+        except np.linalg.LinAlgError:
+            # Robust fallback: symmetric eigendecomposition with clip
+            w, V = np.linalg.eigh(Hp + 1e-15 * np.eye(p))
+            w = np.clip(w, 1e-15, None)
+            y = V @ (V.T @ one / w)
+        denom = float(one @ y)
+        if abs(denom) < 1e-30:
+            # Degenerate case → uniform weights
+            return np.full(p, 1.0 / p, dtype=float)
+        alpha = y / denom
         return alpha
+
 
     def _condition_number(self, H: np.ndarray, lam_eff: float) -> float:
         """Estimate condition number of H + lam*I."""

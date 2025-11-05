@@ -108,6 +108,7 @@ class FixedPointSolver:
                     "dens_iters",
                     "dir_iters",
                     "memory_mb",
+                    "memory_mb_max",
                     "rhoJ",
                     "J_gs",
                 ],
@@ -260,8 +261,7 @@ class FixedPointSolver:
                 base_norm = float((_global_dot(self.comm, dloc, dloc)) ** 0.5)
 
             target = eps * (1.0 + base_norm)
-            loc_norm = max(1e-300, float(np.linalg.norm(dloc)))
-            dloc *= (target / loc_norm)
+            dloc *= (target / max(base_norm, 1e-300))
 
             delta = np.zeros_like(x0)
             delta[sj] = dloc
@@ -358,6 +358,7 @@ class FixedPointSolver:
 
             memory_mb_local = current_memory_mb()
             memory_mb = self.comm.allreduce(memory_mb_local, op=MPI.SUM)
+            memory_mb_max = self.comm.allreduce(memory_mb_local, op=MPI.MAX)
 
             x_raw = self._flatten_state(copy=True)
 
@@ -383,11 +384,8 @@ class FixedPointSolver:
 
             is_picard_local = int(np.allclose(x_next, x_raw))
             is_picard = bool(self.comm.allreduce(is_picard_local, op=MPI.MIN))
-            
-            if is_picard:
-                proj_norm = self._proj_residual_norm(x_k, x_raw, x_raw, weights)
-            else:
-                proj_norm = self._proj_residual_norm(x_k, x_next, x_raw, weights)
+            # Always stop by Picard residual (||x_raw - x_k||_W), AA step norm is logged separately
+            proj_norm = self._proj_residual_norm(x_k, x_raw, x_raw, weights)
             used_iters = itr
 
             # Optional coupling diagnostics
@@ -445,6 +443,7 @@ class FixedPointSolver:
                 "dens_iters": int(dens_iters),
                 "dir_iters": int(dir_iters),
                 "memory_mb": float(memory_mb),
+                "memory_mb_max": float(memory_mb_max),
             }
             
             if step_index is not None:

@@ -320,6 +320,7 @@ class StimulusSolver(_BaseLinearSolver):
         self.A = create_matrix(self.a_form)
         assemble_matrix(self.A, self.a_form)
         self.A.assemble()
+        self.A.setOption(PETSc.Mat.Option.SPD, True)
         self.b = create_vector(self.Q)
         ksp_options = {"ksp_type": self.cfg.ksp_type, "pc_type": self.cfg.pc_type}
         self.create_ksp(prefix="stimulus", ksp_options=ksp_options)
@@ -411,6 +412,7 @@ class DensitySolver(_BaseLinearSolver):
         self.A = create_matrix(self.a_form)
         assemble_matrix(self.A, self.a_form)
         self.A.assemble()
+        self.A.setOption(PETSc.Mat.Option.SPD, True)
         self.b = create_vector(self.Q)
         ksp_options = {"ksp_type": self.cfg.ksp_type, "pc_type": self.cfg.pc_type}
         self.create_ksp(prefix="density", ksp_options=ksp_options)
@@ -469,6 +471,7 @@ class DirectionSolver(_BaseLinearSolver):
         self.A = create_matrix(self.a_form)
         assemble_matrix(self.A, self.a_form)
         self.A.assemble()
+        self.A.setOption(PETSc.Mat.Option.SPD, True)
         self.b = create_vector(self.T)
         ksp_options = {"ksp_type": self.cfg.ksp_type, "pc_type": self.cfg.pc_type}
         self.create_ksp(prefix="direction", ksp_options=ksp_options)
