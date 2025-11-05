@@ -278,3 +278,50 @@ def test_max_subiters_sufficient_and_insufficient(unit_cube):
 
 
  # No __main__ runner needed; tests executed via pytest
+
+
+# -----------------------------------------------------------------------------
+# Interaction-gain (spectral radius) metric
+# -----------------------------------------------------------------------------
+import numpy as _np
+import pytest
+pytest.importorskip("dolfinx")
+pytest.importorskip("mpi4py")
+from mpi4py import MPI
+from simulation.utils import build_facetag
+from simulation.config import Config
+from simulation.model import Remodeller
+
+@pytest.mark.integration
+def test_rhoJ_record_matches_recompute():
+    """When coupling_each_iter=True, the last recorded rhoJ should match a fresh recomputation."""
+    from dolfinx import mesh
+
+    comm = MPI.COMM_WORLD
+    domain = mesh.create_unit_cube(comm, 6, 6, 6, ghost_mode=mesh.GhostMode.shared_facet)
+    facet_tags = build_facetag(domain)
+    cfg = Config(
+        domain=domain,
+        facet_tags=facet_tags,
+        verbose=False,
+        accel_type="anderson",
+        coupling_each_iter=True,
+        max_subiters=10,
+        coupling_tol=1e-6,
+        enable_telemetry=False
+    )
+
+    with Remodeller(cfg) as rem:
+        rem.step(dt=1.0)
+        metrics = getattr(rem.fixedsolver, "subiter_metrics", [])
+        assert metrics, "No subiteration metrics recorded"
+        last = metrics[-1]
+        assert "rhoJ" in last, "rhoJ not present in subiteration metrics"
+        rho_recorded = last["rhoJ"]
+
+        # Fresh recomputation at final state
+        _, rho_recomp = rem.fixedsolver.compute_interaction_gains(project_u_dirichlet=True)
+        # Loose tolerance: the estimate is noisy; only check they agree within ~10%
+        if _np.isfinite(rho_recorded) and _np.isfinite(rho_recomp):
+            denom = max(1.0, abs(rho_recomp))
+            assert abs(rho_recorded - rho_recomp) / denom < 0.10, f"rho(J) mismatch: recorded={rho_recorded}, recomputed={rho_recomp}"
