@@ -64,7 +64,7 @@ def test_mechanics_operator_action_nonzero():
     u = fem.Function(V, name="u")
     rho = fem.Function(Q, name="rho"); rho.x.array[:] = 0.5; rho.x.scatter_forward()
     A = fem.Function(T, name="A"); A.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:,None] * np.ones((1, x.shape[1]))); A.x.scatter_forward()
-    bcs = build_dirichlet_bcs(V, facet_tags)
+    bcs = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
     mech = MechanicsSolver(V, rho, A, bcs, [], cfg)
     mech.solver_setup()
 
