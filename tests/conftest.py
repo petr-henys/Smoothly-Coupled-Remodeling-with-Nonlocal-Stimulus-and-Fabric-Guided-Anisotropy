@@ -59,13 +59,9 @@ class TolerancePresets:
 
 def pytest_configure(config: pytest.Config) -> None:
     """Register markers and silence non-rank-0 output."""
-    # Silence non-root ranks immediately
-    try:
-        from mpi4py import MPI
-        if MPI.COMM_WORLD.rank != 0:
-            sys.stdout = sys.stderr = open(os.devnull, 'w')
-    except Exception:
-        pass
+    from mpi4py import MPI
+    if MPI.COMM_WORLD.rank != 0:
+        sys.stdout = sys.stderr = open(os.devnull, 'w')
     
     # Register markers
     for marker, desc in [
@@ -89,11 +85,8 @@ if repo_root not in sys.path:
 @pytest.fixture(autouse=True)
 def _seed_numpy_for_determinism():
     """Seed numpy RNG for deterministic test behavior."""
-    try:
-        import numpy as np
-        np.random.seed(1234)
-    except Exception:
-        pass
+    import numpy as np
+    np.random.seed(1234)
 
 
 # =============================================================================

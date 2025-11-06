@@ -112,42 +112,22 @@ class TestLogLevelFiltering:
     def test_info_level_logging(self):
         """Info-level messages should be logged."""
         logger = get_logger(comm, verbose=True, name="info_level")
-
-        # Should not raise exception
-        try:
-            logger.info("Test info message")
-        except Exception as e:
-            pytest.fail(f"Info logging raised exception: {e}")
+        logger.info("Test info message")
 
     def test_debug_level_logging(self):
         """Debug-level messages should be logged in verbose mode."""
         logger = get_logger(comm, verbose=True, name="debug_level")
-
-        # Should not raise exception
-        try:
-            logger.debug("Test debug message")
-        except Exception as e:
-            pytest.fail(f"Debug logging raised exception: {e}")
+        logger.debug("Test debug message")
 
     def test_warning_level_logging(self):
         """Warning-level messages should always be logged."""
         logger = get_logger(comm, verbose=False, name="warning_level")
-
-        # Should not raise exception
-        try:
-            logger.warning("Test warning message")
-        except Exception as e:
-            pytest.fail(f"Warning logging raised exception: {e}")
+        logger.warning("Test warning message")
 
     def test_error_level_logging(self):
         """Error-level messages should always be logged."""
         logger = get_logger(comm, verbose=False, name="error_level")
-
-        # Should not raise exception
-        try:
-            logger.error("Test error message")
-        except Exception as e:
-            pytest.fail(f"Error logging raised exception: {e}")
+        logger.error("Test error message")
 
 
 # =============================================================================
@@ -160,24 +140,14 @@ class TestMessageFormatting:
     def test_basic_message_formatting(self):
         """Basic string messages should work."""
         logger = get_logger(comm, verbose=True, name="basic_fmt")
-
-        # Should handle different message types
-        try:
-            logger.info("Simple message")
-            logger.info("Message with {0}", "formatting")
-            logger.info("Message with number: {0}", 42)
-        except Exception as e:
-            pytest.fail(f"Message formatting raised exception: {e}")
+        logger.info("Simple message")
+        logger.info("Message with {0}", "formatting")
+        logger.info("Message with number: {0}", 42)
 
     def test_lazy_evaluation_support(self):
         """Logger should support lazy evaluation (lambda messages)."""
         logger = get_logger(comm, verbose=True, name="lazy_eval")
-
-        # Lambda messages for expensive operations
-        try:
-            logger.debug(lambda: f"Expensive computation: {sum(range(1000))}")
-        except Exception as e:
-            pytest.fail(f"Lazy evaluation raised exception: {e}")
+        logger.debug(lambda: f"Expensive computation: {sum(range(1000))}")
 
 
 # =============================================================================

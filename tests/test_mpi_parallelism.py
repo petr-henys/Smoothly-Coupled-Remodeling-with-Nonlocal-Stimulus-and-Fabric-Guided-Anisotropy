@@ -200,8 +200,6 @@ class TestDomainDecomposition:
             assert abs(rho_global_max - 0.7) < 0.05, f"Global max wrong: {rho_global_max}"
 
 
-# Note: Consolidated 3 MPI reduction tests into single parametrized test
-# Reduces test count from 3→1 while preserving coverage for L2 norms, integrals, min/max
     @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
     def test_load_balancing_fairness(self, unit_cube):
         """Check DOF distribution is reasonably balanced across ranks."""
@@ -241,35 +239,7 @@ class TestCollectiveOps:
         vol_local = fem.assemble_scalar(fem.form(1.0 * cfg.dx))
         vol_global = comm.allreduce(vol_local, op=MPI.SUM)
         
-        # Unit cube should have volume 1.0 (in ND coords)
         assert abs(vol_global - 1.0) < 1e-10, f"Global volume incorrect: {vol_global} ≠ 1.0"
-    
-# =============================================================================
-# Field Ownership Tests
-# =============================================================================
-    
-    @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
-    def test_min_max_reductions(self, unit_cube):
-        """Test global min/max operations."""
-        comm = MPI.COMM_WORLD
-        domain = unit_cube
-        
-        P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
-        Q = functionspace(domain, P1)
-        
-        rho = Function(Q, name="rho")
-        rho.interpolate(lambda x: 0.3 + 0.4*x[0])  # Range [0.3, 0.7]
-        rho.x.scatter_forward()
-        
-        n_owned = Q.dofmap.index_map.size_local
-        rho_local_min = rho.x.array[:n_owned].min()
-        rho_local_max = rho.x.array[:n_owned].max()
-        
-        rho_global_min = comm.allreduce(rho_local_min, op=MPI.MIN)
-        rho_global_max = comm.allreduce(rho_local_max, op=MPI.MAX)
-        
-        assert abs(rho_global_min - 0.3) < 0.05, f"Global min wrong: {rho_global_min}"
-        assert abs(rho_global_max - 0.7) < 0.05, f"Global max wrong: {rho_global_max}"
 
 
 # =============================================================================

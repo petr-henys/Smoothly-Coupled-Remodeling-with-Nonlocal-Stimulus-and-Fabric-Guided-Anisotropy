@@ -1,7 +1,6 @@
 import numpy as np
 import pytest
 import basix
-import warnings
 
 pytest.importorskip("dolfinx")
 pytest.importorskip("mpi4py")
@@ -13,8 +12,6 @@ import ufl
 from types import SimpleNamespace
 
 from simulation.homogenizator import KUBCHomogenizer, SUBCHomogenizer
-
-warnings.filterwarnings("ignore", category=pytest.PytestUnknownMarkWarning)
 
 def _make_config(domain, E, nu, xi=0.0):
     return SimpleNamespace(
@@ -291,9 +288,6 @@ def test_homogenizer_isotropic(n, method):
     C_th = _theoretical_C(E, nu)
     assert np.allclose(C_num, C_th, rtol=5e-4, atol=5e-6)
 
-
-# Note: Consolidated test_kubc_isotropic and test_subc_isotropic into single parametrized test
-# Reduces test count from 2→1 while preserving coverage for both methods
 
 @pytest.mark.mpi
 @pytest.mark.parametrize("n", [3, 4])

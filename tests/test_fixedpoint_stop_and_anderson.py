@@ -21,18 +21,13 @@ from simulation.model import Remodeller
 from simulation.anderson import _Anderson
 
 def _proj_res_norm_ratio(x_ref, x_test, x_raw):
-    """Custom projected-residual-norm used to exercise backtracking logic.
-
-    r_norm = ||x_raw - x_ref|| / ||x_raw - x_ref|| = 1
-    proxy  = ||x_test - x_ref|| / ||x_raw - x_ref||  (scales with step length)
-    """
-    import numpy as _np
+    """Custom projected-residual-norm used to exercise backtracking logic."""
     r = x_raw - x_ref
     t = x_test - x_ref
-    denom = _np.linalg.norm(r) + 1e-300
+    denom = np.linalg.norm(r) + 1e-300
     if x_test is x_raw:
         return 1.0
-    return float(_np.linalg.norm(t) / denom)
+    return float(np.linalg.norm(t) / denom)
 
 @pytest.mark.integration
 def test_proj_res_equals_picard_baseline():
@@ -72,44 +67,39 @@ def test_proj_res_equals_picard_baseline():
 @pytest.mark.unit
 def test_anderson_step_limit_and_backtracking():
     """(1) Enforce step limit; (2) Safeguard backtracking reduces proxy residual."""
-    comm = MPI.COMM_SELF  # isolate from MPI reductions
-    import numpy as _np
-
+    comm = MPI.COMM_SELF
     n = 40
-    x_old = _np.zeros(n)
-    x_raw = _np.ones(n)
+    x_old = np.zeros(n)
+    x_raw = np.ones(n)
 
-    # --- (1) Step-size limiter path (requires p >= 2 so that AA branch is used)
     aa_limit = _Anderson(
         comm=comm, m=3, beta=1.0, lam=1e-12,
-        step_limit_factor=0.25,  # very strict → will clip
+        step_limit_factor=0.25,
         verbose=False
     )
     _ = aa_limit.mix(x_old, x_raw, proj_residual_norm=_proj_res_norm_ratio, gamma=0.0, use_safeguard=False)
     x_new, info = aa_limit.mix(x_old, x_raw, proj_residual_norm=_proj_res_norm_ratio, gamma=0.0, use_safeguard=False)
-    s_norm = _np.linalg.norm(x_new - x_old)
-    r_norm = _np.linalg.norm(x_raw - x_old)
+    s_norm = np.linalg.norm(x_new - x_old)
+    r_norm = np.linalg.norm(x_raw - x_old)
     assert s_norm <= 0.25 * r_norm + 1e-12, f"Step limiter not enforced: ||s||={s_norm} > 0.25||r||={0.25*r_norm}"
 
-    # --- (2) Safeguard backtracking (AA branch with γ=0.5; should backtrack to ≲ 0.5 of baseline)
     aa_bt = _Anderson(
         comm=comm, m=3, beta=1.0, lam=0.0,
-        step_limit_factor=10.0,  # do not clip; let safeguard act
+        step_limit_factor=10.0,
         verbose=False
     )
     _ = aa_bt.mix(x_old, x_raw, proj_residual_norm=_proj_res_norm_ratio, gamma=0.5, use_safeguard=True)
     x_bt, info_bt = aa_bt.mix(x_old, x_raw, proj_residual_norm=_proj_res_norm_ratio, gamma=0.5, use_safeguard=True)
-    rp_final = _proj_res_norm_ratio(x_old, x_bt, x_raw)  # ≤ (1-γ_eff) * 1.0 ≈ 0.5
+    rp_final = _proj_res_norm_ratio(x_old, x_bt, x_raw)
     assert rp_final <= 0.51, f"Backtracking did not reduce proxy residual sufficiently: rp_final={rp_final}"
 
 @pytest.mark.unit
 def test_anderson_restart_on_ill_conditioning():
     """Restart should be scheduled when the H condition number exceeds a tiny threshold."""
     comm = MPI.COMM_SELF
-    import numpy as _np
     n = 30
-    x_old = _np.zeros(n)
-    x_raw = _np.ones(n)
+    x_old = np.zeros(n)
+    x_raw = np.ones(n)
 
     aa = _Anderson(comm=comm, m=2, beta=1.0, lam=0.0, restart_on_cond=1.0, verbose=False)
     _ = aa.mix(x_old, x_raw, proj_residual_norm=_proj_res_norm_ratio, gamma=0.0, use_safeguard=False)
