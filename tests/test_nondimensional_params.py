@@ -94,17 +94,17 @@ def test_dimensional_to_nondimensional_mapping_exact(unit_cube, facet_tags):
     psi_c = cfg.E0_dim * (strain_scale ** 2)
     t_c = 1.0 / cfg.tauS_dim
 
-    # Expected ND constants
+    # Expected ND constants (updated scaling: cS and cA no longer scaled by t_c)
     expect = {
         "E0_nd": 1.0,
         "psi_ref_nd": cfg.psi_ref_dim / psi_c,
         "beta_par_nd": cfg.beta_par_dim * t_c / (cfg.L_c ** 2),
         "beta_perp_nd": cfg.beta_perp_dim * t_c / (cfg.L_c ** 2),
-        "cS_c": cfg.cS_dim / t_c,
+        "cS_c": cfg.cS_dim,
         "tauS_c": 1.0,
         "kappaS_c": cfg.kappaS_dim * t_c / (cfg.L_c ** 2),
         "rS_gain_c": cfg.rS_dim * psi_c * t_c,
-        "cA_c": cfg.cA_dim / t_c,
+        "cA_c": cfg.cA_dim,
         "tauA_c": cfg.tauA_dim * t_c,
         "ell_c": cfg.ell_dim / cfg.L_c,
     }
@@ -136,13 +136,13 @@ def test_roundtrip_reconstruct_dimensionals(unit_cube, facet_tags):
     t_c = 1.0 / cfg.tauS_dim
     psi_c = cfg.psi_c
 
-    # Reconstruct dimensionals from ND constants
+    # Reconstruct dimensionals from ND constants (updated scaling)
     beta_par_dim_rt = _float(cfg.beta_par_nd) * (cfg.L_c ** 2) / t_c
     beta_perp_dim_rt = _float(cfg.beta_perp_nd) * (cfg.L_c ** 2) / t_c
-    cS_dim_rt = _float(cfg.cS_c) * t_c
+    cS_dim_rt = _float(cfg.cS_c)
     kappaS_dim_rt = _float(cfg.kappaS_c) * (cfg.L_c ** 2) / t_c
     rS_dim_rt = _float(cfg.rS_gain_c) / (psi_c * t_c)
-    cA_dim_rt = _float(cfg.cA_c) * t_c
+    cA_dim_rt = _float(cfg.cA_c)
     tauA_dim_rt = _float(cfg.tauA_c) / t_c
     ell_dim_rt = _float(cfg.ell_c) * cfg.L_c
     psi_ref_dim_rt = _float(cfg.psi_ref_nd) * psi_c
@@ -187,10 +187,10 @@ def test_scaling_with_tc(unit_cube, facet_tags):
 
     t_ratio = (1.0 / slower.tauS_dim) / (1.0 / base.tauS_dim)  # t_c(slower)/t_c(base) = 0.5
 
-    # Quantities ~ 1/t_c
+    # cS_c and cA_c are now dimensional constants (no t_c scaling)
     for name in ("cS_c", "cA_c"):
         r = _float(getattr(slower, name)) / _float(getattr(base, name))
-        assert r == pytest.approx(1.0 / t_ratio)
+        assert r == pytest.approx(1.0)  # unchanged with t_c
 
     # Quantities ~ t_c
     for name in ("tauA_c", "rS_gain_c"):
