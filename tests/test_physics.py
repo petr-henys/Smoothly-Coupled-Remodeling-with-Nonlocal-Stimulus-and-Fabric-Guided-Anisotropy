@@ -258,6 +258,52 @@ class TestThermodynamics:
         mean_val = mean_value_factory(dissipation)
         assert mean_val >= -1e-14, f"Diffusion dissipation must be non-negative, got {mean_val}"
 
+    @pytest.mark.parametrize("unit_cube", [6], indirect=True)
+    def test_linear_elastic_energy_balance(self, unit_cube, facet_tags, traction_factory):
+        """For the linear system, a(u,u) == l(u) and U = 0.5 a(u,u) = 0.5 ∫ t·u ds."""
+        comm = MPI.COMM_WORLD
+        domain = unit_cube
+        cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False)
+
+        P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3,))
+        P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
+        P1_ten = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3, 3))
+
+        V = functionspace(domain, P1_vec)
+        Q = functionspace(domain, P1)
+        T = functionspace(domain, P1_ten)
+
+        # Fields
+        u = Function(V, name="u")
+        rho = Function(Q, name="rho")
+        rho.x.array[:] = 0.7
+        rho.x.scatter_forward()
+
+        A = Function(T, name="A")
+        A.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:, None] * np.ones((1, x.shape[1])))
+        A.x.scatter_forward()
+
+        # Dirichlet on x=0, traction on x=1 (axis 0)
+        bc_mech = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
+        t_const, t_tag = traction_factory(-0.4, facet_id=2, axis=0)
+
+        mech = MechanicsSolver(V, rho, A, bc_mech, [(t_const, t_tag)], cfg)
+        mech.solver_setup()
+        mech.solve(u)
+
+        # Internal work: a(u,u) = ∫ σ:ε dx
+        a_uu_local = fem.assemble_scalar(fem.form(ufl.inner(mech.sigma(u, rho), mech.eps(u)) * cfg.dx))
+        a_uu = comm.allreduce(a_uu_local, op=MPI.SUM)
+
+        # External work: l(u) = ∫ t·u ds on tagged facet(s)
+        l_u_local = fem.assemble_scalar(fem.form(ufl.inner(t_const, u) * cfg.ds(t_tag)))
+        l_u = comm.allreduce(l_u_local, op=MPI.SUM)
+
+        # Energy balance in nondimensional units: a(u,u) ≈ l(u)
+        denom = max(abs(l_u), abs(a_uu), 1e-300)
+        rel_gap = abs(a_uu - l_u) / denom
+        assert rel_gap < 5e-9, f"Energy balance violated: a(u,u)={a_uu:.6e}, l(u)={l_u:.6e}, rel_gap={rel_gap:.3e}"
+
 
 # =============================================================================
 # Conservation Tests
@@ -405,6 +451,58 @@ class TestConservation:
         assert neg_delta > 1e-2, (
             "Negative stimulus should reduce density by at least 1%; "
             f"baseline={baseline}, mean={rho_mean_negative}, Δ={neg_delta}"
+        )
+
+    @pytest.mark.parametrize("unit_cube", [6], indirect=True)
+    def test_total_mass_conservation_zero_stimulus(self, unit_cube, facet_tags):
+        """With S=0 and natural (no-flux) boundaries, ∫ρ dx is conserved by diffusion step."""
+        comm = MPI.COMM_WORLD
+        domain = unit_cube
+        cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False)
+
+        P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
+        P1_ten = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3, 3))
+
+        Q = functionspace(domain, P1)
+        T = functionspace(domain, P1_ten)
+
+        # Non-uniform initial density to exercise diffusion but preserve mass
+        rho_old = Function(Q, name="rho_old")
+        rho_old.interpolate(lambda x: 0.6 + 0.2 * np.sin(2*np.pi*x[0]) * np.cos(2*np.pi*x[1]))
+        rho_old.x.scatter_forward()
+
+        # Isotropic direction tensor and zero stimulus
+        A_iso = Function(T, name="A")
+        A_iso.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:, None] * np.ones((1, x.shape[1])))
+        A_iso.x.scatter_forward()
+
+        S = Function(Q, name="S")
+        S.x.array[:] = 0.0
+        S.x.scatter_forward()
+
+        # Assemble initial total mass
+        m_old_local = fem.assemble_scalar(fem.form(rho_old * cfg.dx))
+        m_old = comm.allreduce(m_old_local, op=MPI.SUM)
+
+        # Solve one implicit diffusion step with natural BCs
+        rho = Function(Q, name="rho")
+        dens = DensitySolver(Q, rho_old, A_iso, S, cfg)
+        dens.solver_setup()
+        dens.update_system()
+        dens.solve(rho)
+        rho.x.scatter_forward()
+
+        m_new_local = fem.assemble_scalar(fem.form(rho * cfg.dx))
+        m_new = comm.allreduce(m_new_local, op=MPI.SUM)
+
+        rel_diff = abs(m_new - m_old) / max(abs(m_old), 1e-300)
+        # With smoothed |S| ≈ sqrt(S^2 + eps^2), at S=0 a small reaction ~eps remains.
+        # Allow a tolerance proportional to smooth_eps plus a tiny numerical margin.
+        eps = float(cfg.smooth_eps)
+        tol = max(5e-10, 5.0 * eps)
+        assert rel_diff < tol, (
+            "Total mass approximately conserved for S=0 within smoothing tolerance; "
+            f"rel_diff={rel_diff:.3e}, tol={tol:.3e} (m_old={m_old:.6e}, m_new={m_new:.6e})"
         )
 
 
