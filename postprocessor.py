@@ -17,7 +17,6 @@ class SimulationLoader:
     """Load and analyze results from a parametrizer sweep run directory.
     
     Provides MPI-parallel access to configuration, fields, and metrics.
-    Supports temporal interpolation for fields not stored at requested time.
     
     Directory structure expected:
         output_dir/
@@ -211,7 +210,7 @@ class SimulationLoader:
         return {**step_metrics, **subiters_summary}
     
     # ========================================================================
-    # Field loading (NPZ snapshots with temporal interpolation)
+    # Field loading (NPZ snapshots)
     # ========================================================================
     
     def _get_field_times(self) -> Dict[str, np.ndarray]:
@@ -273,22 +272,22 @@ class SimulationLoader:
     def get_fields_at_time(
         self,
         time_days: float,
-        interpolate: bool = True,
         fields: Optional[List[str]] = None,
     ) -> Dict[str, np.ndarray]:
-        """Load all fields at requested time, with optional interpolation.
+        """Load all fields at requested time.
         
         Args:
-            time_days: Target time in days
-            interpolate: If True, interpolate between checkpoints when exact time unavailable
+            time_days: Target time in days (must match a checkpoint)
             fields: List of field names to load (default: all four fields)
             
         Returns:
             Dictionary mapping field names to DOF value arrays
             
+        Raises:
+            ValueError: If requested time does not match any checkpoint
+            
         Note:
             Current implementation loads final state from NPZ files.
-            Full temporal interpolation requires VTX reader implementation.
         """
         if fields is None:
             fields = ["u", "rho", "S", "A"]
@@ -296,39 +295,19 @@ class SimulationLoader:
         available_times = self.get_available_times()
         
         # Check if exact time exists
-        if np.any(np.isclose(available_times, time_days, rtol=1e-9)):
-            # Exact checkpoint exists
-            exact_time = available_times[np.argmin(np.abs(available_times - time_days))]
-            result = {}
-            for field_name in fields:
-                cache_key = (field_name, exact_time)
-                if cache_key not in self._field_cache:
-                    self._field_cache[cache_key] = self._load_field_raw(field_name, exact_time)
-                result[field_name] = self._field_cache[cache_key]
-            return result
-        
-        if not interpolate:
+        if not np.any(np.isclose(available_times, time_days, rtol=1e-9)):
             raise ValueError(
-                f"Time {time_days} not found in checkpoints. "
-                f"Set interpolate=True for temporal interpolation."
+                f"Time {time_days} days not found in checkpoints. "
+                f"Available times: {available_times}"
             )
         
-        # Temporal interpolation (requires VTX reader for full implementation)
-        self.logger.warning(
-            "Temporal interpolation not yet implemented. "
-            "Returning closest checkpoint. "
-            "Full implementation requires VTX time series reader."
-        )
-        
-        # Return closest checkpoint as fallback
-        closest_idx = np.argmin(np.abs(available_times - time_days))
-        closest_time = available_times[closest_idx]
-        
+        # Load exact checkpoint
+        exact_time = available_times[np.argmin(np.abs(available_times - time_days))]
         result = {}
         for field_name in fields:
-            cache_key = (field_name, closest_time)
+            cache_key = (field_name, exact_time)
             if cache_key not in self._field_cache:
-                self._field_cache[cache_key] = self._load_field_raw(field_name, closest_time)
+                self._field_cache[cache_key] = self._load_field_raw(field_name, exact_time)
             result[field_name] = self._field_cache[cache_key]
         
         return result
@@ -338,7 +317,6 @@ class SimulationLoader:
         target: fem.Function,
         field_name: str,
         time_days: Optional[float] = None,
-        interpolate: bool = True,
     ) -> None:
         """Load field snapshot into a DOLFINx function.
         
@@ -349,7 +327,6 @@ class SimulationLoader:
             target: DOLFINx Function to populate (must have compatible element)
             field_name: Field name ('u', 'rho', 'S', 'A')
             time_days: Target time (default: use final checkpoint)
-            interpolate: Allow temporal interpolation if exact time unavailable
             
         Raises:
             RuntimeError: If element type mismatch between stored and target
