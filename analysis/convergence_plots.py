@@ -22,18 +22,18 @@ def create_spatial_convergence_plot(
     dt_fixed: float,
     output_file: Path,
 ) -> None:
-    """Create spatial convergence plot from XLSX data."""
+    """Create spatial convergence plot from XLSX data with L2 and H1 subplots."""
     # Field definitions
     fields = [
-        ("u", "Displacement"),
-        ("rho", "Density"),
-        ("S", "Stimulus"),
-        ("A", "Orientation"),
+        ("u", "Displacement", "o-"),
+        ("rho", "Density", "s-"),
+        ("S", "Stimulus", "^-"),
+        ("A", "Orientation", "d-"),
     ]
     
     # Load data from XLSX
     results = {}
-    for field_name, field_label in fields:
+    for field_name, field_label, _ in fields:
         sheet_name = f"spatial_{field_name}_dt{dt_fixed}"
         df = pd.read_excel(xlsx_file, sheet_name=sheet_name)
         results[field_name] = {
@@ -43,42 +43,51 @@ def create_spatial_convergence_plot(
             "label": field_label,
         }
     
-    # Create plot
-    fig, axes = plt.subplots(2, 4, figsize=(16, 8))
+    # Create plot with 1x2 subplots
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
     fig.suptitle(f"Spatial Convergence (dt = {dt_fixed} days)", fontsize=14)
     
-    for idx, (field_name, _) in enumerate(fields):
+    ax_l2, ax_h1 = axes
+    
+    # Plot all fields on each subplot
+    for field_name, field_label, marker in fields:
         data = results[field_name]
         h = data["h"]
         l2 = data["l2"]
         h1 = data["h1"]
-        label = data["label"]
         
-        # L2 norm
-        ax_l2 = axes[0, idx]
-        ax_l2.loglog(h, l2, "o-", label=f"{label} L2", linewidth=2, markersize=6)
-        # Reference slopes
-        if len(h) > 1:
-            ax_l2.loglog(h, l2[0] * (h / h[0]) ** 1, "--", alpha=0.5, label="O(h)")
-            ax_l2.loglog(h, l2[0] * (h / h[0]) ** 2, ":", alpha=0.5, label="O(h²)")
-        ax_l2.set_xlabel("h")
-        ax_l2.set_ylabel("L2 Error")
-        ax_l2.set_title(f"{label} - L2 Norm")
-        ax_l2.legend()
-        ax_l2.grid(True, alpha=0.3)
+        # L2 norm (left subplot)
+        ax_l2.loglog(h, l2, marker, label=field_label, linewidth=2, markersize=6)
         
-        # H1 seminorm
-        ax_h1 = axes[1, idx]
-        ax_h1.loglog(h, h1, "s-", label=f"{label} H1", linewidth=2, markersize=6)
-        # Reference slopes
-        if len(h) > 1:
-            ax_h1.loglog(h, h1[0] * (h / h[0]) ** 1, "--", alpha=0.5, label="O(h)")
-            ax_h1.loglog(h, h1[0] * (h / h[0]) ** 2, ":", alpha=0.5, label="O(h²)")
-        ax_h1.set_xlabel("h")
-        ax_h1.set_ylabel("H1 Error")
-        ax_h1.set_title(f"{label} - H1 Seminorm")
-        ax_h1.legend()
-        ax_h1.grid(True, alpha=0.3)
+        # H1 seminorm (right subplot)
+        ax_h1.loglog(h, h1, marker, label=field_label, linewidth=2, markersize=6)
+    
+    # Add reference slopes to L2 plot
+    h = results["u"]["h"]
+    l2_ref = results["u"]["l2"][0]
+    if len(h) > 1:
+        ax_l2.loglog(h, l2_ref * (h / h[0]) ** 1, "k--", alpha=0.4, linewidth=1.5, label="O(h)")
+        ax_l2.loglog(h, l2_ref * (h / h[0]) ** 2, "k:", alpha=0.4, linewidth=1.5, label="O(h²)")
+    
+    # Add reference slopes to H1 plot
+    h1_ref = results["u"]["h1"][0]
+    if len(h) > 1:
+        ax_h1.loglog(h, h1_ref * (h / h[0]) ** 1, "k--", alpha=0.4, linewidth=1.5, label="O(h)")
+        ax_h1.loglog(h, h1_ref * (h / h[0]) ** 2, "k:", alpha=0.4, linewidth=1.5, label="O(h²)")
+    
+    # Configure L2 subplot
+    ax_l2.set_xlabel("Mesh size h", fontsize=12)
+    ax_l2.set_ylabel("L2 Error", fontsize=12)
+    ax_l2.set_title("L2 Norm", fontsize=13)
+    ax_l2.legend(loc="best", fontsize=10)
+    ax_l2.grid(True, alpha=0.3, which="both")
+    
+    # Configure H1 subplot
+    ax_h1.set_xlabel("Mesh size h", fontsize=12)
+    ax_h1.set_ylabel("H1 Seminorm Error", fontsize=12)
+    ax_h1.set_title("H1 Seminorm", fontsize=13)
+    ax_h1.legend(loc="best", fontsize=10)
+    ax_h1.grid(True, alpha=0.3, which="both")
     
     plt.tight_layout()
     output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -92,18 +101,18 @@ def create_temporal_convergence_plot(
     N_fixed: int,
     output_file: Path,
 ) -> None:
-    """Create temporal convergence plot from XLSX data."""
+    """Create temporal convergence plot from XLSX data with L2 and H1 subplots."""
     # Field definitions
     fields = [
-        ("u", "Displacement"),
-        ("rho", "Density"),
-        ("S", "Stimulus"),
-        ("A", "Orientation"),
+        ("u", "Displacement", "o-"),
+        ("rho", "Density", "s-"),
+        ("S", "Stimulus", "^-"),
+        ("A", "Orientation", "d-"),
     ]
     
     # Load data from XLSX
     results = {}
-    for field_name, field_label in fields:
+    for field_name, field_label, _ in fields:
         sheet_name = f"temporal_{field_name}_N{N_fixed}"
         df = pd.read_excel(xlsx_file, sheet_name=sheet_name)
         results[field_name] = {
@@ -113,42 +122,51 @@ def create_temporal_convergence_plot(
             "label": field_label,
         }
     
-    # Create plot
-    fig, axes = plt.subplots(2, 4, figsize=(16, 8))
+    # Create plot with 1x2 subplots
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
     fig.suptitle(f"Temporal Convergence (N = {N_fixed})", fontsize=14)
     
-    for idx, (field_name, _) in enumerate(fields):
+    ax_l2, ax_h1 = axes
+    
+    # Plot all fields on each subplot
+    for field_name, field_label, marker in fields:
         data = results[field_name]
         dt = data["dt"]
         l2 = data["l2"]
         h1 = data["h1"]
-        label = data["label"]
         
-        # L2 norm
-        ax_l2 = axes[0, idx]
-        ax_l2.loglog(dt, l2, "o-", label=f"{label} L2", linewidth=2, markersize=6)
-        # Reference slopes
-        if len(dt) > 1:
-            ax_l2.loglog(dt, l2[0] * (dt / dt[0]) ** 1, "--", alpha=0.5, label="O(dt)")
-            ax_l2.loglog(dt, l2[0] * (dt / dt[0]) ** 2, ":", alpha=0.5, label="O(dt²)")
-        ax_l2.set_xlabel("dt (days)")
-        ax_l2.set_ylabel("L2 Error")
-        ax_l2.set_title(f"{label} - L2 Norm")
-        ax_l2.legend()
-        ax_l2.grid(True, alpha=0.3)
+        # L2 norm (left subplot)
+        ax_l2.loglog(dt, l2, marker, label=field_label, linewidth=2, markersize=6)
         
-        # H1 seminorm
-        ax_h1 = axes[1, idx]
-        ax_h1.loglog(dt, h1, "s-", label=f"{label} H1", linewidth=2, markersize=6)
-        # Reference slopes
-        if len(dt) > 1:
-            ax_h1.loglog(dt, h1[0] * (dt / dt[0]) ** 1, "--", alpha=0.5, label="O(dt)")
-            ax_h1.loglog(dt, h1[0] * (dt / dt[0]) ** 2, ":", alpha=0.5, label="O(dt²)")
-        ax_h1.set_xlabel("dt (days)")
-        ax_h1.set_ylabel("H1 Error")
-        ax_h1.set_title(f"{label} - H1 Seminorm")
-        ax_h1.legend()
-        ax_h1.grid(True, alpha=0.3)
+        # H1 seminorm (right subplot)
+        ax_h1.loglog(dt, h1, marker, label=field_label, linewidth=2, markersize=6)
+    
+    # Add reference slopes to L2 plot
+    dt = results["u"]["dt"]
+    l2_ref = results["u"]["l2"][0]
+    if len(dt) > 1:
+        ax_l2.loglog(dt, l2_ref * (dt / dt[0]) ** 1, "k--", alpha=0.4, linewidth=1.5, label="O(dt)")
+        ax_l2.loglog(dt, l2_ref * (dt / dt[0]) ** 2, "k:", alpha=0.4, linewidth=1.5, label="O(dt²)")
+    
+    # Add reference slopes to H1 plot
+    h1_ref = results["u"]["h1"][0]
+    if len(dt) > 1:
+        ax_h1.loglog(dt, h1_ref * (dt / dt[0]) ** 1, "k--", alpha=0.4, linewidth=1.5, label="O(dt)")
+        ax_h1.loglog(dt, h1_ref * (dt / dt[0]) ** 2, "k:", alpha=0.4, linewidth=1.5, label="O(dt²)")
+    
+    # Configure L2 subplot
+    ax_l2.set_xlabel("Time step dt (days)", fontsize=12)
+    ax_l2.set_ylabel("L2 Error", fontsize=12)
+    ax_l2.set_title("L2 Norm", fontsize=13)
+    ax_l2.legend(loc="best", fontsize=10)
+    ax_l2.grid(True, alpha=0.3, which="both")
+    
+    # Configure H1 subplot
+    ax_h1.set_xlabel("Time step dt (days)", fontsize=12)
+    ax_h1.set_ylabel("H1 Seminorm Error", fontsize=12)
+    ax_h1.set_title("H1 Seminorm", fontsize=13)
+    ax_h1.legend(loc="best", fontsize=10)
+    ax_h1.grid(True, alpha=0.3, which="both")
     
     plt.tight_layout()
     output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -159,7 +177,7 @@ def create_temporal_convergence_plot(
 
 if __name__ == "__main__":
     # Configuration
-    xlsx_file = Path("results/convergence_analysis/convergence_data.xlsx")
+    xlsx_file = Path("analysis/convergence_analysis/convergence_data.xlsx")
     output_dir = Path("manuscript/images")
     
     # Choose specific dt and N for main plots (adjust as needed)
