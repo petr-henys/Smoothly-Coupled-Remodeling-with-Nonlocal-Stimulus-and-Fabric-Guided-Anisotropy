@@ -9,10 +9,8 @@ from dolfinx import fem
 import ufl
 
 from simulation.config import Config
-from simulation.subsolvers import (MechanicsSolver, StimulusSolver,
-                        DensitySolver, DirectionSolver)
-from simulation.utils import assign, get_owned_size, collect_dirichlet_dofs
-from simulation.utils import _global_dot, current_memory_mb
+from simulation.subsolvers import MechanicsSolver, StimulusSolver, DensitySolver, DirectionSolver, unittrace_psd
+from simulation.utils import assign, get_owned_size, collect_dirichlet_dofs, _global_dot, current_memory_mb
 from simulation.logger import get_logger
 from simulation.anderson import _Anderson
 
@@ -359,8 +357,20 @@ class FixedPointSolver:
             memory_mb_local = current_memory_mb()
             memory_mb = self.comm.allreduce(memory_mb_local, op=MPI.SUM)
             memory_mb_max = self.comm.allreduce(memory_mb_local, op=MPI.MAX)
+            memory_mb_avg = memory_mb / max(self.comm.size, 1)
 
             x_raw = self._flatten_state(copy=True)
+            # --- Diagnostics: all subsolvers have conservation/balance checks ---
+            W_int_nd, W_ext_nd, energy_rel = self.mech.energy_balance_nd(self.u)
+            psi_density = 0.5 * ufl.inner(self.mech.sigma(self.u, self.rho), self.mech.eps(self.u))
+            power_abs, power_rel = self.stim.power_balance_residual(self.S, psi_density)
+            mass_abs, mass_rel = self.den.mass_balance_residual(self.rho)
+            eps_ten = self.mech.eps(self.u)
+            B = ufl.dot(ufl.transpose(eps_ten), eps_ten)
+            gdim = self.u.function_space.mesh.geometry.dim
+            Mhat_expr = unittrace_psd(B, gdim, eps=self.cfg.smooth_eps)
+            trA_avg, trMhat_avg, trace_res = self.dir.trace_balance_residual(self.A, Mhat_expr)
+
 
             # Mix iterate (Anderson or Picard)
             if accelerator is None:
@@ -381,9 +391,6 @@ class FixedPointSolver:
                 )
 
             self._restore_state(x_next)
-
-            is_picard_local = int(np.allclose(x_next, x_raw))
-            is_picard = bool(self.comm.allreduce(is_picard_local, op=MPI.MIN))
             # Always stop by Picard residual (||x_raw - x_k||_W), AA step norm is logged separately
             proj_norm = self._proj_residual_norm(x_k, x_raw, x_raw, weights)
             used_iters = itr
@@ -430,6 +437,16 @@ class FixedPointSolver:
                 "condH": float(info['condH']) if info.get('condH') is not None else float('nan'),
                 "r_norm": float(info['r_norm']) if info.get('r_norm') is not None else float('nan'),
                 "r_proxy_norm": float(info['r_proxy_norm']) if info.get('r_proxy_norm') is not None else float('nan'),
+                "energy_Wint_nd": float(W_int_nd),
+                "energy_Wext_nd": float(W_ext_nd),
+                "energy_res_rel": float(energy_rel),
+                "power_res_abs": float(power_abs),
+                "power_res_rel": float(power_rel),
+                "mass_res_abs": float(mass_abs),
+                "mass_res_rel": float(mass_rel),
+                "trace_A_avg": float(trA_avg),
+                "trace_Mhat_avg": float(trMhat_avg),
+                "trace_res": float(trace_res),
                 "mech_time": float(mech_t),
                 "stim_time": float(stim_t),
                 "dens_time": float(dens_t),
@@ -443,6 +460,8 @@ class FixedPointSolver:
                 "dens_iters": int(dens_iters),
                 "dir_iters": int(dir_iters),
                 "memory_mb": float(memory_mb),
+                "memory_mb_sum": float(memory_mb),
+                "memory_mb_avg": float(memory_mb_avg),
                 "memory_mb_max": float(memory_mb_max),
             }
             

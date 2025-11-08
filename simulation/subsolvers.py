@@ -13,6 +13,7 @@ from dolfinx.fem.petsc import (
     create_matrix,
     create_vector,
 )
+from dolfinx import default_scalar_type
 import ufl
 
 from simulation.utils import build_nullspace
@@ -293,6 +294,28 @@ class MechanicsSolver(_BaseLinearSolver):
         psi_nd = self.comm.allreduce(psi_local_nd, op=MPI.SUM)
         # Scale to physical units [J/m^3] once
         return float((psi_nd / max(vol, 1e-300)) * self.cfg.psi_c)
+    
+    def energy_balance_nd(self, u_func: fem.Function) -> tuple[float, float, float]:
+        u_func.x.scatter_forward()
+        self.rho.x.scatter_forward()
+
+        sigma_u = self.sigma(u_func, self.rho)
+        eps_u = self.eps(u_func)
+
+        Wint_local = fem.assemble_scalar(fem.form(ufl.inner(sigma_u, eps_u) * self.dx))
+        W_int_nd = float(self.comm.allreduce(Wint_local, op=MPI.SUM))
+
+        zero_vec = fem.Constant(self.mesh, (0.0,) * self.gdim)
+        Wext_form = ufl.inner(zero_vec, u_func) * self.ds
+        if hasattr(self, "neumanns") and self.neumanns:
+            for t, tag in self.neumanns:
+                Wext_form = Wext_form + ufl.inner(t, u_func) * self.ds(tag)
+        Wext_local = fem.assemble_scalar(fem.form(Wext_form))
+        W_ext_nd = float(self.comm.allreduce(Wext_local, op=MPI.SUM))
+
+        rel_err = abs(W_ext_nd - W_int_nd) / max(W_ext_nd, W_int_nd, 1e-30)
+        return W_int_nd, W_ext_nd, rel_err
+
 
 
 # --------------------------- Stimulus S --------------------------------------
@@ -354,6 +377,29 @@ class StimulusSolver(_BaseLinearSolver):
         its, reason = self._solve(S_func)
         self._maybe_warn(reason, "Stimulus")
         return its, reason
+
+    def power_balance_residual(self, S_current: fem.Function, psi_expr) -> tuple[float, float]:
+        """Power balance check: storage + decay ≈ source + diffusion flux."""
+        S_current.x.scatter_forward()
+        self.S_old.x.scatter_forward()
+        one = fem.Constant(self.mesh, default_scalar_type(1.0))
+        dt_val = float(self.cfg.dt_nd.value)
+        # Storage term: c_S * (S - S_old)/dt
+        storage_loc = fem.assemble_scalar(fem.form((self.cfg.cS_c / dt_val) * (S_current - self.S_old) * one * self.dx))
+        storage = float(self.comm.allreduce(storage_loc, op=MPI.SUM))
+        # Decay term: tau_S * S
+        decay_loc = fem.assemble_scalar(fem.form(self.cfg.tauS_c * S_current * one * self.dx))
+        decay = float(self.comm.allreduce(decay_loc, op=MPI.SUM))
+        # Source term: r_S * (psi - psi_ref)
+        source_loc = fem.assemble_scalar(fem.form(self.cfg.rS_gain_c * (psi_expr - self.cfg.psi_ref_nd) * one * self.dx))
+        source = float(self.comm.allreduce(source_loc, op=MPI.SUM))
+        # Diffusion flux through domain (should be ~0 with Neumann BCs)
+        flux_loc = fem.assemble_scalar(fem.form(self.cfg.kappaS_c * ufl.inner(ufl.grad(S_current), ufl.grad(S_current)) * self.dx))
+        flux = float(self.comm.allreduce(flux_loc, op=MPI.SUM))
+        # Residual: (storage + decay) - (source + 0) since ∫∇·(κ∇S) = 0 with Neumann BC
+        R = (storage + decay) - source
+        denom = abs(storage) + abs(decay) + abs(source) + 1e-30
+        return abs(R), abs(R) / denom
 
 
 # --------------------------- Density rho -------------------------------------
@@ -444,6 +490,31 @@ class DensitySolver(_BaseLinearSolver):
         self._maybe_warn(reason, "Density")
         rho_func.x.scatter_forward()
         return its, reason
+    
+    def mass_balance_residual(self, rho_current: fem.Function) -> tuple[float, float]:
+        """Mass balance check for density: returns (abs_residual, relative_error) in ND units."""
+        rho_current.x.scatter_forward()
+        self.rho_old.x.scatter_forward()
+        self.S.x.scatter_forward()
+        self.A_field.x.scatter_forward()
+        one = fem.Constant(self.mesh, default_scalar_type(1.0))
+        M_new_loc = fem.assemble_scalar(fem.form(rho_current * one * self.dx))
+        M_old_loc = fem.assemble_scalar(fem.form(self.rho_old * one * self.dx))
+        M_new = float(self.comm.allreduce(M_new_loc, op=MPI.SUM))
+        M_old = float(self.comm.allreduce(M_old_loc, op=MPI.SUM))
+        S = self.S
+        Sabs = smooth_abs(S, self.smooth_eps)
+        Splus = 0.5 * (S + Sabs)
+        Sminus = 0.5 * (Sabs - S)
+        decay_loc = fem.assemble_scalar(fem.form(Sabs * rho_current * self.dx))
+        src_loc = fem.assemble_scalar(fem.form((Splus * self.cfg.rho_max_nd + Sminus * self.cfg.rho_min_nd) * self.dx))
+        decay = float(self.comm.allreduce(decay_loc, op=MPI.SUM))
+        src = float(self.comm.allreduce(src_loc, op=MPI.SUM))
+        dt_val = float(self.cfg.dt_nd.value)
+        R = (M_new - M_old) / max(dt_val, 1e-30) + decay - src
+        denom = abs((M_new - M_old) / max(dt_val, 1e-30)) + abs(decay) + abs(src) + 1e-30
+        return abs(R), abs(R) / denom
+
 
 
 # --------------------------- Direction tensor A -------------------------------
@@ -510,3 +581,18 @@ class DirectionSolver(_BaseLinearSolver):
         its, reason = self._solve(A_func)
         self._maybe_warn(reason, "Direction")
         return its, reason
+
+    def trace_balance_residual(self, A_current: fem.Function, Mhat_expr) -> tuple[float, float, float]:
+        """Trace conservation check: tr(A) should relax to tr(M̂)=1."""
+        A_current.x.scatter_forward()
+        mesh = A_current.function_space.mesh
+        one = fem.Constant(mesh, default_scalar_type(1.0))
+        # Volume-averaged trace of A
+        trA_loc = fem.assemble_scalar(fem.form(ufl.tr(A_current) * one * self.dx))
+        trA_vol = float(self.comm.allreduce(trA_loc, op=MPI.SUM)) / self.total_vol
+        # Volume-averaged trace of M̂ (should be 1 by construction)
+        trMhat_loc = fem.assemble_scalar(fem.form(ufl.tr(Mhat_expr) * one * self.dx))
+        trMhat_vol = float(self.comm.allreduce(trMhat_loc, op=MPI.SUM)) / self.total_vol
+        # Residual: how far tr(A) deviates from target tr(M̂)
+        R = trA_vol - trMhat_vol
+        return trA_vol, trMhat_vol, abs(R)

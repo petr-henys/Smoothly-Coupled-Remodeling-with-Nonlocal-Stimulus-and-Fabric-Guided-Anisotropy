@@ -1,32 +1,26 @@
-from dolfinx import fem, la, mesh, default_scalar_type
-
-from petsc4py import PETSc
-import numpy as np
 from typing import List, Tuple
-from mpi4py import MPI
 import resource
 
-from ufl import FunctionSpace
+from dolfinx import fem, la, mesh, default_scalar_type
+from dolfinx.fem import FunctionSpace
+from petsc4py import PETSc
+import numpy as np
+from mpi4py import MPI
 
 dtype = PETSc.ScalarType
 
 def build_nullspace(V: FunctionSpace):
-    """Build PETSc nullspace for 3D elasticity"""
-
-    # Create vectors that will span the nullspace
+    """Build PETSc nullspace for 3D elasticity."""
     bs = V.dofmap.index_map_bs
     length0 = V.dofmap.index_map.size_local
     basis = [la.vector(V.dofmap.index_map, bs=bs, dtype=dtype) for i in range(6)]
     b = [b.array for b in basis]
 
-    # Get dof indices for each subspace (x, y and z dofs)
     dofs = [V.sub(i).dofmap.list.flatten() for i in range(3)]
 
-    # Set the three translational rigid body modes
     for i in range(3):
         b[i][dofs[i]] = 1.0
 
-    # Set the three rotational rigid body modes
     x = V.tabulate_dof_coordinates()
     dofs_block = V.dofmap.list.flatten()
     x0, x1, x2 = x[dofs_block, 0], x[dofs_block, 1], x[dofs_block, 2]
@@ -49,11 +43,7 @@ def compute_principal_dirs_and_vals_vec(
     V_vec: fem.FunctionSpace,
     Q_sca: fem.FunctionSpace,
 ) -> Tuple[List[fem.Function], List[fem.Function]]:
-    """Nodewise eigen-decomposition of tensor field A via NumPy.
-
-    Returns a pair of lists (eigvecs, eigvals) sorted by descending eigenvalue.
-    """
-    # Ensure ghosts are up-to-date before reading arrays
+    """Nodewise eigen-decomposition of tensor field A via NumPy."""
     A_func.x.scatter_forward()
 
     T = A_func.function_space
@@ -62,7 +52,6 @@ def compute_principal_dirs_and_vals_vec(
 
     nT = T.dofmap.index_map.size_local
     bsT = T.dofmap.index_map_bs
-
     nV = V_vec.dofmap.index_map.size_local
     bsV = V_vec.dofmap.index_map_bs
     nQ = Q_sca.dofmap.index_map.size_local
@@ -126,11 +115,10 @@ def build_facetag(m: mesh.Mesh) -> mesh.MeshTags:
 def build_dirichlet_bcs(
     V: fem.FunctionSpace, facet_tags: mesh.MeshTags, id_tag: int, value: float = 0.0
 ) -> List[fem.DirichletBC]:
-    """Homogeneous Dirichlet on facets with tag id_tag (MPI-safe, component-wise)."""
+    """Homogeneous Dirichlet on facets with tag id_tag."""
     fdim = V.mesh.topology.dim - 1
     facets = facet_tags.find(id_tag)
     bcs = []
-    # Use direct subspace dofs; collapse/tuple indexing not needed
     for i in range(V.mesh.geometry.dim):
         Vi = V.sub(i)
         dofs = fem.locate_dofs_topological(Vi, fdim, facets)
@@ -152,14 +140,13 @@ def assign(f: fem.Function, v) -> None:
     f.x.scatter_forward()
 
 def get_owned_size(field: fem.Function) -> int:
-    """Return count of locally owned scalar DOFs (including block size)."""
+    """Return count of locally owned scalar DOFs."""
     return int(field.function_space.dofmap.index_map.size_local * field.function_space.dofmap.index_map_bs)
 
 def collect_dirichlet_dofs(bcs, n_owned: int) -> np.ndarray:
-    """Return unique owned Dirichlet DOFs (DOLFINx 0.9+)."""
+    """Return unique owned Dirichlet DOFs."""
     chunks = []
     for bc in bcs:
-        # DOLFINx 0.9+ returns (indices, first_ghost)
         idx, first_ghost = bc.dof_indices()
         owned = idx[:first_ghost]
         if owned.size:
@@ -170,11 +157,11 @@ def collect_dirichlet_dofs(bcs, n_owned: int) -> np.ndarray:
 
 
 def _global_dot(comm: MPI.Comm, a: np.ndarray, b: np.ndarray) -> float:
-    """MPI global dot product over local vectors."""
+    """MPI global dot product."""
     return comm.allreduce(float(a @ b), op=MPI.SUM)
 
-
 def _global_norm(comm: MPI.Comm, v: np.ndarray) -> float:
+    """MPI global norm."""
     return _global_dot(comm, v, v) ** 0.5
 
 def current_memory_mb() -> float:

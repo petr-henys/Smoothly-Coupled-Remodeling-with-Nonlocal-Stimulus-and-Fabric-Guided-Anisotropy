@@ -1,19 +1,4 @@
-"""
-Universal storage system for field I/O and metrics tracking.
-
-Clean design principles:
-- VTXWriter detects function types (scalar/vector/tensor) automatically
-- Register field groups once, write by key
-- MPI-aware: field writes are COLLECTIVE, metrics are rank-0 only
-- No try/except, no fallbacks, no legacy code
-
-Usage:
-    storage = UnifiedStorage(cfg)
-    storage.fields.register("u", [u_function])
-    storage.fields.register("scalars", [rho, S])
-    storage.fields.write("u", time_days)
-    storage.fields.write("scalars", time_days)
-"""
+"""Universal storage system for field I/O and metrics tracking."""
 
 from __future__ import annotations
 

@@ -3,10 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field, fields
 from typing import Optional, TYPE_CHECKING
 
-
 from dolfinx import fem, mesh, default_scalar_type
 import ufl
-
 
 if TYPE_CHECKING:
     from simulation.telemetry import Telemetry
@@ -77,6 +75,10 @@ class Config:
     restart_on_stall: float = 1.10           # restart if Picard residual stalls vs. best by this factor
     restart_on_cond: float = 1e12            # restart if Gram conditioning exceeds this
     step_limit_factor: float = 2.0           # limit ||AA step|| <= factor * ||new Picard residual||
+
+    # Nitsche method parameters for KUBC homogenizer
+    nitsche_alpha: float = 30.0
+    nitsche_theta: float = 1.0
 
     # Subiteration bounds per external step
     max_subiters: int = 50

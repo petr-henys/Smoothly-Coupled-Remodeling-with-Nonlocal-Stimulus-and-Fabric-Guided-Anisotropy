@@ -84,22 +84,18 @@ class _Anderson:
         p = H.shape[0]
         if p == 0:
             return np.zeros(0, dtype=float)
-        # Solve (H+lam I) y = 1
         Hp = H + lam_eff * np.eye(p)
         one = np.ones(p, dtype=float)
         try:
             y = np.linalg.solve(Hp, one)
         except np.linalg.LinAlgError:
-            # Robust fallback: symmetric eigendecomposition with clip
             w, V = np.linalg.eigh(Hp + 1e-15 * np.eye(p))
             w = np.clip(w, 1e-15, None)
             y = V @ (V.T @ one / w)
         denom = float(one @ y)
         if abs(denom) < 1e-30:
-            # Degenerate case → uniform weights
             return np.full(p, 1.0 / p, dtype=float)
-        alpha = y / denom
-        return alpha
+        return y / denom
 
 
     def _condition_number(self, H: np.ndarray, lam_eff: float) -> float:
@@ -176,11 +172,12 @@ class _Anderson:
             y += a_i * (xi + self.beta * ri)
         s = y - x_old
 
-        # Limit step size
-        s_norm = _global_norm(self.comm, s)
-        r_norm_raw = _global_norm(self.comm, r) + 1e-300
-        if s_norm > self.step_limit_factor * r_norm_raw:
-            s *= (self.step_limit_factor * r_norm_raw) / s_norm
+        # Limit step size using the same metric as safeguarding (explicit, no fallbacks)
+        if proj_residual_norm is not None:
+            s_proxy = proj_residual_norm(x_old, x_old + s, x_raw)
+            r_proxy = proj_residual_norm(x_old, x_raw, x_raw) + 1e-300
+            if s_proxy > self.step_limit_factor * r_proxy:
+                s *= (self.step_limit_factor * r_proxy) / max(s_proxy, 1e-300)
 
         x_cand = x_old + s
 

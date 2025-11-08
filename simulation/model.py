@@ -2,25 +2,24 @@
 
 import sys
 from pathlib import Path
-
-# Add parent directory to sys.path for script execution
-_repo_root = Path(__file__).resolve().parent.parent
-if str(_repo_root) not in sys.path:
-    sys.path.insert(0, str(_repo_root))
+from typing import Dict, Tuple, List, Optional
 
 import numpy as np
 from mpi4py import MPI
 import basix
 from dolfinx import mesh, fem
 from dolfinx.fem import Function, functionspace
-from typing import Dict, Tuple, List, Optional
+
+# Add parent directory to sys.path for script execution
+_repo_root = Path(__file__).resolve().parent.parent
+if str(_repo_root) not in sys.path:
+    sys.path.insert(0, str(_repo_root))
 
 from simulation.storage import UnifiedStorage
 from simulation.logger import get_logger, Level
 from simulation.utils import build_dirichlet_bcs, build_facetag, assign, current_memory_mb
 from simulation.config import Config
-from simulation.subsolvers import (MechanicsSolver, StimulusSolver,
-                        DensitySolver, DirectionSolver)
+from simulation.subsolvers import MechanicsSolver, StimulusSolver, DensitySolver, DirectionSolver
 from simulation.fixedsolver import FixedPointSolver
 
 _SCALED_MESH_IDS: set[int] = set()

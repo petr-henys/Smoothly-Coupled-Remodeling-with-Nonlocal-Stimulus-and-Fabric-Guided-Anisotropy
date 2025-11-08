@@ -862,4 +862,185 @@ class TestBoundaryConditions:
         assert u_x_avg < -1e-10, f"Compression load should yield negative x-displacement, got {u_x_avg}"
 
 
+# =============================================================================
+# Conservation and Balance Check Tests
+# =============================================================================
+
+class TestConservationChecks:
+    """Test physical conservation/balance checks for all subsolvers."""
+    
+    @pytest.mark.parametrize("unit_cube", [6], indirect=True)
+    def test_mechanics_energy_balance(self, unit_cube, traction_factory):
+        """MechanicsSolver: Internal work should equal external work (W_int ≈ W_ext)."""
+        comm = MPI.COMM_WORLD
+        domain = unit_cube
+        facet_tags = build_facetag(domain)
+        cfg = Config(domain=domain, facet_tags=facet_tags, verbose=(comm.rank == 0))
+        
+        P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3,))
+        P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
+        P1_ten = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3, 3))
+        
+        V = functionspace(domain, P1_vec)
+        Q = functionspace(domain, P1)
+        T = functionspace(domain, P1_ten)
+        
+        u = Function(V, name="u")
+        rho = Function(Q, name="rho")
+        rho.x.array[:] = 0.6
+        rho.x.scatter_forward()
+        
+        A = Function(T, name="A")
+        A.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:, None] * np.ones((1, x.shape[1])))
+        A.x.scatter_forward()
+        
+        # Apply traction load
+        traction = traction_factory(-0.1, facet_id=2, axis=0)
+        
+        bc_mech = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
+        mech = MechanicsSolver(V, rho, A, bc_mech, [traction], cfg)
+        
+        mech.solver_setup()
+        mech.solve(u)
+        
+        # Check energy balance
+        W_int, W_ext, rel_error = mech.energy_balance_nd(u)
+        
+        assert rel_error < 0.05, (
+            f"Energy balance violated: W_int={W_int:.3e}, W_ext={W_ext:.3e}, rel_error={rel_error:.3e}"
+        )
+    
+    @pytest.mark.parametrize("unit_cube", [6], indirect=True)
+    def test_stimulus_power_balance(self, unit_cube):
+        """StimulusSolver: Power balance (storage + decay ≈ source)."""
+        comm = MPI.COMM_WORLD
+        domain = unit_cube
+        facet_tags = build_facetag(domain)
+        cfg = Config(domain=domain, facet_tags=facet_tags, verbose=(comm.rank == 0))
+        cfg.set_dt_dim(10.0)  # 10 days
+        
+        P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
+        Q = functionspace(domain, P1)
+        
+        S_old = Function(Q, name="S_old")
+        S_old.x.array[:] = 0.1  # Initial positive stimulus
+        S_old.x.scatter_forward()
+        
+        from simulation.subsolvers import StimulusSolver
+        stim = StimulusSolver(Q, S_old, cfg)
+        stim.solver_setup()
+        
+        # Create a psi field (supra-homeostatic in one region)
+        psi_expr = fem.Constant(domain, 1.2 * float(cfg.psi_ref_nd))
+        
+        S_new = Function(Q, name="S_new")
+        stim.update_rhs(psi_expr)
+        stim.solve(S_new)
+        
+        # Check power balance
+        power_abs, power_rel = stim.power_balance_residual(S_new, psi_expr)
+        
+        # Relaxed tolerance - small timestep can cause numerical errors
+        assert power_rel < 0.1, (
+            f"Stimulus power balance violated: abs={power_abs:.3e}, rel={power_rel:.3e}"
+        )
+    
+    @pytest.mark.parametrize("unit_cube", [6], indirect=True)
+    def test_density_mass_balance(self, unit_cube):
+        """DensitySolver: Mass conservation (dM/dt + decay ≈ source)."""
+        comm = MPI.COMM_WORLD
+        domain = unit_cube
+        facet_tags = build_facetag(domain)
+        cfg = Config(domain=domain, facet_tags=facet_tags, verbose=(comm.rank == 0))
+        cfg.set_dt_dim(10.0)
+        
+        P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
+        P1_ten = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3, 3))
+        Q = functionspace(domain, P1)
+        T = functionspace(domain, P1_ten)
+        
+        rho_old = Function(Q, name="rho_old")
+        rho_old.x.array[:] = 0.5
+        rho_old.x.scatter_forward()
+        
+        A = Function(T, name="A")
+        A.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:, None] * np.ones((1, x.shape[1])))
+        A.x.scatter_forward()
+        
+        S = Function(Q, name="S")
+        S.x.array[:] = 0.2  # Positive stimulus -> formation
+        S.x.scatter_forward()
+        
+        dens = DensitySolver(Q, rho_old, A, S, cfg)
+        dens.solver_setup()
+        
+        rho_new = Function(Q, name="rho_new")
+        dens.update_system()
+        dens.solve(rho_new)
+        
+        # Check mass balance
+        mass_abs, mass_rel = dens.mass_balance_residual(rho_new)
+        
+        assert mass_rel < 0.05, (
+            f"Density mass balance violated: abs={mass_abs:.3e}, rel={mass_rel:.3e}"
+        )
+    
+    @pytest.mark.parametrize("unit_cube", [6], indirect=True)
+    def test_direction_trace_balance(self, unit_cube):
+        """DirectionSolver: Trace conservation (tr(A) → tr(M̂) = 1)."""
+        comm = MPI.COMM_WORLD
+        domain = unit_cube
+        facet_tags = build_facetag(domain)
+        cfg = Config(domain=domain, facet_tags=facet_tags, verbose=(comm.rank == 0))
+        cfg.set_dt_dim(10.0)
+        
+        P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3,))
+        P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
+        P1_ten = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3, 3))
+        
+        V = functionspace(domain, P1_vec)
+        Q = functionspace(domain, P1)
+        T = functionspace(domain, P1_ten)
+        
+        A_old = Function(T, name="A_old")
+        A_old.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:, None] * np.ones((1, x.shape[1])))
+        A_old.x.scatter_forward()
+        
+        dir_solver = DirectionSolver(T, A_old, cfg)
+        dir_solver.solver_setup()
+        
+        # Create simple displacement field
+        u = Function(V, name="u")
+        u.interpolate(lambda x: np.vstack([0.01*x[0], 0.005*x[1], 0.002*x[2]]))
+        u.x.scatter_forward()
+        
+        # Create MechanicsSolver for eps() method
+        rho = Function(Q, name="rho")
+        rho.x.array[:] = 0.6
+        rho.x.scatter_forward()
+        
+        bc_mech = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
+        mech = MechanicsSolver(V, rho, A_old, bc_mech, [], cfg)
+        
+        A_new = Function(T, name="A_new")
+        dir_solver.update_rhs(mech, u)
+        dir_solver.solve(A_new)
+        
+        # Create M̂ expression
+        eps_ten = mech.eps(u)
+        B = ufl.dot(ufl.transpose(eps_ten), eps_ten)
+        Mhat_expr = unittrace_psd(B, domain.geometry.dim, eps=cfg.smooth_eps)
+        
+        # Check trace balance
+        trA_avg, trMhat_avg, trace_res = dir_solver.trace_balance_residual(A_new, Mhat_expr)
+        
+        # tr(M̂) should be 1 by construction
+        assert abs(trMhat_avg - 1.0) < 0.01, f"tr(M̂) should be 1, got {trMhat_avg:.3f}"
+        
+        # tr(A) should relax toward 1 (may not be exact in one step)
+        assert abs(trA_avg - 1.0) < 0.3, (
+            f"tr(A) should approach 1, got {trA_avg:.3f} (residual={trace_res:.3e})"
+        )
+
+
 # No __main__ runner needed; tests executed via pytest
