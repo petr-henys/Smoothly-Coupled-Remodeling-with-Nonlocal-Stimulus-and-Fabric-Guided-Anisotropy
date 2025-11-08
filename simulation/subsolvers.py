@@ -148,7 +148,6 @@ class _BaseLinearSolver:
         opts[f"{prefix}_ksp_atol"] = self.cfg.ksp_atol
         opts[f"{prefix}_ksp_max_it"] = self.cfg.ksp_max_it
 
-        pc = self.ksp.getPC()
         self.ksp.setInitialGuessNonzero(True)
         self.ksp.setOperators(self.A)
 
