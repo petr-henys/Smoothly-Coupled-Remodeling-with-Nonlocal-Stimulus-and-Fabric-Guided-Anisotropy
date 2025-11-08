@@ -89,14 +89,11 @@ if __name__ == "__main__":
     comm = MPI.COMM_WORLD
     sweep = ParameterSweep(
         params={
-            "N": [36],
-            "dt_days": [25.0],
             "smooth_eps": [1e-8, 1e-5, 1e-3],
             "ell_dim": [0.1, 0.2, 0.3],
             "kappaS_dim": [1e-5, 1e-4],
             "beta_par_dim": [1e-6, 1e-5, 1e-4],
-            "beta_perp_dim": [1e-6, 1e-5, 1e-4],
-            "total_time_days": [500.0],
+            "beta_perp_dim": [1e-6, 1e-5, 1e-4]
         },
         base_output_dir=BASE_DIR,
         metadata={"analysis": "regularity", "description": "smoothing + physics sweep"},

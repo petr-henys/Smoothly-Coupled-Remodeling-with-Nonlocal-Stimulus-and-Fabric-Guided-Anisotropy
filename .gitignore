@@ -6,11 +6,13 @@
 !/tests/
 !/manuscript/
 !/analysis/
+!/examples/
 
 # Allow root-level files
 !/.gitignore
 !/README.md
 !/parametrizer.py
+!/postprocessor.py
 
 # Python cache
 __pycache__/

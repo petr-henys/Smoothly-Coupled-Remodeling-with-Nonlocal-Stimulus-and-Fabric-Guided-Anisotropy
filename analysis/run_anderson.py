@@ -37,14 +37,13 @@ def run_anderson(param_point: Dict[str, Any], output_path: Path, comm: MPI.Comm)
     Expected keys in param_point:
       - N, dt_days, accel_type, m, beta, total_time_days, coupling_tol, max_subiters
     """
-    N = int(param_point["N"])
+    N = 24
+    total_time_days = 1000.0
+    coupling_tol = 1e-8
+    max_subiters = 100
     dt_days = float(param_point["dt_days"])
     accel_type = str(param_point["accel_type"])
-    m = int(param_point["m"])
-    beta = float(param_point["beta"])
-    total_time_days = float(param_point["total_time_days"])
-    coupling_tol = float(param_point["coupling_tol"])
-    max_subiters = int(param_point["max_subiters"])
+
 
     # Mesh
     domain = mesh.create_unit_cube(
@@ -63,11 +62,9 @@ def run_anderson(param_point: Dict[str, Any], output_path: Path, comm: MPI.Comm)
         coupling_tol=coupling_tol,
         max_subiters=max_subiters,
         accel_type=accel_type,
-        m=m,
-        beta=beta,
         restart_on_cond=1e12,
         saving_interval=5,
-        coupling_each_iter=True,  # Track coupling strength
+        coupling_each_iter=False,  # Track coupling strength
         coupling_eps=1e-3,
     )
 
@@ -77,7 +74,7 @@ def run_anderson(param_point: Dict[str, Any], output_path: Path, comm: MPI.Comm)
         
         # Save final field states as NPZ
         if comm.rank == 0:
-            print(f"Saving NPZ for {accel_type} m={m} beta={beta} dt={dt_days}")
+            print(f"Saving NPZ for {accel_type} dt={dt_days}")
         
         save_function_npz(remodeller.u, output_path / "u.npz", comm)
         save_function_npz(remodeller.rho, output_path / "rho.npz", comm)
@@ -89,14 +86,8 @@ if __name__ == "__main__":
     comm = MPI.COMM_WORLD
     sweep = ParameterSweep(
         params={
-            "N": [24],
             "dt_days": [25.0, 50.0, 100.0],
             "accel_type": ["picard", "anderson"],
-            "m": [4, 8, 12],
-            "beta": [0.5, 1.0, 1.5],
-            "total_time_days": [1000],
-            "coupling_tol": [1e-8],
-            "max_subiters": [100],
         },
         base_output_dir=BASE_DIR,
         metadata={"analysis": "anderson", "description": "Anderson vs Picard comparison"},

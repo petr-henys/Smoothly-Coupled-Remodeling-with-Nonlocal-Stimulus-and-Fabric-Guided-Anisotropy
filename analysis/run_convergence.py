@@ -31,15 +31,12 @@ def run_remodeller(
     
     Args:
         param_point: Parameter dictionary (must contain all required params: 
-                    'N', 'dt_days', 'total_time_days', 'coupling_tol', 'max_subiters')
+                    'N', 'dt_days')
         output_path: Output directory for this run
         comm: MPI communicator
     """
     N = param_point["N"]
     dt_days = param_point["dt_days"]
-    total_time_days = param_point["total_time_days"]
-    coupling_tol = param_point["coupling_tol"]
-    max_subiters = param_point["max_subiters"]
     
     # Create mesh
     domain = mesh.create_unit_cube(
@@ -55,13 +52,13 @@ def run_remodeller(
         results_dir=str(output_path),
         enable_telemetry=True,
         verbose=False,
-        coupling_tol=coupling_tol,
-        max_subiters=max_subiters,
+        coupling_tol=1e-8,
+        max_subiters=100,
     )
     
     # Run simulation (telemetry saves all metrics automatically)
     with Remodeller(cfg) as remodeller:
-        remodeller.simulate(dt=dt_days, total_time=total_time_days)
+        remodeller.simulate(dt=dt_days, total_time=1000.0)
         
         # Save final field states as NPZ for convergence analysis
         if comm.rank == 0:
@@ -80,11 +77,8 @@ if __name__ == "__main__":
     
     sweep = ParameterSweep(
         params={
-            "N": [16, 24, 36, 54, 81],
-            "dt_days": [6.25, 12.5, 25.0, 50.0, 100.0],
-            "total_time_days": [1000.],
-            "coupling_tol": [1e-8],
-            "max_subiters": [100]
+            "N": [16, 24, 36, 54],
+            "dt_days": [6.25, 12.5, 25.0, 50.0, 100.0]
         },
         base_output_dir=base_dir,
     )
