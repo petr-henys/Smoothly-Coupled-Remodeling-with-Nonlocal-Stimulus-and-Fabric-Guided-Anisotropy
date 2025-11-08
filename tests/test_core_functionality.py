@@ -25,7 +25,6 @@ from mpi4py import MPI
 from dolfinx import mesh, fem
 from dolfinx.fem import Function, functionspace
 import basix
-from pathlib import Path
 
 from simulation.config import Config
 from simulation.utils import build_facetag, build_dirichlet_bcs

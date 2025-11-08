@@ -23,8 +23,7 @@ import basix.ufl
 from analysis.utils import (
     save_function_npz,
     load_field_from_npz,
-    compute_richardson_triplets_qoi,
-    GCI_SAFETY_FACTOR
+    compute_richardson_triplets_qoi
 )
 
 

@@ -29,7 +29,6 @@ np.random.seed(1234)
 from mpi4py import MPI
 from dolfinx import fem
 from dolfinx.fem import Function
-import ufl
 
 from simulation.config import Config
 from simulation.utils import build_facetag
@@ -752,3 +751,43 @@ def test_density_matrix_psd_action():
     dens.A.mult(z, y)
     energy = z.dot(y)
     assert energy >= -1e-12, f"Density operator not PSD: x^T A x = {energy}"
+
+
+@pytest.mark.unit
+def test_mechanics_matrix_symmetry_rayleigh_psd_small():
+    """(Lightweight) K ≈ K^T and z^T K z ≥ 0 on tiny mesh."""
+    from mpi4py import MPI
+    import numpy as np
+    from dolfinx import mesh, fem
+    from petsc4py import PETSc
+    from dolfinx.fem.petsc import assemble_matrix, create_matrix
+    import ufl
+    from config import Config
+    from subsolvers import MechanicsSolver
+    from utils import build_facetag, build_dirichlet_bcs
+
+    comm = MPI.COMM_WORLD
+    m = mesh.create_unit_cube(comm, 4, 4, 4, mesh.CellType.hexahedron, mesh.GhostMode.shared_facet)
+    facets = build_facetag(m)
+    V = fem.functionspace(m, mesh.ufl.element("Lagrange", m.topology.cell_name(), 1, shape=(3,)))
+    Q = fem.functionspace(m, mesh.ufl.element("Lagrange", m.topology.cell_name(), 1))
+    T = fem.functionspace(m, mesh.ufl.element("Lagrange", m.topology.cell_name(), 1, shape=(3,3)))
+
+    rho = fem.Function(Q); rho.x.array[:] = 1.0; rho.x.scatter_forward()
+    A = fem.Function(T); A.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:, None] * np.ones((1, x.shape[1]))); A.x.scatter_forward()
+
+    cfg = Config(domain=m, facet_tags=facets, verbose=False); cfg.xi_aniso = 0.0; cfg._build_constants()
+    bcs = build_dirichlet_bcs(V, facets, id_tag=1, value=0.0)
+
+    mech = MechanicsSolver(V, rho, A, bcs, [], cfg)
+    K = create_matrix(mech.a_form); assemble_matrix(K, mech.a_form, bcs=bcs); K.assemble()
+
+    KT = K.transpose()
+    diff = K.copy(); diff.axpy(-1.0, KT, structure=PETSc.Mat.Structure.SUBSET_NONZERO_PATTERN); diff.assemble()
+    # Use PETSc Frobenius norms to avoid implementing custom operator norms
+    nK = K.norm(); nDiff = diff.norm()
+    assert nDiff / max(1e-16, nK) < 1e-10
+
+    z = K.createVecLeft(); z.setRandom()
+    y = K.createVecLeft(); K.mult(z, y)
+    assert z.dot(y) >= -1e-10

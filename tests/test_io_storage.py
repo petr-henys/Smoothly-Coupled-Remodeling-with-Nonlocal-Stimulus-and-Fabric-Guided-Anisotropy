@@ -29,8 +29,7 @@ pytest.importorskip("mpi4py")
 import numpy as np
 from mpi4py import MPI
 from dolfinx import mesh, fem
-from dolfinx.fem import Function, functionspace
-import basix
+from dolfinx.fem import Function
 from pathlib import Path
 import tempfile
 import csv as csv_module
