@@ -761,17 +761,18 @@ def test_mechanics_matrix_symmetry_rayleigh_psd_small():
     from dolfinx import mesh, fem
     from petsc4py import PETSc
     from dolfinx.fem.petsc import assemble_matrix, create_matrix
+    import basix
     import ufl
-    from config import Config
-    from subsolvers import MechanicsSolver
-    from utils import build_facetag, build_dirichlet_bcs
+    from simulation.config import Config
+    from simulation.subsolvers import MechanicsSolver
+    from simulation.utils import build_facetag, build_dirichlet_bcs
 
     comm = MPI.COMM_WORLD
-    m = mesh.create_unit_cube(comm, 4, 4, 4, mesh.CellType.hexahedron, mesh.GhostMode.shared_facet)
+    m = mesh.create_unit_cube(comm, 4, 4, 4, cell_type=mesh.CellType.hexahedron, ghost_mode=mesh.GhostMode.shared_facet)
     facets = build_facetag(m)
-    V = fem.functionspace(m, mesh.ufl.element("Lagrange", m.topology.cell_name(), 1, shape=(3,)))
-    Q = fem.functionspace(m, mesh.ufl.element("Lagrange", m.topology.cell_name(), 1))
-    T = fem.functionspace(m, mesh.ufl.element("Lagrange", m.topology.cell_name(), 1, shape=(3,3)))
+    V = fem.functionspace(m, basix.ufl.element("Lagrange", m.topology.cell_name(), 1, shape=(3,)))
+    Q = fem.functionspace(m, basix.ufl.element("Lagrange", m.topology.cell_name(), 1))
+    T = fem.functionspace(m, basix.ufl.element("Lagrange", m.topology.cell_name(), 1, shape=(3,3)))
 
     rho = fem.Function(Q); rho.x.array[:] = 1.0; rho.x.scatter_forward()
     A = fem.Function(T); A.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:, None] * np.ones((1, x.shape[1]))); A.x.scatter_forward()
