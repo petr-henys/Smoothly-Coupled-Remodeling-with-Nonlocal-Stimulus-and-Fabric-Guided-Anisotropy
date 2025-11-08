@@ -37,14 +37,14 @@ def run_regularity(param_point: Dict[str, Any], output_path: Path, comm: MPI.Com
     Expected keys in param_point:
       - N, dt_days, smooth_eps, ell_dim, kappaS_dim, beta_par_dim, beta_perp_dim, total_time_days
     """
-    N = int(param_point["N"])
-    dt_days = float(param_point["dt_days"])
+    N = 36
+    dt_days = 25
     smooth_eps = float(param_point["smooth_eps"])
     ell_dim = float(param_point["ell_dim"])
     kappaS_dim = float(param_point["kappaS_dim"])
     beta_par_dim = float(param_point["beta_par_dim"])
     beta_perp_dim = float(param_point["beta_perp_dim"])
-    total_time_days = float(param_point["total_time_days"])
+    total_time_days = 1000
 
     # Mesh
     domain = mesh.create_unit_cube(
