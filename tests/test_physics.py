@@ -15,19 +15,38 @@ Tests:
 import pytest
 pytest.importorskip("dolfinx")
 pytest.importorskip("mpi4py")
+
 import numpy as np
 from mpi4py import MPI
-from dolfinx import mesh, fem
+from dolfinx import mesh, fem, default_scalar_type
 from dolfinx.fem import Function, functionspace
 import basix
 import ufl
 
 from simulation.config import Config
-from simulation.utils import build_facetag, build_dirichlet_bcs
-from simulation.subsolvers import (MechanicsSolver, DensitySolver, DirectionSolver, smooth_abs, smooth_plus, smooth_max,
-                        smooth_heaviside, unittrace_psd_from_any, unittrace_psd)
+from simulation.utils import build_facetag, build_dirichlet_bcs, collect_dirichlet_dofs
+from simulation.subsolvers import (
+    MechanicsSolver, StimulusSolver, DensitySolver, DirectionSolver,
+    smooth_abs, smooth_plus, smooth_max, smooth_heaviside,
+    unittrace_psd_from_any, unittrace_psd
+)
 
-comm = MPI.COMM_WORLD
+
+def _make_unit_cube(comm: MPI.Comm, n: int = 6):
+    """Create a tiny 3D unit cube mesh."""
+    return mesh.create_unit_cube(comm, n, n, n, cell_type=mesh.CellType.hexahedron, ghost_mode=mesh.GhostMode.shared_facet)
+
+
+def _iso_tensor(x):
+    """Isotropic unit-trace tensor I/3."""
+    base = (np.eye(3) / 3.0).flatten()[:, None]
+    return np.tile(base, (1, x.shape[1]))
+
+
+def _fiber_tensor(x):
+    """Anisotropic unit-trace tensor with fiber in x-direction."""
+    mat = np.array([[0.92, 0.0, 0.0], [0.0, 0.04, 0.0], [0.0, 0.0, 0.04]], dtype=float)
+    return np.tile(mat.flatten()[:, None], (1, x.shape[1]))
 
 
 # =============================================================================
@@ -38,20 +57,18 @@ class TestConstitutiveLaw:
     """Test stress-strain constitutive relationships."""
     
     @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
-    def test_isotropic_stress_symmetry(self, unit_cube):
+    def test_isotropic_stress_symmetry(self, unit_cube, facet_tags):
         """Verify stress tensor is symmetric for isotropic material."""
         comm = MPI.COMM_WORLD
-        domain = unit_cube
-        facet_tags = build_facetag(domain)
-        cfg = Config(domain=domain, facet_tags=facet_tags, verbose=(comm.rank == 0))
+        cfg = Config(domain=unit_cube, facet_tags=facet_tags, verbose=(comm.rank == 0))
         
-        P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3,))
-        P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
-        P1_ten = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3, 3))
+        P1_vec = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3,))
+        P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
+        P1_ten = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3, 3))
         
-        V = functionspace(domain, P1_vec)
-        Q = functionspace(domain, P1)
-        T = functionspace(domain, P1_ten)
+        V = functionspace(unit_cube, P1_vec)
+        Q = functionspace(unit_cube, P1)
+        T = functionspace(unit_cube, P1_ten)
         
         # Create test displacement with non-zero gradient
         u = Function(V, name="u")
@@ -64,7 +81,7 @@ class TestConstitutiveLaw:
         rho.x.scatter_forward()
         
         A = Function(T, name="A")
-        A.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:, None] * np.ones((1, x.shape[1])))
+        A.interpolate(_iso_tensor)
         A.x.scatter_forward()
         
         bc_mech = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
@@ -97,7 +114,7 @@ class TestConstitutiveLaw:
     def test_density_modulus_scaling(self):
         """Verify E(ρ) = E0 * ρ^n power-law scaling."""
         comm = MPI.COMM_WORLD
-        domain = mesh.create_unit_cube(comm, 8, 8, 8, ghost_mode=mesh.GhostMode.shared_facet)
+        domain = _make_unit_cube(comm, 8)
         facet_tags = build_facetag(domain)
         cfg = Config(domain=domain, facet_tags=facet_tags, verbose=(comm.rank == 0))
         
@@ -119,7 +136,6 @@ class TestConstitutiveLaw:
             E_expected = E0_nd * (rho_eff ** n_power)
             
             # Compute via UFL (using smooth_max as in sigma())
-            from simulation.subsolvers import smooth_max
             rho_eff_ufl = smooth_max(rho, cfg.rho_min_nd, cfg.smooth_eps)
             E_ufl = cfg.E0_nd * (rho_eff_ufl ** cfg.n_power_c)
             
@@ -139,29 +155,20 @@ class TestConstitutiveLaw:
     def test_anisotropic_stiffness_increases_energy(self, unit_cube, facet_tags):
         """Anisotropic fabric aligned with tension should stiffen response measurably."""
         comm = MPI.COMM_WORLD
-        domain = unit_cube
-        cfg = Config(domain=domain, facet_tags=facet_tags, verbose=(comm.rank == 0),
+        cfg = Config(domain=unit_cube, facet_tags=facet_tags, verbose=(comm.rank == 0),
                      enable_telemetry=False, xi_aniso=2.0)
 
-        P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3,))
-        P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
-        P1_ten = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3, 3))
+        P1_vec = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3,))
+        P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
+        P1_ten = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3, 3))
 
-        V = functionspace(domain, P1_vec)
-        Q = functionspace(domain, P1)
-        T = functionspace(domain, P1_ten)
+        V = functionspace(unit_cube, P1_vec)
+        Q = functionspace(unit_cube, P1)
+        T = functionspace(unit_cube, P1_ten)
 
         rho = Function(Q, name="rho")
         rho.x.array[:] = 0.6
         rho.x.scatter_forward()
-
-        def _iso_tensor(x):
-            base = (np.eye(3) / 3.0).flatten()[:, None]
-            return np.tile(base, (1, x.shape[1]))
-
-        def _fiber_tensor(x):
-            mat = np.array([[0.92, 0.0, 0.0], [0.0, 0.04, 0.0], [0.0, 0.0, 0.04]], dtype=float)
-            return np.tile(mat.flatten()[:, None], (1, x.shape[1]))
 
         A_iso = Function(T, name="A_iso")
         A_iso.interpolate(_iso_tensor)
@@ -195,20 +202,18 @@ class TestThermodynamics:
     """Test energy dissipation and thermodynamic consistency."""
     
     @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
-    def test_strain_energy_positivity(self, unit_cube):
+    def test_strain_energy_positivity(self, unit_cube, facet_tags):
         """Strain energy density ψ = 0.5*σ:ε must be non-negative."""
         comm = MPI.COMM_WORLD
-        domain = unit_cube
-        facet_tags = build_facetag(domain)
-        cfg = Config(domain=domain, facet_tags=facet_tags, verbose=(comm.rank == 0))
+        cfg = Config(domain=unit_cube, facet_tags=facet_tags, verbose=(comm.rank == 0))
         
-        P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3,))
-        P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
-        P1_ten = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3, 3))
+        P1_vec = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3,))
+        P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
+        P1_ten = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3, 3))
         
-        V = functionspace(domain, P1_vec)
-        Q = functionspace(domain, P1)
-        T = functionspace(domain, P1_ten)
+        V = functionspace(unit_cube, P1_vec)
+        Q = functionspace(unit_cube, P1)
+        T = functionspace(unit_cube, P1_ten)
         
         # Random displacement field
         u = Function(V, name="u")
@@ -224,7 +229,7 @@ class TestThermodynamics:
         rho.x.scatter_forward()
         
         A = Function(T, name="A")
-        A.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:, None] * np.ones((1, x.shape[1])))
+        A.interpolate(_iso_tensor)
         A.x.scatter_forward()
         
         bc_mech = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
@@ -238,15 +243,13 @@ class TestThermodynamics:
         assert psi_global >= -1e-12, f"Strain energy must be non-negative, got {psi_global}"
     
     @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
-    def test_stimulus_diffusion_dissipation(self, unit_cube, mean_value_factory):
+    def test_stimulus_diffusion_dissipation(self, unit_cube, facet_tags, mean_value_factory):
         """Stimulus diffusion term should dissipate energy (κ∇S·∇S ≥ 0)."""
         comm = MPI.COMM_WORLD
-        domain = unit_cube
-        facet_tags = build_facetag(domain)
-        cfg = Config(domain=domain, facet_tags=facet_tags, verbose=(comm.rank == 0))
+        cfg = Config(domain=unit_cube, facet_tags=facet_tags, verbose=(comm.rank == 0))
         
-        P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
-        Q = functionspace(domain, P1)
+        P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
+        Q = functionspace(unit_cube, P1)
         
         S = Function(Q, name="S")
         S.interpolate(lambda x: np.sin(np.pi*x[0]) * np.cos(np.pi*x[1]) * np.sin(np.pi*x[2]))
@@ -265,13 +268,13 @@ class TestThermodynamics:
         domain = unit_cube
         cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False)
 
-        P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3,))
-        P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
-        P1_ten = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3, 3))
+        P1_vec = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3,))
+        P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
+        P1_ten = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3, 3))
 
-        V = functionspace(domain, P1_vec)
-        Q = functionspace(domain, P1)
-        T = functionspace(domain, P1_ten)
+        V = functionspace(unit_cube, P1_vec)
+        Q = functionspace(unit_cube, P1)
+        T = functionspace(unit_cube, P1_ten)
 
         # Fields
         u = Function(V, name="u")
@@ -280,7 +283,7 @@ class TestThermodynamics:
         rho.x.scatter_forward()
 
         A = Function(T, name="A")
-        A.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:, None] * np.ones((1, x.shape[1])))
+        A.interpolate(_iso_tensor)
         A.x.scatter_forward()
 
         # Dirichlet on x=0, traction on x=1 (axis 0)
@@ -320,13 +323,13 @@ class TestConservation:
         facet_tags = build_facetag(domain)
         cfg = Config(domain=domain, facet_tags=facet_tags, verbose=(comm.rank == 0))
         
-        P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3,))
-        P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
-        P1_ten = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3, 3))
+        P1_vec = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3,))
+        P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
+        P1_ten = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3, 3))
         
-        V = functionspace(domain, P1_vec)
-        Q = functionspace(domain, P1)
-        T = functionspace(domain, P1_ten)
+        V = functionspace(unit_cube, P1_vec)
+        Q = functionspace(unit_cube, P1)
+        T = functionspace(unit_cube, P1_ten)
         
         u = Function(V, name="u")
         rho = Function(Q, name="rho")
@@ -334,7 +337,7 @@ class TestConservation:
         rho.x.scatter_forward()
         
         A = Function(T, name="A")
-        A.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:, None] * np.ones((1, x.shape[1])))
+        A.interpolate(_iso_tensor)
         A.x.scatter_forward()
         
         # BCs: left fixed, no traction on right
@@ -354,7 +357,7 @@ class TestConservation:
     def test_density_bounds_preservation(self):
         """Density solver should preserve [rho_min, rho_max] bounds."""
         comm = MPI.COMM_WORLD
-        domain = mesh.create_unit_cube(comm, 8, 8, 8, ghost_mode=mesh.GhostMode.shared_facet)
+        domain = _make_unit_cube(comm, 8)
         facet_tags = build_facetag(domain)
         cfg = Config(domain=domain, facet_tags=facet_tags, verbose=(comm.rank == 0))
         
@@ -372,7 +375,7 @@ class TestConservation:
         rho_old.x.scatter_forward()
         
         A = Function(T, name="A")
-        A.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:, None] * np.ones((1, x.shape[1])))
+        A.interpolate(_iso_tensor)
         A.x.scatter_forward()
         
         S = Function(Q, name="S")
@@ -396,24 +399,16 @@ class TestConservation:
         assert rho_max_computed <= rho_max_nd + 1e-6, f"Density above maximum: {rho_max_computed} > {rho_max_nd}"
 
     @pytest.mark.parametrize("unit_cube", [6], indirect=True)
-    def test_density_solver_response_to_stimulus_sign(self, unit_cube, facet_tags):
+    def test_density_solver_response_to_stimulus_sign(self, unit_cube, facet_tags, mean_value_factory):
         """Positive stimulus should increase density, negative stimulus should decrease it."""
         comm = MPI.COMM_WORLD
-        domain = unit_cube
-        cfg = Config(domain=domain, facet_tags=facet_tags, verbose=(comm.rank == 0))
+        cfg = Config(domain=unit_cube, facet_tags=facet_tags, verbose=(comm.rank == 0))
 
-        P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
-        P1_ten = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3, 3))
+        P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
+        P1_ten = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3, 3))
 
-        Q = functionspace(domain, P1)
-        T = functionspace(domain, P1_ten)
-
-        def _mean_value(func):
-            val_local = fem.assemble_scalar(fem.form(func * cfg.dx))
-            vol_local = fem.assemble_scalar(fem.form(1.0 * cfg.dx))
-            val = comm.allreduce(val_local, op=MPI.SUM)
-            vol = comm.allreduce(vol_local, op=MPI.SUM)
-            return float(val / max(vol, 1e-300))
+        Q = functionspace(unit_cube, P1)
+        T = functionspace(unit_cube, P1_ten)
 
         def _solve_density(stimulus_value: float) -> float:
             rho_old = Function(Q, name="rho_old")
@@ -423,7 +418,7 @@ class TestConservation:
             rho = Function(Q, name="rho")
 
             A_field = Function(T, name="A")
-            A_field.interpolate(lambda x: (np.eye(3) / 3.0).flatten()[:, None] * np.ones((1, x.shape[1])))
+            A_field.interpolate(_iso_tensor)
             A_field.x.scatter_forward()
 
             S_field = Function(Q, name="S")
@@ -435,7 +430,7 @@ class TestConservation:
             dens.update_system()
             dens.solve(rho)
             rho.x.scatter_forward()
-            return _mean_value(rho)
+            return mean_value_factory(rho)
 
         baseline = 0.5
         rho_mean_positive = _solve_density(0.25)
@@ -460,11 +455,11 @@ class TestConservation:
         domain = unit_cube
         cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False)
 
-        P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
-        P1_ten = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3, 3))
+        P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
+        P1_ten = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3, 3))
 
-        Q = functionspace(domain, P1)
-        T = functionspace(domain, P1_ten)
+        Q = functionspace(unit_cube, P1)
+        T = functionspace(unit_cube, P1_ten)
 
         # Non-uniform initial density to exercise diffusion but preserve mass
         rho_old = Function(Q, name="rho_old")
@@ -473,7 +468,7 @@ class TestConservation:
 
         # Isotropic direction tensor and zero stimulus
         A_iso = Function(T, name="A")
-        A_iso.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:, None] * np.ones((1, x.shape[1])))
+        A_iso.interpolate(_iso_tensor)
         A_iso.x.scatter_forward()
 
         S = Function(Q, name="S")
@@ -516,13 +511,13 @@ class TestDirectionSolverProperties:
         domain = unit_cube
         cfg = Config(domain=domain, facet_tags=facet_tags, verbose=(comm.rank == 0))
 
-        P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3,))
-        P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
-        P1_ten = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3, 3))
+        P1_vec = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3,))
+        P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
+        P1_ten = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3, 3))
 
-        V = functionspace(domain, P1_vec)
-        Q = functionspace(domain, P1)
-        T = functionspace(domain, P1_ten)
+        V = functionspace(unit_cube, P1_vec)
+        Q = functionspace(unit_cube, P1)
+        T = functionspace(unit_cube, P1_ten)
 
         rho = Function(Q, name="rho")
         rho.x.array[:] = 0.6
@@ -627,7 +622,7 @@ class TestSmoothFunctions:
     def test_smooth_functions_match_ufl_on_mesh(self):
         """Validate UFL implementations of smooth_* against their analytical forms by integration."""
         comm = MPI.COMM_WORLD
-        domain = mesh.create_unit_cube(comm, 8, 8, 8, ghost_mode=mesh.GhostMode.shared_facet)
+        domain = _make_unit_cube(comm, 8)
         facet_tags = build_facetag(domain)
         cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False)
 
@@ -678,7 +673,7 @@ class TestPSDTensors:
     def test_unittrace_psd_from_any_properties(self):
         """Verify unittrace_psd_from_any produces symmetric, SPD, unit-trace tensor."""
         comm = MPI.COMM_WORLD
-        domain = mesh.create_unit_cube(comm, 8, 8, 8, ghost_mode=mesh.GhostMode.shared_facet)
+        domain = _make_unit_cube(comm, 8)
         facet_tags = build_facetag(domain)
         cfg = Config(domain=domain, facet_tags=facet_tags, verbose=(comm.rank == 0))
         
@@ -731,7 +726,7 @@ class TestPSDTensors:
     def test_fabric_normalization_stability(self):
         """Test fabric normalization doesn't blow up with zero strain."""
         comm = MPI.COMM_WORLD
-        domain = mesh.create_unit_cube(comm, 8, 8, 8, ghost_mode=mesh.GhostMode.shared_facet)
+        domain = _make_unit_cube(comm, 8)
         facet_tags = build_facetag(domain)
         cfg = Config(domain=domain, facet_tags=facet_tags, verbose=(comm.rank == 0))
         
@@ -783,13 +778,13 @@ class TestBoundaryConditions:
         facet_tags = build_facetag(domain)
         cfg = Config(domain=domain, facet_tags=facet_tags, verbose=(comm.rank == 0))
         
-        P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3,))
-        P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
-        P1_ten = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3, 3))
+        P1_vec = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3,))
+        P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
+        P1_ten = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3, 3))
         
-        V = functionspace(domain, P1_vec)
-        Q = functionspace(domain, P1)
-        T = functionspace(domain, P1_ten)
+        V = functionspace(unit_cube, P1_vec)
+        Q = functionspace(unit_cube, P1)
+        T = functionspace(unit_cube, P1_ten)
         
         u = Function(V, name="u")
         rho = Function(Q, name="rho")
@@ -797,7 +792,7 @@ class TestBoundaryConditions:
         rho.x.scatter_forward()
         
         A = Function(T, name="A")
-        A.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:, None] * np.ones((1, x.shape[1])))
+        A.interpolate(_iso_tensor)
         A.x.scatter_forward()
         
         # Apply traction on right face
@@ -810,7 +805,6 @@ class TestBoundaryConditions:
         mech.solve(u)
         
         # Extract DOFs on left boundary (tag=1, x=0)
-        from simulation.utils import collect_dirichlet_dofs
         bc_dofs = collect_dirichlet_dofs(bc_mech, mech.V.dofmap.index_map.size_local)
         
         if bc_dofs.size > 0:
@@ -826,13 +820,13 @@ class TestBoundaryConditions:
         facet_tags = build_facetag(domain)
         cfg = Config(domain=domain, facet_tags=facet_tags, verbose=(comm.rank == 0))
         
-        P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3,))
-        P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
-        P1_ten = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3, 3))
+        P1_vec = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3,))
+        P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
+        P1_ten = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3, 3))
         
-        V = functionspace(domain, P1_vec)
-        Q = functionspace(domain, P1)
-        T = functionspace(domain, P1_ten)
+        V = functionspace(unit_cube, P1_vec)
+        Q = functionspace(unit_cube, P1)
+        T = functionspace(unit_cube, P1_ten)
         
         u = Function(V, name="u")
         rho = Function(Q, name="rho")
@@ -840,7 +834,7 @@ class TestBoundaryConditions:
         rho.x.scatter_forward()
         
         A = Function(T, name="A")
-        A.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:, None] * np.ones((1, x.shape[1])))
+        A.interpolate(_iso_tensor)
         A.x.scatter_forward()
         
         # Compression in x-direction
@@ -877,13 +871,13 @@ class TestConservationChecks:
         facet_tags = build_facetag(domain)
         cfg = Config(domain=domain, facet_tags=facet_tags, verbose=(comm.rank == 0))
         
-        P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3,))
-        P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
-        P1_ten = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3, 3))
+        P1_vec = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3,))
+        P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
+        P1_ten = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3, 3))
         
-        V = functionspace(domain, P1_vec)
-        Q = functionspace(domain, P1)
-        T = functionspace(domain, P1_ten)
+        V = functionspace(unit_cube, P1_vec)
+        Q = functionspace(unit_cube, P1)
+        T = functionspace(unit_cube, P1_ten)
         
         u = Function(V, name="u")
         rho = Function(Q, name="rho")
@@ -891,7 +885,7 @@ class TestConservationChecks:
         rho.x.scatter_forward()
         
         A = Function(T, name="A")
-        A.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:, None] * np.ones((1, x.shape[1])))
+        A.interpolate(_iso_tensor)
         A.x.scatter_forward()
         
         # Apply traction load
@@ -919,8 +913,8 @@ class TestConservationChecks:
         cfg = Config(domain=domain, facet_tags=facet_tags, verbose=(comm.rank == 0))
         cfg.set_dt_dim(10.0)  # 10 days
         
-        P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
-        Q = functionspace(domain, P1)
+        P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
+        Q = functionspace(unit_cube, P1)
         
         S_old = Function(Q, name="S_old")
         S_old.x.array[:] = 0.1  # Initial positive stimulus
@@ -954,17 +948,17 @@ class TestConservationChecks:
         cfg = Config(domain=domain, facet_tags=facet_tags, verbose=(comm.rank == 0))
         cfg.set_dt_dim(10.0)
         
-        P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
-        P1_ten = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3, 3))
-        Q = functionspace(domain, P1)
-        T = functionspace(domain, P1_ten)
+        P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
+        P1_ten = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3, 3))
+        Q = functionspace(unit_cube, P1)
+        T = functionspace(unit_cube, P1_ten)
         
         rho_old = Function(Q, name="rho_old")
         rho_old.x.array[:] = 0.5
         rho_old.x.scatter_forward()
         
         A = Function(T, name="A")
-        A.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:, None] * np.ones((1, x.shape[1])))
+        A.interpolate(_iso_tensor)
         A.x.scatter_forward()
         
         S = Function(Q, name="S")
@@ -994,13 +988,13 @@ class TestConservationChecks:
         cfg = Config(domain=domain, facet_tags=facet_tags, verbose=(comm.rank == 0))
         cfg.set_dt_dim(10.0)
         
-        P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3,))
-        P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
-        P1_ten = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3, 3))
+        P1_vec = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3,))
+        P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
+        P1_ten = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3, 3))
         
-        V = functionspace(domain, P1_vec)
-        Q = functionspace(domain, P1)
-        T = functionspace(domain, P1_ten)
+        V = functionspace(unit_cube, P1_vec)
+        Q = functionspace(unit_cube, P1)
+        T = functionspace(unit_cube, P1_ten)
         
         A_old = Function(T, name="A_old")
         A_old.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:, None] * np.ones((1, x.shape[1])))
@@ -1043,4 +1037,148 @@ class TestConservationChecks:
         )
 
 
-# No __main__ runner needed; tests executed via pytest
+@pytest.mark.unit
+def test_mechanics_force_equilibrium():
+    """Simple force equilibrium: clamp one face, apply traction on opposite, check solve converges."""
+    comm = MPI.COMM_WORLD
+    m = _make_unit_cube(comm, n=6)
+    facets = build_facetag(m)
+
+    # Function spaces
+    V = fem.functionspace(m, basix.ufl.element("Lagrange", m.basix_cell(), 1, shape=(3,)))
+    Q = fem.functionspace(m, basix.ufl.element("Lagrange", m.basix_cell(), 1))
+    T = fem.functionspace(m, basix.ufl.element("Lagrange", m.basix_cell(), 1, shape=(3,3)))
+
+    # Fields
+    rho = fem.Function(Q, name="rho")
+    rho.x.array[:] = 0.8
+    rho.x.scatter_forward()
+
+    Afield = fem.Function(T, name="A")
+    Afield.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:, None] * np.ones((1, x.shape[1])))
+    Afield.x.scatter_forward()
+
+    # Config
+    cfg = Config(domain=m, facet_tags=facets, verbose=False)
+    cfg.xi_aniso = 0.0  # isotropic
+    cfg._build_constants()
+
+    # BCs: clamp x=0 face
+    bcs = build_dirichlet_bcs(V, facets, id_tag=1, value=0.0)
+
+    # Apply traction on x=1 face
+    t0 = fem.Constant(m, np.array([1.0, 0.0, 0.0], dtype=float))
+    neumanns = [(t0, 2)]
+
+    # Solve mechanics
+    mech = MechanicsSolver(V, rho, Afield, bcs, neumanns, cfg)
+    mech.solver_setup()
+
+    u = fem.Function(V, name="u")
+    its, reason = mech.solve(u)
+
+    # Check solver converged
+    assert reason > 0, f"KSP failed to converge, reason={reason}"
+
+    # Check energy balance from solver
+    W_int, W_ext, rel_err = mech.energy_balance_nd(u)
+    assert rel_err < 1e-6, f"Energy balance violated: rel_err={rel_err:.2e} (W_int={W_int:.3e}, W_ext={W_ext:.3e})"
+
+
+@pytest.mark.unit
+def test_mechanics_uniform_extension():
+    """Uniform extension test: apply displacement BCs, check solver converges and energy balance holds."""
+    comm = MPI.COMM_WORLD
+    m = _make_unit_cube(comm, n=6)
+    facets = build_facetag(m)
+
+    # Function spaces
+    V = fem.functionspace(m, basix.ufl.element("Lagrange", m.basix_cell(), 1, shape=(3,)))
+    Q = fem.functionspace(m, basix.ufl.element("Lagrange", m.basix_cell(), 1))
+    T = fem.functionspace(m, basix.ufl.element("Lagrange", m.basix_cell(), 1, shape=(3,3)))
+
+    # Fields
+    rho = fem.Function(Q, name="rho")
+    rho.x.array[:] = 1.0
+    rho.x.scatter_forward()
+
+    Afield = fem.Function(T, name="A")
+    Afield.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:, None] * np.ones((1, x.shape[1])))
+    Afield.x.scatter_forward()
+
+    # Config
+    cfg = Config(domain=m, facet_tags=facets, verbose=False)
+    cfg.xi_aniso = 0.0
+    cfg._build_constants()
+
+    # Simple extension test: clamp x=0, prescribe u_x=0.01 on x=1
+    fdim = m.topology.dim - 1
+    eps = 0.01
+
+    # Clamp x=0 face
+    bcs = build_dirichlet_bcs(V, facets, id_tag=1, value=0.0)
+    
+    # Prescribe u_x=eps on x=1 face
+    facets_x1 = facets.find(2)
+    V0 = V.sub(0)
+    dofs_x1 = fem.locate_dofs_topological(V0, fdim, facets_x1)
+    bc_x1 = fem.dirichletbc(default_scalar_type(eps), dofs_x1, V0)
+    bcs.append(bc_x1)
+
+    # Solve
+    mech = MechanicsSolver(V, rho, Afield, bcs, [], cfg)
+    mech.solver_setup()
+
+    u = fem.Function(V, name="u")
+    its, reason = mech.solve(u)
+    assert reason > 0, f"KSP failed to converge, reason={reason}"
+
+    # Check solution is nonzero (should have extension)
+    idxmap = V.dofmap.index_map
+    bs = V.dofmap.index_map_bs
+    owned = idxmap.size_local * bs
+    u_norm = np.linalg.norm(u.x.array[:owned])
+    assert u_norm > 1e-6, f"Solution is nearly zero: {u_norm:.2e}"
+
+
+@pytest.mark.unit
+def test_stimulus_power_residual_scales_with_dt():
+    """Power residual in stimulus solver should scale with dt (consistency check)."""
+    comm = MPI.COMM_WORLD
+    m = _make_unit_cube(comm, n=4)
+    facets = build_facetag(m)
+
+    Q = fem.functionspace(m, basix.ufl.element("Lagrange", m.basix_cell(), 1))
+
+    # Config: disable diffusion for algebraic balance
+    cfg = Config(domain=m, facet_tags=facets, verbose=False)
+    cfg.kappaS_dim = 0.0
+    cfg._build_constants()
+
+    S_old = fem.Function(Q, name="S_old")
+    S_old.x.array[:] = 0.2
+    S_old.x.scatter_forward()
+
+    stim = StimulusSolver(Q, S_old, cfg)
+
+    # Constant psi > psi_ref for positive source
+    psi_val = 1.5 * float(cfg.psi_ref_nd.value)
+    psi = fem.Constant(m, default_scalar_type(psi_val))
+
+    def compute_residual(dt_scale: float) -> float:
+        cfg.dt_nd.value = dt_scale
+        stor = float(cfg.rS_gain_c.value) * (psi_val - float(cfg.psi_ref_nd.value)) - float(cfg.tauS_c.value) * 0.2
+        S_pred = fem.Function(Q, name="S_pred")
+        S_pred.x.array[:] = 0.2 + dt_scale * stor / float(cfg.cS_c.value)
+        S_pred.x.scatter_forward()
+        R_abs, R_rel = stim.power_balance_residual(S_pred, psi)
+        return abs(R_abs)
+
+    R1 = compute_residual(1.0)
+    R2 = compute_residual(0.5)
+    R3 = compute_residual(0.25)
+
+    # Expect scaling: R2 ~ R1/2, R3 ~ R1/4
+    assert R2 <= R1 * 0.7 + 1e-14, f"Residual didn't scale ~O(dt): R2={R2:.3e}, R1={R1:.3e}"
+    assert R3 <= R1 * 0.4 + 1e-14, f"Residual didn't scale ~O(dt): R3={R3:.3e}, R1={R1:.3e}"
+
