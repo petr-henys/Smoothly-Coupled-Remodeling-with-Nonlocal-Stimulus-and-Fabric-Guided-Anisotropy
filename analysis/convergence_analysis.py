@@ -29,6 +29,7 @@ def analyze_field_errors(
     field_type: str,
     comm: MPI.Comm,
     base_dir: Path,
+    verbose: bool = True,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Compute L2/H1 errors for a single field across all sweep points.
     
@@ -42,22 +43,29 @@ def analyze_field_errors(
     prev_field = None
     prev_N = None
     
-    for record in records:
+    total = len(records)
+    for idx, record in enumerate(records, start=1):
         output_dir = record["output_dir"]
         run_dir = base_dir / output_dir
         N = int(record["N"])
+        
+        if verbose and comm.rank == 0:
+            print(f"  [{idx}/{total}] Loading {field_name} (N={N})...", flush=True)
         
         domain, field = load_field_from_npz(
             run_dir, comm, N, field_name, field_type
         )
         
         if prev_field is not None:
-            # Compute errors on finer mesh
+            if verbose and comm.rank == 0:
+                print(f"  [{idx}/{total}] Computing errors for {field_name} (N_prev={prev_N} vs N={N})...", flush=True)
             l2_err, h1_err = compute_l2_h1_errors(prev_field, field, domain)
             N_values.append(prev_N)
             h_values.append(1.0 / prev_N)
             l2_errors.append(l2_err)
             h1_errors.append(h1_err)
+            if verbose and comm.rank == 0:
+                print(f"      L2 error: {l2_err:.6e}, H1 error: {h1_err:.6e}", flush=True)
         
         prev_field = field
         prev_N = N
@@ -100,7 +108,7 @@ def compute_spatial_convergence_data(
     records_filtered = filter_records_by_dt(records, dt_value)
     
     if comm.rank == 0:
-        print(f"Spatial convergence: dt={dt_value}, {len(records_filtered)} meshes")
+        print(f"\n==> Spatial convergence: dt={dt_value}, {len(records_filtered)} meshes")
     
     # Field definitions
     fields = [
@@ -112,9 +120,13 @@ def compute_spatial_convergence_data(
     
     # Compute errors for all fields
     results = {}
-    for field_name, field_type, field_label in fields:
+    total_fields = len(fields)
+    for field_idx, (field_name, field_type, field_label) in enumerate(fields, start=1):
+        if comm.rank == 0:
+            print(f"\n  Field [{field_idx}/{total_fields}]: {field_label} ({field_name})")
+        
         N_vals, h_vals, l2_errs, h1_errs = analyze_field_errors(
-            records_filtered, field_name, field_type, comm, base_dir
+            records_filtered, field_name, field_type, comm, base_dir, verbose=True
         )
         
         df = pd.DataFrame({
@@ -124,6 +136,9 @@ def compute_spatial_convergence_data(
             "H1_error": h1_errs,
         })
         results[field_name] = df
+        
+        if comm.rank == 0:
+            print(f"  ✓ Completed {field_label}")
     
     return results
 
@@ -142,7 +157,7 @@ def compute_temporal_convergence_data(
     records_filtered = filter_records_by_N(records, N_value)
     
     if comm.rank == 0:
-        print(f"Temporal convergence: N={N_value}, {len(records_filtered)} timesteps")
+        print(f"\n==> Temporal convergence: N={N_value}, {len(records_filtered)} timesteps")
     
     # Field definitions
     fields = [
@@ -154,9 +169,13 @@ def compute_temporal_convergence_data(
     
     # Compute errors for all fields
     results = {}
-    for field_name, field_type, field_label in fields:
+    total_fields = len(fields)
+    for field_idx, (field_name, field_type, field_label) in enumerate(fields, start=1):
+        if comm.rank == 0:
+            print(f"\n  Field [{field_idx}/{total_fields}]: {field_label} ({field_name})")
+        
         N_vals, h_vals, l2_errs, h1_errs = analyze_field_errors(
-            records_filtered, field_name, field_type, comm, base_dir
+            records_filtered, field_name, field_type, comm, base_dir, verbose=True
         )
         # For temporal, use dt values not h
         dt_vals = np.array([r["dt_days"] for r in records_filtered[:-1]])
@@ -167,6 +186,9 @@ def compute_temporal_convergence_data(
             "H1_error": h1_errs,
         })
         results[field_name] = df
+        
+        if comm.rank == 0:
+            print(f"  ✓ Completed {field_label}")
     
     return results
 
@@ -207,7 +229,14 @@ if __name__ == "__main__":
     base_dir = Path("results/convergence_sweep")
     output_dir = Path("analysis/convergence_analysis")
     
+    if comm.rank == 0:
+        print("=" * 80)
+        print("CONVERGENCE ANALYSIS - Phase 2")
+        print("=" * 80)
+    
     # Load all sweep records
+    if comm.rank == 0:
+        print("\n[1/4] Loading sweep records...")
     all_records = load_sweep_records(base_dir, comm)
     
     # Extract unique dt and N values
@@ -215,40 +244,60 @@ if __name__ == "__main__":
     N_values = sorted(set(r["N"] for r in all_records))
     
     if comm.rank == 0:
-        print(f"Found {len(dt_values)} unique dt values: {dt_values}")
-        print(f"Found {len(N_values)} unique N values: {N_values}")
+        print(f"  ✓ Found {len(all_records)} total simulation runs")
+        print(f"  ✓ {len(dt_values)} unique dt values: {dt_values}")
+        print(f"  ✓ {len(N_values)} unique N values: {N_values}")
     
     # Compute spatial convergence for all dt values
+    if comm.rank == 0:
+        print(f"\n[2/4] Computing spatial convergence ({len(dt_values)} refinement series)...")
+    
     all_spatial_data = {}
-    for dt_val in dt_values:
+    for idx, dt_val in enumerate(dt_values, start=1):
         if comm.rank == 0:
-            print(f"\n=== Processing spatial convergence for dt={dt_val} ===")
+            print(f"\n{'─' * 80}")
+            print(f"SPATIAL [{idx}/{len(dt_values)}]: dt = {dt_val} days")
+            print(f"{'─' * 80}")
         spatial_data = compute_spatial_convergence_data(
             base_dir=base_dir,
             dt_value=dt_val,
             comm=comm,
         )
         all_spatial_data[dt_val] = spatial_data
+        if comm.rank == 0:
+            print(f"\n✓ Completed spatial convergence for dt={dt_val}")
     
     # Compute temporal convergence for all N values
+    if comm.rank == 0:
+        print(f"\n[3/4] Computing temporal convergence ({len(N_values)} refinement series)...")
+    
     all_temporal_data = {}
-    for N_val in N_values:
+    for idx, N_val in enumerate(N_values, start=1):
         if comm.rank == 0:
-            print(f"\n=== Processing temporal convergence for N={N_val} ===")
+            print(f"\n{'─' * 80}")
+            print(f"TEMPORAL [{idx}/{len(N_values)}]: N = {N_val}")
+            print(f"{'─' * 80}")
         temporal_data = compute_temporal_convergence_data(
             base_dir=base_dir,
             N_value=N_val,
             comm=comm,
         )
         all_temporal_data[N_val] = temporal_data
+        if comm.rank == 0:
+            print(f"\n✓ Completed temporal convergence for N={N_val}")
     
     # Save all data to XLSX (rank 0 only)
     if comm.rank == 0:
+        print(f"\n[4/4] Saving results to XLSX...")
         save_convergence_xlsx(
             all_spatial_data=all_spatial_data,
             all_temporal_data=all_temporal_data,
             output_file=output_dir / "convergence_data.xlsx",
         )
-        print("\nConvergence analysis complete!")
-        print(f"Generated {len(dt_values)} spatial convergence datasets")
-        print(f"Generated {len(N_values)} temporal convergence datasets")
+        print("\n" + "=" * 80)
+        print("CONVERGENCE ANALYSIS COMPLETE!")
+        print("=" * 80)
+        print(f"✓ Generated {len(dt_values)} spatial convergence datasets")
+        print(f"✓ Generated {len(N_values)} temporal convergence datasets")
+        print(f"✓ Output saved to: {output_dir / 'convergence_data.xlsx'}")
+        print("=" * 80)
