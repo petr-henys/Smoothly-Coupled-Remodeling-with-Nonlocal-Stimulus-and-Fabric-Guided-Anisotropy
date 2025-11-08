@@ -43,6 +43,8 @@ def run_anderson(param_point: Dict[str, Any], output_path: Path, comm: MPI.Comm)
     max_subiters = 100
     dt_days = float(param_point["dt_days"])
     accel_type = str(param_point["accel_type"])
+    m = int(param_point.get("m"))
+    beta = float(param_point.get("beta"))
 
 
     # Mesh
@@ -64,8 +66,10 @@ def run_anderson(param_point: Dict[str, Any], output_path: Path, comm: MPI.Comm)
         accel_type=accel_type,
         restart_on_cond=1e12,
         saving_interval=5,
-        coupling_each_iter=False,  # Track coupling strength
+        coupling_each_iter=True,  # Track coupling strength
         coupling_eps=1e-3,
+        m=m,
+        beta=beta
     )
 
     # Run simulation (telemetry saves all metrics automatically)
@@ -88,6 +92,8 @@ if __name__ == "__main__":
         params={
             "dt_days": [25.0, 50.0, 100.0],
             "accel_type": ["picard", "anderson"],
+            "m": [4, 8, 12],
+            "beta": [0.5, 1.0]
         },
         base_output_dir=BASE_DIR,
         metadata={"analysis": "anderson", "description": "Anderson vs Picard comparison"},
