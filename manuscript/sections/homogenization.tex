@@ -1,0 +1,50 @@
+\paragraph{KUBC homogenization under the adopted nondimensionalization.}
+Let $\varepsilon_c:=u_c/L_c$, $\sigma_c:=E_0\,\varepsilon_c$, and $\psi_c:=E_0\,\varepsilon_c^2$ be the characteristic strain, stress, and strain–energy scales from the nondimensionalization in \S\ref{sec:strong-forms-nd}. All fields used in the homogenization below are \emph{dimensionless}; primes are dropped. For a prescribed macroscopic (symmetric) strain tensor $\mathbf{E}$ we impose the affine boundary field $\mathbf{u}_D(x)=\mathbf{E}x$ and solve the kinematic uniform boundary condition by symmetric Nitsche coupling on $\partial\Omega$ (with $\theta=1$): find $\mathbf{u}\in[H^1(\Omega)]^d$ such that for all $\mathbf{v}\in[H^1(\Omega)]^d$
+\begin{equation}\label{eq:kubc-nitsche-weak}
+\begin{aligned}
+(\boldsymbol{\sigma}(\mathbf{u},\rho,\mathbf{A}),\,\boldsymbol{\varepsilon}(\mathbf{v}))_{\Omega}
+&\;-\;\langle \boldsymbol{\sigma}(\mathbf{u},\rho,\mathbf{A})\,\mathbf{n},\,\mathbf{v}\rangle_{\partial\Omega}
+\;-\;\langle \boldsymbol{\sigma}(\mathbf{v},\rho,\mathbf{A})\,\mathbf{n},\,\mathbf{u}\rangle_{\partial\Omega}
+\;+\;\Big\langle \frac{\gamma}{h}\,\mathbf{u},\,\mathbf{v}\Big\rangle_{\partial\Omega}
+\\
+&=\;-\;\langle \boldsymbol{\sigma}(\mathbf{v},\rho,\mathbf{A})\,\mathbf{n},\,\mathbf{u}_D\rangle_{\partial\Omega}
+\;+\;\Big\langle \frac{\gamma}{h}\,\mathbf{u}_D,\,\mathbf{v}\Big\rangle_{\partial\Omega},
+\end{aligned}
+\end{equation}
+where $\boldsymbol{\varepsilon}(\cdot)$ and $\boldsymbol{\sigma}(\cdot,\rho,\mathbf{A})$ are given by \eqref{eq:mech-eps-nd}–\eqref{eq:stress-law-nd}, $h$ is a local facet size, and the penalty is chosen as $\gamma=\alpha\,E_{\mathrm{ref}}^{\mathrm{nd}}$ with $\alpha>0$ and a \emph{dimensionless} reference modulus $E_{\mathrm{ref}}^{\mathrm{nd}}$ (discussed below). The Hill–Mandel work equivalence holds in this setting:
+\begin{equation}\label{eq:hill-mandel-nd}
+\overline{\boldsymbol{\sigma}}:\mathbf{E}
+\;=\;\frac{1}{|\Omega|}\int_{\Omega}\boldsymbol{\sigma}(\mathbf{u},\rho,\mathbf{A}):\boldsymbol{\varepsilon}(\mathbf{u})\,\mathrm{d}x,
+\qquad
+\overline{\boldsymbol{\sigma}}:=\frac{1}{|\Omega|}\int_{\Omega}\boldsymbol{\sigma}(\mathbf{u},\rho,\mathbf{A})\,\mathrm{d}x.
+\end{equation}
+
+\paragraph{Six canonical tests and the apparent tensor.}
+We drive six \emph{dimensionless} strain cases of engineering magnitude $\varepsilon_{\mathrm{eng}}>0$:
+\[
+\mathbf{E}^{(1)}=\varepsilon_{\mathrm{eng}}\mathbf{e}_1\!\otimes\!\mathbf{e}_1,\quad
+\mathbf{E}^{(2)}=\varepsilon_{\mathrm{eng}}\mathbf{e}_2\!\otimes\!\mathbf{e}_2,\quad
+\mathbf{E}^{(3)}=\varepsilon_{\mathrm{eng}}\mathbf{e}_3\!\otimes\!\mathbf{e}_3,
+\]
+\[
+\mathbf{E}^{(4)}=\tfrac12\varepsilon_{\mathrm{eng}}(\mathbf{e}_2\!\otimes\!\mathbf{e}_3+\mathbf{e}_3\!\otimes\!\mathbf{e}_2),\quad
+\mathbf{E}^{(5)}=\tfrac12\varepsilon_{\mathrm{eng}}(\mathbf{e}_1\!\otimes\!\mathbf{e}_3+\mathbf{e}_3\!\otimes\!\mathbf{e}_1),\quad
+\mathbf{E}^{(6)}=\tfrac12\varepsilon_{\mathrm{eng}}(\mathbf{e}_1\!\otimes\!\mathbf{e}_2+\mathbf{e}_2\!\otimes\!\mathbf{e}_1),
+\]
+so that shear uses the engineering convention $\gamma_{ij}=2E_{ij}$. Let $s^{(k)}_{\mathrm{nd}}\in\mathbb{R}^6$ be the Voigt vector of $\overline{\boldsymbol{\sigma}}^{(k)}$ in the order $(11,22,33,23,13,12)$. The \emph{dimensionless} apparent stiffness is assembled columnwise as
+\begin{equation}\label{eq:kubc-C-nd}
+\mathbf{C}_{\mathrm{app}}^{\mathrm{nd}}(:,k)\;=\;\frac{s^{(k)}_{\mathrm{nd}}}{\varepsilon_{\mathrm{eng}}},\qquad k=1,\dots,6,
+\end{equation}
+followed by minor–major symmetrization. Rotating $\mathbf{C}_{\mathrm{app}}^{\mathrm{nd}}$ to a fabric-aligned basis via $C'_{pqrs}=R_{pi}R_{qj}R_{rk}R_{sl}C_{ijkl}$ and inverting $\mathbf{S}'=(\mathbf{C}')^{-1}$ yields principal moduli $E_i^{\mathrm{nd}}$, shear $G_{ij}^{\mathrm{nd}}$, and Poisson ratios $\nu_{ij}$ (Voigt convention), all in the nondimensional setting.
+
+\paragraph{Impact of nondimensionalization and unit recovery.}
+By construction $\boldsymbol{\sigma}^{\mathrm{dim}}=\sigma_c\,\boldsymbol{\sigma}^{\mathrm{nd}}$ and $\mathbf{E}^{\mathrm{dim}}=\varepsilon_c\,\mathbf{E}^{\mathrm{nd}}$. Consequently the dimensional and dimensionless apparent tensors are linked by
+\begin{equation}\label{eq:kubc-scale}
+\mathbf{C}_{\mathrm{app}}^{\mathrm{dim}}
+\;=\;\frac{\sigma_c}{\varepsilon_c}\,\mathbf{C}_{\mathrm{app}}^{\mathrm{nd}}
+\;=\;E_0\,\mathbf{C}_{\mathrm{app}}^{\mathrm{nd}}.
+\end{equation}
+Thus \emph{all} reported elastic moduli scale linearly with $E_0$, while ratios such as $E_{\max}/E_{\min}$, $G_{ij}/E_k$, and $\nu_{ij}$ are \emph{invariant} to $(L_c,u_c)$ and to the choice of $E_0$. Average energy transforms as $\overline{\psi}^{\mathrm{dim}}=\psi_c\,\overline{\psi}^{\mathrm{nd}}$, consistent with \eqref{eq:hill-mandel-nd}. If a \emph{physical} macrostrain $\varepsilon_{\mathrm{app}}^{\mathrm{dim}}$ is desired in KUBC, choose $\varepsilon_{\mathrm{eng}}=\varepsilon_{\mathrm{app}}^{\mathrm{dim}}/\varepsilon_c$ when prescribing $\mathbf{u}_D$; conversely, dimensional results are obtained by multiplying $E_i^{\mathrm{nd}}$ and $G_{ij}^{\mathrm{nd}}$ by $E_0$, while $\nu_{ij}$ remains unchanged.
+
+\paragraph{Penalty scaling in nondimensional form.}
+In \eqref{eq:kubc-nitsche-weak} the penalty enters as $(\gamma/h)\langle\cdot,\cdot\rangle_{\partial\Omega}$ and must be comparable to a representative shear/Young modulus to guarantee coercivity. In dimensional variables one would set $\gamma^{\mathrm{dim}}=\alpha\,E_{\mathrm{ref}}^{\mathrm{dim}}$. Under our scaling, $h=h^{\mathrm{dim}}/L_c$ and $E_{\mathrm{ref}}^{\mathrm{nd}}=E_{\mathrm{ref}}^{\mathrm{dim}}/E_0$, so $(\gamma/h)$ remains dimensionless if $\gamma=\alpha\,E_{\mathrm{ref}}^{\mathrm{nd}}$. A robust choice is $E_{\mathrm{ref}}^{\mathrm{nd}}\approx \sup_{\Omega}E(\rho)$ (or a safe upper percentile) so that a mesh-independent $\alpha=\mathcal{O}(10^2)$ suffices; using $E_{\mathrm{ref}}^{\mathrm{nd}}\equiv 1$ is consistent provided $\alpha$ is chosen large enough to dominate the largest $E(\rho)$ realized by the current $(\rho,\mathbf{A})$ field. This keeps the KUBC bilinear form uniformly coercive in the nondimensional setting while preserving the expected dimensional scaling \eqref{eq:kubc-scale}.
