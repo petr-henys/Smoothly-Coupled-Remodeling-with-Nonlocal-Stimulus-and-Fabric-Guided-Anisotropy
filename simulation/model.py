@@ -502,4 +502,4 @@ if __name__ == "__main__":
     facet_tags = build_facetag(m)
     config = Config(facet_tags=facet_tags, domain=m, verbose=True)
     with Remodeller(config) as remodeller:
-        remodeller.simulate(dt=50, total_time=2000)
+        remodeller.simulate(dt=50, total_time=100)

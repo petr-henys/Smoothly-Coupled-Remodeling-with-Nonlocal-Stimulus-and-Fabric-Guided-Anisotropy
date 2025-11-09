@@ -117,27 +117,38 @@ def create_unified_legend(
     handles,
     labels,
     ncol: Optional[int] = None,
-    bbox_y: float = -0.02,
+    loc: str = "upper left",
+    bbox_to_anchor: Optional[tuple] = None,
 ) -> None:
-    """Create unified legend below subplots.
+    """Create unified legend for figure.
     
     Args:
         fig: Matplotlib figure
         handles: Legend handles
         labels: Legend labels
         ncol: Number of columns (auto if None)
-        bbox_y: Y-position for legend (0 = bottom of figure)
+        loc: Legend location
+        bbox_to_anchor: Custom anchor position (default based on loc)
     """
     if ncol is None:
         ncol = min(len(handles), 5)
     
+    if bbox_to_anchor is None:
+        if loc == "upper left":
+            bbox_to_anchor = (0.05, 0.98)
+        elif loc == "lower center":
+            bbox_to_anchor = (0.5, -0.02)
+        else:
+            bbox_to_anchor = None
+    
     fig.legend(
         handles, labels,
-        loc="lower center",
+        loc=loc,
         ncol=ncol,
         frameon=True,
         fontsize=10,
-        bbox_to_anchor=(0.5, bbox_y),
+        bbox_to_anchor=bbox_to_anchor,
+        framealpha=0.9,
     )
 
 
@@ -162,7 +173,7 @@ def save_figure(
         plt.close(fig)
 
 
-def estimate_convergence_order(x: np.ndarray, y: np.ndarray, n_pts: int = 3) -> float:
+def estimate_convergence_order(x: np.ndarray, y: np.ndarray, n_pts: int = 3, from_start: bool = False) -> float:
     """Estimate convergence order from log-log data via linear regression.
     
     Fits log(y) = log(C) + p*log(x) and returns slope p.
@@ -170,7 +181,9 @@ def estimate_convergence_order(x: np.ndarray, y: np.ndarray, n_pts: int = 3) -> 
     Args:
         x: Independent variable (h or dt)
         y: Dependent variable (error)
-        n_pts: Number of points to use (from end, for robustness)
+        n_pts: Number of points to use (for robustness)
+        from_start: If True, use first n points (smallest x, finest resolution).
+                   If False, use last n points (largest x).
         
     Returns:
         Estimated convergence order (slope)
@@ -178,10 +191,16 @@ def estimate_convergence_order(x: np.ndarray, y: np.ndarray, n_pts: int = 3) -> 
     if len(x) < 2 or len(y) < 2:
         return np.nan
     
-    # Use last n_pts (or all if less)
+    # Use n_pts from appropriate end
     n = min(n_pts, len(x))
-    x_fit = x[-n:]
-    y_fit = y[-n:]
+    if from_start:
+        # Use first n points (smallest x = finest resolution)
+        x_fit = x[:n]
+        y_fit = y[:n]
+    else:
+        # Use last n points (largest x)
+        x_fit = x[-n:]
+        y_fit = y[-n:]
     
     # Log-log linear regression
     log_x = np.log10(x_fit)

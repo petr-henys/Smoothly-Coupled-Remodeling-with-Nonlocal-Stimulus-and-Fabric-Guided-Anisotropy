@@ -79,7 +79,7 @@ if __name__ == "__main__":
         # Add legend to first plot
         axes[0].plot([], [], "C0-", linewidth=2, label="Picard")
         axes[0].plot([], [], "C1:", linewidth=2, label="Anderson")
-        axes[0].legend(loc="upper right", fontsize=10)
+        axes[0].legend(loc="upper left", fontsize=10)
         
         plt.tight_layout()
         save_figure(fig, Path("manuscript/images/anderson_vs_picard.png"))

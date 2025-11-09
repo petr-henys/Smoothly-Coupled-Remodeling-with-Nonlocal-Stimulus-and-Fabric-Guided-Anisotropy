@@ -124,7 +124,8 @@ def plot_temporal_convergence(
         dt = df["dt_days"].values
         error = df[error_type].values
         
-        order = estimate_convergence_order(dt, error)
+        # Use finest temporal points (smallest dt, from start)
+        order = estimate_convergence_order(dt, error, from_start=True)
         label = f"{FIELD_LABELS[field]} (p={order:.2f})"
         
         ax.loglog(
@@ -200,22 +201,20 @@ def create_convergence_figure(
     print("Plotting temporal H1 convergence...")
     plot_temporal_convergence(axes[1, 1], temporal_data, "H1_error", N_temporal)
     
-    # Create unified legend
-    handles, labels = axes[1, 1].get_legend_handles_labels()
+    # Keep individual legends on each subplot to show both spatial and temporal orders
+    # Just add them in a cleaner way
     
-    # Add reference line handles
-    ref_handles = [
-        Line2D([0], [0], color=REFERENCE_COLOR, linestyle=REFERENCE_LINESTYLE,
-               linewidth=REFERENCE_LINEWIDTH, alpha=REFERENCE_ALPHA),
-        Line2D([0], [0], color=REFERENCE_COLOR, linestyle=":",
-               linewidth=REFERENCE_LINEWIDTH, alpha=REFERENCE_ALPHA),
-    ]
-    ref_labels = [r"$O(h), O(\Delta t)$", r"$O(h^2)$"]
+    # Style spatial legends (top row)
+    for ax in axes[0, :]:
+        legend = ax.legend(loc="upper left", fontsize=9, framealpha=0.9)
+        legend.set_title("Spatial", prop={"size": 9, "weight": "bold"})
     
-    remove_all_legends(axes)
-    create_unified_legend(fig, handles + ref_handles, labels + ref_labels, ncol=3)
+    # Style temporal legends (bottom row)
+    for ax in axes[1, :]:
+        legend = ax.legend(loc="upper left", fontsize=9, framealpha=0.9)
+        legend.set_title("Temporal", prop={"size": 9, "weight": "bold"})
     
-    plt.tight_layout(rect=[0, 0.03, 1, 0.99])
+    plt.tight_layout(rect=[0, 0.01, 1, 0.99])
     save_figure(fig, output_file)
     print(f"✓ Convergence figure saved to {output_file}")
 
