@@ -57,9 +57,9 @@ We validate spatial and temporal consistency by comparing adjacent levels of mes
 
 \begin{figure}[htbp]
   \centering
-  \IfFileExists{images/convergence.png}{%
-    \includegraphics[width=0.92\linewidth]{images/convergence.png}%
-  }{\fbox{\parbox{0.9\linewidth}{\centering Missing image: \texttt{images/convergence.png}}}}
+  \IfFileExists{images/convergence_plot.png}{%
+    \includegraphics[width=0.92\linewidth]{images/convergence_plot.png}%
+  }{\fbox{\parbox{0.9\linewidth}{\centering Missing image: \texttt{images/convergence_plot.png}}}}
   \caption{Convergence of spatial and temporal errors under mesh and time-step refinement. Solid lines: errors (norms specified in the text). Dotted lines: ideal slopes for $P^1$ elements and the Backward--Euler scheme. Shaded bands show interquartile ranges across regions of interest.}
   \label{fig:individual_convergence}
 \end{figure}
@@ -82,9 +82,9 @@ As $\Delta t$ decreases, we observe a sublinear reduction in the earliest steps 
 
 \begin{figure}[htbp]
   \centering
-  \IfFileExists{images/performance.png}{%
-    \includegraphics[width=1\linewidth]{images/performance.png}%
-  }{\fbox{\parbox{0.9\linewidth}{\centering Missing image: \texttt{images/performance.png}}}}
+  \IfFileExists{images/performance_plot.png}{%
+    \includegraphics[width=1\linewidth]{images/performance_plot.png}%
+  }{\fbox{\parbox{0.9\linewidth}{\centering Missing image: \texttt{images/performance_plot.png}}}}
   \caption{Solver performance: wall time per block iteration, memory footprint, and scaling with mesh size and $\Delta t$. Points show medians across steps; bands show interquartile ranges.}
   \label{fig:performance}
 \end{figure}
@@ -110,4 +110,4 @@ As $\Delta t$ decreases, we observe a sublinear reduction in the earliest steps 
 \end{table}
 
 \paragraph{Summary}
-Both spatial and temporal refinement show the expected consistency and monotone error reduction. Solver costs correlate with coupling strength across fields; more strongly coupled steps increase the per-iteration cost and the benefits of AA-I (see \cref{subsec:anderson}). The tabulated metrics complement the figures with a compact numerical overview to aid replication.
+Both spatial and temporal refinement show the expected consistency and monotone error reduction. Solver costs correlate with coupling strength across fields; more strongly coupled steps increase the per-iteration cost and the benefits of AA-I (see \cref{subsec:anderson} and \cref{fig:performance}). The tabulated metrics complement the figures with a compact numerical overview to aid replication.
