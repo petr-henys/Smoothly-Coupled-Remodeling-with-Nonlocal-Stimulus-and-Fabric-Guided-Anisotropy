@@ -194,8 +194,10 @@ def plot_gains_heatmap(ax, data_by_dt, dt_selected, step_selected=None):
     for i in range(4):
         for j in range(4):
             text_color = "white" if J_avg[i, j] > 0.5 * J_avg.max() else "black"
+            # Annotation font derived from global font size for consistency
             ax.text(j, i, f"{J_avg[i, j]:.2e}",
-                   ha="center", va="center", color=text_color, fontsize=6)
+                   ha="center", va="center", color=text_color,
+                   fontsize=max(plt.rcParams.get('font.size', 10) - 1, 8))
     
     # Set ticks and labels
     subsolver_names = ["u", "S", "ρ", "A"]
@@ -473,4 +475,3 @@ if __name__ == "__main__":
         print_banner("CONTRACTIVITY ANALYSIS COMPLETE")
         
         plt.show()
-

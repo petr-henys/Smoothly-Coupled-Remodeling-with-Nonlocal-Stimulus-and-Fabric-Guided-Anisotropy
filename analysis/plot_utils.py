@@ -28,13 +28,14 @@ if str(project_root) not in sys.path:
 plt.rcParams.update({
     'font.family': 'serif',
     'font.serif': ['Times New Roman', 'DejaVu Serif'],
-    'font.size': 8,
-    'axes.labelsize': 8,
-    'axes.titlesize': 9,
-    'xtick.labelsize': 7,
-    'ytick.labelsize': 7,
-    'legend.fontsize': 6,
-    'figure.titlesize': 10,
+    # Use manuscript-like body size (approx. 10 pt) regardless of figure size
+    'font.size': 10,
+    'axes.labelsize': 10,
+    'axes.titlesize': 10,
+    'xtick.labelsize': 9,
+    'ytick.labelsize': 9,
+    'legend.fontsize': 9,
+    'figure.titlesize': 11,
     'text.usetex': False,  # Set True if LaTeX available
     'mathtext.fontset': 'dejavuserif',
     'axes.linewidth': 0.8,
@@ -144,7 +145,7 @@ PLOT_MARKERSIZE = 3
 PLOT_ALPHA_OVERLAY = 0.5  # For overlapping curves
 
 # Legend styling constants (CONSISTENT ACROSS ALL PLOTS)
-LEGEND_FONTSIZE = 6
+LEGEND_FONTSIZE = 9
 LEGEND_FRAMEALPHA = 0.95
 LEGEND_EDGECOLOR = "black"
 LEGEND_FANCYBOX = False

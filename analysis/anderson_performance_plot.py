@@ -213,8 +213,8 @@ def plot_sensitivity_analysis(axes, sensitivity_df):
         # Styling
         ax.set_xticks(range(n_groups))
         ax.set_xticklabels([f"{int(dt)}" for dt in dt_values])
-        ax.set_xlabel("Timestep dt (days)", fontsize=8)
-        ax.set_ylabel(ylabel, fontsize=8)
+        ax.set_xlabel("Timestep dt (days)", ))
+        ax.set_ylabel(ylabel, ))
         ax.grid(True, alpha=0.3, axis='y')
         
         # Log scale for condition number
@@ -299,11 +299,11 @@ if __name__ == "__main__":
         )
         
         # Style time evolution panel
-        ax_cond.set_xlabel("Simulation time (days)", fontsize=8)
-        ax_cond.set_ylabel(r"Condition number $\kappa(\mathbf{H})$", fontsize=8)
+        ax_cond.set_xlabel("Simulation time (days)")
+        ax_cond.set_ylabel(r"Condition number $\kappa(\mathbf{H})$")
         ax_cond.set_yscale("log")
         ax_cond.grid(True, alpha=0.3)
-        ax_cond.set_title(f"(a) Condition (dt={fixed_dt:.0f}d)", fontweight="bold", fontsize=8)
+        ax_cond.set_title(f"(a) Condition (dt={fixed_dt:.0f}d)", fontweight="bold", ))
         # No legend in subplot - will add unified legend below
         
         # RIGHT: Sensitivity analysis
@@ -314,9 +314,9 @@ if __name__ == "__main__":
         )
         
         # Add title to sensitivity panel
-        ax_sens_rej.set_title("(b) Rejection sensitivity", fontweight="bold", fontsize=8)
-        ax_sens_cond.set_title("(c) Condition sensitivity", fontweight="bold", fontsize=8)
-        ax_sens_hist.set_title("(d) History sensitivity", fontweight="bold", fontsize=8)
+        ax_sens_rej.set_title("(b) Rejection sensitivity", fontweight="bold", ))
+        ax_sens_cond.set_title("(c) Condition sensitivity", fontweight="bold", ))
+        ax_sens_hist.set_title("(d) History sensitivity", fontweight="bold", ))
         
         plt.tight_layout(rect=[0, 0.15, 1, 1])  # Leave space at bottom for legend
         
@@ -329,13 +329,13 @@ if __name__ == "__main__":
         # Combine: time evolution legend on left, sensitivity legend on right
         fig.legend(handles_time, labels_time, 
                    loc='lower left', bbox_to_anchor=(0.02, 0.0), 
-                   ncol=3, fontsize=5, frameon=True, framealpha=0.95,
-                   title="Time evolution (a)", title_fontsize=6)
+                   ncol=3, fontsize=LEGEND_FONTSIZE, frameon=True, framealpha=0.95,
+                   title="Time evolution (a)", title_fontsize=LEGEND_FONTSIZE)
         
         fig.legend(handles_sens, labels_sens,
                    loc='lower right', bbox_to_anchor=(0.98, 0.0),
-                   ncol=3, fontsize=5, frameon=True, framealpha=0.95,
-                   title="Parameter configs (b-d)", title_fontsize=6)
+                   ncol=3, fontsize=LEGEND_FONTSIZE, frameon=True, framealpha=0.95,
+                   title="Parameter configs (b-d)", title_fontsize=LEGEND_FONTSIZE)
         
         # Save figure
         output_path = Path("manuscript/images/anderson_performance_vs_time.png")
