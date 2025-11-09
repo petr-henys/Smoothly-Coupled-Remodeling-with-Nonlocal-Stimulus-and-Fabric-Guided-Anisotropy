@@ -78,7 +78,7 @@ if __name__ == "__main__":
     sweep = ParameterSweep(
         params={
             "N": [16, 24, 36, 54],
-            "dt_days": [6.25, 12.5, 25.0, 50.0, 100.0]
+            "dt_days": [6.25, 12.5, 25.0, 50.0]
         },
         base_output_dir=base_dir,
     )
