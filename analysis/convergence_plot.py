@@ -20,11 +20,10 @@ from matplotlib.lines import Line2D
 
 from analysis.plot_utils import (
     FIELD_NAMES, FIELD_LABELS, FIELD_COLORS, FIELD_MARKERS,
-    REFERENCE_COLOR, REFERENCE_ALPHA, REFERENCE_LINESTYLE, REFERENCE_LINEWIDTH,
     FIGSIZE_DOUBLE_COLUMN, PUBLICATION_DPI,
     PLOT_LINEWIDTH, PLOT_MARKERSIZE,
     estimate_convergence_order, add_reference_line, setup_axis_style,
-    remove_all_legends, create_unified_legend, save_figure, print_banner, add_subplot_legend,
+    save_figure, print_banner, add_subplot_legend,
 )
 
 

@@ -14,7 +14,7 @@ MPI-independent (any rank count can load).
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Tuple, Any, List, Optional
+from typing import Dict, Tuple, Any, List
 
 import numpy as np
 import pandas as pd

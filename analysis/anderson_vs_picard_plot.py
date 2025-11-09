@@ -10,8 +10,7 @@ from mpi4py import MPI
 from postprocessor import SweepLoader
 from analysis.plot_utils import (
     setup_axis_style, save_figure, print_banner,
-    FIGSIZE_DOUBLE_COLUMN, PUBLICATION_DPI,
-    PLOT_LINEWIDTH, PLOT_MARKERSIZE, PLOT_ALPHA_OVERLAY,
+    PUBLICATION_DPI, PLOT_LINEWIDTH, PLOT_ALPHA_OVERLAY,
     add_subplot_legend,
 )
 

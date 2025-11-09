@@ -19,7 +19,7 @@ from mpi4py import MPI
 from postprocessor import SweepLoader
 from analysis.plot_utils import (
     SUBSOLVER_COLORS, SUBSOLVER_MARKERS, SUBSOLVER_LABELS, SUBSOLVER_NAMES,
-    DT_COLORS, DT_MARKERS, DT_LINESTYLES,
+    DT_COLORS, DT_MARKERS,
     FIGSIZE_DOUBLE_COLUMN, PUBLICATION_DPI,
     PLOT_LINEWIDTH, PLOT_MARKERSIZE,
     setup_axis_style, save_figure, print_banner, add_subplot_legend,
