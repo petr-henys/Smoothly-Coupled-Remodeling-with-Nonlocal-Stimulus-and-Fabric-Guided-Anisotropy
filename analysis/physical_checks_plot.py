@@ -321,10 +321,14 @@ def create_physical_checks_figure(
     legend_handles.append(Line2D([0], [0], color='black', linewidth=PLOT_LINEWIDTH, linestyle='--'))
     legend_labels.append('Relative')
     
-    # Add unified legend below all subplots
+    # Apply tight_layout first, then adjust for legend
+    plt.tight_layout()
+    plt.subplots_adjust(bottom=0.15)  # Make room for legend (increased from 0.12)
+    
+    # Add unified legend below all subplots (outside plot area)
     fig.legend(
         legend_handles, legend_labels,
-        loc='lower center',
+        loc='upper center',
         bbox_to_anchor=(0.5, -0.02),
         ncol=len(dt_values) + 3,  # dt values + separator + 2 line styles
         fontsize=LEGEND_FONTSIZE,
@@ -333,9 +337,6 @@ def create_physical_checks_figure(
         edgecolor=LEGEND_EDGECOLOR,
         fancybox=LEGEND_FANCYBOX,
     )
-    
-    plt.tight_layout()
-    plt.subplots_adjust(bottom=0.12)  # Make room for legend
     save_figure(fig, output_file, dpi=PUBLICATION_DPI)
     print(f"\n✓ Physical checks figure saved to {output_file}")
     

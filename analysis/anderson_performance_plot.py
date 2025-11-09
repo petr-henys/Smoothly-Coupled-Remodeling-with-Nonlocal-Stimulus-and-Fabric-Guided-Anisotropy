@@ -31,6 +31,7 @@ from analysis.plot_utils import (
     PUBLICATION_DPI, PLOT_LINEWIDTH, PLOT_MARKERSIZE,
     DT_COLORS, DT_MARKERS, DT_LINESTYLES, format_dt_label,
     add_subplot_legend, FIGSIZE_DOUBLE_COLUMN, PLOT_ALPHA_OVERLAY,
+    LEGEND_FONTSIZE,
 )
 
 
@@ -213,8 +214,8 @@ def plot_sensitivity_analysis(axes, sensitivity_df):
         # Styling
         ax.set_xticks(range(n_groups))
         ax.set_xticklabels([f"{int(dt)}" for dt in dt_values])
-        ax.set_xlabel("Timestep dt (days)", ))
-        ax.set_ylabel(ylabel, ))
+        ax.set_xlabel("Timestep dt (days)")
+        ax.set_ylabel(ylabel)
         ax.grid(True, alpha=0.3, axis='y')
         
         # Log scale for condition number
@@ -303,7 +304,7 @@ if __name__ == "__main__":
         ax_cond.set_ylabel(r"Condition number $\kappa(\mathbf{H})$")
         ax_cond.set_yscale("log")
         ax_cond.grid(True, alpha=0.3)
-        ax_cond.set_title(f"(a) Condition (dt={fixed_dt:.0f}d)", fontweight="bold", ))
+        ax_cond.set_title(f"(a) Condition (dt={fixed_dt:.0f}d)", fontweight="bold")
         # No legend in subplot - will add unified legend below
         
         # RIGHT: Sensitivity analysis
@@ -314,11 +315,12 @@ if __name__ == "__main__":
         )
         
         # Add title to sensitivity panel
-        ax_sens_rej.set_title("(b) Rejection sensitivity", fontweight="bold", ))
-        ax_sens_cond.set_title("(c) Condition sensitivity", fontweight="bold", ))
-        ax_sens_hist.set_title("(d) History sensitivity", fontweight="bold", ))
+        ax_sens_rej.set_title("(b) Rejection sensitivity", fontweight="bold")
+        ax_sens_cond.set_title("(c) Condition sensitivity", fontweight="bold")
+        ax_sens_hist.set_title("(d) History sensitivity", fontweight="bold")
         
-        plt.tight_layout(rect=[0, 0.15, 1, 1])  # Leave space at bottom for legend
+        # First apply tight_layout without legend space
+        plt.tight_layout()
         
         # Unified legend below all plots
         # Collect handles from time evolution plot (for m, beta combinations)
@@ -327,13 +329,14 @@ if __name__ == "__main__":
         handles_sens, labels_sens = ax_sens_rej.get_legend_handles_labels()
         
         # Combine: time evolution legend on left, sensitivity legend on right
+        # Use negative y-offset to place below figure (outside plot area)
         fig.legend(handles_time, labels_time, 
-                   loc='lower left', bbox_to_anchor=(0.02, 0.0), 
+                   loc='upper left', bbox_to_anchor=(0.02, -0.05), 
                    ncol=3, fontsize=LEGEND_FONTSIZE, frameon=True, framealpha=0.95,
                    title="Time evolution (a)", title_fontsize=LEGEND_FONTSIZE)
         
         fig.legend(handles_sens, labels_sens,
-                   loc='lower right', bbox_to_anchor=(0.98, 0.0),
+                   loc='upper right', bbox_to_anchor=(0.98, -0.05),
                    ncol=3, fontsize=LEGEND_FONTSIZE, frameon=True, framealpha=0.95,
                    title="Parameter configs (b-d)", title_fontsize=LEGEND_FONTSIZE)
         

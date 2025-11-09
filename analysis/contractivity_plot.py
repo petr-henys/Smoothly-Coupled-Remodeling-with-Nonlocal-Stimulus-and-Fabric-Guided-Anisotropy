@@ -197,7 +197,7 @@ def plot_gains_heatmap(ax, data_by_dt, dt_selected, step_selected=None):
             # Annotation font derived from global font size for consistency
             ax.text(j, i, f"{J_avg[i, j]:.2e}",
                    ha="center", va="center", color=text_color,
-                   fontsize=max(plt.rcParams.get('font.size', 10) - 1, 8))
+                   fontsize=max(plt.rcParams.get('font.size', 8) - 1, 6))
     
     # Set ticks and labels
     subsolver_names = ["u", "S", "ρ", "A"]

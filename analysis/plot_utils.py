@@ -25,18 +25,28 @@ if str(project_root) not in sys.path:
 # A4 width: 210mm = 8.27 inches
 # Two-column format: column width ~3.5 inches
 # Font: Times/Computer Modern for consistency with LaTeX
+#
+# CRITICAL FONT SIZE PRINCIPLE:
+# Font sizes are specified in POINTS (absolute units), NOT relative to figure size.
+# This ensures text appears at the SAME PHYSICAL SIZE when printed, regardless of
+# whether the figure is single-column (3.5") or double-column (8.0").
+# 
+# Standard for CMAME/Elsevier:
+# - Body text: 10pt
+# - Figure labels should match or be slightly smaller (8-10pt)
+# - This makes text equally readable in print for any figure size
 plt.rcParams.update({
     'font.family': 'serif',
     'font.serif': ['Times New Roman', 'DejaVu Serif'],
-    # Use manuscript-like body size (approx. 10 pt) regardless of figure size
-    'font.size': 10,
-    'axes.labelsize': 10,
-    'axes.titlesize': 10,
-    'xtick.labelsize': 9,
-    'ytick.labelsize': 9,
-    'legend.fontsize': 9,
-    'figure.titlesize': 11,
-    'text.usetex': False,  # Set True if LaTeX available
+    # Base font size: matches manuscript body text (10pt)
+    'font.size': 8,           # Default for all text
+    'axes.labelsize': 8,      # X/Y axis labels
+    'axes.titlesize': 9,      # Subplot titles (slightly larger)
+    'xtick.labelsize': 7,     # X-axis tick labels
+    'ytick.labelsize': 7,     # Y-axis tick labels
+    'legend.fontsize': 7,     # Legend text
+    'figure.titlesize': 10,   # Main figure title (if used)
+    'text.usetex': False,     # Set True if LaTeX available
     'mathtext.fontset': 'dejavuserif',
     'axes.linewidth': 0.8,
     'grid.linewidth': 0.5,
@@ -145,7 +155,7 @@ PLOT_MARKERSIZE = 3
 PLOT_ALPHA_OVERLAY = 0.5  # For overlapping curves
 
 # Legend styling constants (CONSISTENT ACROSS ALL PLOTS)
-LEGEND_FONTSIZE = 9
+LEGEND_FONTSIZE = 7  # Matches rcParams['legend.fontsize']
 LEGEND_FRAMEALPHA = 0.95
 LEGEND_EDGECOLOR = "black"
 LEGEND_FANCYBOX = False
