@@ -18,22 +18,68 @@ if str(project_root) not in sys.path:
 
 
 # ============================================================================
+# CMAME Publication Settings
+# ============================================================================
+
+# Configure matplotlib for CMAME journal standards
+# A4 width: 210mm = 8.27 inches
+# Two-column format: column width ~3.5 inches
+# Font: Times/Computer Modern for consistency with LaTeX
+plt.rcParams.update({
+    'font.family': 'serif',
+    'font.serif': ['Times New Roman', 'DejaVu Serif'],
+    'font.size': 8,
+    'axes.labelsize': 8,
+    'axes.titlesize': 9,
+    'xtick.labelsize': 7,
+    'ytick.labelsize': 7,
+    'legend.fontsize': 6,
+    'figure.titlesize': 10,
+    'text.usetex': False,  # Set True if LaTeX available
+    'mathtext.fontset': 'dejavuserif',
+    'axes.linewidth': 0.8,
+    'grid.linewidth': 0.5,
+    'lines.linewidth': 1.2,
+    'lines.markersize': 3,
+    'xtick.major.width': 0.8,
+    'ytick.major.width': 0.8,
+    'xtick.minor.width': 0.6,
+    'ytick.minor.width': 0.6,
+    'figure.dpi': 300,
+    'savefig.dpi': 300,
+    'savefig.bbox': 'tight',
+    'savefig.pad_inches': 0.05,
+})
+
+# Figure size presets for CMAME (A4 paper)
+FIGSIZE_SINGLE_COLUMN = (3.5, 2.8)      # Single column width
+FIGSIZE_DOUBLE_COLUMN = (8.0, 6.0)      # Double column width (larger for readability)
+FIGSIZE_FULL_WIDTH = (8.0, 6.0)         # Full A4 width
+FIGSIZE_TALL = (8.0, 10.0)              # Tall format (3x2 subplots)
+
+# DPI for publication quality
+PUBLICATION_DPI = 600
+DEFAULT_DPI = 300
+
+
+# ============================================================================
 # Shared styling configuration
 # ============================================================================
 
-# Field styling (for convergence plots)
+# Field styling (for convergence plots) - CONSISTENT ACROSS ALL PLOTS
 FIELD_NAMES = ["u", "rho", "S", "A"]
 FIELD_LABELS = {
-    "u": r"Displacement $u$",
-    "rho": r"Density $\rho$",
-    "S": r"Stimulus $S$",
-    "A": r"Orientation $A$",
+    "u": r"$\mathbf{u}$ (displacement)",
+    "rho": r"$\rho$ (density)",
+    "S": r"$S$ (stimulus)",
+    "A": r"$\mathbf{A}$ (orientation)",
 }
+# Color-blind friendly palette
 FIELD_COLORS = {
-    "u": "#1f77b4",      # Blue
-    "rho": "#ff7f0e",    # Orange
-    "S": "#2ca02c",      # Green
-    "A": "#d62728",      # Red
+    "u": "#0173B2",      # Blue (mechanics)
+    "rho": "#DE8F05",    # Orange (density)
+    "S": "#029E73",      # Green (stimulus)
+    "A": "#CC78BC",      # Purple (orientation/direction)
 }
 FIELD_MARKERS = {
     "u": "o",
@@ -42,30 +88,67 @@ FIELD_MARKERS = {
     "A": "D",
 }
 
-# Timestep styling (for performance/anderson plots)
+# Subsolver styling - SAME as field colors for consistency
+SUBSOLVER_NAMES = ["mech", "stim", "dens", "dir"]
+SUBSOLVER_LABELS = {
+    "mech": r"$\mathbf{u}$ (mechanics)",
+    "stim": r"$S$ (stimulus)", 
+    "dens": r"$\rho$ (density)",
+    "dir": r"$\mathbf{A}$ (direction)",
+}
+SUBSOLVER_COLORS = {
+    "mech": FIELD_COLORS["u"],      # Blue
+    "stim": FIELD_COLORS["S"],      # Green
+    "dens": FIELD_COLORS["rho"],    # Orange
+    "dir": FIELD_COLORS["A"],       # Purple
+}
+SUBSOLVER_MARKERS = {
+    "mech": FIELD_MARKERS["u"],
+    "stim": FIELD_MARKERS["S"],
+    "dens": FIELD_MARKERS["rho"],
+    "dir": FIELD_MARKERS["A"],
+}
+
+# Timestep styling (for performance/anderson plots) - grayscale for print compatibility
 DT_COLORS = {
-    6.25: "#1f77b4",
-    12.5: "#ff7f0e",
-    25.0: "#2ca02c",
-    50.0: "#d62728",
-    100.0: "#9467bd",
+    6.25: "#000000",   # Black
+    12.5: "#404040",   # Dark gray
+    25.0: "#707070",   # Medium gray
+    50.0: "#A0A0A0",   # Light gray
+    100.0: "#D0D0D0",  # Very light gray
 }
 DT_MARKERS = {
-    6.25: "o",
-    12.5: "s",
-    25.0: "^",
-    50.0: "D",
-    100.0: "v",
+    6.25: "v",   # Triangle down
+    12.5: "<",   # Triangle left
+    25.0: "o",   # Circle
+    50.0: "s",   # Square
+    100.0: "^",  # Triangle up
+}
+DT_LINESTYLES = {
+    6.25: "-",
+    12.5: "--",
+    25.0: "-.",
+    50.0: ":",
+    100.0: "-",
 }
 
 # Reference line styling
-REFERENCE_COLOR = "gray"
-REFERENCE_ALPHA = 0.5
+REFERENCE_COLOR = "#808080"
+REFERENCE_ALPHA = 0.6
 REFERENCE_LINESTYLE = "--"
-REFERENCE_LINEWIDTH = 1.5
+REFERENCE_LINEWIDTH = 1.0
 
-# Default figure settings
-DEFAULT_DPI = 300
+# Plot styling constants (CONSISTENT ACROSS ALL PLOTS)
+PLOT_LINEWIDTH = 1.2
+PLOT_MARKERSIZE = 3
+PLOT_ALPHA_OVERLAY = 0.5  # For overlapping curves
+
+# Legend styling constants (CONSISTENT ACROSS ALL PLOTS)
+LEGEND_FONTSIZE = 6
+LEGEND_FRAMEALPHA = 0.95
+LEGEND_EDGECOLOR = "black"
+LEGEND_FANCYBOX = False
+
 DEFAULT_FIGURE_FORMAT = "png"
 
 
@@ -81,7 +164,7 @@ def setup_axis_style(
     loglog: bool = False,
     grid: bool = True,
 ) -> None:
-    """Apply consistent axis styling.
+    """Apply consistent axis styling for CMAME publication.
     
     Args:
         ax: Matplotlib axis
@@ -91,16 +174,20 @@ def setup_axis_style(
         loglog: Use log-log scale
         grid: Show grid
     """
-    ax.set_xlabel(xlabel, fontsize=11)
-    ax.set_ylabel(ylabel, fontsize=11)
-    ax.set_title(title, fontsize=12, fontweight="bold")
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.set_title(title, fontweight="bold")
     
     if loglog:
         ax.set_xscale("log")
         ax.set_yscale("log")
     
     if grid:
-        ax.grid(True, which="both", alpha=0.3, linestyle=":")
+        ax.grid(True, which="both", alpha=0.25, linestyle=":", linewidth=0.5, color="gray")
+    
+    # Ensure tick labels are visible
+    ax.tick_params(axis='both', which='major', direction='in')
+    ax.tick_params(axis='both', which='minor', direction='in', length=2)
 
 
 def remove_all_legends(axes) -> None:
@@ -146,28 +233,47 @@ def create_unified_legend(
         loc=loc,
         ncol=ncol,
         frameon=True,
-        fontsize=10,
+        fontsize=LEGEND_FONTSIZE,
         bbox_to_anchor=bbox_to_anchor,
-        framealpha=0.9,
+        framealpha=LEGEND_FRAMEALPHA,
+        edgecolor=LEGEND_EDGECOLOR,
+        fancybox=LEGEND_FANCYBOX,
+    )
+
+
+def add_subplot_legend(ax: plt.Axes, loc: str = "upper left") -> None:
+    """Add consistent legend to subplot.
+    
+    Args:
+        ax: Matplotlib axis
+        loc: Legend location
+    """
+    ax.legend(
+        loc=loc,
+        fontsize=LEGEND_FONTSIZE,
+        framealpha=LEGEND_FRAMEALPHA,
+        frameon=True,
+        edgecolor=LEGEND_EDGECOLOR,
+        fancybox=LEGEND_FANCYBOX,
     )
 
 
 def save_figure(
     fig: plt.Figure,
     output_file: Path,
-    dpi: int = DEFAULT_DPI,
+    dpi: int = PUBLICATION_DPI,
     close: bool = True,
 ) -> None:
-    """Save figure with consistent settings.
+    """Save figure with CMAME publication settings (PNG only).
     
     Args:
         fig: Matplotlib figure
-        output_file: Output path
-        dpi: Resolution
+        output_file: Output path (PNG format)
+        dpi: Resolution for raster output
         close: Close figure after saving
     """
     output_file.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_file, dpi=dpi, bbox_inches="tight")
+    fig.savefig(output_file, format="png", dpi=dpi, bbox_inches="tight", pad_inches=0.05)
     
     if close:
         plt.close(fig)

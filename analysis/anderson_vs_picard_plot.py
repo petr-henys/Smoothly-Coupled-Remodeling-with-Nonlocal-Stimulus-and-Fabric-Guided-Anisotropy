@@ -8,7 +8,12 @@ import matplotlib.pyplot as plt
 from mpi4py import MPI
 
 from postprocessor import SweepLoader
-from analysis.plot_utils import setup_axis_style, save_figure, print_banner
+from analysis.plot_utils import (
+    setup_axis_style, save_figure, print_banner,
+    FIGSIZE_DOUBLE_COLUMN, PUBLICATION_DPI,
+    PLOT_LINEWIDTH, PLOT_MARKERSIZE, PLOT_ALPHA_OVERLAY,
+    add_subplot_legend,
+)
 
 
 def plot_convergence_curves(ax, df, color, linestyle):
@@ -18,8 +23,8 @@ def plot_convergence_curves(ax, df, color, linestyle):
         ax.plot(
             step_data["iter"].values,
             step_data["proj_res"].values,
-            linewidth=1.5,
-            alpha=0.6,
+            linewidth=PLOT_LINEWIDTH * 0.8,  # Slightly thinner for overlapping
+            alpha=PLOT_ALPHA_OVERLAY,
             color=color,
             linestyle=linestyle
         )
@@ -47,9 +52,11 @@ if __name__ == "__main__":
     # Plot on rank 0
     if comm.rank == 0:
         dt_values = sorted(data_by_dt.keys())
+        # Create figure with appropriate width
+        fig_width = min(3.5 * len(dt_values), 8.0)  # Max A4 width
         fig, axes = plt.subplots(
             1, len(dt_values), 
-            figsize=(6 * len(dt_values), 5)
+            figsize=(fig_width, 2.8)
         )
         
         # Ensure axes is iterable (handle single subplot case)
@@ -61,28 +68,28 @@ if __name__ == "__main__":
             anderson_df = data_by_dt[dt].get("anderson")
             
             if picard_df is not None:
-                plot_convergence_curves(ax, picard_df, "C0", "-")
+                plot_convergence_curves(ax, picard_df, "#000000", "-")
             
             if anderson_df is not None:
-                plot_convergence_curves(ax, anderson_df, "C1", ":")
+                plot_convergence_curves(ax, anderson_df, "#606060", ":")
             
             setup_axis_style(
                 ax,
                 xlabel="Subiteration",
                 ylabel="Residual",
-                title=f"dt = {dt:.0f} days",
+                title=rf"$\Delta t = {dt:.0f}$ days",
                 loglog=False,
                 grid=True,
             )
             ax.set_yscale("log")
         
         # Add legend to first plot
-        axes[0].plot([], [], "C0-", linewidth=2, label="Picard")
-        axes[0].plot([], [], "C1:", linewidth=2, label="Anderson")
-        axes[0].legend(loc="upper left", fontsize=10)
+        axes[0].plot([], [], "#000000", linestyle="-", linewidth=PLOT_LINEWIDTH, label="Picard")
+        axes[0].plot([], [], "#606060", linestyle=":", linewidth=PLOT_LINEWIDTH, label="Anderson")
+        add_subplot_legend(axes[0], loc="upper right")
         
         plt.tight_layout()
-        save_figure(fig, Path("manuscript/images/anderson_vs_picard.png"))
+        save_figure(fig, Path("manuscript/images/anderson_vs_picard.png"), dpi=PUBLICATION_DPI)
         
         print_banner("ANDERSON VS PICARD PLOTTING COMPLETE")
 

@@ -21,8 +21,10 @@ from matplotlib.lines import Line2D
 from analysis.plot_utils import (
     FIELD_NAMES, FIELD_LABELS, FIELD_COLORS, FIELD_MARKERS,
     REFERENCE_COLOR, REFERENCE_ALPHA, REFERENCE_LINESTYLE, REFERENCE_LINEWIDTH,
+    FIGSIZE_DOUBLE_COLUMN, PUBLICATION_DPI,
+    PLOT_LINEWIDTH, PLOT_MARKERSIZE,
     estimate_convergence_order, add_reference_line, setup_axis_style,
-    remove_all_legends, create_unified_legend, save_figure, print_banner,
+    remove_all_legends, create_unified_legend, save_figure, print_banner, add_subplot_legend,
 )
 
 
@@ -64,8 +66,12 @@ def plot_spatial_convergence(
     dt_value: float,
 ) -> None:
     """Plot spatial convergence (varying h, fixed dt)."""
-    ylabel = r"$L^2$ error" if error_type == "L2_error" else r"$H^1$ error"
-    title_prefix = "Spatial L²" if error_type == "L2_error" else "Spatial H¹"
+    if error_type == "L2_error":
+        ylabel = r"$L^2$ error"
+        title_prefix = r"(a) Spatial $L^2$" if error_type == "L2_error" else r"(b) Spatial $L^2$"
+    else:
+        ylabel = r"$H^1$ seminorm error"
+        title_prefix = r"(a) Spatial $H^1$" if error_type == "L2_error" else r"(b) Spatial $H^1$"
     
     # Plot all fields
     for field in FIELD_NAMES:
@@ -84,8 +90,8 @@ def plot_spatial_convergence(
             marker=FIELD_MARKERS[field],
             color=FIELD_COLORS[field],
             label=label,
-            linewidth=2,
-            markersize=8,
+            linewidth=PLOT_LINEWIDTH,
+            markersize=PLOT_MARKERSIZE,
         )
     
     # Add reference lines
@@ -102,7 +108,7 @@ def plot_spatial_convergence(
         add_reference_line(ax, h_range, 2.0, ref_scale, r"$O(h^2)$", linestyle=":")
     
     setup_axis_style(ax, r"Mesh size $h$", ylabel, 
-                     f"{title_prefix} convergence (dt={dt_value} days)", loglog=True)
+                     rf"{title_prefix} ($\Delta t = {dt_value}$ days)", loglog=True)
 
 
 def plot_temporal_convergence(
@@ -112,8 +118,12 @@ def plot_temporal_convergence(
     N_value: int,
 ) -> None:
     """Plot temporal convergence (varying dt, fixed N)."""
-    ylabel = r"$L^2$ error" if error_type == "L2_error" else r"$H^1$ error"
-    title_prefix = "Temporal L²" if error_type == "L2_error" else "Temporal H¹"
+    if error_type == "L2_error":
+        ylabel = r"$L^2$ error"
+        title_prefix = r"(c) Temporal $L^2$"
+    else:
+        ylabel = r"$H^1$ seminorm error"
+        title_prefix = r"(d) Temporal $H^1$"
     
     # Plot all fields
     for field in FIELD_NAMES:
@@ -133,8 +143,8 @@ def plot_temporal_convergence(
             marker=FIELD_MARKERS[field],
             color=FIELD_COLORS[field],
             label=label,
-            linewidth=2,
-            markersize=8,
+            linewidth=PLOT_LINEWIDTH,
+            markersize=PLOT_MARKERSIZE,
         )
     
     # Add reference line O(dt)
@@ -149,8 +159,8 @@ def plot_temporal_convergence(
         
         add_reference_line(ax, dt_range, 1.0, ref_scale, r"$O(\Delta t)$")
     
-    setup_axis_style(ax, r"Time step $\Delta t$ [days]", ylabel,
-                     f"{title_prefix} convergence (N={N_value})", loglog=True)
+    setup_axis_style(ax, r"Timestep $\Delta t$ [days]", ylabel,
+                     rf"{title_prefix} ($N = {N_value}$)", loglog=True)
 
 
 # ============================================================================
@@ -178,14 +188,8 @@ def create_convergence_figure(
     print(f"Loading temporal data (N={N_temporal})...")
     temporal_data = load_temporal_data(xlsx_file, N_temporal)
     
-    # Create figure
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-    fig.suptitle(
-        "Convergence Analysis: Bone Remodeling Simulator",
-        fontsize=14,
-        fontweight="bold",
-        y=0.995,
-    )
+    # Create figure with CMAME double-column width
+    fig, axes = plt.subplots(2, 2, figsize=FIGSIZE_DOUBLE_COLUMN)
     
     # Top row: Spatial convergence
     print("Plotting spatial L2 convergence...")
@@ -201,21 +205,12 @@ def create_convergence_figure(
     print("Plotting temporal H1 convergence...")
     plot_temporal_convergence(axes[1, 1], temporal_data, "H1_error", N_temporal)
     
-    # Keep individual legends on each subplot to show both spatial and temporal orders
-    # Just add them in a cleaner way
+    # Add compact legends to each subplot
+    for ax in axes.flat:
+        add_subplot_legend(ax, loc="upper left")
     
-    # Style spatial legends (top row)
-    for ax in axes[0, :]:
-        legend = ax.legend(loc="upper left", fontsize=9, framealpha=0.9)
-        legend.set_title("Spatial", prop={"size": 9, "weight": "bold"})
-    
-    # Style temporal legends (bottom row)
-    for ax in axes[1, :]:
-        legend = ax.legend(loc="upper left", fontsize=9, framealpha=0.9)
-        legend.set_title("Temporal", prop={"size": 9, "weight": "bold"})
-    
-    plt.tight_layout(rect=[0, 0.01, 1, 0.99])
-    save_figure(fig, output_file)
+    plt.tight_layout()
+    save_figure(fig, output_file, dpi=PUBLICATION_DPI)
     print(f"✓ Convergence figure saved to {output_file}")
 
 

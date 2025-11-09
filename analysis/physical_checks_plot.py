@@ -17,7 +17,13 @@ import matplotlib.pyplot as plt
 from mpi4py import MPI
 
 from postprocessor import SweepLoader
-from analysis.plot_utils import setup_axis_style, save_figure, print_banner
+from analysis.plot_utils import (
+    setup_axis_style, save_figure, print_banner,
+    DT_COLORS, DT_MARKERS, DT_LINESTYLES,
+    FIGSIZE_TALL, PUBLICATION_DPI,
+    PLOT_LINEWIDTH, PLOT_MARKERSIZE,
+    add_subplot_legend,
+)
 
 
 # ============================================================================
@@ -27,72 +33,56 @@ from analysis.plot_utils import setup_axis_style, save_figure, print_banner
 # Fixed N for physical checks comparison
 FIXED_N = 36
 
-# DT styling - same as in performance_plot for consistency
-DT_COLORS = {
-    6.25: "#8c564b",   # Brown
-    12.5: "#e377c2",   # Pink
-    25.0: "#7f7f7f",   # Gray
-    50.0: "#bcbd22",   # Yellow-green
-    100.0: "#17becf",  # Cyan
-}
-DT_MARKERS = {
-    6.25: "v",   # Triangle down
-    12.5: "<",   # Triangle left
-    25.0: ">",   # Triangle right
-    50.0: "p",   # Pentagon
-    100.0: "h",  # Hexagon
-}
-
 def format_dt_label(dt: float) -> str:
     """Format dt value for legend labels."""
     if dt == int(dt):
-        return f"dt={int(dt)} days"
+        return r"$\Delta t = " + f"{int(dt)}" + r"$ days"
     else:
-        return f"dt={dt:.2f} days"
+        return r"$\Delta t = " + f"{dt:.2f}" + r"$ days"
 
 
 # Physical checks configuration
 PHYSICAL_CHECKS = {
     "energy": {
         "metrics": ["energy_Wint_nd", "energy_Wext_nd"],
-        "labels": ["W_int", "W_ext"],
-        "ylabel": "Energy [nondim]",
-        "title": "Mechanical Energy Balance",
+        "labels": [r"$W_{\mathrm{int}}$", r"$W_{\mathrm{ext}}$"],
+        "ylabel": "Energy [nondimensional]",
+        "title": r"(a) Mechanical energy balance",
         "loglog": False,
     },
     "energy_residual": {
         "metrics": ["energy_res_rel"],
         "labels": ["Relative residual"],
         "ylabel": "Relative residual",
-        "title": "Mechanical Energy Balance Error",
+        "title": r"(b) Mechanical energy error",
         "loglog": True,
     },
     "power": {
         "metrics": ["power_res_abs", "power_res_rel"],
         "labels": ["Absolute", "Relative"],
         "ylabel": "Power residual",
-        "title": "Stimulus Power Balance Error",
+        "title": r"(c) Stimulus power balance error",
         "loglog": True,
     },
     "mass": {
         "metrics": ["mass_res_abs", "mass_res_rel"],
         "labels": ["Absolute", "Relative"],
         "ylabel": "Mass residual",
-        "title": "Density Mass Balance Error",
+        "title": r"(d) Density mass balance error",
         "loglog": True,
     },
     "trace": {
         "metrics": ["trace_A_avg", "trace_Mhat_avg"],
-        "labels": ["tr(A)", "tr(M̂)"],
+        "labels": [r"$\mathrm{tr}(\mathbf{A})$", r"$\mathrm{tr}(\hat{\mathbf{M}})$"],
         "ylabel": "Trace value",
-        "title": "Direction Trace Conservation",
+        "title": r"(e) Direction trace conservation",
         "loglog": False,
     },
     "trace_residual": {
         "metrics": ["trace_res"],
         "labels": ["Trace residual"],
         "ylabel": "Trace residual",
-        "title": "Direction Trace Balance Error",
+        "title": r"(f) Direction trace error",
         "loglog": True,
     },
 }
@@ -190,8 +180,9 @@ def plot_physical_check(
                 marker=DT_MARKERS.get(dt, "o"),
                 color=DT_COLORS.get(dt, "gray"),
                 label=format_dt_label(dt),
-                linewidth=2,
-                markersize=6,
+                linestyle=DT_LINESTYLES.get(dt, "-"),
+                linewidth=PLOT_LINEWIDTH,
+                markersize=PLOT_MARKERSIZE,
                 markevery=max(1, len(metric_data) // 10),  # Show fewer markers
             )
         else:
@@ -212,9 +203,9 @@ def plot_physical_check(
                     marker=DT_MARKERS.get(dt, "o"),
                     color=DT_COLORS.get(dt, "gray"),
                     label=label,
-                    linewidth=2,
+                    linewidth=PLOT_LINEWIDTH,
                     linestyle=linestyle,
-                    markersize=6,
+                    markersize=PLOT_MARKERSIZE,
                     markevery=max(1, len(metric_data) // 10),
                 )
     
@@ -251,8 +242,8 @@ def create_physical_checks_figure(
     print("\nExtracting physical checks from telemetry...")
     physical_data = collect_physical_checks(sweep_loader, N_value, dt_values)
     
-    # Create figure (3x2 grid)
-    fig, axes = plt.subplots(3, 2, figsize=(14, 15))
+    # Create figure (3x2 grid) with CMAME tall format
+    fig, axes = plt.subplots(3, 2, figsize=FIGSIZE_TALL)
     
     # Plot each check
     check_names = list(PHYSICAL_CHECKS.keys())
@@ -265,13 +256,13 @@ def create_physical_checks_figure(
         
         if len(df) > 0:
             plot_physical_check(axes[row, col], df, check_config, dt_values)
-            axes[row, col].legend(loc="best", fontsize=8, framealpha=0.9)
+            add_subplot_legend(axes[row, col], loc="best")
         else:
             axes[row, col].text(0.5, 0.5, "No data", ha="center", va="center")
             axes[row, col].set_title(check_config["title"])
     
     plt.tight_layout()
-    save_figure(fig, output_file)
+    save_figure(fig, output_file, dpi=PUBLICATION_DPI)
     print(f"\n✓ Physical checks figure saved to {output_file}")
     
     # Print summary statistics

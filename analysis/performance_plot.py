@@ -18,8 +18,11 @@ from mpi4py import MPI
 
 from postprocessor import SweepLoader
 from analysis.plot_utils import (
-    FIELD_COLORS, FIELD_MARKERS, FIELD_LABELS, setup_axis_style, 
-    remove_all_legends, create_unified_legend, save_figure, print_banner,
+    SUBSOLVER_COLORS, SUBSOLVER_MARKERS, SUBSOLVER_LABELS, SUBSOLVER_NAMES,
+    DT_COLORS, DT_MARKERS, DT_LINESTYLES,
+    FIGSIZE_DOUBLE_COLUMN, PUBLICATION_DPI,
+    PLOT_LINEWIDTH, PLOT_MARKERSIZE,
+    setup_axis_style, save_figure, print_banner, add_subplot_legend,
 )
 
 
@@ -30,77 +33,44 @@ from analysis.plot_utils import (
 # Fixed dt for all plots
 FIXED_DT = 25.0
 
-# Subsolver styling
-SUBSOLVER_NAMES = ["mech", "stim", "dens", "dir"]
-SUBSOLVER_LABELS = {
-    "mech": "Mechanics",
-    "stim": "Stimulus", 
-    "dens": "Density",
-    "dir": "Direction",
-}
-SUBSOLVER_COLORS = {
-    "mech": FIELD_COLORS["u"],
-    "stim": FIELD_COLORS["S"],
-    "dens": FIELD_COLORS["rho"],
-    "dir": FIELD_COLORS["A"],
-}
-SUBSOLVER_MARKERS = {
-    "mech": FIELD_MARKERS["u"],
-    "stim": FIELD_MARKERS["S"],
-    "dens": FIELD_MARKERS["rho"],
-    "dir": FIELD_MARKERS["A"],
-}
-
-# Memory metric styling
+# Memory metric styling (grayscale for print)
 MEMORY_METRICS = ["total", "max"]
 MEMORY_LABELS = {
     "total": "Total (sum all ranks)",
     "max": "Maximum per rank",
 }
 MEMORY_COLORS = {
-    "total": "#1f77b4",  # Blue
-    "max": "#d62728",    # Red
+    "total": "#000000",  # Black
+    "max": "#606060",    # Dark gray
 }
 MEMORY_MARKERS = {
     "total": "o",
-    "max": "^",
+    "max": "s",
 }
-
-# DT styling (for subiterations plot) - distinct from subsolver colors
-DT_COLORS = {
-    6.25: "#8c564b",   # Brown
-    12.5: "#e377c2",   # Pink
-    25.0: "#7f7f7f",   # Gray
-    50.0: "#bcbd22",   # Yellow-green
-    100.0: "#17becf",  # Cyan
-}
-DT_MARKERS = {
-    6.25: "v",   # Triangle down
-    12.5: "<",   # Triangle left
-    25.0: ">",   # Triangle right
-    50.0: "p",   # Pentagon
-    100.0: "h",  # Hexagon
+MEMORY_LINESTYLES = {
+    "total": "-",
+    "max": "--",
 }
 
 def format_dt_label(dt: float) -> str:
     """Format dt value for legend labels."""
     if dt == int(dt):
-        return f"dt={int(dt)} days"
+        return r"$\Delta t = " + f"{int(dt)}" + r"$ days"
     else:
-        return f"dt={dt:.2f} days"
+        return r"$\Delta t = " + f"{dt:.2f}" + r"$ days"
 
 METRICS_CONFIG = {
     "subiterations": {
-        "ylabel": "Subiterations per step",
-        "title": "Fixed-Point Iterations",
+        "ylabel": r"Subiterations per timestep",
+        "title": r"(a) Fixed-point iterations",
         "data_key": "num_subiters",
         "aggregate": "mean",
         "by_dt": True,
         "vary_both": True,  # Vary both N and dt
     },
     "ksp_iterations": {
-        "ylabel": "KSP iterations per step",
-        "title": "Linear Solver Iterations (dt={dt_value} days)",
+        "ylabel": r"KSP iterations per timestep",
+        "title": r"(b) Linear solver iterations ($\Delta t = {dt_value}$ days)",
         "data_keys": {
             "mech": "mech_iters",
             "stim": "stim_iters",
@@ -111,8 +81,8 @@ METRICS_CONFIG = {
         "by_subsolver": True,
     },
     "memory": {
-        "ylabel": "Memory [MB]",
-        "title": "Memory Consumption (dt={dt_value} days)",
+        "ylabel": r"Memory [MB]",
+        "title": r"(c) Memory consumption ($\Delta t = {dt_value}$ days)",
         "data_keys": {
             "total": "memory_mb",      # Sum across all ranks
             "max": "memory_mb_max",    # Maximum per rank
@@ -121,8 +91,8 @@ METRICS_CONFIG = {
         "by_memory_metric": True,
     },
     "walltime": {
-        "ylabel": "Wall time per step [s]",
-        "title": "Wall-Clock Time (dt={dt_value} days)",
+        "ylabel": r"Walltime per timestep [s]",
+        "title": r"(d) Computational cost ($\Delta t = {dt_value}$ days)",
         "data_keys": {
             "mech": "mech_time",
             "stim": "stim_time",
@@ -355,8 +325,8 @@ def plot_performance_metric(
                 marker=SUBSOLVER_MARKERS[subsolver],
                 color=SUBSOLVER_COLORS[subsolver],
                 label=SUBSOLVER_LABELS[subsolver],
-                linewidth=2,
-                markersize=8,
+                linewidth=PLOT_LINEWIDTH,
+                markersize=PLOT_MARKERSIZE,
             )
     elif by_memory_metric:
         # Plot per memory metric
@@ -372,8 +342,8 @@ def plot_performance_metric(
                 marker=MEMORY_MARKERS[mem_metric],
                 color=MEMORY_COLORS[mem_metric],
                 label=MEMORY_LABELS[mem_metric],
-                linewidth=2,
-                markersize=8,
+                linewidth=PLOT_LINEWIDTH,
+                markersize=PLOT_MARKERSIZE,
             )
     elif by_dt:
         # Plot per dt value (vs DOFs if vary_both, vs dt otherwise)
@@ -397,8 +367,8 @@ def plot_performance_metric(
                 marker=DT_MARKERS.get(dt, "o"),
                 color=DT_COLORS.get(dt, "gray"),
                 label=format_dt_label(dt),
-                linewidth=2,
-                markersize=8,
+                linewidth=PLOT_LINEWIDTH,
+                markersize=PLOT_MARKERSIZE,
             )
     else:
         # Plot global metric (single line)
@@ -409,8 +379,8 @@ def plot_performance_metric(
             marker="o",
             color="C0",
             label="Total",
-            linewidth=2,
-            markersize=8,
+            linewidth=PLOT_LINEWIDTH,
+            markersize=PLOT_MARKERSIZE,
         )
     
     # Set axis labels and style
@@ -453,8 +423,8 @@ def create_performance_figure(
     print("\nExtracting performance metrics from telemetry...")
     perf_data = collect_performance_data(sweep_loader, dt_value, N_values, dt_values)
     
-    # Create figure
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    # Create figure with CMAME double-column width
+    fig, axes = plt.subplots(2, 2, figsize=FIGSIZE_DOUBLE_COLUMN)
     
     # Plot each metric
     metric_names = list(METRICS_CONFIG.keys())
@@ -477,10 +447,10 @@ def create_performance_figure(
         plot_performance_metric(axes[row, col], df, plot_config)
         
         # Add individual legend to each subplot
-        axes[row, col].legend(loc="upper left", fontsize=9, framealpha=0.9)
+        add_subplot_legend(axes[row, col], loc="upper left")
     
     plt.tight_layout()
-    save_figure(fig, output_file)
+    save_figure(fig, output_file, dpi=PUBLICATION_DPI)
     print(f"\n✓ Performance figure saved to {output_file}")
     
     # Print summary statistics
