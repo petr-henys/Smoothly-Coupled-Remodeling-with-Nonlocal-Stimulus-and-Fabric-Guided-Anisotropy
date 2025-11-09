@@ -1,10 +1,14 @@
+"""Compare Anderson acceleration vs Picard iteration convergence rates."""
+
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import matplotlib.pyplot as plt
-from postprocessor import SweepLoader
 from mpi4py import MPI
+
+from postprocessor import SweepLoader
+from analysis.plot_utils import setup_axis_style, save_figure, print_banner
 
 
 def plot_convergence_curves(ax, df, color, linestyle):
@@ -21,48 +25,64 @@ def plot_convergence_curves(ax, df, color, linestyle):
         )
 
 
-# Load sweep data
-simulations = SweepLoader("results/anderson_sweep", MPI.COMM_WORLD)
-summary = simulations.get_summary()
-
-data_by_dt = {}
-for _, row in summary.iterrows():
-    dt, accel = row["dt_days"], row["accel_type"]
-    loader = simulations.get_loader(row["output_dir"])
+if __name__ == "__main__":
+    comm = MPI.COMM_WORLD
     
-    if dt not in data_by_dt:
-        data_by_dt[dt] = {}
-    data_by_dt[dt][accel] = loader.get_subiterations_metrics()
-
-# Plot on rank 0
-if MPI.COMM_WORLD.rank == 0:
-    dt_values = sorted(data_by_dt.keys())
-    fig, axes = plt.subplots(
-        1, len(dt_values), 
-        figsize=(6 * len(dt_values), 5)
-    )
+    if comm.rank == 0:
+        print_banner("ANDERSON VS PICARD COMPARISON")
     
-    for ax, dt in zip(axes, dt_values):
-        picard_df = data_by_dt[dt].get("picard")
-        anderson_df = data_by_dt[dt].get("anderson")
+    # Load sweep data
+    simulations = SweepLoader("results/anderson_sweep", comm)
+    summary = simulations.get_summary()
+    
+    data_by_dt = {}
+    for _, row in summary.iterrows():
+        dt, accel = row["dt_days"], row["accel_type"]
+        loader = simulations.get_loader(row["output_dir"])
         
-        if picard_df is not None:
-            plot_convergence_curves(ax, picard_df, "C0", "-")
-        
-        if anderson_df is not None:
-            plot_convergence_curves(ax, anderson_df, "C1", ":")
-        
-        ax.set_xlabel("Subiteration", fontsize=12)
-        ax.set_ylabel("Residual", fontsize=12)
-        ax.set_yscale("log")
-        ax.grid(True, alpha=0.3, which="both")
-        ax.set_title(f"dt = {dt:.0f} days", fontsize=12, fontweight="bold")
+        if dt not in data_by_dt:
+            data_by_dt[dt] = {}
+        data_by_dt[dt][accel] = loader.get_subiterations_metrics()
     
-    # Add legend to first plot
-    axes[0].plot([], [], "C0-", linewidth=2, label="Picard")
-    axes[0].plot([], [], "C1:", linewidth=2, label="Anderson")
-    axes[0].legend(loc="upper right", fontsize=10)
-    
-    plt.tight_layout()
-    plt.savefig("manuscript/images/anderson_vs_picard.png", dpi=300, bbox_inches="tight")
+    # Plot on rank 0
+    if comm.rank == 0:
+        dt_values = sorted(data_by_dt.keys())
+        fig, axes = plt.subplots(
+            1, len(dt_values), 
+            figsize=(6 * len(dt_values), 5)
+        )
+        
+        # Ensure axes is iterable (handle single subplot case)
+        if len(dt_values) == 1:
+            axes = [axes]
+        
+        for ax, dt in zip(axes, dt_values):
+            picard_df = data_by_dt[dt].get("picard")
+            anderson_df = data_by_dt[dt].get("anderson")
+            
+            if picard_df is not None:
+                plot_convergence_curves(ax, picard_df, "C0", "-")
+            
+            if anderson_df is not None:
+                plot_convergence_curves(ax, anderson_df, "C1", ":")
+            
+            setup_axis_style(
+                ax,
+                xlabel="Subiteration",
+                ylabel="Residual",
+                title=f"dt = {dt:.0f} days",
+                loglog=False,
+                grid=True,
+            )
+            ax.set_yscale("log")
+        
+        # Add legend to first plot
+        axes[0].plot([], [], "C0-", linewidth=2, label="Picard")
+        axes[0].plot([], [], "C1:", linewidth=2, label="Anderson")
+        axes[0].legend(loc="upper right", fontsize=10)
+        
+        plt.tight_layout()
+        save_figure(fig, Path("manuscript/images/anderson_vs_picard.png"))
+        
+        print_banner("ANDERSON VS PICARD PLOTTING COMPLETE")
 
