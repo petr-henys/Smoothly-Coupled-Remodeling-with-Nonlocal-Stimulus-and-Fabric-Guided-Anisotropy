@@ -1,6 +1,6 @@
 \subsection*{Convergence and performance}
 
-We verify spatial consistency by combining (i) field–norm error estimates on nested meshes with non-matching transfer, and (ii) \emph{quantity–of–interest} (QoI) Richardson analysis with Roache’s grid–convergence index (GCI). All quantities are nondimensional under the scaling in \S\ref{sec:strong-forms-nd}; averages are normalized by $|\Omega|$.
+We verify spatial consistency using field–norm error estimates on nested meshes with non-matching transfer. All quantities are nondimensional under the scaling in \S\ref{sec:strong-forms-nd}; averages are normalized by $|\Omega|$.
 
 \paragraph{Meshes and notation.}
 Let $\{\mathcal{T}_i\}_{i=1}^L$ be a family of tetrahedral meshes on $\Omega$ obtained by uniform refinement, with characteristic sizes $h_i=1/N_i$ (we report $h_i=1/N_i$ explicitly). On each $\mathcal{T}_i$ we solve the fully coupled problem to a fixed time $T$ with \emph{the same} $\Delta t$ and model parameters; this avoids additional time–discretization bias from remounting left–hand sides. Denote by
@@ -23,8 +23,8 @@ p \;=\; \arg\min_{p} \sum_{i} \big(\log e_{i\to i+1}^{X,\bullet} - p\log h_{i+1}
 \]
 reported for both $L^2$ and $H^1$–semi norms. When only three levels are available, we also quote the two–ratio estimate $p \approx \log(e_{H\to h}/e_{h\to h/2})/\log(r)$ with $r=h_H/h_h$.
 
-\paragraph{QoIs for convergence tracking.}
-Alongside field norms we track scalar QoIs that remain robust for sharp solutions. The analysis reports
+\paragraph{Quantities of interest.}
+We also define scalar QoIs used throughout the study:
 \[
 \overline{u}_x \;=\; \frac{1}{|\Omega|}\int_\Omega \boldsymbol{u}\cdot\mathbf{e}_x\,\mathrm{d}x,\quad
 \overline{S} \;=\; \frac{1}{|\Omega|}\int_\Omega S\,\mathrm{d}x,\quad
@@ -37,31 +37,7 @@ and the domain-average strain-energy density
 \]
 The post-processing converts $\overline{u}_x$ to millimetres using the model scale $u_c$; all other quantities remain nondimensional unless stated otherwise.
 
-\paragraph{QoI–based Richardson and GCI.}
-Let $Q(h)$ be any scalar QoI from the set above. Using the last three levels $h_1>h_2>h_3$ (coarse$\to$fine) we form
-\[
-r_{21}=\frac{h_1}{h_2},\quad r_{32}=\frac{h_2}{h_3},\quad
-d_{12}=Q(h_1)-Q(h_2),\quad d_{23}=Q(h_2)-Q(h_3).
-\]
-Assuming smooth asymptotics $Q(h)=Q_\infty + C h^p + o(h^p)$, the order and extrapolated limit are
-\[
-p \;=\; \bigg|\frac{\log|d_{12}/d_{23}|}{\log r_{21}}\bigg|,\qquad
-Q_\infty \;\approx\; Q(h_3) + \frac{Q(h_3)-Q(h_2)}{r_{32}^{\,p}-1}.
-\]
-Following Roache, the (relative) GCIs between the last two spacings are
-\[
-\mathrm{GCI}_{21} \;=\; F_s\,\frac{|d_{12}|}{|Q(h_2)|}\,\frac{1}{|r_{21}^{\,p}-1|},\qquad
-\mathrm{GCI}_{32} \;=\; F_s\,\frac{|d_{23}|}{|Q(h_3)|}\,\frac{1}{|r_{32}^{\,p}-1|},
-\]
-with safety factor $F_s=1.25$. We also report a monotonicity flag $\mathsf{mono}=\mathbb{1}[d_{12}d_{23}\ge 0]$ and the asymptoticity indicator
-\[
-\beta \;=\; \frac{|d_{12}|}{|d_{23}|}\,\frac{1}{\widehat r^{\,p}},\qquad
-\widehat r = \begin{cases}
- r_{21}, & r_{21}=r_{32},\\
-\dfrac{|h_2^{p}-h_1^{p}|}{|h_3^{p}-h_2^{p}|}, & \text{otherwise},
-\end{cases}
-\]
-which matches the implementation used in the post-processing scripts. The indicator tends to $1$ when the last three levels are in the asymptotic range. For strongly localized solutions (as in our remodeling front), $p<1$ and $\beta\ll 1$ may legitimately occur; in that case the QoI averages ($\overline{\psi},\overline{\rho},\overline{S}$) provide the most informative trend.
+
 
 \subsection*{Anisotropy index (QoI)}
 For the fabric tensor $\mathbf A$ (symmetric, positive semidefinite, unit trace) we report the domain-average
@@ -71,10 +47,10 @@ For the fabric tensor $\mathbf A$ (symmetric, positive semidefinite, unit trace)
 i.e.\ the mean squared Frobenius norm of $\mathbf A$, which increases with anisotropy when $\mathrm{tr}\,\mathbf A=1$.
 
 \paragraph{Implementation notes.}
-Errors use DOLFINx non-matching transfer (creation of interpolation data on the fine grid and cell-wise interpolation), and all integrals are assembled with MPI reductions after updating ghost values. The same set of converged solutions $\{(\mathbf{u}_i,S_i,\rho_i,\mathbf{A}_i)\}$ is reused for field-norm and QoI analysis to avoid duplicating runs. Sixth-order quadrature suffices for the observation spaces employed here. Because we keep $\Delta t$ fixed across $h$ (no $h$-dependent remounting of left--hand sides), the study isolates \emph{spatial} sensitivity; in a posteriori checks on the finest mesh, halving $\Delta t$ changed the reported QoIs by less than our print precision, confirming that temporal error is subdominant in the regimes shown.
+Errors use DOLFINx non-matching transfer (creation of interpolation data on the fine grid and cell-wise interpolation), and all integrals are assembled with MPI reductions after updating ghost values. The same set of converged solutions $\{(\mathbf{u}_i,S_i,\rho_i,\mathbf{A}_i)\}$ is reused for the field-norm analysis to avoid duplicating runs. Sixth-order quadrature suffices for the observation spaces employed here. Because we keep $\Delta t$ fixed across $h$ (no $h$-dependent remounting of left--hand sides), the study isolates \emph{spatial} sensitivity; in a posteriori checks on the finest mesh, halving $\Delta t$ changed the reported QoIs by less than our print precision, confirming that temporal error is subdominant in the regimes shown.
 
 \paragraph{Reporting.}
-We show (i) $h$ per level and per pair, (ii) EOC from the log–log fit for $L^2$ and $H^1$–semi norms of $(\mathbf{u},S,\rho,\mathbf{A})$, and (iii) for each QoI: $(p,Q_\infty,\mathrm{GCI}_{32},\beta,\mathsf{mono})$. Where relevant we additionally provide absolute GCIs (without normalization by $|Q(h)|$) to disambiguate small denominators.
+We show (i) $h$ per level and per pair, and (ii) EOC from the log–log fit for $L^2$ and $H^1$–semi norms of $(\mathbf{u},S,\rho,\mathbf{A})$.
 \label{subsec:subsolver_conv}
 \paragraph{Objective and approach}
 We validate spatial and temporal consistency by comparing adjacent levels of mesh and time-step refinement. For each quantity we report (i) log--log error scaling versus $h$ and $\Delta t$, (ii) local pairwise orders of convergence, and (iii) solver performance scaling.
