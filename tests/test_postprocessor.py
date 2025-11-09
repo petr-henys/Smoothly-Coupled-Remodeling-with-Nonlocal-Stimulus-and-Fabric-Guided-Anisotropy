@@ -25,7 +25,7 @@ from dolfinx import mesh, fem
 import basix.ufl
 
 from postprocessor import SimulationLoader, SweepLoader
-from analysis.utils import save_function_npz
+from analysis.analysis_utils import save_function_npz
 
 
 # =============================================================================

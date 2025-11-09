@@ -19,7 +19,7 @@ from mpi4py import MPI
 from dolfinx import mesh, fem
 import basix.ufl
 
-from analysis.utils import (
+from analysis.analysis_utils import (
     load_sweep_records,
     load_npz_field,
     compute_l2_h1_errors,

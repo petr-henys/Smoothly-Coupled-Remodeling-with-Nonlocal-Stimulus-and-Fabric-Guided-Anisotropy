@@ -9,7 +9,7 @@ import pandas as pd
 from mpi4py import MPI
 from dolfinx import fem
 
-from analysis.utils import load_npz_field
+from analysis.analysis_utils import load_npz_field
 from simulation.logger import get_logger
 
 

@@ -25,7 +25,7 @@ from simulation.config import Config
 from simulation.model import Remodeller
 from simulation.utils import build_facetag
 from parametrizer import Parametrizer, ParameterSweep
-from analysis.utils import save_function_npz
+from analysis.analysis_utils import save_function_npz
 
 
 BASE_DIR = Path("results/regularity_sweep")

@@ -20,7 +20,7 @@ import pytest
 
 from dolfinx import mesh, fem
 import basix.ufl
-from analysis.utils import (
+from analysis.analysis_utils import (
     save_function_npz,
     load_field_from_npz,
     compute_richardson_triplets_qoi
@@ -154,7 +154,7 @@ def test_npz_roundtrip_scalar_vector_tensor(shared_tmpdir):
     import basix.ufl
 
     # Import the saver used in convergence_runs and the loader used in postprocess
-    from analysis.utils import load_npz_field, save_function_npz
+    from analysis.analysis_utils import load_npz_field, save_function_npz
 
     comm = MPI.COMM_WORLD
     N = 8
@@ -237,7 +237,7 @@ def test_npz_mpi_independence(shared_tmpdir):
     from mpi4py import MPI
     from dolfinx import mesh, fem
     import basix.ufl
-    from analysis.utils import load_npz_field, save_function_npz
+    from analysis.analysis_utils import load_npz_field, save_function_npz
 
     comm = MPI.COMM_WORLD
     N = 6
@@ -278,7 +278,7 @@ def test_npz_element_mismatch_detection(shared_tmpdir):
     from mpi4py import MPI
     from dolfinx import mesh, fem
     import basix.ufl
-    from analysis.utils import load_npz_field, save_function_npz
+    from analysis.analysis_utils import load_npz_field, save_function_npz
 
     comm = MPI.COMM_WORLD
     N = 6
@@ -328,7 +328,7 @@ def test_qoi_dirichlet_energy_scalar_richardson():
     from dolfinx import mesh, fem
     import basix.ufl
     import ufl
-    from analysis.utils import (
+    from analysis.analysis_utils import (
         mpi_scalar_integral,
         compute_richardson_triplets_qoi,
     )
@@ -390,7 +390,7 @@ def test_qoi_dirichlet_energy_vector_richardson():
     from dolfinx import mesh, fem
     import basix.ufl
     import ufl
-    from analysis.utils import (
+    from analysis.analysis_utils import (
         mpi_scalar_integral,
         compute_richardson_triplets_qoi,
     )
@@ -439,7 +439,7 @@ def test_qoi_gradient_norm_scalar_richardson():
     from dolfinx import mesh, fem
     import basix.ufl
     import ufl
-    from analysis.utils import (
+    from analysis.analysis_utils import (
         mpi_scalar_integral,
         compute_richardson_triplets_qoi,
     )
@@ -497,7 +497,7 @@ def test_save(shared_tmpdir):
     from mpi4py import MPI
     from dolfinx import mesh, fem
     import basix.ufl
-    from analysis.utils import save_function_npz
+    from analysis.analysis_utils import save_function_npz
 
     comm = MPI.COMM_WORLD
     N = 12
@@ -538,7 +538,7 @@ def test_load(shared_tmpdir):
     from mpi4py import MPI
     from dolfinx import mesh, fem
     import basix.ufl
-    from analysis.utils import load_npz_field
+    from analysis.analysis_utils import load_npz_field
 
     comm = MPI.COMM_WORLD
     N = 12
