@@ -16,9 +16,12 @@ import numpy as np
 import pandas as pd
 from mpi4py import MPI
 
+from dolfinx import mesh, fem
+import basix.ufl
+
 from analysis.utils import (
     load_sweep_records,
-    load_field_from_npz,
+    load_npz_field,
     compute_l2_h1_errors,
 )
 
@@ -52,9 +55,28 @@ def analyze_field_errors(
         if verbose and comm.rank == 0:
             print(f"  [{idx}/{total}] Loading {field_name} (N={N})...", flush=True)
         
-        domain, field = load_field_from_npz(
-            run_dir, comm, N, field_name, field_type
+        # Create mesh and function space
+        domain = mesh.create_unit_cube(
+            comm, N, N, N,
+            ghost_mode=mesh.GhostMode.shared_facet
         )
+        
+        # Create function space based on field type
+        if field_type == "vector":
+            element = basix.ufl.element("P", domain.topology.cell_name(), 1, shape=(3,))
+        elif field_type == "scalar":
+            element = basix.ufl.element("P", domain.topology.cell_name(), 1)
+        elif field_type == "tensor":
+            element = basix.ufl.element("P", domain.topology.cell_name(), 1, shape=(3, 3))
+        else:
+            raise ValueError(f"Unknown field type: {field_type}")
+        
+        space = fem.functionspace(domain, element)
+        field = fem.Function(space, name=field_name)
+        
+        # Load from NPZ
+        npz_path = run_dir / f"{field_name}.npz"
+        load_npz_field(comm, npz_path, field)
         
         if prev_field is not None:
             if verbose and comm.rank == 0:

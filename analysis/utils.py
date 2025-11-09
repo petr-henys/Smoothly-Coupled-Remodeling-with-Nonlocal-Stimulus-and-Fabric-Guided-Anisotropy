@@ -153,18 +153,13 @@ def load_npz_field(comm: MPI.Comm, npz_file: Path, target: fem.Function) -> None
     owned_dofs = index_map.size_local
     local_coords = space.tabulate_dof_coordinates()[:owned_dofs]
     
-    # Build KDTree on rank 0 and query all ranks' coordinates
-    if comm.rank == 0:
-        kdtree = cKDTree(stored_coords)
-    else:
-        kdtree = None
-    
-    # Broadcast stored data to all ranks (needed for querying)
+    # Broadcast stored data to all ranks (needed for coordinate matching)
     stored_coords = comm.bcast(stored_coords, root=0)
     stored_values = comm.bcast(stored_values, root=0)
     
-    # Query KDTree for each local DOF
-    distances, indices = cKDTree(stored_coords).query(local_coords)
+    # Build KDTree from stored coords and query local DOF coordinates
+    kdtree = cKDTree(stored_coords)
+    distances, indices = kdtree.query(local_coords)
     
     # Validate matching (should be exact up to floating-point tolerance)
     max_dist = np.max(distances)
