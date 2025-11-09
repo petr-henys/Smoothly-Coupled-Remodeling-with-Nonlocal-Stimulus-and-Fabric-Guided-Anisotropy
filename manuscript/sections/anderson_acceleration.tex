@@ -10,22 +10,49 @@ We estimate a $4\times 4$ interaction-gain matrix $J$ of the Gauss--Seidel (GS) 
 \end{equation*}
 The block norms $\|\cdot\|$ are the same as in our stopping criterion (\S\ref{subsec:proj_merit}); for mechanics we \emph{project out} Dirichlet degrees of freedom before forming the norm. We report the spectral radius $\rho(J)$ as a diagnostic of local contractivity ($\rho(J)<1$ implies a locally contracting GS map in this block-norm sense). This diagnostic is optional and does not affect the iterate; it can be enabled per sub-iteration.
 
+\paragraph{Contractivity analysis}
+We summarize contractivity and coupling structure across timesteps and configurations (\cref{fig:contractivity}). Panel (a) shows the evolution of the spectral radius $\rho(J)$ over time with the $\rho(J)=1$ threshold; values below unity indicate local contraction. Panel (b) visualizes a representative interaction-gain matrix $\mathbf J$ as a heatmap; panel (c) tracks the strongest gains over time. Panel (d) aggregates the distribution of $\rho(J)$ across $\Delta t$, and panel (e) shows the maximum off-diagonal gain versus time. Together these diagnostics indicate predominantly contractive behavior and stable coupling strengths in the regimes tested.
+
+\begin{figure}[htbp]
+  \centering
+  \IfFileExists{images/contractivity_analysis.png}{%
+    \includegraphics[width=1\linewidth]{images/contractivity_analysis.png}%
+  }{\fbox{\parbox{0.9\linewidth}{\centering Missing image: \texttt{images/contractivity_analysis.png}}}}
+  \caption{Contractivity and interaction gains. (a) Spectral radius $\rho(J)$ over time for several $\Delta t$ (reference line at $\rho(J)=1$). (b) Representative interaction-gain matrix $\mathbf J$ (heatmap). (c) Key gains $J_{i,j}$ versus time. (d) Distribution of $\rho(J)$ across $\Delta t$. (e) Maximum off-diagonal gain versus time.}
+  \label{fig:contractivity}
+\end{figure}
+
 \subsection*{Projected residual merit, stopping, and AA acceptance}\label{subsec:proj_merit}
-We measure progress by a \emph{projected, RMS-per-DOF} block merit
-\begin{equation}\label{eq:proj_merit}
-  \|r\|_{\mathrm{proj}}^2 \;=\; \sum_{i\in\{u,\rho,\mathbf A,S\}} w_i\,\|r_i\|_2^2,\qquad
-  w_i \;=\; \frac{1}{N_i}\,,
-\end{equation}
-where $N_i$ is the global number of unknowns in block $i$. For the mechanics block $u$ we exclude Dirichlet DOFs from the norm (they are masked out before evaluation). We declare convergence once $\|r\|_{\mathrm{proj}}<\mathtt{coupling\_tol}$ after at least a minimal number of GS sub-iterations. The same merit~\eqref{eq:proj_merit} is also used to accept or backtrack Anderson-accelerated candidates: a candidate is accepted only if it does not degrade the merit relative to the underlying Picard step.
+We use the \emph{projected, RMS-per-DOF} merit and acceptance/backtracking defined in the solver description (\S\ref{sec:fp-aa}). The projected norm zeros mechanics Dirichlet DOFs and uses block weights $w_i=1/N_i$; acceptance follows the safeguard \eqref{eq:safeguard} with the same thresholds and minimal-subiteration requirement as in \S\ref{sec:fp-aa}. Candidate formation and step limiting follow \eqref{eq:kkt}--\eqref{eq:aa-update}.
 
 \subsection*{Stacking vs.\ sweep order}\label{subsec:order}
 The stacked state follows $(u,\rho,\mathbf A,S)$, while a single GS sweep updates blocks in the physical order $u\!\to\! S\!\to\!\rho\!\to\!\mathbf A$. The interaction-gain matrix $J$ is indexed according to the stacked order.
 
 \subsection*{Anderson acceleration details}\label{subsec:aa_details}
-We use Type-I Anderson (Pulay) acceleration with the equality constraint $\sum_j \alpha_j=1$. The least-squares system is formed from the global Gram matrix $H=RR^\top$; Tikhonov regularization uses $\lambda_{\mathrm{eff}}=\lambda\max(\mathrm{tr}\,H/p,\,1)$. We impose a step limit $\|s\|\le c\,\|r\|$ (with $c=2$ in our runs) and perform line search/backtracking along $s$ guided by the projected merit~\eqref{eq:proj_merit}. We restart the AA history upon (i) repeated rejections, (ii) stagnation with respect to the best Picard merit, or (iii) poor conditioning of the regularized Gram system. Accepted AA candidates re-enforce Dirichlet DOFs from the freshest Picard state.
+We use Type-I Anderson (Pulay) acceleration with the equality constraint $\sum_j \alpha_j=1$. The least-squares system is formed from the global Gram matrix $H=RR^\top$; Tikhonov regularization uses $\lambda_{\mathrm{eff}}=\lambda\max(\mathrm{tr}\,H/p,\,1)$. We impose a step limit $\|s\|\le c\,\|r\|$ (with $c=2$ in our runs) and perform line search/backtracking along $s$ guided by the projected merit defined in \S\ref{sec:fp-aa}. We restart the AA history upon (i) repeated rejections, (ii) stagnation with respect to the best Picard merit, or (iii) poor conditioning of the regularized Gram system. Accepted AA candidates re-enforce Dirichlet DOFs from the freshest Picard state.
 \paragraph{Setup and convergence metric}
-Convergence is measured by the projected residual
-\(
-\|r_k\|_{\mathcal{P}} := \big\|\mathcal{P}(x_{k+1}-x_k)\big\|_2,
-\)
-where $\mathcal{P}$ aggregates the relevant field components and non-dimensionalizes the norm. A sub-iteration is accepted when $\|r_k\|_{\mathcal{P}}\le \varepsilon_{\mathrm{fix}}$ and the relative decrease satisfies $\|r_k\|_{\mathcal{P}}/\|r_0\|_{\mathcal{P}} \le \varepsilon_{\mathrm{rel}}$. In AA-I we solve a small Tikhonov-regularized least-squares problem for the mixing coefficients and \emph{restart} if a candidate update violates the monotonicity safeguard; optional damping limits the step to $\theta\in(0,1]$ if the predicted residual exceeds $\gamma\,\|r_k\|_{\mathcal{P}}$ (typical $\gamma\in[1.05,1.25]$).
+Convergence and acceptance use the same projected-residual metric and safeguards as in \S\ref{sec:fp-aa} (see \eqref{eq:kkt}, \eqref{eq:aa-update}, \eqref{eq:safeguard}).
+
+\paragraph{Performance diagnostics}
+To assess stability and tuning, we monitor Anderson metrics over time and their sensitivity to $(\Delta t, m, \beta)$ (\cref{fig:aa-metrics}). At fixed $\Delta t=25$ days, a sliding-window view of the Gram-matrix condition number $\kappa(\mathbf H)$ remains well behaved across tested histories $m$ and mixing factors $\beta$. Aggregated over late-time windows, the rejection rate stays moderate, the average history depth scales with $m$, and the median $\kappa(\mathbf H)$ shows only mild growth with larger $m$ or $\beta$.
+
+\begin{figure}[htbp]
+  \centering
+  \IfFileExists{images/anderson_performance_vs_time.png}{%
+    \includegraphics[width=1\linewidth]{images/anderson_performance_vs_time.png}%
+  }{\fbox{\parbox{0.9\linewidth}{\centering Missing image: \texttt{images/anderson_performance_vs_time.png}}}}
+  \caption{Anderson performance metrics and sensitivity. (a) Time-windowed condition number $\kappa(\mathbf H)$ at fixed $\Delta t=25$ days for several $(m,\beta)$. (b) Rejection rate averaged over the final window versus $\Delta t$, grouped by $(m,\beta)$. (c) Average $\kappa(\mathbf H)$ (log scale) versus $\Delta t$. (d) Average Anderson history depth versus $\Delta t$.}
+  \label{fig:aa-metrics}
+\end{figure}
+
+\paragraph{AA vs. Picard}
+We compare the baseline block Picard scheme with AA-I across representative timestep sizes and coupling strengths (\cref{fig:aa-vs-picard}). In our runs, AA-I consistently reduces sub-iterations per timestep and total walltime while preserving acceptance and stability safeguards; the benefit is largest in tighter couplings, with comparable behavior to Picard in mild regimes.
+
+\begin{figure}[htbp]
+  \centering
+  \IfFileExists{images/anderson_vs_picard.png}{%
+    \includegraphics[width=1\linewidth]{images/anderson_vs_picard.png}%
+  }{\fbox{\parbox{0.9\linewidth}{\centering Missing image: \texttt{images/anderson_vs_picard.png}}}}
+  \caption{Comparison of block Picard and Anderson acceleration (AA-I) at representative $\Delta t$ and coupling strengths. Left: convergence behavior over time (projected-residual trends). Right: per-timestep subiterations and walltime summaries. AA-I reduces sub-iterations and computational cost while retaining robustness relative to Picard.}
+  \label{fig:aa-vs-picard}
+\end{figure}

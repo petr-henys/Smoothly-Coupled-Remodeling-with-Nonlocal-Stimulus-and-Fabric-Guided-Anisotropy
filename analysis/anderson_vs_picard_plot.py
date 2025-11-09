@@ -62,7 +62,10 @@ if __name__ == "__main__":
         if len(dt_values) == 1:
             axes = [axes]
         
-        for ax, dt in zip(axes, dt_values):
+        # Subplot labels (a), (b), (c), ...
+        subplot_labels = ['(a)', '(b)', '(c)', '(d)', '(e)', '(f)']
+        
+        for idx, (ax, dt) in enumerate(zip(axes, dt_values)):
             picard_df = data_by_dt[dt].get("picard")
             anderson_df = data_by_dt[dt].get("anderson")
             
@@ -72,11 +75,13 @@ if __name__ == "__main__":
             if anderson_df is not None:
                 plot_convergence_curves(ax, anderson_df, "#606060", ":")
             
+            # Add subplot label to title
+            label = subplot_labels[idx] if idx < len(subplot_labels) else f"({chr(97+idx)})"
             setup_axis_style(
                 ax,
                 xlabel="Subiteration",
                 ylabel="Residual",
-                title=rf"$\Delta t = {dt:.0f}$ days",
+                title=rf"{label} $\Delta t = {dt:.0f}$ days",
                 loglog=False,
                 grid=True,
             )

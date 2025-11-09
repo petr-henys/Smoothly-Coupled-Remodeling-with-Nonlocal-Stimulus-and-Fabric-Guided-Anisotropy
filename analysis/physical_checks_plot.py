@@ -20,8 +20,10 @@ from postprocessor import SweepLoader
 from analysis.plot_utils import (
     setup_axis_style, save_figure, print_banner,
     DT_COLORS, DT_MARKERS, DT_LINESTYLES,
+    SUBSOLVER_COLORS,
     FIGSIZE_TALL, PUBLICATION_DPI,
     PLOT_LINEWIDTH, PLOT_MARKERSIZE,
+    LEGEND_FONTSIZE, LEGEND_FRAMEALPHA, LEGEND_EDGECOLOR, LEGEND_FANCYBOX,
     add_subplot_legend,
 )
 
@@ -41,6 +43,16 @@ def format_dt_label(dt: float) -> str:
         return r"$\Delta t = " + f"{dt:.2f}" + r"$ days"
 
 
+# Color intensity modulation for different dt values (lighter to darker)
+# Maps dt to alpha value for color intensity
+DT_ALPHAS = {
+    6.25: 0.4,   # Lightest
+    12.5: 0.5,
+    25.0: 0.7,
+    50.0: 0.85,
+    100.0: 1.0,  # Darkest (full intensity)
+}
+
 # Physical checks configuration
 PHYSICAL_CHECKS = {
     "energy": {
@@ -49,6 +61,7 @@ PHYSICAL_CHECKS = {
         "ylabel": "Energy [nondimensional]",
         "title": r"(a) Mechanical energy balance",
         "loglog": False,
+        "subsolver": "mech",  # Mechanics (blue)
     },
     "energy_residual": {
         "metrics": ["energy_res_rel"],
@@ -56,6 +69,7 @@ PHYSICAL_CHECKS = {
         "ylabel": "Relative residual",
         "title": r"(b) Mechanical energy error",
         "loglog": True,
+        "subsolver": "mech",  # Mechanics (blue)
     },
     "power": {
         "metrics": ["power_res_abs", "power_res_rel"],
@@ -63,6 +77,7 @@ PHYSICAL_CHECKS = {
         "ylabel": "Power residual",
         "title": r"(c) Stimulus power balance error",
         "loglog": True,
+        "subsolver": "stim",  # Stimulus (green)
     },
     "mass": {
         "metrics": ["mass_res_abs", "mass_res_rel"],
@@ -70,6 +85,7 @@ PHYSICAL_CHECKS = {
         "ylabel": "Mass residual",
         "title": r"(d) Density mass balance error",
         "loglog": True,
+        "subsolver": "dens",  # Density (orange)
     },
     "trace": {
         "metrics": ["trace_A_avg", "trace_Mhat_avg"],
@@ -77,6 +93,7 @@ PHYSICAL_CHECKS = {
         "ylabel": "Trace value",
         "title": r"(e) Direction trace conservation",
         "loglog": False,
+        "subsolver": "dir",  # Direction (purple)
     },
     "trace_residual": {
         "metrics": ["trace_res"],
@@ -84,6 +101,7 @@ PHYSICAL_CHECKS = {
         "ylabel": "Trace residual",
         "title": r"(f) Direction trace error",
         "loglog": True,
+        "subsolver": "dir",  # Direction (purple)
     },
 }
 
@@ -155,12 +173,15 @@ def plot_physical_check(
     df: pd.DataFrame,
     check_config: dict,
     dt_values: list[float],
+    is_bottom_row: bool = False,
 ) -> None:
     """Plot physical check metric vs time for different dt values."""
     metric_names = check_config["metrics"]
     metric_labels = check_config["labels"]
+    subsolver = check_config["subsolver"]
+    base_color = SUBSOLVER_COLORS[subsolver]
     
-    # Plot each dt value
+    # Plot each dt value with varying intensity
     for dt in sorted(dt_values):
         dt_data = df[df["dt_days"] == dt].copy()
         
@@ -170,6 +191,9 @@ def plot_physical_check(
         # Sort by time
         dt_data = dt_data.sort_values("time_days")
         
+        # Get alpha for this dt (intensity variation)
+        alpha = DT_ALPHAS.get(dt, 0.7)
+        
         # If multiple metrics, plot them with different line styles
         if len(metric_names) == 1:
             # Single metric - one line per dt
@@ -178,7 +202,8 @@ def plot_physical_check(
                 metric_data["time_days"].values,
                 metric_data["value"].values,
                 marker=DT_MARKERS.get(dt, "o"),
-                color=DT_COLORS.get(dt, "gray"),
+                color=base_color,
+                alpha=alpha,
                 label=format_dt_label(dt),
                 linestyle=DT_LINESTYLES.get(dt, "-"),
                 linewidth=PLOT_LINEWIDTH,
@@ -201,7 +226,8 @@ def plot_physical_check(
                     metric_data["time_days"].values,
                     metric_data["value"].values,
                     marker=DT_MARKERS.get(dt, "o"),
-                    color=DT_COLORS.get(dt, "gray"),
+                    color=base_color,
+                    alpha=alpha,
                     label=label,
                     linewidth=PLOT_LINEWIDTH,
                     linestyle=linestyle,
@@ -213,8 +239,10 @@ def plot_physical_check(
     if check_config["loglog"]:
         ax.set_yscale("log")
     
+    # Only show x-axis label on bottom row
+    xlabel = "Time [days]" if is_bottom_row else ""
     setup_axis_style(
-        ax, "Time [days]", check_config["ylabel"],
+        ax, xlabel, check_config["ylabel"],
         check_config["title"], loglog=False, grid=True
     )
 
@@ -242,26 +270,72 @@ def create_physical_checks_figure(
     print("\nExtracting physical checks from telemetry...")
     physical_data = collect_physical_checks(sweep_loader, N_value, dt_values)
     
-    # Create figure (3x2 grid) with CMAME tall format
-    fig, axes = plt.subplots(3, 2, figsize=FIGSIZE_TALL)
+    # Create figure (2x3 grid) with equal aspect ratio subplots and shared x-axis
+    # Each subplot: 2.5" wide × 2.0" tall → total: 7.5" × 4.0"
+    fig, axes = plt.subplots(2, 3, figsize=(7.5, 4.0), sharex=True)
     
     # Plot each check
     check_names = list(PHYSICAL_CHECKS.keys())
     for idx, (check_name, check_config) in enumerate(PHYSICAL_CHECKS.items()):
-        row = idx // 2
-        col = idx % 2
+        row = idx // 3
+        col = idx % 3
+        is_bottom_row = (row == 1)  # Bottom row for 2x3 grid
         
         print(f"Plotting {check_name}...")
         df = physical_data[check_name]
         
         if len(df) > 0:
-            plot_physical_check(axes[row, col], df, check_config, dt_values)
-            add_subplot_legend(axes[row, col], loc="best")
+            plot_physical_check(axes[row, col], df, check_config, dt_values, is_bottom_row)
         else:
             axes[row, col].text(0.5, 0.5, "No data", ha="center", va="center")
             axes[row, col].set_title(check_config["title"])
     
+    # Create unified legend with neutral grayscale colors matching dt intensities
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Patch
+    
+    legend_handles = []
+    legend_labels = []
+    
+    # Add dt values
+    for dt in sorted(dt_values):
+        alpha = DT_ALPHAS.get(dt, 0.7)
+        # Use neutral gray color with varying intensity
+        handle = Line2D([0], [0], 
+                       color='gray', 
+                       alpha=alpha,
+                       linewidth=PLOT_LINEWIDTH * 1.5,
+                       marker=DT_MARKERS.get(dt, "o"),
+                       markersize=PLOT_MARKERSIZE * 1.2,
+                       linestyle=DT_LINESTYLES.get(dt, "-"))
+        legend_handles.append(handle)
+        legend_labels.append(format_dt_label(dt))
+    
+    # Add separator
+    legend_handles.append(Patch(facecolor='none', edgecolor='none'))
+    legend_labels.append('')
+    
+    # Add line style indicators for metrics with absolute/relative
+    legend_handles.append(Line2D([0], [0], color='black', linewidth=PLOT_LINEWIDTH, linestyle='-'))
+    legend_labels.append('Absolute')
+    legend_handles.append(Line2D([0], [0], color='black', linewidth=PLOT_LINEWIDTH, linestyle='--'))
+    legend_labels.append('Relative')
+    
+    # Add unified legend below all subplots
+    fig.legend(
+        legend_handles, legend_labels,
+        loc='lower center',
+        bbox_to_anchor=(0.5, -0.02),
+        ncol=len(dt_values) + 3,  # dt values + separator + 2 line styles
+        fontsize=LEGEND_FONTSIZE,
+        framealpha=LEGEND_FRAMEALPHA,
+        frameon=True,
+        edgecolor=LEGEND_EDGECOLOR,
+        fancybox=LEGEND_FANCYBOX,
+    )
+    
     plt.tight_layout()
+    plt.subplots_adjust(bottom=0.12)  # Make room for legend
     save_figure(fig, output_file, dpi=PUBLICATION_DPI)
     print(f"\n✓ Physical checks figure saved to {output_file}")
     

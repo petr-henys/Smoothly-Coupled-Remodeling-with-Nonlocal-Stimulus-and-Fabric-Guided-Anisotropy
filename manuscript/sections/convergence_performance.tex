@@ -39,6 +39,18 @@ At fixed $\Delta t$, errors decrease monotonically under mesh refinement and pai
 \paragraph{Temporal convergence}
 Decreasing $\Delta t$ shows an initial sublinear regime (transient adaptation) followed by the asymptotic behavior indicated by the dotted reference slope.
 
+\paragraph{Physical checks}
+We verify basic conservation and invariants at a fixed mesh resolution while varying the timestep (\cref{fig:physical-checks}). For each timestep we plot, over physical time, (a) internal versus external work in mechanics and (b) the corresponding relative energy-balance residual; (c) stimulus power-balance residual (absolute/relative); (d) density mass-balance residual (absolute/relative); and for the direction field, (e) the spatially averaged traces $\mathrm{tr}(\mathbf{A})$ and $\mathrm{tr}(\widehat{\mathbf{M}})$ and (f) the trace residual. Curves use converged sub-iterations per step. As $\Delta t$ decreases, balance residuals decrease and invariants remain bounded as expected.
+
+\begin{figure}[htbp]
+  \centering
+  \IfFileExists{images/physical_checks_plot.png}{%
+    \includegraphics[width=1\linewidth]{images/physical_checks_plot.png}%
+  }{\fbox{\parbox{0.9\linewidth}{\centering Missing image: \texttt{images/physical_checks_plot.png}}}}
+  \caption{Physical conservation and invariants at fixed mesh resolution and varying timestep. Panels (a)--(f) show, respectively: mechanical internal/external work, mechanical energy residual (relative), stimulus power-balance residual (absolute/relative), density mass-balance residual (absolute/relative), traces $\mathrm{tr}(\mathbf{A})$ and $\mathrm{tr}(\widehat{\mathbf{M}})$, and the trace residual. One line per $\Delta t$; quantities are evaluated on converged sub-iterations per step.}
+  \label{fig:physical-checks}
+\end{figure}
+
 \paragraph{Solver performance}
 We profile per-timestep cost and memory across meshes and time steps (\cref{fig:performance}). Metrics are aggregated across the simulated horizon: means for subiterations and memory; sums for linear iterations and walltime. The figure summarizes how iteration counts, walltime, memory, and the distribution across subsolvers vary with total DOFs and timestep size.
 

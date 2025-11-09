@@ -67,10 +67,10 @@ def plot_spatial_convergence(
     """Plot spatial convergence (varying h, fixed dt)."""
     if error_type == "L2_error":
         ylabel = r"$L^2$ error"
-        title_prefix = r"(a) Spatial $L^2$" if error_type == "L2_error" else r"(b) Spatial $L^2$"
+        title_prefix = r"(a) Spatial $L^2$"
     else:
         ylabel = r"$H^1$ seminorm error"
-        title_prefix = r"(a) Spatial $H^1$" if error_type == "L2_error" else r"(b) Spatial $H^1$"
+        title_prefix = r"(b) Spatial $H^1$"
     
     # Plot all fields
     for field in FIELD_NAMES:
