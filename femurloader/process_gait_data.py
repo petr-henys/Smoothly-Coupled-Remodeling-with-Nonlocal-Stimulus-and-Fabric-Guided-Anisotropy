@@ -15,7 +15,8 @@ def load_xy_datasets(xlsx_path: str | Path, sheet: str | int | None = 0, flip_y:
 
     datasets = {}
     for dataset_name in df.columns.levels[0]:
-        if pd.isna(dataset_name):
+        # Skip NaN and unnamed columns (pandas adds these for index column)
+        if pd.isna(dataset_name) or str(dataset_name).startswith('Unnamed:'):
             continue
 
         try:
@@ -210,12 +211,24 @@ def plot_hip_data(hip_path: str | Path, components: List[str] = None, vs_time: b
     plt.show()
 
 def rescale_curve(curve_poins, x_scale=(0., 1.), y_scale=(0., 1.)):
-    """Rescale curve points to a given range."""
+    """Rescale curve points to a given range. Handles degenerate cases (single point, uniform values)."""
     x_min, x_max = np.min(curve_poins[:, 0]), np.max(curve_poins[:, 0])
     y_min, y_max = np.min(curve_poins[:, 1]), np.max(curve_poins[:, 1])
     
-    x_rescaled = (curve_poins[:, 0] - x_min) / (x_max - x_min) * (x_scale[1] - x_scale[0]) + x_scale[0]
-    y_rescaled = (curve_poins[:, 1] - y_min) / (y_max - y_min) * (y_scale[1] - y_scale[0]) + y_scale[0]
+    # Handle degenerate cases (x_max == x_min or y_max == y_min)
+    # Map to center of target range
+    x_range = x_max - x_min
+    y_range = y_max - y_min
+    
+    if x_range > 0:
+        x_rescaled = (curve_poins[:, 0] - x_min) / x_range * (x_scale[1] - x_scale[0]) + x_scale[0]
+    else:
+        x_rescaled = np.full_like(curve_poins[:, 0], (x_scale[0] + x_scale[1]) / 2)
+    
+    if y_range > 0:
+        y_rescaled = (curve_poins[:, 1] - y_min) / y_range * (y_scale[1] - y_scale[0]) + y_scale[0]
+    else:
+        y_rescaled = np.full_like(curve_poins[:, 1], (y_scale[0] + y_scale[1]) / 2)
     
     return np.column_stack((x_rescaled, y_rescaled))
 
