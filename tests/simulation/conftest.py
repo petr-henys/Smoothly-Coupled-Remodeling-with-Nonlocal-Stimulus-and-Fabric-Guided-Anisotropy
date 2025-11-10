@@ -77,7 +77,7 @@ def pytest_configure(config: pytest.Config) -> None:
 
 # Add repository root to sys.path
 tests_dir = os.path.dirname(__file__)
-repo_root = os.path.abspath(os.path.join(tests_dir, ".."))
+repo_root = os.path.abspath(os.path.join(tests_dir, "..", ".."))
 if repo_root not in sys.path:
     sys.path.insert(0, repo_root)
 

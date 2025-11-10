@@ -53,7 +53,7 @@ def mock_run_directory(tmp_path):
         "total_time_days": 200.0,
         "accel_type": "anderson",
         "coupling_tol": 1e-6,
-        "mesh_size": 33,
+        "mesh_size": 3,
         "verbose": True,
     }
     with open(run_dir / "config.json", "w") as f:
@@ -109,8 +109,12 @@ def mock_run_directory(tmp_path):
 
 
 @pytest.fixture
-def mock_run_with_fields(mock_run_directory):
-    """Add field NPZ files to mock run directory."""
+def mock_run_with_fields(mock_run_directory, request):
+    """Add field NPZ files to mock run directory.
+    
+    Note: NPZ file generation is SLOW with MPI due to KDTree coordinate matching.
+    Only generate NPZ files for tests that explicitly need them (marked with slow).
+    """
     comm = MPI.COMM_WORLD
     
     # Create tiny mesh for field generation
@@ -147,11 +151,13 @@ def mock_run_with_fields(mock_run_directory):
         A.x.array[i+2] = A.x.array[i+6]  # A[0,2] = A[2,0]
         A.x.array[i+5] = A.x.array[i+7]  # A[1,2] = A[2,1]
     
-    # Save fields
-    save_function_npz(u, mock_run_directory / "u.npz", comm)
-    save_function_npz(rho, mock_run_directory / "rho.npz", comm)
-    save_function_npz(S, mock_run_directory / "S.npz", comm)
-    save_function_npz(A, mock_run_directory / "A.npz", comm)
+    # Only save NPZ files if test is marked as 'slow' (needs actual NPZ loading)
+    # This avoids expensive KDTree operations for tests that don't need them
+    if "slow" in request.keywords:
+        save_function_npz(u, mock_run_directory / "u.npz", comm)
+        save_function_npz(rho, mock_run_directory / "rho.npz", comm)
+        save_function_npz(S, mock_run_directory / "S.npz", comm)
+        save_function_npz(A, mock_run_directory / "A.npz", comm)
     
     return mock_run_directory, domain, (V, Q, T)
 
@@ -240,7 +246,7 @@ def test_config_loading(mock_run_directory):
     assert isinstance(config, dict)
     assert config["dt_days"] == 50.0
     assert config["accel_type"] == "anderson"
-    assert config["mesh_size"] == 33
+    assert config["mesh_size"] == 3
     
     # Caching behavior
     config2 = loader.get_config()
@@ -365,6 +371,7 @@ def test_available_times(mock_run_directory):
 
 
 @pytest.mark.mpi
+@pytest.mark.slow
 def test_field_loading(mock_run_with_fields):
     """Test field snapshot loading from NPZ files."""
     run_dir, domain, spaces = mock_run_with_fields
@@ -389,6 +396,7 @@ def test_field_loading(mock_run_with_fields):
 
 
 @pytest.mark.mpi
+@pytest.mark.slow
 def test_field_loading_caching(mock_run_with_fields):
     """Test field loading caching behavior."""
     run_dir, domain, spaces = mock_run_with_fields
@@ -405,6 +413,7 @@ def test_field_loading_caching(mock_run_with_fields):
 
 
 @pytest.mark.mpi
+@pytest.mark.slow
 def test_load_field_to_function(mock_run_with_fields):
     """Test loading field snapshot directly into DOLFINx function."""
     run_dir, domain, spaces = mock_run_with_fields
@@ -429,6 +438,7 @@ def test_load_field_to_function(mock_run_with_fields):
 
 
 @pytest.mark.mpi
+@pytest.mark.slow
 def test_field_statistics(mock_run_with_fields):
     """Test field statistics computation."""
     run_dir, domain, spaces = mock_run_with_fields
@@ -705,6 +715,7 @@ def test_invalid_time_raises_error(mock_run_directory):
 
 
 @pytest.mark.smoke
+@pytest.mark.slow
 def test_smoke_postprocessor_workflow(mock_run_with_fields):
     """Smoke test: Full workflow from sweep to field analysis."""
     run_dir, domain, spaces = mock_run_with_fields
