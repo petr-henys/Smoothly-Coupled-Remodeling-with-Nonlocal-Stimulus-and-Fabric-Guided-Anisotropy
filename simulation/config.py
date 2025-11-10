@@ -18,22 +18,23 @@ class Config:
     rho_c: float = 1000.0
     u_c: float = 1e-3
     E0_dim: float = 6.5e9
-    psi_ref_dim: float = 300.0
+    psi_ref_dim: float = 360.0
 
     # --- density: anisotropic diffusion (DIM) ---
-    beta_par_dim: float = 5e-6
-    beta_perp_dim: float = 5e-6
+    beta_par_dim: float = 2.8e-6
+    beta_perp_dim: float = 8.5e-7
 
     # --- stimulus S (DIM) ---
-    cS_dim: float = 20.0
-    tauS_dim: float = 1.0
-    kappaS_dim: float = 1e-4
-    rS_dim: float = 5e-5
+    # Tuned for proximal-femur remodeling under cyclic gait loading.
+    cS_dim: float = 32.0          # signaling capacity [Pa·day]
+    tauS_dim: float = 0.04        # decay rate [1/day] → 25-day time constant
+    kappaS_dim: float = 2.5e-4    # diffusion [m^2/day]
+    rS_dim: float = 3.6e-5        # mechano-transduction gain [1/(Pa·day)]
 
     # --- orientation A (DIM) ---
-    cA_dim: float = 1.0
-    tauA_dim: float = 1.0
-    ell_dim: float = 0.2
+    cA_dim: float = 1.4
+    tauA_dim: float = 0.6
+    ell_dim: float = 0.35
 
     # --- nondimensional material/mechanics params ---
     nu: float = 0.3
@@ -41,10 +42,10 @@ class Config:
     xi_aniso: float = 0.2
 
     # --- density/load limits (DIM) ---
-    rho_min_dim: float = 1.
-    rho_max_dim: float = 2000.0
+    rho_min_dim: float = 350.0
+    rho_max_dim: float = 1850.0
     t_p: float = 3e6
-    rho0: float = 1000.0
+    rho0: float = 1200.0
 
     # --- numerics / I-O ---
     quadrature_degree: int = 6
@@ -91,7 +92,14 @@ class Config:
 
     # Smoothness controls (used by multiple subsolvers)
     # Unified epsilon per manuscript's recommendation; slightly larger for SPD conditioning.
-    smooth_eps: float = 1e-6
+    smooth_eps: float = 5e-7
+
+    # --- Gait / remodeling runtime defaults ---
+    gait_cycles_per_day: float = 7000.0   # average steps/day (two contacts per cycle)
+    gait_samples: int = 9                 # quadrature samples across gait cycle
+    body_mass_kg: float = 75.0
+    sim_dt_days: float = 10.0
+    sim_total_days: float = 1000.0
 
     # --- FE / I-O (set these at construction) ---
     domain: Optional[mesh.Mesh] = field(default=None, repr=False)

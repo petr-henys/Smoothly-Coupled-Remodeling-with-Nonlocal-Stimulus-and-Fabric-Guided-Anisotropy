@@ -595,3 +595,13 @@ class DirectionSolver(_BaseLinearSolver):
         # Residual: how far tr(A) deviates from target tr(M̂)
         R = trA_vol - trMhat_vol
         return trA_vol, trMhat_vol, abs(R)
+    
+    def update_rhs_from_Bexpr(self, B_sum_expr):
+        B_hat = unittrace_psd(B_sum_expr, self.gdim, eps=self.smooth_eps)
+        with self.b.localForm() as b_local:
+            b_local.set(0.0)
+        rhs_ten = (self.cfg.cA_c / self.cfg.dt_nd) * self.A_old + self.cfg.tauA_c * B_hat
+        self._rhs_form = fem.form(ufl.inner(rhs_ten, self.Q) * self.dx)
+        assemble_vector(self.b, self._rhs_form)
+        self.b.ghostUpdate(PETSc.InsertMode.ADD, PETSc.ScatterMode.REVERSE)
+        self.b.ghostUpdate(PETSc.InsertMode.INSERT, PETSc.ScatterMode.FORWARD)

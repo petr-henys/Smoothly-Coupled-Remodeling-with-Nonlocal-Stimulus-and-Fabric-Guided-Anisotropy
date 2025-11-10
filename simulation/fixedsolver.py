@@ -165,16 +165,25 @@ class FixedPointSolver:
         """One Gauss-Seidel sweep: solve mechanics → stimulus → density → direction."""
         mech_time_total = stim_time_total = dens_time_total = dir_time_total = 0.0
 
-        # Mechanics
+        # Mechanics (skip if using external accumulated strain energy)
         t0 = MPI.Wtime()
-        self.mech.update_stiffness()
-        mech_iters, mech_reason = self.mech.solve(self.u)
+        use_external_psi = hasattr(self, "psi_expr_external") and self.psi_expr_external is not None
+        
+        if not use_external_psi:
+            # Standard mode: solve mechanics with current loads
+            self.mech.update_stiffness()
+            mech_iters, mech_reason = self.mech.solve(self.u)
+        else:
+            # Accumulate mode: mechanics already solved for all gait phases
+            # Skip solve to avoid overwriting with zero-load solution
+            mech_iters, mech_reason = 0, 0
         mech_time_total += self._elapsed_max(t0)
 
         # Stimulus
         t0 = MPI.Wtime()
-        psi_density = 0.5 * ufl.inner(self.mech.sigma(self.u, self.rho), self.mech.eps(self.u))
-        self.stim.update_rhs(psi_density)
+        psi_expr = getattr(self, "psi_expr_external",
+                        0.5*ufl.inner(self.mech.sigma(self.u, self.rho), self.mech.eps(self.u)))
+        self.stim.update_rhs(psi_expr)
         stim_iters, stim_reason = self.stim.solve(self.S)
         stim_time_total += self._elapsed_max(t0)
 
@@ -186,7 +195,11 @@ class FixedPointSolver:
 
         # Direction
         t0 = MPI.Wtime()
-        self.dir.update_rhs(self.mech, self.u)
+        B_expr = getattr(self, "B_expr_external", None)
+        if B_expr is None:
+            self.dir.update_rhs(self.mech, self.u)
+        else:
+            self.dir.update_rhs_from_Bexpr(B_expr)
         dir_iters, dir_reason = self.dir.solve(self.A)
         dir_time_total += self._elapsed_max(t0)
 
