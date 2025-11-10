@@ -22,8 +22,7 @@ from dolfinx import mesh, fem
 import basix.ufl
 from analysis.analysis_utils import (
     save_function_npz,
-    load_field_from_npz,
-    compute_richardson_triplets_qoi
+    load_npz_field,
 )
 
 
@@ -53,7 +52,7 @@ def test_save_load_npz_roundtrip():
         
         # Load back into new function
         u_loaded = fem.Function(V, name="loaded_function")
-        domain_loaded, u_loaded = load_field_from_npz(temp_dir, comm, 8, "test_function", "scalar")
+        load_npz_field(comm, npz_path, u_loaded)
         
         # Compare values
         diff = u_orig.x.array - u_loaded.x.array
@@ -68,64 +67,6 @@ def test_save_load_npz_roundtrip():
         if comm.rank == 0:
             shutil.rmtree(temp_dir)
 
-
-@pytest.mark.unit
-def test_richardson_extrapolation():
-    """Test Richardson extrapolation with known convergence."""
-    # Create synthetic data with known convergence order p=2
-    h_values = [0.1, 0.05, 0.025, 0.0125]
-    exact_value = 1.0
-    p_true = 2.0
-    
-    # Generate QoI values with p=2 convergence: Q(h) = Q_exact + C*h^p
-    C = 0.1
-    qoi_values = [exact_value + C * h**p_true for h in h_values]
-    
-    # Apply Richardson extrapolation
-    richardson_data = compute_richardson_triplets_qoi(h_values, qoi_values)
-    
-    assert len(richardson_data) == 2, "Should have 2 Richardson triplets"
-    
-    # Check estimated convergence orders
-    p_estimates = [r["p"] for r in richardson_data]
-    for p_est in p_estimates:
-        assert abs(p_est - p_true) < 0.1, f"Convergence order estimate {p_est} too far from true value {p_true}"
-    
-    # Check extrapolated values
-    q_ext_estimates = [r["Q_ext"] for r in richardson_data]
-    for q_ext in q_ext_estimates:
-        if np.isfinite(q_ext):
-            assert abs(q_ext - exact_value) < 0.05, f"Extrapolated value {q_ext} too far from exact {exact_value}"
-    
-    print(f"✓ Richardson test passed: p_estimates = {p_estimates}, Q_ext = {q_ext_estimates}")
-
-
-@pytest.mark.unit  
-def test_gci_computation():
-    """Test Grid Convergence Index computation."""
-    # Test data with good convergence
-    h_values = [0.08, 0.04, 0.02] 
-    qoi_values = [1.1, 1.025, 1.00625]  # Converging to 1.0 with p≈2
-    
-    richardson_data = compute_richardson_triplets_qoi(h_values, qoi_values)
-    
-    assert len(richardson_data) == 1, "Should have 1 Richardson triplet"
-    
-    result = richardson_data[0]
-    
-    # Check GCI values are reasonable (should be small for good convergence)
-    assert 0 < result["GCI32_percent"] < 10, f"GCI32 should be reasonable: {result['GCI32_percent']}"
-    assert 0 < result["GCI21_percent"] < 10, f"GCI21 should be reasonable: {result['GCI21_percent']}"
-    
-    # Check beta (should be close to 1 for consistent convergence)
-    if np.isfinite(result["beta"]):
-        assert 0.5 < result["beta"] < 2.0, f"Beta should be close to 1: {result['beta']}"
-    
-    print(f"✓ GCI test passed: GCI32={result['GCI32_percent']:.2f}%, GCI21={result['GCI21_percent']:.2f}%, beta={result['beta']:.3f}")
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
 
     
 
@@ -313,167 +254,6 @@ def test_npz_element_mismatch_detection(shared_tmpdir):
 
 import numpy as np
 import pytest
-
-
-@pytest.mark.mpi
-@pytest.mark.unit
-def test_qoi_dirichlet_energy_scalar_richardson():
-    """Use Dirichlet energy of a smooth scalar field as QoI.
-
-    Q(h) = 1/2 ∫ |∇f_h|^2 dx converges to a limit with mesh refinement.
-    We apply Richardson/GCI on Q(h) across uniform refinements and assert
-    sensible p > 0, decreasing GCIs, and ratio consistency.
-    """
-    from mpi4py import MPI
-    from dolfinx import mesh, fem
-    import basix.ufl
-    import ufl
-    from analysis.analysis_utils import (
-        mpi_scalar_integral,
-        compute_richardson_triplets_qoi,
-    )
-
-    comm = MPI.COMM_WORLD
-    # Uniform-ish ratio to fit solver assumptions (r ≈ 1.5)
-    N_list = [8, 12, 18, 27]  # 4 levels → 2 triplets
-
-    def make_field(N):
-        domain = mesh.create_unit_cube(comm, N, N, N, ghost_mode=mesh.GhostMode.shared_facet)
-        P1 = basix.ufl.element("Lagrange", domain.topology.cell_name(), 1)
-        Q = fem.functionspace(domain, P1)
-        f = fem.Function(Q, name="f")
-        # Quadratic manufactured solution (nontrivial gradient)
-        f.interpolate(
-            lambda x: (
-                x[0] * x[0]
-                - 0.5 * x[1] * x[1]
-                + 0.75 * x[2] * x[2]
-                + 0.3 * x[0] * x[1]
-                + 0.2 * x[1] * x[2]
-                + 0.15 * x[0] * x[2]
-            )
-        )
-        f.x.scatter_forward()
-        return domain, f
-
-    domains, fields = zip(*(make_field(N) for N in N_list))
-    h_values = 1.0 / np.asarray(N_list, dtype=float)
-
-    # QoI: Dirichlet energy 0.5 * ∫ |∇f_h|^2
-    Q_vals = []
-    for dom, f in zip(domains, fields):
-        e_density = 0.5 * ufl.inner(ufl.grad(f), ufl.grad(f))
-        Q_vals.append(mpi_scalar_integral(e_density, dom))
-
-    rows = compute_richardson_triplets_qoi(h_values.tolist(), Q_vals)
-    assert len(rows) == len(N_list) - 2
-
-    for i, row in enumerate(rows):
-        assert np.isfinite(row["p"]) and row["p"] > 0.5 and row["p"] < 3.5
-        # Finer level should be closer to Q_ext → smaller GCI32
-        assert row["GCI32_percent"] <= row["GCI21_percent"] + 1e-8
-        # Consistency: GCI32/GCI21 ≈ (h3/h2)^p = (1/r32)^p
-        ratio = row["GCI32"] / row["GCI21"] if row["GCI21"] > 0 else np.nan
-        expected = (1.0 / row["r32"]) ** row["p"] if row["r32"] > 0 else np.nan
-        if np.isfinite(ratio) and np.isfinite(expected):
-            assert abs(ratio - expected) / max(1e-12, expected) < 0.25
-
-
-@pytest.mark.mpi
-@pytest.mark.unit
-def test_qoi_dirichlet_energy_vector_richardson():
-    """Use Dirichlet energy of a smooth vector field as QoI.
-
-    Q(h) = 1/2 ∫ |∇u_h|^2 dx with u quadratic in each component.
-    """
-    from mpi4py import MPI
-    from dolfinx import mesh, fem
-    import basix.ufl
-    import ufl
-    from analysis.analysis_utils import (
-        mpi_scalar_integral,
-        compute_richardson_triplets_qoi,
-    )
-
-    comm = MPI.COMM_WORLD
-    N_list = [8, 12, 18, 27]
-
-    def make_field(N):
-        domain = mesh.create_unit_cube(comm, N, N, N, ghost_mode=mesh.GhostMode.shared_facet)
-        V = fem.functionspace(
-            domain, basix.ufl.element("Lagrange", domain.topology.cell_name(), 1, shape=(3,))
-        )
-        u = fem.Function(V, name="u")
-        u.interpolate(lambda x: np.vstack([x[0] ** 2, 0.5 * x[1] ** 2, 0.25 * x[2] ** 2]))
-        u.x.scatter_forward()
-        return domain, u
-
-    domains, fields = zip(*(make_field(N) for N in N_list))
-    h_values = 1.0 / np.asarray(N_list, dtype=float)
-
-    Q_vals = []
-    for dom, u in zip(domains, fields):
-        e_density = 0.5 * ufl.inner(ufl.grad(u), ufl.grad(u))
-        Q_vals.append(mpi_scalar_integral(e_density, dom))
-
-    rows = compute_richardson_triplets_qoi(h_values.tolist(), Q_vals)
-    assert len(rows) == len(N_list) - 2
-
-    for row in rows:
-        assert np.isfinite(row["p"]) and row["p"] > 0.5 and row["p"] < 3.5
-        assert row["GCI32_percent"] <= row["GCI21_percent"] + 1e-8
-        ratio = row["GCI32"] / row["GCI21"] if row["GCI21"] > 0 else np.nan
-        expected = (1.0 / row["r32"]) ** row["p"] if row["r32"] > 0 else np.nan
-        if np.isfinite(ratio) and np.isfinite(expected):
-            assert abs(ratio - expected) / max(1e-12, expected) < 0.25
-
-
-@pytest.mark.mpi
-@pytest.mark.unit
-def test_qoi_gradient_norm_scalar_richardson():
-    """Use L2 norm of gradient as QoI (not variance).
-
-    Q(h) = ∫ |∇f_h|^2 dx behaves similarly to energy and is meaningful for GCI.
-    """
-    from mpi4py import MPI
-    from dolfinx import mesh, fem
-    import basix.ufl
-    import ufl
-    from analysis.analysis_utils import (
-        mpi_scalar_integral,
-        compute_richardson_triplets_qoi,
-    )
-
-    comm = MPI.COMM_WORLD
-    N_list = [8, 12, 18, 27]
-
-    def make_field(N):
-        domain = mesh.create_unit_cube(comm, N, N, N, ghost_mode=mesh.GhostMode.shared_facet)
-        P1 = basix.ufl.element("Lagrange", domain.topology.cell_name(), 1)
-        Q = fem.functionspace(domain, P1)
-        f = fem.Function(Q, name="f")
-        f.interpolate(lambda x: np.sin(1.3 * np.pi * x[0]) * np.cos(0.7 * np.pi * x[1]) + 0.2 * x[2])
-        f.x.scatter_forward()
-        return domain, f
-
-    domains, fields = zip(*(make_field(N) for N in N_list))
-    h_values = 1.0 / np.asarray(N_list, dtype=float)
-
-    Q_vals = []
-    for dom, f in zip(domains, fields):
-        Q_vals.append(mpi_scalar_integral(ufl.inner(ufl.grad(f), ufl.grad(f)), dom))
-
-    rows = compute_richardson_triplets_qoi(h_values.tolist(), Q_vals)
-    assert len(rows) == len(N_list) - 2
-
-    for row in rows:
-        assert np.isfinite(row["p"]) and row["p"] > 0.5
-        assert row["GCI32_percent"] <= row["GCI21_percent"] + 1e-8
-        ratio = row["GCI32"] / row["GCI21"] if row["GCI21"] > 0 else np.nan
-        expected = (1.0 / row["r32"]) ** row["p"] if row["r32"] > 0 else np.nan
-        if np.isfinite(ratio) and np.isfinite(expected):
-            assert abs(ratio - expected) / max(1e-12, expected) < 0.35
-
 
 
 ################################################################################

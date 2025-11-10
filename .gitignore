@@ -6,7 +6,7 @@
 !/tests/
 !/manuscript/
 !/analysis/
-!/examples/
+!/femurloader/
 
 # Allow root-level files
 !/.gitignore
