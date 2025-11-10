@@ -165,24 +165,15 @@ class FixedPointSolver:
         """One Gauss-Seidel sweep: solve mechanics → stimulus → density → direction."""
         mech_time_total = stim_time_total = dens_time_total = dir_time_total = 0.0
 
-        # Mechanics (skip if using external accumulated strain energy)
+        # Mechanics
         t0 = MPI.Wtime()
-        use_external_psi = hasattr(self, "psi_expr_external") and self.psi_expr_external is not None
-        
-        if not use_external_psi:
-            # Standard mode: solve mechanics with current loads
-            self.mech.update_stiffness()
-            mech_iters, mech_reason = self.mech.solve(self.u)
-        else:
-            # Accumulate mode: mechanics already solved for all gait phases
-            # Skip solve to avoid overwriting with zero-load solution
-            mech_iters, mech_reason = 0, 0
+        self.mech.update_stiffness()
+        mech_iters, mech_reason = self.mech.solve(self.u)
         mech_time_total += self._elapsed_max(t0)
 
-        # Stimulus
+        # Stimulus (query strain energy from mechanics solver)
         t0 = MPI.Wtime()
-        psi_expr = getattr(self, "psi_expr_external",
-                        0.5*ufl.inner(self.mech.sigma(self.u, self.rho), self.mech.eps(self.u)))
+        psi_expr = self.mech.get_strain_energy_density()
         self.stim.update_rhs(psi_expr)
         stim_iters, stim_reason = self.stim.solve(self.S)
         stim_time_total += self._elapsed_max(t0)
@@ -193,13 +184,10 @@ class FixedPointSolver:
         dens_iters, dens_reason = self.den.solve(self.rho)
         dens_time_total += self._elapsed_max(t0)
 
-        # Direction
+        # Direction (query strain tensor from mechanics solver)
         t0 = MPI.Wtime()
-        B_expr = getattr(self, "B_expr_external", None)
-        if B_expr is None:
-            self.dir.update_rhs(self.mech, self.u)
-        else:
-            self.dir.update_rhs_from_Bexpr(B_expr)
+        B_expr = self.mech.get_strain_tensor()
+        self.dir.update_rhs_from_Bexpr(B_expr)
         dir_iters, dir_reason = self.dir.solve(self.A)
         dir_time_total += self._elapsed_max(t0)
 
@@ -385,11 +373,10 @@ class FixedPointSolver:
             x_raw = self._flatten_state(copy=True)
             # --- Diagnostics: all subsolvers have conservation/balance checks ---
             W_int_nd, W_ext_nd, energy_rel = self.mech.energy_balance_nd(self.u)
-            psi_density = 0.5 * ufl.inner(self.mech.sigma(self.u, self.rho), self.mech.eps(self.u))
+            psi_density = self.mech.get_strain_energy_density(self.u)
             power_abs, power_rel = self.stim.power_balance_residual(self.S, psi_density)
             mass_abs, mass_rel = self.den.mass_balance_residual(self.rho)
-            eps_ten = self.mech.eps(self.u)
-            B = ufl.dot(ufl.transpose(eps_ten), eps_ten)
+            B = self.mech.get_strain_tensor(self.u)
             gdim = self.u.function_space.mesh.geometry.dim
             Mhat_expr = unittrace_psd(B, gdim, eps=self.cfg.smooth_eps)
             trA_avg, trMhat_avg, trace_res = self.dir.trace_balance_residual(self.A, Mhat_expr)

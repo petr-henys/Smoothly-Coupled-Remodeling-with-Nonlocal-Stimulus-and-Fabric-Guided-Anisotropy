@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from typing import Tuple, List, Optional, Dict
+from abc import ABC, abstractmethod
 
+import numpy as np
 from mpi4py import MPI
 from petsc4py import PETSc
 from dolfinx import fem
@@ -16,11 +18,39 @@ from dolfinx.fem.petsc import (
 from dolfinx import default_scalar_type
 import ufl
 
-from simulation.utils import build_nullspace
+from simulation.utils import build_nullspace, assign
 from simulation.config import Config
 from simulation.logger import get_logger
 
 Scalar = PETSc.ScalarType
+
+
+# --------------------------- Gait Loading Interface --------------------------
+class GaitQuadrature(ABC):
+    """Abstract interface for time-varying gait loading patterns."""
+    
+    @abstractmethod
+    def get_quadrature(self) -> List[Tuple[float, float]]:
+        """Return [(phase_percent, weight), ...] where weights sum to 1.
+        
+        Returns
+        -------
+        List[Tuple[float, float]]
+            List of (gait_phase_percent, quadrature_weight) pairs.
+            phase_percent in [0, 100], weights sum to 1.0.
+        """
+        pass
+    
+    @abstractmethod
+    def update_loads(self, phase_percent: float) -> None:
+        """Update traction fem.Functions to given gait phase percentage.
+        
+        Parameters
+        ----------
+        phase_percent : float
+            Gait cycle phase in [0, 100] percent.
+        """
+        pass
 
 
 # --------------------------- Smooth helpers (C∞-ish) -------------------------
@@ -164,8 +194,8 @@ class MechanicsSolver(_BaseLinearSolver):
         rho: fem.Function,
         A_dir: fem.Function,
         dirichlets: List[fem.DirichletBC],
-        neumanns: List[Tuple[fem.Function, int]],
         config: Config,
+        neumanns: Optional[List[Tuple[fem.Function, int]]] = None,
     ):
         super().__init__(V.mesh.comm, config)
         self.V = V
@@ -178,7 +208,11 @@ class MechanicsSolver(_BaseLinearSolver):
         self.rho = rho
         self.A_dir = A_dir
         self.bcs = dirichlets
-        self.neumanns = neumanns
+        self.neumanns: List[Tuple[fem.Function, int]] = neumanns if neumanns is not None else []
+        
+        # Gait accumulation mode
+        self.gait_mode: Optional[GaitQuadrature] = None
+        self._cached_gait_solutions: List[Tuple[fem.Function, float]] = []
 
         vol_local = fem.assemble_scalar(fem.form(1 * self.dx))
         self.total_vol = self.comm.allreduce(vol_local, op=MPI.SUM)
@@ -273,10 +307,90 @@ class MechanicsSolver(_BaseLinearSolver):
         set_bc(self.b, self.bcs)
         self.b.ghostUpdate(PETSc.InsertMode.INSERT, PETSc.ScatterMode.FORWARD)
 
+    # --------------------------- Gait Mode API -------------------------------
+    def add_neumann_bc(self, traction_func: fem.Function, facet_tag: int):
+        """Add a Neumann boundary condition (traction on tagged facets).
+        
+        Must be called before solver_setup().
+        """
+        self.neumanns.append((traction_func, facet_tag))
+    
+    def set_gait_mode(self, quadrature: GaitQuadrature):
+        """Enable gait accumulation mode with time-varying loads.
+        
+        Parameters
+        ----------
+        quadrature : GaitQuadrature
+            Object that provides (phase, weight) pairs and updates traction functions.
+        """
+        self.gait_mode = quadrature
+    
+    def clear_gait_cache(self):
+        """Clear cached gait solutions (call at start of each timestep)."""
+        self._cached_gait_solutions = []
+
+    # --------------------------- Core Solve ----------------------------------
     def solve(self, u_func: fem.Function):
-        its, reason = self._solve(u_func)
-        self._maybe_warn(reason, "Mechanics")
-        return its, reason
+        """Solve mechanics (single-phase or gait-accumulated).
+        
+        Parameters
+        ----------
+        u_func : fem.Function
+            Output displacement function. If gait_mode is active, contains
+            mid-gait displacement for visualization; otherwise single-load solution.
+        
+        Returns
+        -------
+        total_iters : int
+            Total KSP iterations (sum across all gait phases if applicable)
+        reason : int
+            Convergence reason from last solve
+        """
+        if self.gait_mode is None:
+            # Simple single-load solve
+            self.update_rhs()
+            its, reason = self._solve(u_func)
+            self._maybe_warn(reason, "Mechanics")
+            return its, reason
+        else:
+            # Gait accumulation mode
+            return self._solve_gait_accumulated(u_func)
+    
+    def _solve_gait_accumulated(self, u_out: fem.Function) -> Tuple[int, int]:
+        """Solve mechanics at multiple gait phases and store mid-gait u in u_out."""
+        quad = self.gait_mode.get_quadrature()
+        u_list: List[Tuple[fem.Function, float]] = []
+        total_iters = 0
+        last_reason = 0
+        
+        mid_idx = len(quad) // 2
+        
+        for idx, (phase_pct, weight) in enumerate(quad):
+            # Update traction functions for this phase
+            self.gait_mode.update_loads(phase_pct)
+            
+            # Reassemble RHS with updated tractions
+            self.update_rhs()
+            
+            # Solve at this phase
+            u_phase = fem.Function(self.V, name=f"u_{phase_pct:.1f}")
+            iters, reason = self._solve(u_phase)
+            total_iters += iters
+            last_reason = reason
+            
+            # Store mid-gait displacement for visualization
+            if idx == mid_idx:
+                assign(u_out, u_phase.x.array)
+            
+            u_list.append((u_phase, weight))
+        
+        # Cache solutions for strain energy / strain tensor queries
+        self._cached_gait_solutions = u_list
+        
+        if last_reason < 0:
+            self.logger.warning(f"Mechanics (gait) failed to converge (reason: {last_reason})")
+        
+        return total_iters, last_reason
 
     def average_strain_energy(self, u_func: fem.Function) -> float:
         """Average strain-energy density in physical units."""
@@ -314,6 +428,66 @@ class MechanicsSolver(_BaseLinearSolver):
 
         rel_err = abs(W_ext_nd - W_int_nd) / max(W_ext_nd, W_int_nd, 1e-30)
         return W_int_nd, W_ext_nd, rel_err
+
+    # --------------------------- Query Methods -------------------------------
+    def get_strain_energy_density(self, u: Optional[fem.Function] = None):
+        """Return strain energy density expression.
+        
+        Parameters
+        ----------
+        u : Optional[fem.Function]
+            Displacement for which to compute strain energy.
+            If None, uses gait-averaged expression from cached solutions if available,
+            otherwise falls back to self.u (last solve result).
+        
+        Returns
+        -------
+        ufl expression for strain energy density ψ = 0.5 σ:ε
+        """
+        if u is not None:
+            # Explicit displacement provided
+            return 0.5 * ufl.inner(self.sigma(u, self.rho), self.eps(u))
+        
+        # No explicit u provided - use gait cache if available
+        if self.gait_mode is not None and self._cached_gait_solutions:
+            # Return gait-averaged expression using cached solutions
+            psi_terms = []
+            for u_phase, weight in self._cached_gait_solutions:
+                psi_k = 0.5 * ufl.inner(self.sigma(u_phase, self.rho), self.eps(u_phase))
+                psi_terms.append(weight * psi_k)
+            return sum(psi_terms)
+        
+        # Fallback: no gait mode or cache not ready - must provide u explicitly
+        raise ValueError("get_strain_energy_density() requires displacement argument when gait cache is empty")
+    
+    def get_strain_tensor(self, u: Optional[fem.Function] = None):
+        """Return strain tensor B = ε^T ε for direction solver.
+        
+        Parameters
+        ----------
+        u : Optional[fem.Function]
+            Displacement for which to compute strain tensor.
+            If None, uses gait-averaged expression from cached solutions if available.
+        
+        Returns
+        -------
+        ufl expression for B = ε^T ε
+        """
+        if u is not None:
+            eps = self.eps(u)
+            return ufl.dot(ufl.transpose(eps), eps)
+        
+        # No explicit u provided - use gait cache if available
+        if self.gait_mode is not None and self._cached_gait_solutions:
+            B_terms = []
+            for u_phase, weight in self._cached_gait_solutions:
+                eps_k = self.eps(u_phase)
+                B_k = ufl.dot(ufl.transpose(eps_k), eps_k)
+                B_terms.append(weight * B_k)
+            return sum(B_terms)
+        
+        # Fallback: no gait mode or cache not ready
+        raise ValueError("get_strain_tensor() requires displacement argument when gait cache is empty")
 
 
 
