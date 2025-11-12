@@ -32,6 +32,7 @@ from simulation.config import Config
 from simulation.utils import build_facetag
 from simulation.subsolvers import MechanicsSolver, StimulusSolver, DensitySolver, DirectionSolver
 from simulation.fixedsolver import FixedPointSolver
+from simulation.drivers import InstantEnergyDriver
 from simulation.anderson import _Anderson
 
 
@@ -52,7 +53,8 @@ class TestDOFOrdering:
         stim = StimulusSolver(S, S_old, cfg)
         dens = DensitySolver(rho, rho_old, A, S, cfg)
         dirn = DirectionSolver(A, A_old, cfg)
-        fps = FixedPointSolver(comm, cfg, mech, stim, dens, dirn,
+        driver = InstantEnergyDriver(mech)
+        fps = FixedPointSolver(comm, cfg, mech, stim, dens, dirn, driver,
                                u, rho, rho_old, A, A_old, S, S_old)
         
         # Check slice sizes
@@ -89,7 +91,8 @@ class TestDOFOrdering:
         stim = StimulusSolver(S, S_old, cfg)
         dens = DensitySolver(rho, rho_old, A, S, cfg)
         dirn = DirectionSolver(A, A_old, cfg)
-        fps = FixedPointSolver(comm, cfg, mech, stim, dens, dirn,
+        driver = InstantEnergyDriver(mech)
+        fps = FixedPointSolver(comm, cfg, mech, stim, dens, dirn, driver,
                                u, rho, rho_old, A, A_old, S, S_old)
         flat = fps._flatten_state(copy=True)
         # Modify fields and restore
@@ -110,7 +113,8 @@ class TestDOFOrdering:
         stim = StimulusSolver(S, S_old, cfg)
         dens = DensitySolver(rho, rho_old, A, S, cfg)
         dirn = DirectionSolver(A, A_old, cfg)
-        fps = FixedPointSolver(comm, cfg, mech, stim, dens, dirn,
+        driver = InstantEnergyDriver(mech)
+        fps = FixedPointSolver(comm, cfg, mech, stim, dens, dirn, driver,
                                u, rho, rho_old, A, A_old, S, S_old)
         
         # Check mask structure
@@ -314,6 +318,7 @@ class TestMatrixAssembly:
         """Mechanics stiffness matrix should be symmetric positive definite (modulo BCs)."""
         V, Q, T = spaces.V, spaces.Q, spaces.T
         _, rho, _, A, _, _, _ = fields
+        u = fem.Function(V, name="u")
         mech = MechanicsSolver(u, rho, A, cfg, bc_mech, [])
         
         mech.setup()
@@ -332,6 +337,7 @@ class TestMatrixAssembly:
         """Stimulus LHS matrix should be SPD."""
         cfg.set_dt_dim(10.0)
         Q = spaces.Q
+        S = Function(Q, name="S")
         S_old = Function(Q, name="S_old")
         stim = StimulusSolver(S, S_old, cfg)
         stim.setup()
@@ -345,6 +351,7 @@ class TestMatrixAssembly:
         """Changing dt via set_dt_dim and update_lhs should alter matrix norm."""
         cfg.set_dt_dim(10.0)
         Q = spaces.Q
+        S = Function(Q, name="S")
         S_old = Function(Q, name="S_old")
         stim = StimulusSolver(S, S_old, cfg)
         stim.setup()
@@ -369,6 +376,7 @@ class TestMatrixAssembly:
         
         if solver_type == "mechanics":
             # Mechanics solver: positive-definite for non-Dirichlet DOFs
+            u = Function(V, name="u")
             rho = Function(Q, name="rho"); rho.x.array[:] = 0.6; rho.x.scatter_forward()
             A = Function(T, name="A"); A.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:, None] * np.ones((1, x.shape[1]))); A.x.scatter_forward()
             solver = MechanicsSolver(u, rho, A, cfg, bc_mech, [])
@@ -392,6 +400,7 @@ class TestMatrixAssembly:
         elif solver_type == "stimulus":
             # Stimulus solver: positive semi-definite
             cfg.set_dt_dim(10.0)
+            S = Function(Q, name="S")
             S_old = Function(Q, name="S_old"); S_old.x.array[:] = 0.0; S_old.x.scatter_forward()
             solver = StimulusSolver(S, S_old, cfg)
             solver.setup()
@@ -409,12 +418,12 @@ class TestMatrixAssembly:
             
         elif solver_type == "density":
             # Density solver: positive semi-definite
+            rho = Function(Q, name="rho")
             rho_old = Function(Q, name="rho_old"); rho_old.x.array[:] = 0.5; rho_old.x.scatter_forward()
             A_tens = Function(T, name="A"); A_tens.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:, None] * np.ones((1, x.shape[1]))); A_tens.x.scatter_forward()
             S = Function(Q, name="S"); S.x.array[:] = 0.0; S.x.scatter_forward()
             solver = DensitySolver(rho, rho_old, A_tens, S, cfg)
-            solver.setup()
-            solver.update_system()
+            solver.setup()  # setup() already calls assemble_lhs()
             
             # Random vector
             z = Function(Q, name="z")
@@ -445,7 +454,8 @@ class TestProjectedResidual:
         stim = StimulusSolver(S, S_old, cfg)
         dens = DensitySolver(rho, rho_old, A, S, cfg)
         dirn = DirectionSolver(A, A_old, cfg)
-        fps = FixedPointSolver(comm, cfg, mech, stim, dens, dirn,
+        driver = InstantEnergyDriver(mech)
+        fps = FixedPointSolver(comm, cfg, mech, stim, dens, dirn, driver,
                                u, rho, rho_old, A, A_old, S, S_old)
 
         x_old = fps._flatten_state(copy=True)
@@ -778,6 +788,7 @@ def test_mechanics_matrix_symmetry_rayleigh_psd_small():
     cfg = Config(domain=m, facet_tags=facets, verbose=False); cfg.xi_aniso = 0.0; cfg._build_constants()
     bcs = build_dirichlet_bcs(V, facets, id_tag=1, value=0.0)
 
+    u = fem.Function(V, name="u")
     mech = MechanicsSolver(u, rho, A, cfg, bcs, [])
     K = create_matrix(mech.a_form); assemble_matrix(K, mech.a_form, bcs=bcs); K.assemble()
 

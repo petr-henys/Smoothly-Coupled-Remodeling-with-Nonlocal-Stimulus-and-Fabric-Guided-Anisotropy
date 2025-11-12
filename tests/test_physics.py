@@ -86,7 +86,7 @@ class TestConstitutiveLaw:
         mech = MechanicsSolver(u, rho, A, cfg, bc_mech, [])
         
         # Compute stress tensor components
-        sigma = mech.sigma(u, rho)
+        sigma = mech.sigma(u, rho, A)
         
         # Check σ_ij = σ_ji (symmetry)
         sigma_01 = sigma[0, 1]
@@ -164,6 +164,7 @@ class TestConstitutiveLaw:
         Q = functionspace(unit_cube, P1)
         T = functionspace(unit_cube, P1_ten)
 
+        u = Function(V, name="u")
         rho = Function(Q, name="rho")
         rho.x.array[:] = 0.6
         rho.x.scatter_forward()
@@ -180,11 +181,15 @@ class TestConstitutiveLaw:
         u_test.interpolate(lambda x: np.vstack([0.003 * x[0], 0.0 * x[1], 0.0 * x[2]]))
         u_test.x.scatter_forward()
 
+        # Copy u_test to u for energy computation
+        u.x.array[:] = u_test.x.array[:]
+        u.x.scatter_forward()
+
         mech_iso = MechanicsSolver(u, rho, A_iso, cfg, [], [])
         mech_aniso = MechanicsSolver(u, rho, A_fiber, cfg, [], [])
 
-        energy_iso = mech_iso.average_strain_energy(u_test)
-        energy_aniso = mech_aniso.average_strain_energy(u_test)
+        energy_iso = mech_iso.average_strain_energy()
+        energy_aniso = mech_aniso.average_strain_energy()
 
         assert energy_aniso >= energy_iso * 1.10, (
             "Anisotropic fabric should raise energy for the same tensile strain by ≥10%; "
@@ -233,7 +238,7 @@ class TestThermodynamics:
         bc_mech = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
         mech = MechanicsSolver(u, rho, A, cfg, bc_mech, [])
         
-        psi = 0.5 * ufl.inner(mech.sigma(u, rho), mech.eps(u))
+        psi = 0.5 * ufl.inner(mech.sigma(u, rho, A), mech.eps(u))
         
         psi_local = fem.assemble_scalar(fem.form(psi * cfg.dx))
         psi_global = comm.allreduce(psi_local, op=MPI.SUM)
@@ -293,7 +298,7 @@ class TestThermodynamics:
         mech.solve()
 
         # Internal work: a(u,u) = ∫ σ:ε dx
-        a_uu_local = fem.assemble_scalar(fem.form(ufl.inner(mech.sigma(u, rho), mech.eps(u)) * cfg.dx))
+        a_uu_local = fem.assemble_scalar(fem.form(ufl.inner(mech.sigma(u, rho, A), mech.eps(u)) * cfg.dx))
         a_uu = comm.allreduce(a_uu_local, op=MPI.SUM)
 
         # External work: l(u) = ∫ t·u ds on tagged facet(s)
@@ -382,7 +387,7 @@ class TestConservation:
         
         densolver = DensitySolver(rho, rho_old, A, S, cfg)
         densolver.setup()
-        densolver.update_system()
+        densolver.assemble_rhs()
         densolver.solve()
         
         rho_min_nd = float(cfg.rho_min_nd)
@@ -425,7 +430,7 @@ class TestConservation:
 
             dens = DensitySolver(rho, rho_old, A_field, S_field, cfg)
             dens.setup()
-            dens.update_system()
+            dens.assemble_rhs()
             dens.solve()
             rho.x.scatter_forward()
             return mean_value_factory(rho)
@@ -481,7 +486,7 @@ class TestConservation:
         rho = Function(Q, name="rho")
         dens = DensitySolver(rho, rho_old, A_iso, S, cfg)
         dens.setup()
-        dens.update_system()
+        dens.assemble_rhs()
         dens.solve()
         rho.x.scatter_forward()
 
@@ -533,19 +538,22 @@ class TestDirectionSolverProperties:
         mech.setup()
         mech.solve()
 
+        A = Function(T, name="A")
         dir_solver = DirectionSolver(A, A_old, cfg)
         dir_solver.setup()
-        dir_solver.update_rhs(mech, u)
+        
+        # Get strain tensor for RHS
+        strain_tensor = mech.get_strain_tensor()
+        dir_solver.assemble_rhs(strain_tensor)
 
-        A_new = Function(T, name="A_new")
         dir_solver.solve()
-        A_new.x.scatter_forward()
+        A.x.scatter_forward()
 
         n_owned = T.dofmap.index_map.size_local * T.dofmap.index_map_bs
         if n_owned == 0:
             pytest.skip("No owned DOFs on this rank for tensor space")
 
-        values = A_new.x.array[:n_owned]
+        values = A.x.array[:n_owned]
         assert values.size % 9 == 0, "Tensor DOF array not divisible by 9 components"
         tensors = values.reshape(-1, 9)
 
@@ -800,10 +808,11 @@ class TestBoundaryConditions:
         mech = MechanicsSolver(u, rho, A, cfg, bc_mech, [traction])
         
         mech.setup()
+        mech.assemble_rhs()
         mech.solve()
         
         # Extract DOFs on left boundary (tag=1, x=0)
-        bc_dofs = collect_dirichlet_dofs(bc_mech, mech.V.dofmap.index_map.size_local)
+        bc_dofs = collect_dirichlet_dofs(bc_mech, mech.function_space.dofmap.index_map.size_local)
         
         if bc_dofs.size > 0:
             u_bc_vals = u.x.array[bc_dofs]
@@ -842,6 +851,7 @@ class TestBoundaryConditions:
         mech = MechanicsSolver(u, rho, A, cfg, bc_mech, [traction])
         
         mech.setup()
+        mech.assemble_rhs()
         mech.solve()
         
         # Under compression, expect negative x-displacement (compression)
@@ -914,6 +924,7 @@ class TestConservationChecks:
         P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
         Q = functionspace(unit_cube, P1)
         
+        S = Function(Q, name="S")
         S_old = Function(Q, name="S_old")
         S_old.x.array[:] = 0.1  # Initial positive stimulus
         S_old.x.scatter_forward()
@@ -925,12 +936,11 @@ class TestConservationChecks:
         # Create a psi field (supra-homeostatic in one region)
         psi_expr = fem.Constant(domain, 1.2 * float(cfg.psi_ref_nd))
         
-        S_new = Function(Q, name="S_new")
-        stim.update_rhs(psi_expr)
+        stim.assemble_rhs(psi_expr)
         stim.solve()
         
-        # Check power balance
-        power_abs, power_rel = stim.power_balance_residual(S_new, psi_expr)
+        # Check power balance (S is already updated by solve())
+        power_abs, power_rel = stim.power_balance_residual(psi_expr)
         
         # Relaxed tolerance - small timestep can cause numerical errors
         assert power_rel < 0.1, (
@@ -951,6 +961,7 @@ class TestConservationChecks:
         Q = functionspace(unit_cube, P1)
         T = functionspace(unit_cube, P1_ten)
         
+        rho = Function(Q, name="rho")
         rho_old = Function(Q, name="rho_old")
         rho_old.x.array[:] = 0.5
         rho_old.x.scatter_forward()
@@ -966,12 +977,11 @@ class TestConservationChecks:
         dens = DensitySolver(rho, rho_old, A, S, cfg)
         dens.setup()
         
-        rho_new = Function(Q, name="rho_new")
-        dens.update_system()
+        dens.assemble_rhs()
         dens.solve()
         
-        # Check mass balance
-        mass_abs, mass_rel = dens.mass_balance_residual(rho_new)
+        # Check mass balance (rho is already updated by solve())
+        mass_abs, mass_rel = dens.mass_balance_residual()
         
         assert mass_rel < 0.05, (
             f"Density mass balance violated: abs={mass_abs:.3e}, rel={mass_rel:.3e}"
@@ -994,6 +1004,7 @@ class TestConservationChecks:
         Q = functionspace(unit_cube, P1)
         T = functionspace(unit_cube, P1_ten)
         
+        A = Function(T, name="A")
         A_old = Function(T, name="A_old")
         A_old.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:, None] * np.ones((1, x.shape[1])))
         A_old.x.scatter_forward()
@@ -1014,17 +1025,17 @@ class TestConservationChecks:
         bc_mech = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
         mech = MechanicsSolver(u, rho, A_old, cfg, bc_mech, [])
         
-        A_new = Function(T, name="A_new")
-        dir_solver.update_rhs(mech, u)
+        # Get strain tensor and assemble RHS
+        eps_ten = mech.get_strain_tensor()
+        B = ufl.dot(ufl.transpose(eps_ten), eps_ten)
+        dir_solver.assemble_rhs(B)
         dir_solver.solve()
         
-        # Create M̂ expression
-        eps_ten = mech.eps(u)
-        B = ufl.dot(ufl.transpose(eps_ten), eps_ten)
+        # Create M̂ expression for balance check
         Mhat_expr = unittrace_psd(B, domain.geometry.dim, eps=cfg.smooth_eps)
         
-        # Check trace balance
-        trA_avg, trMhat_avg, trace_res = dir_solver.trace_balance_residual(A_new, Mhat_expr)
+        # Check trace balance (uses self.A_dir, not A_new)
+        trA_avg, trMhat_avg, trace_res = dir_solver.trace_balance_residual(Mhat_expr)
         
         # tr(M̂) should be 1 by construction
         assert abs(trMhat_avg - 1.0) < 0.01, f"tr(M̂) should be 1, got {trMhat_avg:.3f}"
@@ -1130,6 +1141,7 @@ def test_mechanics_uniform_extension():
     # Solve
     mech = MechanicsSolver(u, rho, Afield, cfg, bcs, [])
     mech.setup()
+    mech.assemble_rhs()
     its, reason = mech.solve()
     assert reason > 0, f"KSP failed to converge, reason={reason}"
 
@@ -1169,10 +1181,9 @@ def test_stimulus_power_residual_scales_with_dt():
     def compute_residual(dt_scale: float) -> float:
         cfg.dt_nd.value = dt_scale
         stor = float(cfg.rS_gain_c.value) * (psi_val - float(cfg.psi_ref_nd.value)) - float(cfg.tauS_c.value) * 0.2
-        S_pred = fem.Function(Q, name="S_pred")
-        S_pred.x.array[:] = 0.2 + dt_scale * stor / float(cfg.cS_c.value)
-        S_pred.x.scatter_forward()
-        R_abs, R_rel = stim.power_balance_residual(S_pred, psi)
+        S.x.array[:] = 0.2 + dt_scale * stor / float(cfg.cS_c.value)
+        S.x.scatter_forward()
+        R_abs, R_rel = stim.power_balance_residual(psi)
         return abs(R_abs)
 
     R1 = compute_residual(1.0)
