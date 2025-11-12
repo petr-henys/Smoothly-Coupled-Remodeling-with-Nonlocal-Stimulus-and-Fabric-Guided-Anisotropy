@@ -5,9 +5,6 @@ Tests gait data loading, curve segmentation, HIP file parsing,
 physics validation, and data transformations.
 """
 
-import tempfile
-from pathlib import Path
-
 import numpy as np
 import pandas as pd
 import pytest
@@ -22,14 +19,28 @@ from simulation.process_gait_data import (
 )
 
 
+@pytest.fixture
+def temp_hip_file(tmp_path):
+    """Create minimal HIP file for testing."""
+    content = """Peak Resultant Force F = 2500N
+Cycle [%]	Fx [N]	Fy [N]	Fz [N]	F [N]	Time [s]
+0	500	1000	1500	2500	0.0
+25	600	1100	1600	2400	0.25
+50	700	1200	1700	2200	0.5
+75	600	1100	1600	2400	0.75
+100	500	1000	1500	2500	1.0
+"""
+    hip_file = tmp_path / "test_gait.HIP"
+    hip_file.write_text(content)
+    return hip_file
+
+
 # ============================================================================
 # LOAD XY DATASETS TESTS
 # ============================================================================
 
 class TestLoadXYDatasets:
     """Test loading XY datasets from Excel files."""
-    
-    @pytest.mark.gait_data
     def test_load_single_dataset(self, tmp_path):
         """Test loading Excel file with single dataset."""
         # Create sample Excel file
@@ -48,8 +59,6 @@ class TestLoadXYDatasets:
         assert datasets['Dataset1'].shape == (5, 2)
         assert_array_almost_equal(datasets['Dataset1'][:, 0], [0, 25, 50, 75, 100])
         assert_array_almost_equal(datasets['Dataset1'][:, 1], [100, 150, 200, 150, 100])
-    
-    @pytest.mark.gait_data
     def test_load_multiple_datasets(self, tmp_path):
         """Test loading Excel file with multiple datasets."""
         df = pd.DataFrame({
@@ -68,8 +77,6 @@ class TestLoadXYDatasets:
         assert len(datasets) == 2
         assert 'Dataset1' in datasets
         assert 'Dataset2' in datasets
-    
-    @pytest.mark.gait_data
     def test_load_with_nan_values(self, tmp_path):
         """Test loading datasets with NaN values (should be filtered)."""
         df = pd.DataFrame({
@@ -86,8 +93,6 @@ class TestLoadXYDatasets:
         # NaN rows should be filtered out
         assert datasets['Dataset1'].shape[0] < 5
         assert not np.any(np.isnan(datasets['Dataset1']))
-    
-    @pytest.mark.gait_data
     def test_load_with_flip_y(self, tmp_path):
         """Test loading with Y-axis flipping."""
         df = pd.DataFrame({
@@ -103,8 +108,6 @@ class TestLoadXYDatasets:
         
         # Y values should be negated
         assert_array_almost_equal(datasets['Dataset1'][:, 1], [-10, -20, -30])
-    
-    @pytest.mark.gait_data
     def test_load_missing_columns(self, tmp_path):
         """Test error handling when X or Y columns are missing."""
         df = pd.DataFrame({
@@ -118,8 +121,6 @@ class TestLoadXYDatasets:
         
         with pytest.raises(ValueError, match="missing X/Y columns"):
             load_xy_datasets(excel_file)
-    
-    @pytest.mark.gait_data
     def test_load_specific_sheet(self, tmp_path):
         """Test loading from specific Excel sheet."""
         with pd.ExcelWriter(tmp_path / "test_data.xlsx", engine='openpyxl') as writer:
@@ -141,8 +142,6 @@ class TestLoadXYDatasets:
         datasets = load_xy_datasets(tmp_path / "test_data.xlsx", sheet='Sheet2')
         assert 'Sheet2Data' in datasets
         assert 'Sheet1Data' not in datasets
-    
-    @pytest.mark.gait_data
     def test_load_nonexistent_file(self):
         """Test error handling for non-existent file."""
         with pytest.raises(FileNotFoundError):
@@ -282,8 +281,6 @@ class TestSegmentCurvesGrid:
 
 class TestParseHIPFile:
     """Test HIP file parsing and physics validation."""
-    
-    @pytest.mark.gait_data
     def test_parse_valid_hip_file(self, temp_hip_file):
         """Test parsing valid HIP file."""
         result = parse_hip_file(temp_hip_file)
@@ -297,8 +294,6 @@ class TestParseHIPFile:
         data = result['data']
         assert data.shape[1] == 6  # 6 columns: Cycle, Fx, Fy, Fz, F, Time
         assert data.shape[0] > 0
-    
-    @pytest.mark.gait_data
     def test_parse_hip_metadata(self, temp_hip_file):
         """Test metadata extraction from HIP file."""
         result = parse_hip_file(temp_hip_file)
@@ -307,8 +302,6 @@ class TestParseHIPFile:
         assert 'file_name' in metadata
         assert 'peak_force' in metadata
         assert_almost_equal(metadata['peak_force'], 2500.0)
-    
-    @pytest.mark.gait_data
     def test_parse_hip_column_names(self, temp_hip_file):
         """Test column name extraction."""
         result = parse_hip_file(temp_hip_file)
@@ -318,8 +311,6 @@ class TestParseHIPFile:
         assert 'Fx [N]' in column_names
         assert 'Fy [N]' in column_names
         assert 'Fz [N]' in column_names
-    
-    @pytest.mark.gait_data
     def test_physics_validation(self, tmp_path):
         """Test physics validation (F >= sqrt(Fx² + Fy² + Fz²))."""
         # Create HIP file with physics violation
@@ -336,8 +327,6 @@ class TestParseHIPFile:
         # Should detect violations
         assert len(result['physics_warnings']) > 0
         assert any('violations' in warning.lower() for warning in result['physics_warnings'])
-    
-    @pytest.mark.gait_data
     def test_physics_fixing(self, tmp_path):
         """Test automatic physics fixing."""
         # Create HIP file with incorrect resultant
@@ -357,14 +346,10 @@ class TestParseHIPFile:
         
         assert_array_almost_equal(f_calc, f_expected, decimal=1)
         assert any('Recalculated' in warning for warning in result['physics_warnings'])
-    
-    @pytest.mark.gait_data
     def test_parse_missing_file(self):
         """Test error handling for missing HIP file."""
         with pytest.raises(FileNotFoundError):
             parse_hip_file("nonexistent.HIP")
-    
-    @pytest.mark.gait_data
     def test_parse_no_data_section(self, tmp_path):
         """Test error handling when data section is missing."""
         content = """Some header text
@@ -375,8 +360,6 @@ But no Cycle [%] line
         
         with pytest.raises(ValueError, match="Could not find data section"):
             parse_hip_file(hip_file)
-    
-    @pytest.mark.gait_data
     def test_parse_no_valid_data_rows(self, tmp_path):
         """Test error handling when no valid data rows exist."""
         content = """Cycle [%]	Fx [N]	Fy [N]	Fz [N]	F [N]	Time [s]
@@ -387,8 +370,6 @@ invalid	data	here
         
         with pytest.raises(ValueError, match="No valid data rows found"):
             parse_hip_file(hip_file)
-    
-    @pytest.mark.gait_data
     def test_parse_incomplete_rows(self, tmp_path):
         """Test handling of incomplete data rows."""
         content = """Cycle [%]	Fx [N]	Fy [N]	Fz [N]	F [N]	Time [s]
@@ -403,8 +384,6 @@ invalid	data	here
         
         # Should skip incomplete row
         assert result['data'].shape[0] == 2  # Only valid rows
-    
-    @pytest.mark.gait_data
     def test_physics_within_tolerance(self, tmp_path):
         """Test that small numerical errors don't trigger warnings."""
         # Create HIP file with correct physics (within tolerance)
@@ -428,8 +407,6 @@ invalid	data	here
 
 class TestHipToXYDatasets:
     """Test conversion of HIP data to XY datasets."""
-    
-    @pytest.mark.gait_data
     def test_default_components(self, temp_hip_file):
         """Test default component extraction (Fx, Fy, Fz, F)."""
         datasets = hip_to_xy_datasets(temp_hip_file)
@@ -439,8 +416,6 @@ class TestHipToXYDatasets:
         assert 'Fy_vs_Cycle' in datasets
         assert 'Fz_vs_Cycle' in datasets
         assert 'F_vs_Cycle' in datasets
-    
-    @pytest.mark.gait_data
     def test_specific_components(self, temp_hip_file):
         """Test extraction of specific components only."""
         datasets = hip_to_xy_datasets(temp_hip_file, components=['Fx', 'F'])
@@ -449,8 +424,6 @@ class TestHipToXYDatasets:
         assert 'F_vs_Cycle' in datasets
         assert 'Fy_vs_Cycle' not in datasets
         assert 'Fz_vs_Cycle' not in datasets
-    
-    @pytest.mark.gait_data
     def test_vs_time_axis(self, temp_hip_file):
         """Test using time instead of cycle percentage."""
         datasets = hip_to_xy_datasets(temp_hip_file, vs_time=True)
@@ -462,8 +435,6 @@ class TestHipToXYDatasets:
         # X-axis should be time values
         fx_data = datasets['Fx_vs_Time']
         assert fx_data[0, 0] == 0.0  # First time point
-    
-    @pytest.mark.gait_data
     def test_unknown_component_warning(self, temp_hip_file, caplog):
         """Test warning for unknown component names."""
         datasets = hip_to_xy_datasets(temp_hip_file, components=['Fx', 'UnknownComponent'])
@@ -471,8 +442,6 @@ class TestHipToXYDatasets:
         # Should only get valid component
         assert 'Fx_vs_Cycle' in datasets
         assert 'UnknownComponent_vs_Cycle' not in datasets
-    
-    @pytest.mark.gait_data
     def test_dataset_structure(self, temp_hip_file):
         """Test structure of returned datasets."""
         datasets = hip_to_xy_datasets(temp_hip_file, components=['Fx'])
@@ -594,11 +563,8 @@ class TestRescaleCurve:
 # INTEGRATION TESTS
 # ============================================================================
 
-@pytest.mark.integration
 class TestIntegration:
     """Integration tests combining multiple functions."""
-    
-    @pytest.mark.gait_data
     def test_complete_hip_processing_workflow(self, temp_hip_file):
         """Test complete HIP data processing workflow."""
         # Parse HIP file
@@ -617,8 +583,6 @@ class TestIntegration:
         assert rescaled.shape == f_data.shape
         assert np.all(rescaled[:, 0] >= 0) and np.all(rescaled[:, 0] <= 1)
         assert np.all(rescaled[:, 1] >= 0) and np.all(rescaled[:, 1] <= 1)
-    
-    @pytest.mark.gait_data
     def test_excel_to_curve_segmentation(self, tmp_path):
         """Test workflow from Excel to segmented curves."""
         # Create Excel file
@@ -685,8 +649,6 @@ class TestEdgeCases:
         # Should handle extreme ranges
         assert rescaled.shape == points.shape
         assert np.all(np.isfinite(rescaled))
-    
-    @pytest.mark.gait_data
     def test_hip_file_with_tabs_and_spaces(self, tmp_path):
         """Test HIP file parsing with mixed tabs and spaces."""
         content = """Cycle [%]	Fx [N]	Fy [N]	Fz [N]	F [N]	Time [s]

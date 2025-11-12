@@ -182,7 +182,6 @@ def mock_sweep_directory(shared_tmp_path):
 # SimulationLoader Tests
 # =============================================================================
 
-@pytest.mark.unit
 def test_simulation_loader_initialization(mock_run_directory):
     """Test initialization and directory validation."""
     comm = MPI.COMM_WORLD
@@ -195,7 +194,6 @@ def test_simulation_loader_initialization(mock_run_directory):
         SimulationLoader("/nonexistent/path", comm, verbose=False)
 
 
-@pytest.mark.unit
 def test_config_loading(mock_run_directory):
     """Test configuration loading and parameter access."""
     comm = MPI.COMM_WORLD
@@ -214,7 +212,6 @@ def test_config_loading(mock_run_directory):
     assert loader.get_param("nonexistent", default=42) == 42
 
 
-@pytest.mark.unit
 def test_run_summary_loading(mock_run_directory):
     """Test run summary metadata loading."""
     comm = MPI.COMM_WORLD
@@ -230,7 +227,6 @@ def test_run_summary_loading(mock_run_directory):
     assert summary is summary2
 
 
-@pytest.mark.unit
 def test_missing_run_summary(shared_tmp_path):
     """Test that missing run_summary.json returns empty dict."""
     comm = MPI.COMM_WORLD
@@ -249,7 +245,6 @@ def test_missing_run_summary(shared_tmp_path):
     assert summary == {}
 
 
-@pytest.mark.unit
 def test_steps_metrics_loading(mock_run_directory):
     """Test per-timestep metrics loading."""
     comm = MPI.COMM_WORLD
@@ -267,7 +262,6 @@ def test_steps_metrics_loading(mock_run_directory):
     assert expected_cols.issubset(set(steps_df.columns))
 
 
-@pytest.mark.unit
 def test_subiterations_metrics_loading(mock_run_directory):
     """Test per-subiteration metrics loading."""
     comm = MPI.COMM_WORLD
@@ -290,7 +284,6 @@ def test_subiterations_metrics_loading(mock_run_directory):
     assert all(step_0_data["time_days"] == 0.0)
 
 
-@pytest.mark.unit
 def test_metrics_at_time(mock_run_directory):
     """Test aggregated metrics extraction at specific time."""
     comm = MPI.COMM_WORLD
@@ -311,7 +304,6 @@ def test_metrics_at_time(mock_run_directory):
     assert metrics_close["time_days"] == 100.0
 
 
-@pytest.mark.unit
 def test_available_times(mock_run_directory):
     """Test extraction of available checkpoint times."""
     comm = MPI.COMM_WORLD
@@ -324,7 +316,6 @@ def test_available_times(mock_run_directory):
 
 
 @pytest.mark.mpi
-@pytest.mark.slow
 def test_field_loading(mock_run_with_fields):
     """Test field snapshot loading from NPZ files."""
     run_dir, domain, spaces = mock_run_with_fields
@@ -346,7 +337,6 @@ def test_field_loading(mock_run_with_fields):
 
 
 @pytest.mark.mpi
-@pytest.mark.slow
 def test_field_loading_caching(mock_run_with_fields):
     """Test field loading caching."""
     run_dir, domain, spaces = mock_run_with_fields
@@ -361,7 +351,6 @@ def test_field_loading_caching(mock_run_with_fields):
 
 
 @pytest.mark.mpi
-@pytest.mark.slow
 def test_load_field_to_function(mock_run_with_fields):
     """Test loading field snapshot into DOLFINx function."""
     run_dir, domain, spaces = mock_run_with_fields
@@ -381,7 +370,6 @@ def test_load_field_to_function(mock_run_with_fields):
 
 
 @pytest.mark.mpi
-@pytest.mark.slow
 def test_field_statistics(mock_run_with_fields):
     """Test field statistics computation."""
     run_dir, domain, spaces = mock_run_with_fields
@@ -407,7 +395,6 @@ def test_field_statistics(mock_run_with_fields):
 # SweepLoader Tests
 # =============================================================================
 
-@pytest.mark.unit
 def test_sweep_loader_initialization(mock_sweep_directory):
     """Test sweep loader initialization."""
     comm = MPI.COMM_WORLD
@@ -422,7 +409,6 @@ def test_sweep_loader_initialization(mock_sweep_directory):
         SweepLoader("/nonexistent/sweep", comm, verbose=False)
 
 
-@pytest.mark.unit
 def test_sweep_summary_loading(mock_sweep_directory):
     """Test sweep summary loading."""
     comm = MPI.COMM_WORLD
@@ -439,7 +425,6 @@ def test_sweep_summary_loading(mock_sweep_directory):
     assert set(summary["accel_type"]) == {"picard", "anderson"}
 
 
-@pytest.mark.unit
 def test_sweep_filter_runs(mock_sweep_directory):
     """Test filtering runs by parameter values."""
     comm = MPI.COMM_WORLD
@@ -461,7 +446,6 @@ def test_sweep_filter_runs(mock_sweep_directory):
     assert len(empty) == 0
 
 
-@pytest.mark.unit
 def test_sweep_get_loader(mock_sweep_directory):
     """Test getting individual run loaders."""
     comm = MPI.COMM_WORLD
@@ -476,7 +460,6 @@ def test_sweep_get_loader(mock_sweep_directory):
     assert loader is loader2
 
 
-@pytest.mark.unit
 def test_sweep_get_all_loaders(mock_sweep_directory):
     """Test getting all run loaders."""
     comm = MPI.COMM_WORLD
@@ -492,7 +475,6 @@ def test_sweep_get_all_loaders(mock_sweep_directory):
     assert hashes == expected_hashes
 
 
-@pytest.mark.unit
 def test_missing_sweep_summary(shared_tmp_path):
     """Test that missing sweep_summary.csv scans directories."""
     comm = MPI.COMM_WORLD
@@ -518,7 +500,6 @@ def test_missing_sweep_summary(shared_tmp_path):
 # Integration and cross-consistency tests
 # =============================================================================
 
-@pytest.mark.integration
 def test_loader_metrics_consistency(mock_run_directory):
     """Test consistency between steps and subiterations metrics."""
     comm = MPI.COMM_WORLD
@@ -534,7 +515,6 @@ def test_loader_metrics_consistency(mock_run_directory):
         assert actual_count == expected_count
 
 
-@pytest.mark.integration
 def test_sweep_and_loader_parameter_consistency(mock_sweep_directory):
     """Test that sweep summary matches individual loader configs."""
     comm = MPI.COMM_WORLD
@@ -572,7 +552,6 @@ def test_mpi_rank_consistency(mock_run_directory):
 # Error handling and edge cases
 # =============================================================================
 
-@pytest.mark.unit
 def test_missing_config_file(shared_tmp_path):
     """Test error when config.json is missing."""
     comm = MPI.COMM_WORLD
@@ -588,7 +567,6 @@ def test_missing_config_file(shared_tmp_path):
         loader.get_config()
 
 
-@pytest.mark.unit
 def test_missing_steps_csv(shared_tmp_path):
     """Test error when steps.csv is missing."""
     comm = MPI.COMM_WORLD
@@ -607,7 +585,6 @@ def test_missing_steps_csv(shared_tmp_path):
         loader.get_steps_metrics()
 
 
-@pytest.mark.unit
 def test_missing_subiterations_csv(shared_tmp_path):
     """Test error when subiterations.csv is missing."""
     comm = MPI.COMM_WORLD
@@ -626,7 +603,6 @@ def test_missing_subiterations_csv(shared_tmp_path):
         loader.get_subiterations_metrics()
 
 
-@pytest.mark.unit
 def test_missing_field_npz(mock_run_directory):
     """Test error when field NPZ file is missing."""
     comm = MPI.COMM_WORLD
@@ -636,7 +612,6 @@ def test_missing_field_npz(mock_run_directory):
         loader.get_fields_at_time(0.0, fields=["u"])
 
 
-@pytest.mark.unit
 def test_invalid_time_raises_error(mock_run_directory):
     """Test error when requesting non-checkpoint time."""
     comm = MPI.COMM_WORLD
@@ -650,8 +625,6 @@ def test_invalid_time_raises_error(mock_run_directory):
         loader.get_fields_at_time(75.0, fields=["rho"])
 
 
-@pytest.mark.smoke
-@pytest.mark.slow
 def test_smoke_postprocessor_workflow(mock_run_with_fields):
     """Smoke test: Full postprocessor workflow."""
     run_dir, domain, spaces = mock_run_with_fields

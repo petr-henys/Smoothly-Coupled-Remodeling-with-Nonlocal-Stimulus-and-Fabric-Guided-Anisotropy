@@ -12,7 +12,6 @@ Tests coordinate system setup (CSS) for femur models including:
 import json
 import tempfile
 from pathlib import Path
-from typing import Dict, Any
 
 import numpy as np
 import pytest
@@ -396,7 +395,6 @@ class TestParametrized:
 
 
 # Performance tests (optional, can be marked as slow)
-@pytest.mark.slow
 class TestPerformance:
     """Performance tests for large meshes."""
     

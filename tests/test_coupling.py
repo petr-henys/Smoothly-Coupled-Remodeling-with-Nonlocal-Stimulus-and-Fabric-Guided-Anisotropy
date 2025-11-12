@@ -22,8 +22,6 @@ import numpy as np
 import pytest
 
 from mpi4py import MPI
-
-from simulation.config import Config
 from simulation.model import Remodeller
 from simulation.anderson import _Anderson
 
@@ -37,14 +35,6 @@ def _proj_res_norm_ratio(x_ref, x_test, x_raw):
     return float(np.linalg.norm(t) / denom)
 
 
-# REMOVED: test_proj_res_equals_picard_baseline - causes SIGABRT with Remodeller
-# REMOVED: test_coupling_tol_vs_qoi_error - causes SIGABRT with Remodeller  
-# REMOVED: test_spectral_radius_bounds_contraction - causes SIGABRT with Remodeller
-# REMOVED: test_max_subiters_sufficient_and_insufficient - causes SIGABRT with Remodeller
-# REMOVED: test_rhoJ_record_matches_recompute - causes SIGABRT with Remodeller
-
-
-@pytest.mark.unit
 def test_anderson_step_limit_and_backtracking():
     """(1) Enforce step limit; (2) Safeguard backtracking reduces proxy residual."""
     comm = MPI.COMM_SELF
@@ -73,7 +63,6 @@ def test_anderson_step_limit_and_backtracking():
     rp_final = _proj_res_norm_ratio(x_old, x_bt, x_raw)
     assert rp_final <= 0.51, f"Backtracking did not reduce proxy residual sufficiently: rp_final={rp_final}"
 
-@pytest.mark.unit
 def test_anderson_restart_on_ill_conditioning():
     """Restart should be scheduled when the H condition number exceeds a tiny threshold."""
     comm = MPI.COMM_SELF

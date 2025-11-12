@@ -272,8 +272,6 @@ class TestAndersonAcceleration:
             # Third call honors pending reset
             _ = aa.mix(x_old, x_raw, proj_residual_norm=prn)
             assert len(aa.x_hist) <= 1, "History not cleared after scheduled reset"
-# Note: Consolidated 4 Anderson tests (init, restart, mix, reject_restart) into single parametrized test
-# Reduces test count from 4→1 while preserving all coverage
 
 
 # =============================================================================
@@ -315,7 +313,10 @@ class TestMatrixAssembly:
     """Test matrix assembly correctness."""
     
     def test_mechanics_stiffness_spd(self, cfg, spaces, fields, bc_mech):
-        """Mechanics stiffness matrix should be symmetric positive definite (modulo BCs)."""
+        """Mechanics stiffness matrix should be symmetric positive definite (modulo BCs).
+        
+        Tests: (1) No NaN/Inf entries, (2) K ≈ K^T symmetry, (3) z^T K z ≥ 0 for random z.
+        """
         V, Q, T = spaces.V, spaces.Q, spaces.T
         _, rho, _, A, _, _, _ = fields
         u = fem.Function(V, name="u")
@@ -323,15 +324,31 @@ class TestMatrixAssembly:
         
         mech.setup()
         
-        # Check matrix is symmetric
         from petsc4py import PETSc
         mech.A.assemble()
         
-        # PETSc check for symmetry (expensive, use small mesh)
-        # Just verify no NaN/Inf
+        # Test 1: No NaN/Inf
         norm = mech.A.norm(PETSc.NormType.FROBENIUS)
         assert np.isfinite(norm), f"Stiffness matrix has non-finite entries"
         assert norm > 0, f"Stiffness matrix is zero"
+        
+        # Test 2: Symmetry K ≈ K^T
+        KT = mech.A.transpose()
+        diff = mech.A.copy()
+        diff.axpy(-1.0, KT, structure=PETSc.Mat.Structure.SUBSET_NONZERO_PATTERN)
+        diff.assemble()
+        nK = mech.A.norm()
+        nDiff = diff.norm()
+        assert nDiff / max(1e-16, nK) < 1e-10, f"Matrix not symmetric: ||K-K^T||/||K|| = {nDiff/nK:.2e}"
+        
+        # Test 3: Positive definiteness z^T K z ≥ 0
+        z = mech.A.createVecLeft()
+        z.setRandom()
+        y = mech.A.createVecLeft()
+        mech.A.mult(z, y)
+        energy = z.dot(y)
+        assert energy >= -1e-10, f"Matrix not PSD: z^T K z = {energy:.2e}"
+
     
     def test_stimulus_lhs_spd(self, cfg, spaces):
         """Stimulus LHS matrix should be SPD."""
@@ -437,9 +454,6 @@ class TestMatrixAssembly:
             assert energy >= 0.0, f"Density operator not positive semi-definite: {energy}"
 
 
-# Note: Removed separate test_mechanics_energy_positive, test_stimulus_energy_positive, test_density_energy_positive
-# Consolidated into single parametrized test above for cleaner organization
-
 class TestProjectedResidual:
     """Tests for projected residual norm used in FixedPointSolver."""
 
@@ -508,11 +522,6 @@ class TestUtilsEigen:
         assert m1[0] > 0.999 and m1[1] < 1e-12 and m1[2] < 1e-12
         assert m2[1] > 0.999 and m2[0] < 1e-12 and m2[2] < 1e-12
         assert m3[2] > 0.999 and m3[0] < 1e-12 and m3[1] < 1e-12
-
-
-class TestDensitySPD:
-    """Energy positivity for Density operator."""
-
 
 
 # =============================================================================
@@ -670,7 +679,7 @@ from petsc4py import PETSc
 
 from simulation.config import Config
 from simulation.utils import build_facetag, build_dirichlet_bcs
-from simulation.subsolvers import MechanicsSolver, StimulusSolver, DensitySolver
+from simulation.subsolvers import MechanicsSolver, StimulusSolver
 
 def _mat_action_norm(A, x_petsc):
     """Compute ||A x||_2 without converting to dense."""
@@ -678,7 +687,6 @@ def _mat_action_norm(A, x_petsc):
     A.mult(x_petsc, y)
     return float(y.norm())
 
-@pytest.mark.unit
 def test_stimulus_matrix_changes_with_dt():
     """Changing dt (dimensional) and calling update_lhs should change the LHS norm significantly."""
     comm = MPI.COMM_WORLD
@@ -702,7 +710,6 @@ def test_stimulus_matrix_changes_with_dt():
     # Require a noticeable change
     assert abs(n2 - n1) / max(1.0, n1) > 1e-6, "Stimulus LHS norm did not change with dt"
 
-@pytest.mark.unit
 def test_mechanics_operator_action_nonzero():
     """Mechanics K should produce nonzero action on a random vector when rho>0."""
     comm = MPI.COMM_WORLD
@@ -729,7 +736,6 @@ def test_mechanics_operator_action_nonzero():
     norm = _mat_action_norm(mech.A, z)
     assert np.isfinite(norm) and norm > 0.0, "Mechanics operator action is zero or non-finite"
 
-@pytest.mark.unit
 def test_density_matrix_psd_action():
     """x^T A x >= 0 for the density solver (discrete PSD check)."""
     comm = MPI.COMM_WORLD
@@ -759,45 +765,3 @@ def test_density_matrix_psd_action():
     dens.A.mult(z, y)
     energy = z.dot(y)
     assert energy >= -1e-12, f"Density operator not PSD: x^T A x = {energy}"
-
-
-@pytest.mark.unit
-def test_mechanics_matrix_symmetry_rayleigh_psd_small():
-    """(Lightweight) K ≈ K^T and z^T K z ≥ 0 on tiny mesh."""
-    from mpi4py import MPI
-    import numpy as np
-    from dolfinx import mesh, fem
-    from petsc4py import PETSc
-    from dolfinx.fem.petsc import assemble_matrix, create_matrix
-    import basix
-    import ufl
-    from simulation.config import Config
-    from simulation.subsolvers import MechanicsSolver
-    from simulation.utils import build_facetag, build_dirichlet_bcs
-
-    comm = MPI.COMM_WORLD
-    m = mesh.create_unit_cube(comm, 4, 4, 4, cell_type=mesh.CellType.hexahedron, ghost_mode=mesh.GhostMode.shared_facet)
-    facets = build_facetag(m)
-    V = fem.functionspace(m, basix.ufl.element("Lagrange", m.topology.cell_name(), 1, shape=(3,)))
-    Q = fem.functionspace(m, basix.ufl.element("Lagrange", m.topology.cell_name(), 1))
-    T = fem.functionspace(m, basix.ufl.element("Lagrange", m.topology.cell_name(), 1, shape=(3,3)))
-
-    rho = fem.Function(Q); rho.x.array[:] = 1.0; rho.x.scatter_forward()
-    A = fem.Function(T); A.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:, None] * np.ones((1, x.shape[1]))); A.x.scatter_forward()
-
-    cfg = Config(domain=m, facet_tags=facets, verbose=False); cfg.xi_aniso = 0.0; cfg._build_constants()
-    bcs = build_dirichlet_bcs(V, facets, id_tag=1, value=0.0)
-
-    u = fem.Function(V, name="u")
-    mech = MechanicsSolver(u, rho, A, cfg, bcs, [])
-    K = create_matrix(mech.a_form); assemble_matrix(K, mech.a_form, bcs=bcs); K.assemble()
-
-    KT = K.transpose()
-    diff = K.copy(); diff.axpy(-1.0, KT, structure=PETSc.Mat.Structure.SUBSET_NONZERO_PATTERN); diff.assemble()
-    # Use PETSc Frobenius norms to avoid implementing custom operator norms
-    nK = K.norm(); nDiff = diff.norm()
-    assert nDiff / max(1e-16, nK) < 1e-10
-
-    z = K.createVecLeft(); z.setRandom()
-    y = K.createVecLeft(); K.mult(z, y)
-    assert z.dot(y) >= -1e-10

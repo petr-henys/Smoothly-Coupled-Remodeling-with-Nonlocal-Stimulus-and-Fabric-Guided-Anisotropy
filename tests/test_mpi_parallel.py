@@ -1,28 +1,26 @@
 #!/usr/bin/env python3
 """
-MPI parallelism and performance tests.
+MPI parallelism tests.
 
-Merged from:
-- test_mpi_parallelism.py
-- test_performance.py
-"""
-
-#!/usr/bin/env python3
-"""
-Advanced MPI parallelism tests for bone remodeling model.
-
-Tests:
-- Ghost cell updates across partition boundaries
-- Domain decomposition consistency
-- Collective operations (reductions, barriers)
-- Rank-dependent I/O correctness
-- Load balancing verification
-- Partition-independent solution convergence
+Tests ghost cell updates, domain decomposition, collective operations, I/O, and parallel solver behavior.
 """
 
 import pytest
-pytestmark = [pytest.mark.integration]
+pytestmark = [pytest.mark.integration, pytest.mark.slow, pytest.mark.performance]
 import numpy as np
+np.random.seed(1234)
+import time
+from mpi4py import MPI
+from dolfinx import mesh, fem
+from dolfinx.fem import Function, functionspace
+import basix
+
+from simulation.config import Config
+from simulation.utils import build_facetag, build_dirichlet_bcs
+from simulation.subsolvers import MechanicsSolver, StimulusSolver, DensitySolver, DirectionSolver
+from simulation.fixedsolver import FixedPointSolver
+from simulation.model import Remodeller
+comm = MPI.COMM_WORLD
 from mpi4py import MPI
 from dolfinx import fem
 from dolfinx.fem import Function, functionspace
@@ -162,8 +160,9 @@ class TestDomainDecomposition:
             
             traction = traction_factory(-0.5, facet_id=2, axis=0)
             bc_mech = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
-            mech = MechanicsSolver(V, rho, A, cfg, bc_mech, [traction])
+            mech = MechanicsSolver(u, rho, A, cfg, bc_mech, [traction])
             mech.setup()
+            mech.assemble_rhs()
             mech.solve()
             
             # Global L2 norm
@@ -453,44 +452,8 @@ class TestCrossRankComm:
             assert abs(n - u_norm_sq) < 1e-14, f"Rank {i} has different norm: {n} vs {u_norm_sq}"
 
 
-# No __main__ runner needed; tests executed via pytest
-
-
-################################################################################
-
-#!/usr/bin/env python3
-"""
-Advanced performance and solver efficiency tests for bone remodeling model.
-
-Tests:
-- Solver iteration counts vs problem size
-- Preconditioner effectiveness
-- Anderson acceleration efficiency
-- Memory usage patterns
-- Weak/strong scaling properties
-- Solver convergence rates
-"""
-
-import pytest
-pytestmark = [pytest.mark.slow, pytest.mark.performance]
-import numpy as np
-np.random.seed(1234)
-from mpi4py import MPI
-from dolfinx import mesh, fem
-from dolfinx.fem import Function, functionspace
-import basix
-import time
-
-from simulation.config import Config
-from simulation.utils import build_facetag, build_dirichlet_bcs
-from simulation.subsolvers import MechanicsSolver, StimulusSolver, DensitySolver, DirectionSolver
-from simulation.fixedsolver import FixedPointSolver
-from simulation.model import Remodeller
-comm = MPI.COMM_WORLD
-
-
 # =============================================================================
-# Solver Iteration Efficiency Tests
+# Performance and Solver Efficiency Tests
 # =============================================================================
 
 class TestSolverIterations:
@@ -530,9 +493,10 @@ class TestSolverIterations:
             traction = (fem.Constant(domain, t_vec), 2)
             
             bc_mech = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
-            mech = MechanicsSolver(V, rho, A, cfg, bc_mech, [traction])
+            mech = MechanicsSolver(u, rho, A, cfg, bc_mech, [traction])
             
             mech.setup()
+            mech.assemble_rhs()
             its, _ = mech.solve()
             
             iteration_counts.append(its)
@@ -564,14 +528,15 @@ class TestSolverIterations:
         S_old.x.array[:] = 0.1
         S_old.x.scatter_forward()
         
+        S = Function(Q, name="S")
+        
         import ufl
         psi_density = fem.Constant(domain, 50.0)  # Dummy source
         
-        stim = StimulusSolver(Q, S_old, cfg)
+        stim = StimulusSolver(S, S_old, cfg)
         stim.setup()
-        stim.update_rhs(psi_density)
+        stim.assemble_rhs(psi_density)
         
-        S = Function(Q, name="S")
         its, _ = stim.solve()
         
         # Should converge in reasonable iterations
@@ -692,9 +657,10 @@ class TestPreconditioners:
         traction = (fem.Constant(domain, t_vec), 2)
         
         bc_mech = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
-        mech = MechanicsSolver(V, rho, A, cfg, bc_mech, [traction])
+        mech = MechanicsSolver(u, rho, A, cfg, bc_mech, [traction])
         
         mech.setup()
+        mech.assemble_rhs()
         
         # Solve with fresh preconditioner
         its1, _ = mech.solve()
@@ -702,7 +668,8 @@ class TestPreconditioners:
         # Slightly modify rho
         rho.x.array[:] = 0.51
         rho.x.scatter_forward()
-        mech.update_stiffness()
+        mech.assemble_lhs()  # Reassemble stiffness matrix
+        mech.assemble_rhs()
         
         # Solve with reused preconditioner
         its2, _ = mech.solve()
@@ -744,13 +711,17 @@ class TestMemoryUsage:
         S_old = Function(Q, name="S_old")
         
         bc_mech = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
-        mech = MechanicsSolver(V, rho, A, cfg, bc_mech, [])
-        stim = StimulusSolver(Q, S_old, cfg)
-        dens = DensitySolver(Q, rho_old, A, S, cfg)
-        dirn = DirectionSolver(T, A_old, cfg)
+        mech = MechanicsSolver(u, rho, A, cfg, bc_mech, [])
+        stim = StimulusSolver(S, S_old, cfg)
+        dens = DensitySolver(rho, rho_old, A, S, cfg)
+        dirn = DirectionSolver(A, A_old, cfg)
+        
+        # Create driver for fixed-point solver (required in new architecture)
+        from simulation.drivers import InstantEnergyDriver
+        driver = InstantEnergyDriver(mech)
         
         fps = FixedPointSolver(
-            comm, cfg, mech, stim, dens, dirn,
+            comm, cfg, mech, stim, dens, dirn, driver,
             u, rho, rho_old, A, A_old, S, S_old
         )
         
@@ -890,6 +861,3 @@ class TestTiming:
             assert fps.stim_time_total > 0, "Stimulus time not tracked"
             assert fps.dens_time_total > 0, "Density time not tracked"
             assert fps.dir_time_total > 0, "Direction time not tracked"
-
-
-# No __main__ runner needed; tests executed via pytest

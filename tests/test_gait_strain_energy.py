@@ -11,6 +11,7 @@ from simulation.paths import FemurPaths
 from simulation.femur_remodeller_gait import setup_femur_gait_loading
 from simulation.config import Config
 from simulation.subsolvers import MechanicsSolver
+from simulation.drivers import GaitEnergyDriver
 from simulation.utils import build_dirichlet_bcs
 
 
@@ -77,64 +78,56 @@ def mechanics_solver(femur_setup, gait_loader):
 
 
 class TestAccumulatedStrainEnergy:
-    """Test accumulated strain energy computation over gait cycle."""
+    """Test accumulated strain energy computation over gait cycle using GaitEnergyDriver."""
     
-    @pytest.mark.skip(reason="API changed - GaitEnergyDriver now provides energy_expr() instead of accumulated_strain_energy_gait()")
-    def test_accumulated_energy_is_positive(self, mechanics_solver, gait_loader):
-        """Accumulated strain energy should be positive."""
-        psi_accumulated = mechanics_solver.accumulated_strain_energy_gait(gait_loader)
-        assert psi_accumulated > 0.0, \
-            f"Accumulated strain energy should be positive, got {psi_accumulated}"
+    def test_energy_driver_initialization(self, mechanics_solver, gait_loader):
+        """GaitEnergyDriver should initialize without errors."""
+        driver = GaitEnergyDriver(mechanics_solver, gait_loader, cycles_per_day=7000.0)
+        assert driver.cpd == 7000.0
+        assert driver.mech is mechanics_solver
+        assert driver.gait is gait_loader
     
-    @pytest.mark.skip(reason="API changed - GaitEnergyDriver now provides energy_expr() instead of accumulated_strain_energy_gait()")
-    def test_accumulated_energy_physical_range(self, mechanics_solver, gait_loader):
-        """Accumulated strain energy should be in physically reasonable range.
+    def test_energy_expr_builds(self, mechanics_solver, gait_loader):
+        """Energy expression should build successfully."""
+        driver = GaitEnergyDriver(mechanics_solver, gait_loader, cycles_per_day=1.0)
+        psi_expr = driver.energy_expr()
+        assert psi_expr is not None, "Energy expression should be created"
+    
+    def test_energy_positivity(self, mechanics_solver, gait_loader):
+        """Accumulated energy should be positive when integrated."""
+        from dolfinx import fem
+        driver = GaitEnergyDriver(mechanics_solver, gait_loader, cycles_per_day=1.0)
+        psi_expr = driver.energy_expr()
         
-        For bone tissue under gait loading:
-        - Typical strain energy density: 0.01 - 1.0 MPa (10^4 - 10^6 Pa)
-        - Daily accumulation (multiple cycles) can be higher
-        """
-        psi_accumulated = mechanics_solver.accumulated_strain_energy_gait(gait_loader)
+        # Integrate energy over domain
+        cfg = mechanics_solver.cfg
+        psi_total_local = fem.assemble_scalar(fem.form(psi_expr * cfg.dx))
+        comm = cfg.domain.comm
+        psi_total = comm.allreduce(psi_total_local, op=4)  # MPI.SUM=4
         
-        # Expect range 10^3 - 10^7 Pa (0.001 - 10 MPa) for accumulated daily stimulus
-        assert 1e3 < psi_accumulated < 1e7, \
-            f"Accumulated energy should be 10^3-10^7 Pa, got {psi_accumulated:.2e} Pa"
+        assert psi_total > 0.0, f"Total strain energy should be positive, got {psi_total}"
     
-    @pytest.mark.skip(reason="API changed - GaitEnergyDriver now provides energy_expr() instead of accumulated_strain_energy_gait()")
-    def test_energy_increases_with_load_magnitude(self, femur_setup, gait_loader):
+    def test_energy_increases_with_load_magnitude(self, mechanics_solver, gait_loader):
         """Strain energy should increase with load magnitude."""
-        domain, facet_tags, V, Q, cfg = femur_setup
-        
-        # Create solver with low load
-        u1 = fem.Function(V, name="u1")
-        rho1 = fem.Function(Q, name="rho1")
-        A_dir1 = fem.Function(fem.functionspace(domain, 
-                             basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3, 3))),
-                             name="A1")
-        rho1.x.array[:] = 1.0
-        A_dir1.x.array[:] = 0.0
-        for i in range(3):
-            A_dir1.x.array[i::9] = 1.0/3.0
-        
-        dirichlet_bcs1 = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
-        neumann_bcs1 = [
-            (gait_loader.t_hip, 2),
-            (gait_loader.t_glmed, 2),
-            (gait_loader.t_glmax, 2),
-        ]
-        solver1 = MechanicsSolver(u1, rho1, A_dir1, cfg, dirichlet_bcs1, neumann_bcs1)
-        solver1.setup()
+        from simulation.drivers import GaitEnergyDriver
         
         # Store original load scale
         original_scale = gait_loader.load_scale
+        comm = mechanics_solver.cfg.domain.comm
         
         # Compute with base load
         gait_loader.load_scale = 1.0
-        psi_base = solver1.accumulated_strain_energy_gait(gait_loader)
+        driver_base = GaitEnergyDriver(mechanics_solver, gait_loader)
+        psi_expr_base = driver_base.energy_expr()
+        psi_base_local = fem.assemble_scalar(fem.form(psi_expr_base * mechanics_solver.cfg.dx))
+        psi_base = comm.allreduce(psi_base_local, op=4)  # MPI.SUM=4
         
         # Compute with 2x load
         gait_loader.load_scale = 2.0
-        psi_double = solver1.accumulated_strain_energy_gait(gait_loader)
+        driver_double = GaitEnergyDriver(mechanics_solver, gait_loader)
+        psi_expr_double = driver_double.energy_expr()
+        psi_double_local = fem.assemble_scalar(fem.form(psi_expr_double * mechanics_solver.cfg.dx))
+        psi_double = comm.allreduce(psi_double_local, op=4)  # MPI.SUM=4
         
         # Restore original scale
         gait_loader.load_scale = original_scale
@@ -145,27 +138,38 @@ class TestAccumulatedStrainEnergy:
         assert 3.0 < ratio < 5.0, \
             f"Energy should scale ~4x with 2x load, got ratio={ratio:.2f}"
     
-    @pytest.mark.skip(reason="API changed - GaitEnergyDriver now provides energy_expr() instead of accumulated_strain_energy_gait()")
     def test_energy_components_contribution(self, mechanics_solver, gait_loader):
         """Verify that multiple gait phases contribute to accumulated energy."""
-        # Get individual phase energies
+        from simulation.drivers import GaitEnergyDriver
+        
+        # Get individual phase energies (integrals over domain)
         quadrature = gait_loader.get_quadrature()
         phase_energies = []
+        comm = mechanics_solver.cfg.domain.comm
+        cfg = mechanics_solver.cfg
         
         for phase, weight in quadrature:
             gait_loader.update_loads(phase)
             mechanics_solver.assemble_rhs()
             mechanics_solver.solve()
-            psi_phase = mechanics_solver.average_strain_energy()
-            phase_energies.append((phase, weight, psi_phase))
+            # Get strain energy density and integrate
+            psi_density = mechanics_solver.get_strain_energy_density(mechanics_solver.u)
+            psi_local = fem.assemble_scalar(fem.form(psi_density * cfg.dx))
+            psi_total = comm.allreduce(psi_local, op=4)  # MPI.SUM=4
+            phase_energies.append((phase, weight, psi_total))
         
         # All phases should have positive energy
         for phase, weight, psi in phase_energies:
             assert psi > 0.0, f"Phase {phase}% should have positive energy, got {psi}"
         
-        # Verify manual accumulation matches method
+        # Verify manual accumulation matches GaitEnergyDriver
+        # Both compute weighted sum of energy integrals
         manual_accumulated = sum(w * psi for _, w, psi in phase_energies)
-        method_accumulated = mechanics_solver.accumulated_strain_energy_gait(gait_loader)
+        
+        driver = GaitEnergyDriver(mechanics_solver, gait_loader)
+        psi_expr = driver.energy_expr()
+        method_local = fem.assemble_scalar(fem.form(psi_expr * cfg.dx))
+        method_accumulated = comm.allreduce(method_local, op=4)  # MPI.SUM=4
         
         np.testing.assert_allclose(manual_accumulated, method_accumulated, rtol=1e-6,
             err_msg="Manual and method accumulation should match")

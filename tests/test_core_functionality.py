@@ -27,7 +27,6 @@ import basix
 from simulation.config import Config
 from simulation.utils import build_facetag, build_dirichlet_bcs
 from simulation.subsolvers import MechanicsSolver
-from simulation.model import Remodeller
 from simulation.storage import UnifiedStorage
 from simulation.logger import get_logger
 
@@ -38,7 +37,6 @@ comm = MPI.COMM_WORLD
 # Core Smoke Tests (8 critical tests, reduced from 20+)
 # =============================================================================
 
-@pytest.mark.unit
 def test_config_and_mesh_creation():
     """Config and mesh creation should work without errors."""
     domain = mesh.create_unit_cube(comm, 2, 2, 2, ghost_mode=mesh.GhostMode.shared_facet)
@@ -57,7 +55,6 @@ def test_config_and_mesh_creation():
     
     comm.Barrier()
 
-@pytest.mark.unit
 def test_function_spaces_and_bc_creation():
     """Function spaces and boundary conditions should initialize."""
     domain = mesh.create_unit_cube(comm, 2, 2, 2, ghost_mode=mesh.GhostMode.shared_facet)
@@ -83,7 +80,6 @@ def test_function_spaces_and_bc_creation():
     assert all(isinstance(bc, fem.DirichletBC) for bc in bc_mech)
 
 
-@pytest.mark.unit
 def test_solver_initialization():
     """All subsolver types should initialize without errors."""
     from simulation.subsolvers import StimulusSolver, DensitySolver, DirectionSolver
@@ -133,7 +129,6 @@ def test_solver_initialization():
     assert dirn is not None
 
 
-@pytest.mark.integration
 def test_simple_mechanics_solve():
     """Mechanics solver should converge quickly on tiny mesh."""
     domain = mesh.create_unit_cube(comm, 2, 2, 2, ghost_mode=mesh.GhostMode.shared_facet)
@@ -171,7 +166,6 @@ def test_simple_mechanics_solve():
     mech.destroy()
 
 
-@pytest.mark.unit
 def test_storage_initialization(shared_tmpdir):
     """Storage system should initialize correctly."""
     domain = mesh.create_unit_cube(comm, 2, 2, 2, ghost_mode=mesh.GhostMode.shared_facet)
@@ -194,7 +188,6 @@ def test_storage_initialization(shared_tmpdir):
 # into DOLFINx/PETSc object lifecycle management
 
 
-@pytest.mark.unit
 def test_utility_functions_basic():
     """Basic utility functions should work correctly."""
     from simulation.subsolvers import smooth_abs, smooth_max, smooth_plus, smooth_heaviside

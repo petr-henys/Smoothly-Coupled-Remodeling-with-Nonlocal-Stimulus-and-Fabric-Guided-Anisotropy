@@ -8,10 +8,7 @@ Tests load application classes and utility functions including:
 - MuscleLoad for muscle force application along splines
 """
 
-import tempfile
-from pathlib import Path
-from typing import Dict, Any
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -805,7 +802,6 @@ class TestParametrized:
 
 
 # Performance tests (marked as slow)
-@pytest.mark.slow
 class TestPerformance:
     """Performance tests for large-scale scenarios."""
     

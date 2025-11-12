@@ -335,10 +335,10 @@ class Remodeller:
         coupling_iters_before = getattr(self.fixedsolver, "total_gs_iters", 0)
 
         if not self.solvers_initialized:
-            self.mechsolver.solver_setup()
-            self.stimsolver.solver_setup()
-            self.densolver.solver_setup()
-            self.dirsolver.solver_setup()
+            self.mechsolver.setup()
+            self.stimsolver.setup()
+            self.densolver.setup()
+            self.dirsolver.setup()
             self.solvers_initialized = True
 
 

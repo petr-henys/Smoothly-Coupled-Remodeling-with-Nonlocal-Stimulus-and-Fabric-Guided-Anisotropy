@@ -266,7 +266,10 @@ class TestThermodynamics:
 
     @pytest.mark.parametrize("unit_cube", [6], indirect=True)
     def test_linear_elastic_energy_balance(self, unit_cube, facet_tags, traction_factory):
-        """For the linear system, a(u,u) == l(u) and U = 0.5 a(u,u) = 0.5 ∫ t·u ds."""
+        """For the linear system, internal work equals external work: W_int ≈ W_ext.
+        
+        Tests both manual calculation (a(u,u) vs l(u)) and solver method (energy_balance_nd()).
+        """
         comm = MPI.COMM_WORLD
         domain = unit_cube
         cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False)
@@ -297,7 +300,7 @@ class TestThermodynamics:
         mech.setup()
         mech.solve()
 
-        # Internal work: a(u,u) = ∫ σ:ε dx
+        # Test 1: Manual calculation - Internal work: a(u,u) = ∫ σ:ε dx
         a_uu_local = fem.assemble_scalar(fem.form(ufl.inner(mech.sigma(u, rho, A), mech.eps(u)) * cfg.dx))
         a_uu = comm.allreduce(a_uu_local, op=MPI.SUM)
 
@@ -309,6 +312,11 @@ class TestThermodynamics:
         denom = max(abs(l_u), abs(a_uu), 1e-300)
         rel_gap = abs(a_uu - l_u) / denom
         assert rel_gap < 5e-9, f"Energy balance violated: a(u,u)={a_uu:.6e}, l(u)={l_u:.6e}, rel_gap={rel_gap:.3e}"
+        
+        # Test 2: Solver method energy_balance_nd()
+        W_int, W_ext, rel_error = mech.energy_balance_nd()
+        assert rel_error < 0.05, f"Solver energy balance: W_int={W_int:.3e}, W_ext={W_ext:.3e}, rel_error={rel_error:.3e}"
+
 
 
 # =============================================================================
@@ -320,7 +328,10 @@ class TestConservation:
     
     @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
     def test_force_equilibrium_no_body_force(self, unit_cube):
-        """With no body force and homogeneous BCs, internal forces should sum to zero."""
+        """With no body force and homogeneous BCs, internal forces should sum to zero.
+        
+        Also tests that with traction applied, solver converges and energy balance holds.
+        """
         comm = MPI.COMM_WORLD
         domain = unit_cube
         facet_tags = build_facetag(domain)
@@ -343,19 +354,34 @@ class TestConservation:
         A.interpolate(_iso_tensor)
         A.x.scatter_forward()
         
-        # BCs: left fixed, no traction on right
+        # Test 1: No load case - BCs: left fixed, no traction on right
         bc_mech = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
         mech = MechanicsSolver(u, rho, A, cfg, bc_mech, [])
         
         mech.setup()
         mech.solve()
         
-        # Check residual: ∫ σ:∇v dx should be zero for all v (satisfied by FEM)
-        # Instead, verify displacement is approximately zero when no load applied
+        # Check residual: displacement should be zero when no load applied
         u_norm_sq_local = fem.assemble_scalar(fem.form(ufl.inner(u, u) * cfg.dx))
         u_norm_sq = comm.allreduce(u_norm_sq_local, op=MPI.SUM)
         
         assert u_norm_sq < 1e-12, f"No-load case should yield zero displacement, got ||u||²={u_norm_sq}"
+        
+        # Test 2: With traction - clamp x=0, apply traction on x=1
+        t0 = fem.Constant(domain, np.array([1.0, 0.0, 0.0], dtype=float))
+        neumanns = [(t0, 2)]
+        
+        mech2 = MechanicsSolver(u, rho, A, cfg, bc_mech, neumanns)
+        mech2.setup()
+        its, reason = mech2.solve()
+        
+        # Check solver converged
+        assert reason > 0, f"KSP failed to converge, reason={reason}"
+        
+        # Check energy balance
+        W_int, W_ext, rel_err = mech2.energy_balance_nd()
+        assert rel_err < 1e-6, f"Energy balance violated: rel_err={rel_err:.2e} (W_int={W_int:.3e}, W_ext={W_ext:.3e})"
+
     
     def test_density_bounds_preservation(self):
         """Density solver should relax toward [rho_min, rho_max] bounds."""
@@ -872,47 +898,6 @@ class TestConservationChecks:
     """Test physical conservation/balance checks for all subsolvers."""
     
     @pytest.mark.parametrize("unit_cube", [6], indirect=True)
-    def test_mechanics_energy_balance(self, unit_cube, traction_factory):
-        """MechanicsSolver: Internal work should equal external work (W_int ≈ W_ext)."""
-        comm = MPI.COMM_WORLD
-        domain = unit_cube
-        facet_tags = build_facetag(domain)
-        cfg = Config(domain=domain, facet_tags=facet_tags, verbose=(comm.rank == 0))
-        
-        P1_vec = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3,))
-        P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
-        P1_ten = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3, 3))
-        
-        V = functionspace(unit_cube, P1_vec)
-        Q = functionspace(unit_cube, P1)
-        T = functionspace(unit_cube, P1_ten)
-        
-        u = Function(V, name="u")
-        rho = Function(Q, name="rho")
-        rho.x.array[:] = 0.6
-        rho.x.scatter_forward()
-        
-        A = Function(T, name="A")
-        A.interpolate(_iso_tensor)
-        A.x.scatter_forward()
-        
-        # Apply traction load
-        traction = traction_factory(-0.1, facet_id=2, axis=0)
-        
-        bc_mech = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
-        mech = MechanicsSolver(u, rho, A, cfg, bc_mech, [traction])
-        
-        mech.setup()
-        mech.solve()
-        
-        # Check energy balance
-        W_int, W_ext, rel_error = mech.energy_balance_nd()
-        
-        assert rel_error < 0.05, (
-            f"Energy balance violated: W_int={W_int:.3e}, W_ext={W_ext:.3e}, rel_error={rel_error:.3e}"
-        )
-    
-    @pytest.mark.parametrize("unit_cube", [6], indirect=True)
     def test_stimulus_power_balance(self, unit_cube):
         """StimulusSolver: Power balance (storage + decay ≈ source)."""
         comm = MPI.COMM_WORLD
@@ -1046,56 +1031,6 @@ class TestConservationChecks:
         )
 
 
-@pytest.mark.unit
-def test_mechanics_force_equilibrium():
-    """Simple force equilibrium: clamp one face, apply traction on opposite, check solve converges."""
-    comm = MPI.COMM_WORLD
-    m = _make_unit_cube(comm, n=6)
-    facets = build_facetag(m)
-
-    # Function spaces
-    V = fem.functionspace(m, basix.ufl.element("Lagrange", m.basix_cell(), 1, shape=(3,)))
-    Q = fem.functionspace(m, basix.ufl.element("Lagrange", m.basix_cell(), 1))
-    T = fem.functionspace(m, basix.ufl.element("Lagrange", m.basix_cell(), 1, shape=(3,3)))
-
-    # Fields
-    rho = fem.Function(Q, name="rho")
-    rho.x.array[:] = 0.8
-    rho.x.scatter_forward()
-
-    Afield = fem.Function(T, name="A")
-    Afield.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:, None] * np.ones((1, x.shape[1])))
-    Afield.x.scatter_forward()
-
-    # Config
-    cfg = Config(domain=m, facet_tags=facets, verbose=False)
-    cfg.xi_aniso = 0.0  # isotropic
-    cfg._build_constants()
-
-    # BCs: clamp x=0 face
-    bcs = build_dirichlet_bcs(V, facets, id_tag=1, value=0.0)
-
-    # Apply traction on x=1 face
-    t0 = fem.Constant(m, np.array([1.0, 0.0, 0.0], dtype=float))
-    neumanns = [(t0, 2)]
-
-    # Create solution function
-    u = fem.Function(V, name="u")
-    
-    # Solve mechanics
-    mech = MechanicsSolver(u, rho, Afield, cfg, bcs, neumanns)
-    mech.setup()
-    its, reason = mech.solve()
-
-    # Check solver converged
-    assert reason > 0, f"KSP failed to converge, reason={reason}"
-
-    # Check energy balance from solver
-    W_int, W_ext, rel_err = mech.energy_balance_nd()
-    assert rel_err < 1e-6, f"Energy balance violated: rel_err={rel_err:.2e} (W_int={W_int:.3e}, W_ext={W_ext:.3e})"
-
-
-@pytest.mark.unit
 def test_mechanics_uniform_extension():
     """Uniform extension test: apply displacement BCs, check solver converges and energy balance holds."""
     comm = MPI.COMM_WORLD
@@ -1153,7 +1088,6 @@ def test_mechanics_uniform_extension():
     assert u_norm > 1e-6, f"Solution is nearly zero: {u_norm:.2e}"
 
 
-@pytest.mark.unit
 def test_stimulus_power_residual_scales_with_dt():
     """Power residual in stimulus solver should scale with dt (consistency check)."""
     comm = MPI.COMM_WORLD

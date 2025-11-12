@@ -2,29 +2,21 @@
 """
 Nondimensionalization parameter consistency and subsolver scaling tests.
 
-Merged from:
-- test_nondimensional_params.py
-- test_nondimensional_subsolvers.py
-"""
-
-#!/usr/bin/env python3
-"""
-Focused tests for nondimensional parameter consistency.
-
-Covers:
-- Exact mapping: dimensional -> nondimensional constants
-- Round-trip: nondimensional constants -> recover dimensionals
-- Scaling laws with L_c (length) and t_c (time)
-- Basic type/positivity checks and property relations
+Tests exact mapping between dimensional/nondimensional constants and physics invariance.
 """
 
 import math
 import pytest
-
+import numpy as np
 
 from dolfinx import fem
+import basix
+import ufl
+from mpi4py import MPI
 
 from simulation.config import Config
+from simulation.subsolvers import MechanicsSolver, StimulusSolver, DensitySolver, DirectionSolver
+from simulation.utils import build_dirichlet_bcs
 
 
 def _float(c):
@@ -35,7 +27,6 @@ def _float(c):
         return float(c.value)
 
 
-@pytest.mark.unit
 def test_constant_types_and_basic_ranges(unit_cube, facet_tags):
     """All nondimensional constants exist with correct types and basic ranges."""
     cfg = Config(domain=unit_cube, facet_tags=facet_tags, verbose=False)
@@ -69,7 +60,6 @@ def test_constant_types_and_basic_ranges(unit_cube, facet_tags):
     assert _float(cfg.xi_aniso_c) == pytest.approx(cfg.xi_aniso)
 
 
-@pytest.mark.unit
 def test_dimensional_to_nondimensional_mapping_exact(unit_cube, facet_tags):
     """Verify exact formulas used for nondimensionalization."""
     # Choose distinct, nontrivial dimensional values
@@ -127,7 +117,6 @@ def test_dimensional_to_nondimensional_mapping_exact(unit_cube, facet_tags):
     assert cfg.rho_min_nd < cfg.rho_max_nd
 
 
-@pytest.mark.unit
 def test_roundtrip_reconstruct_dimensionals(unit_cube, facet_tags):
     """Invert the nondimensionalization to recover original dimensionals."""
     cfg = Config(
@@ -165,7 +154,6 @@ def test_roundtrip_reconstruct_dimensionals(unit_cube, facet_tags):
     assert psi_ref_dim_rt == pytest.approx(cfg.psi_ref_dim, rel=1e-14, abs=1e-14)
 
 
-@pytest.mark.unit
 def test_scaling_with_Lc(unit_cube, facet_tags):
     """Verify expected scaling laws when changing L_c only."""
     base = Config(domain=unit_cube, facet_tags=facet_tags, L_c=1.0, tauS_dim=1.0, verbose=False)
@@ -185,7 +173,6 @@ def test_scaling_with_Lc(unit_cube, facet_tags):
     assert r_psiref == pytest.approx((scaled.L_c / base.L_c) ** 2)
 
 
-@pytest.mark.unit
 def test_scaling_with_tc(unit_cube, facet_tags):
     """Verify expected scaling laws when changing t_c (via tauS_dim)."""
     # t_c = 1 / tauS_dim
@@ -213,7 +200,6 @@ def test_scaling_with_tc(unit_cube, facet_tags):
         assert r == pytest.approx(t_ratio)
 
 
-@pytest.mark.unit
 def test_property_relations_consistent(unit_cube, facet_tags):
     """Basic relationships among derived scales hold: psi_c/sigma_c = strain_scale."""
     cfg = Config(domain=unit_cube, facet_tags=facet_tags, L_c=2.3, u_c=1.1e-3, E0_dim=9.1e9, verbose=False)
@@ -224,40 +210,6 @@ def test_property_relations_consistent(unit_cube, facet_tags):
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
-
-
-################################################################################
-
-#!/usr/bin/env python3
-"""
-Nondimensionalization consistency tests for subsolvers.
-
-Focus: physics invariance or expected scaling across changes of
-characteristic scales when parameters are transformed consistently.
-
-Covered solvers:
-- Mechanics: energy invariance for physically equivalent scaling and
-  proportional scaling with psi_c when ND load is unchanged.
-- Stimulus: invariance under E0/psi_c changes with rS_dim and psi_ref_dim
-  adjusted to maintain the same ND problem.
-- Density: invariance under joint scaling of L_c and t_c with dt_nd and
-  diffusion groups held constant.
-- Direction: invariance under joint scaling that preserves all ND groups
-  (cA_c/dt_nd, tauA_c, cA_c*ell_c^2).
-"""
-
-import numpy as np
-import pytest
-
-
-from dolfinx import fem
-import basix
-import ufl
-from mpi4py import MPI
-
-from simulation.config import Config
-from simulation.subsolvers import MechanicsSolver, StimulusSolver, DensitySolver, DirectionSolver
-from simulation.utils import build_dirichlet_bcs
 
 
 def _constant_scalar(Q, value: float) -> fem.Function:
@@ -289,7 +241,6 @@ def _build_spaces(domain):
     return V, Q, T
 
 
-@pytest.mark.unit
 @pytest.mark.parametrize("unit_cube", [4], indirect=True)
 def test_mechanics_energy_invariant_under_Lu_scale(unit_cube, facet_tags):
     """Changing L_c and u_c by the same factor keeps physical energy invariant.
@@ -335,7 +286,6 @@ def test_mechanics_energy_invariant_under_Lu_scale(unit_cube, facet_tags):
     assert E_A == pytest.approx(E_B, rel=5e-5, abs=5e-5)
 
 
-@pytest.mark.unit
 @pytest.mark.parametrize("unit_cube", [4], indirect=True)
 def test_mechanics_energy_scales_with_psi_c_for_equal_nd_load(unit_cube, facet_tags):
     """With identical ND traction, physical energy scales with psi_c.
@@ -375,7 +325,6 @@ def test_mechanics_energy_scales_with_psi_c_for_equal_nd_load(unit_cube, facet_t
     assert (E2 / E1) == pytest.approx(cfg2.psi_c / cfg1.psi_c, rel=5e-5)
 
 
-@pytest.mark.unit
 @pytest.mark.parametrize("unit_cube", [4], indirect=True)
 def test_mechanics_energy_matches_direct_nd_assembly(unit_cube, facet_tags):
     """average_strain_energy equals ND assembly times psi_c (no double scaling)."""
@@ -404,7 +353,6 @@ def test_mechanics_energy_matches_direct_nd_assembly(unit_cube, facet_tags):
     assert mech.average_strain_energy() == pytest.approx(psi_dim_direct, rel=5e-6, abs=5e-8)
 
 
-@pytest.mark.unit
 @pytest.mark.parametrize("unit_cube", [4], indirect=True)
 def test_stimulus_invariance_under_E0_scaling_compensated(unit_cube, facet_tags):
     """Stimulus solution invariant when E0 scaling is compensated.
@@ -450,7 +398,6 @@ def test_stimulus_invariance_under_E0_scaling_compensated(unit_cube, facet_tags)
     assert np.allclose(S_A.x.array, S_B.x.array, rtol=5e-6, atol=5e-8)
 
 
-@pytest.mark.unit
 @pytest.mark.parametrize("unit_cube", [4], indirect=True)
 def test_density_invariance_under_Lc_tc_scaling(unit_cube, facet_tags):
     """Density solution invariant when t_c/L_c^2 and dt_nd are held constant.
@@ -491,7 +438,6 @@ def test_density_invariance_under_Lc_tc_scaling(unit_cube, facet_tags):
     assert np.allclose(rho_A.x.array, rho_B.x.array, rtol=5e-6, atol=5e-8)
 
 
-@pytest.mark.unit
 @pytest.mark.parametrize("unit_cube", [4], indirect=True)
 def test_direction_invariance_under_joint_scaling(unit_cube, facet_tags):
     """Direction solver invariant under joint scaling preserving ND groups.

@@ -213,7 +213,6 @@ class TestGaitQuadrature:
             f"Expected {gait_loader.n_samples} samples, got {len(quadrature)}"
 
 
-@pytest.mark.slow
 class TestForceMaxima:
     """Compute and report maximum forces for each load type across gait cycle."""
 

@@ -12,7 +12,6 @@ Tests cover:
 
 import pytest
 from pathlib import Path
-import tempfile
 import shutil
 
 # Import after sys.path manipulation in conftest

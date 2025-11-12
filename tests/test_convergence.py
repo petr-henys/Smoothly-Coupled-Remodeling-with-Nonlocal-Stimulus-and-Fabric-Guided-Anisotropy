@@ -1,15 +1,9 @@
 #!/usr/bin/env python3
 """
-Convergence analysis, NPZ I/O, and QoI tests.
+Convergence analysis, NPZ I/O tests.
 
-Merged from:
-- test_convergence_analysis.py
-- test_convergence_npz_io.py
-- test_convergence_qoi_energy.py
-- test_npz_cross_mpi.py
+Tests NPZ save/load functionality with coordinate-based matching for MPI-independent loading.
 """
-
-"""Test convergence analysis functionality."""
 
 import tempfile
 import shutil
@@ -17,7 +11,6 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-
 
 from mpi4py import MPI
 from dolfinx import mesh, fem
@@ -70,19 +63,7 @@ def test_save_load_npz_roundtrip():
             shutil.rmtree(temp_dir)
 
 
-    
-
-################################################################################
-
-import os
-from pathlib import Path
-
-import numpy as np
-import pytest
-
-
 @pytest.mark.mpi
-@pytest.mark.unit
 def test_npz_roundtrip_scalar_vector_tensor(shared_tmpdir):
     """Verify NPZ save/load with coordinate-based matching (MPI-independent).
 
@@ -169,7 +150,6 @@ def test_npz_roundtrip_scalar_vector_tensor(shared_tmpdir):
 
 
 @pytest.mark.mpi
-@pytest.mark.unit
 def test_npz_mpi_independence(shared_tmpdir):
     """Verify NPZ load works with different MPI rank count than save.
     
@@ -215,7 +195,6 @@ def test_npz_mpi_independence(shared_tmpdir):
 
 
 @pytest.mark.mpi
-@pytest.mark.unit
 def test_npz_element_mismatch_detection(shared_tmpdir):
     """Ensure load_npz_field raises on element family/degree/shape mismatch."""
     from mpi4py import MPI
@@ -249,28 +228,6 @@ def test_npz_element_mismatch_detection(shared_tmpdir):
     
     with pytest.raises(RuntimeError, match="degree mismatch"):
         load_npz_field(comm, outdir / "f_p1.npz", f2)
-
-
-
-################################################################################
-
-import numpy as np
-import pytest
-
-
-################################################################################
-
-"""Test NPZ I/O across different MPI sizes (manual verification).
-
-This test must be run manually in two stages:
-1. Save with one MPI size: mpirun -np 2 pytest tests/test_npz_cross_mpi.py::test_save -v
-2. Load with different size: mpirun -np 4 pytest tests/test_npz_cross_mpi.py::test_load -v
-"""
-
-import os
-from pathlib import Path
-import numpy as np
-import pytest
 
 
 @pytest.mark.mpi
