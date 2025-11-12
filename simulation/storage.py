@@ -162,60 +162,53 @@ class MetricsStorage:
 class UnifiedStorage:
     """Unified field + metrics storage."""
 
-    __slots__ = ("comm", "fields", "metrics", "_metrics_enabled")
+    __slots__ = ("comm", "fields", "metrics")
 
     def __init__(self, cfg: "Config") -> None:
         self.comm = cfg.domain.comm
         self.fields = FieldStorage(cfg, self.comm)
         self.metrics = MetricsStorage(cfg, self.comm)
         
-        # Register standard metrics CSV if telemetry not already doing it
-        self._metrics_enabled = not hasattr(cfg, "telemetry") or cfg.telemetry is None
-        if self._metrics_enabled:
-            self.metrics.register_csv(
-                "steps",
-                columns=[
-                    "step", "time_days", "dt_days", "num_dofs_total", "rss_mem_mb",
-                    "mech_iters", "stim_iters", "dens_iters", "dir_iters",
-                    "coupling_iters", "coupling_time",
-                ],
-            )
+        # Register standard metrics CSV
+        self.metrics.register_csv(
+            "steps",
+            columns=[
+                "step", "time_days", "dt_days", "num_dofs_total", "rss_mem_mb",
+                "mech_iters", "stim_iters", "dens_iters", "dir_iters",
+                "coupling_iters", "coupling_time",
+            ],
+        )
 
     def write_step(
         self,
         step: int,
         time_days: float,
         dt_days: float,
-        u: fem.Function,
-        rho: fem.Function,
-        S: fem.Function,
-        A: fem.Function,
         num_dofs_total: int,
         rss_mem_mb: float,
         solver_stats: Dict[str, int],
         coupling_stats: Dict[str, float],
     ) -> None:
         """Write timestep data. COLLECTIVE operation (field writes)."""
-        # Field writes (COLLECTIVE)
+        # Field writes (COLLECTIVE) - fields already registered in Remodeller
         self.fields.write("u", time_days)
         self.fields.write("scalars", time_days)
         self.fields.write("A", time_days)
         
         # Metrics (rank-0 only)
-        if self._metrics_enabled:
-            self.metrics.record("steps", {
-                "step": step,
-                "time_days": time_days,
-                "dt_days": dt_days,
-                "num_dofs_total": num_dofs_total,
-                "rss_mem_mb": rss_mem_mb,
-                "mech_iters": solver_stats.get("mech", 0),
-                "stim_iters": solver_stats.get("stim", 0),
-                "dens_iters": solver_stats.get("dens", 0),
-                "dir_iters": solver_stats.get("dir", 0),
-                "coupling_iters": coupling_stats.get("iters", 0),
-                "coupling_time": coupling_stats.get("time", 0.0),
-            })
+        self.metrics.record("steps", {
+            "step": step,
+            "time_days": time_days,
+            "dt_days": dt_days,
+            "num_dofs_total": num_dofs_total,
+            "rss_mem_mb": rss_mem_mb,
+            "mech_iters": solver_stats.get("mech", 0),
+            "stim_iters": solver_stats.get("stim", 0),
+            "dens_iters": solver_stats.get("dens", 0),
+            "dir_iters": solver_stats.get("dir", 0),
+            "coupling_iters": coupling_stats.get("iters", 0),
+            "coupling_time": coupling_stats.get("time", 0.0),
+        })
 
     def close(self) -> None:
         """Close storage. COLLECTIVE operation."""

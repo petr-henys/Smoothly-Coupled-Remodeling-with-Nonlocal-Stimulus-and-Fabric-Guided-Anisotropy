@@ -52,8 +52,6 @@ class Config:
     saving_interval: int = 1
     results_dir: str = ".results"
     verbose: bool = True
-    # Control whether telemetry is initialised (and directories created)
-    enable_telemetry: bool = True
 
     # Global linear solver defaults (tighter for verification-grade solves)
     ksp_type: str = "minres"
@@ -150,9 +148,8 @@ class Config:
         
         self._build_measures()
         self._build_constants()
-        # Initialise telemetry only if enabled; avoids creating empty output dirs
-        if getattr(self, "enable_telemetry", True):
-            self._init_telemetry()
+        # Always initialize telemetry
+        self._init_telemetry()
 
     # ------------------------------- #
     # Helpers
@@ -218,7 +215,7 @@ class Config:
     def _init_telemetry(self) -> None:
         """Create telemetry under results_dir and write config.json.
 
-        Executed only when ``enable_telemetry=True``.
+        Always executed during initialization.
         Rank 0 performs I/O; other ranks no-op.
         """
         from simulation.telemetry import Telemetry

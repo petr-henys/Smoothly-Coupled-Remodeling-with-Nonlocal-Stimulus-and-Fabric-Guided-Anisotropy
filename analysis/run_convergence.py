@@ -45,12 +45,11 @@ def run_remodeller(
     )
     facet_tags = build_facetag(domain)
     
-    # Configure
+    # Config
     cfg = Config(
         domain=domain,
         facet_tags=facet_tags,
         results_dir=str(output_path),
-        enable_telemetry=True,
         verbose=False,
         coupling_tol=1e-8,
         max_subiters=100,

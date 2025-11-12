@@ -59,7 +59,6 @@ def run_anderson(param_point: Dict[str, Any], output_path: Path, comm: MPI.Comm)
         domain=domain,
         facet_tags=facet_tags,
         results_dir=str(output_path),
-        enable_telemetry=True,
         verbose=False,
         coupling_tol=coupling_tol,
         max_subiters=max_subiters,

@@ -398,8 +398,7 @@ class TestUnifiedStorage:
     def test_write_step_writes_all_data(self, shared_tmpdir, unit_cube, facet_tags, spaces, fields):
         """write_step should write fields and record metrics."""
         cfg = Config(domain=unit_cube, facet_tags=facet_tags,
-                    results_dir=shared_tmpdir / "test_step", verbose=False,
-                    enable_telemetry=False)  # Disable telemetry to use storage's CSV
+                    results_dir=shared_tmpdir / "test_step", verbose=False)
 
         storage = UnifiedStorage(cfg)
 
@@ -419,10 +418,6 @@ class TestUnifiedStorage:
             step=1,
             time_days=10.0,
             dt_days=1.0,
-            u=fields.u,
-            rho=fields.rho,
-            S=fields.S,
-            A=fields.A,
             num_dofs_total=1000,
             rss_mem_mb=100.5,
             solver_stats={"mech": 50, "stim": 20, "dens": 10, "dir": 5},
@@ -465,24 +460,19 @@ class TestUnifiedStorage:
         assert len(storage.fields._writers) == 0
 
     def test_telemetry_integration(self, shared_tmpdir, unit_cube, facet_tags, spaces, fields):
-        """When telemetry is enabled, storage should not duplicate metrics CSV."""
+        """Telemetry is always enabled - storage uses its own metrics CSV."""
         from simulation.telemetry import Telemetry
-
-        tel = Telemetry(comm, outdir=str(shared_tmpdir / "test_tel"), verbose=False)
-        tel.register_csv("steps", ["step", "value"])
 
         cfg = Config(domain=unit_cube, facet_tags=facet_tags,
                     results_dir=shared_tmpdir / "test_tel",
                     verbose=False)
-        cfg.telemetry = tel
 
         storage = UnifiedStorage(cfg)
 
-        # Storage should NOT create its own steps CSV
-        assert storage._metrics_enabled is False
+        # Storage always creates its own steps CSV
+        assert "steps" in storage.metrics._writers
 
         storage.close()
-        tel.flush_all()
 
 
 # =============================================================================
@@ -879,16 +869,16 @@ class TestTelemetry:
                 assert gz_path.exists(), "Gzipped CSV not created"
     
     def test_telemetry_integration_in_config(self):
-        """Config should create telemetry when enable_telemetry=True."""
+        """Config should always create telemetry."""
         comm = MPI.COMM_WORLD
         domain = mesh.create_unit_cube(comm, 8, 8, 8, ghost_mode=mesh.GhostMode.shared_facet)
         facet_tags = build_facetag(domain)
         
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False, 
-                        results_dir=tmpdir, enable_telemetry=True)
+                        results_dir=tmpdir)
             
-            assert cfg.telemetry is not None, "Telemetry not created by Config when enable_telemetry=True"
+            assert cfg.telemetry is not None, "Telemetry not created by Config"
             assert isinstance(cfg.telemetry, Telemetry), "Config.telemetry wrong type"
 
     def test_write_metadata_injects_standard_fields(self):
@@ -972,7 +962,7 @@ class TestStorage:
         domain = unit_cube
         facet_tags = build_facetag(domain)
         
-        cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False, results_dir=shared_tmpdir, enable_telemetry=False)
+        cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False, results_dir=shared_tmpdir)
         
         with Remodeller(cfg) as rem:
             # Compute total DOFs
@@ -990,10 +980,6 @@ class TestStorage:
                 step=0,
                 time_days=0.0,
                 dt_days=1.0,
-                u=rem.u,
-                rho=rem.rho,
-                S=rem.S,
-                A=rem.A,
                 num_dofs_total=num_dofs_total,
                 rss_mem_mb=rss_mb_total,
                 solver_stats={"mech": 10, "stim": 5, "dens": 5, "dir": 5},
@@ -1038,10 +1024,6 @@ class TestStorage:
                 step=0,
                 time_days=0.0,
                 dt_days=1.0,
-                u=rem.u,
-                rho=rem.rho,
-                S=rem.S,
-                A=rem.A,
                 num_dofs_total=num_dofs_total,
                 rss_mem_mb=rss_mb_total,
                 solver_stats={"mech": 10, "stim": 5, "dens": 5, "dir": 5},
@@ -1170,11 +1152,10 @@ class TestFieldStatistics:
 class TestSubiterationDiagnostics:
     """Additional checks on fixed-point solver diagnostics."""
 
-    @pytest.mark.parametrize("unit_cube", [6], indirect=True)
-    @pytest.mark.skip(reason="ADIOS2 VTXWriter profiling writes after tmpdir cleanup - known DOLFINx issue")
+    @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
     def test_avg_memory_matches_metrics(self, unit_cube, facet_tags):
         """avg_memory_mb should equal the mean of recorded memory columns."""
-        cfg = Config(domain=unit_cube, facet_tags=facet_tags, verbose=False, enable_telemetry=False, max_subiters=8)
+        cfg = Config(domain=unit_cube, facet_tags=facet_tags, verbose=False, max_subiters=8)
 
         with Remodeller(cfg) as rem:
             rem.step(dt=1.0)
@@ -1274,7 +1255,6 @@ class TestMonitoringIntegration:
                 facet_tags=facet_tags,
                 verbose=False,
                 results_dir=tmpdir,
-                enable_telemetry=True,
                 max_subiters=5,
             )
             with Remodeller(cfg) as rem:

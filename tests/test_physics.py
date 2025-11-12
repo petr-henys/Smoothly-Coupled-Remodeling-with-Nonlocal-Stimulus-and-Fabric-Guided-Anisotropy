@@ -154,7 +154,7 @@ class TestConstitutiveLaw:
         """Anisotropic fabric aligned with tension should stiffen response measurably."""
         comm = MPI.COMM_WORLD
         cfg = Config(domain=unit_cube, facet_tags=facet_tags, verbose=(comm.rank == 0),
-                     enable_telemetry=False, xi_aniso=2.0)
+                     xi_aniso=2.0)
 
         P1_vec = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3,))
         P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)

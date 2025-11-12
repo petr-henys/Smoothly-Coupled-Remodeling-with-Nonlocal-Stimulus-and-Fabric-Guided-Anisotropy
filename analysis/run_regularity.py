@@ -58,7 +58,6 @@ def run_regularity(param_point: Dict[str, Any], output_path: Path, comm: MPI.Com
         domain=domain,
         facet_tags=facet_tags,
         results_dir=str(output_path),
-        enable_telemetry=True,
         verbose=False,
         coupling_tol=1e-8,
         max_subiters=100,

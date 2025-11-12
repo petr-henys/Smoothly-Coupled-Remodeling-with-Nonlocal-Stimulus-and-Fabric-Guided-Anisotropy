@@ -172,7 +172,7 @@ def test_storage_initialization(shared_tmpdir):
     facet_tags = build_facetag(domain)
     cfg = Config(domain=domain, facet_tags=facet_tags,
                 results_dir=shared_tmpdir / "smoke_storage",
-                verbose=False, enable_telemetry=False)
+                verbose=False)
 
     storage = UnifiedStorage(cfg)
 
