@@ -101,6 +101,10 @@ def pytest_configure(config: pytest.Config) -> None:
     
     # Register markers
     config.addinivalue_line("markers", "mpi: tests that are intended for MPI environments")
+    config.addinivalue_line("markers", "smoke: quick smoke tests for basic functionality")
+    config.addinivalue_line("markers", "integration: integration tests spanning multiple components")
+    config.addinivalue_line("markers", "slow: tests that take significant time to complete")
+    config.addinivalue_line("markers", "performance: performance benchmarks and profiling tests")
 
 
 # Add workspace root to sys.path (where simulation/ folder is located)
