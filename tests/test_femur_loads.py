@@ -665,8 +665,8 @@ class TestEdgeCases:
     
     def test_very_small_mesh(self, sample_head_line, sample_le_me_line):
         """Test with very small mesh."""
-        # Create minimal tetrahedron
-        points = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]])
+        # Create minimal tetrahedron with float64 points
+        points = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=np.float64)
         cells = np.array([[4, 0, 1, 2, 3]])  # Single tetrahedron
         mesh = pv.UnstructuredGrid(cells, [pv.CellType.TETRA], points)
         
