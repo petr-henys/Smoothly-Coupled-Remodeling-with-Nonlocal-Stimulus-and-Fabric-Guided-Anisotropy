@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import csv
-import gzip
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, TYPE_CHECKING
+from typing import Dict, List, Sequence, TYPE_CHECKING
 
 from mpi4py import MPI
 from dolfinx import fem
@@ -16,6 +15,9 @@ if TYPE_CHECKING:
     from simulation.config import Config
 
 from simulation.logger import get_logger
+
+
+FLUSH_INTERVAL: int = 10
 
 
 class FieldStorage:
@@ -39,7 +41,7 @@ class FieldStorage:
         self,
         key: str,
         fields: Sequence[fem.Function],
-        filename: Optional[str] = None,
+        filename: str | None = None,
         engine: str = "bp4",
     ) -> None:
         """Register VTX writer for field group (COLLECTIVE)."""
@@ -73,13 +75,12 @@ class FieldStorage:
 class MetricsStorage:
     """CSV metrics writer (rank-0 only)."""
 
-    __slots__ = ("comm", "logger", "output_dir", "_flush_interval", "_buffers", "_files", "_writers")
+    __slots__ = ("comm", "logger", "output_dir", "_buffers", "_files", "_writers")
 
-    def __init__(self, cfg: "Config", comm: MPI.Comm, flush_interval: int = 10) -> None:
+    def __init__(self, cfg: "Config", comm: MPI.Comm) -> None:
         self.comm = comm
         self.logger = get_logger(comm, verbose=cfg.verbose, name="Storage.Metrics")
         self.output_dir = Path(cfg.results_dir)
-        self._flush_interval = flush_interval
         self._buffers: Dict[str, List[Dict]] = defaultdict(list)
         self._files: Dict[str, object] = {}
         self._writers: Dict[str, csv.DictWriter] = {}
@@ -93,15 +94,14 @@ class MetricsStorage:
         self,
         name: str,
         columns: Sequence[str],
-        gz: bool = False,
-        filename: Optional[str] = None,
+        filename: str | None = None,
     ) -> None:
         """Register CSV with header (rank-0 only)."""
         if self.comm.rank != 0:
             return
 
-        path = self.output_dir / (filename or f"{name}.csv{'.gz' if gz else ''}")
-        handle = gzip.open(path, "wt", newline="") if gz else open(path, "w", newline="")
+        path = self.output_dir / (filename or f"{name}.csv")
+        handle = open(path, "w", newline="")
         writer = csv.DictWriter(handle, fieldnames=list(columns))
         writer.writeheader()
         
@@ -116,7 +116,7 @@ class MetricsStorage:
             return
 
         self._buffers[name].append(dict(data))
-        if len(self._buffers[name]) >= self._flush_interval:
+        if len(self._buffers[name]) >= FLUSH_INTERVAL:
             self._flush(name)
 
     def _flush(self, name: str) -> None:

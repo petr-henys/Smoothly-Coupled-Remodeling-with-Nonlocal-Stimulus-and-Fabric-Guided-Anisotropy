@@ -224,7 +224,6 @@ class Config:
             cfg_dict,
             filename="config.json",
             overwrite=True,
-            inject_standard_fields=False,
         )
 
     def set_dt_dim(self, dt_dim: float):
@@ -242,7 +241,6 @@ class Config:
             cfg_dict,
             filename="config.json",
             overwrite=True,
-            inject_standard_fields=False,
         )
 
     def rebuild(self, domain: mesh.Mesh, facet_tags: Optional[mesh.MeshTags] = None):

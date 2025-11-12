@@ -268,7 +268,7 @@ class TestMetricsStorage:
         """record() should write data rows to CSV."""
         cfg = Config(domain=unit_cube, facet_tags=facet_tags,
                     results_dir=shared_tmpdir / "test_record", verbose=False)
-        storage = MetricsStorage(cfg, comm, flush_interval=1)  # Immediate flush
+        storage = MetricsStorage(cfg, comm)
 
         storage.register_csv("data", ["x", "y"])
         storage.record("data", {"x": 1, "y": 2})
@@ -287,14 +287,14 @@ class TestMetricsStorage:
                 assert rows[1]["x"] == "3" and rows[1]["y"] == "4"
 
     def test_buffering_delays_writes(self, shared_tmpdir, unit_cube, facet_tags):
-        """Data should be buffered until flush_interval reached."""
+        """Data should be buffered until FLUSH_INTERVAL reached."""
         cfg = Config(domain=unit_cube, facet_tags=facet_tags,
                     results_dir=shared_tmpdir / "test_buffer", verbose=False)
-        storage = MetricsStorage(cfg, comm, flush_interval=5)
+        storage = MetricsStorage(cfg, comm)
 
         storage.register_csv("buffered", ["val"])
 
-        # Write 3 records (below flush_interval)
+        # Write 3 records (below FLUSH_INTERVAL=10)
         for i in range(3):
             storage.record("buffered", {"val": i})
 
@@ -310,27 +310,6 @@ class TestMetricsStorage:
             assert len(storage._buffers["buffered"]) == 0
 
         storage.close()
-
-    def test_gzip_compression(self, shared_tmpdir, unit_cube, facet_tags):
-        """CSV with gz=True should create .csv.gz file."""
-        cfg = Config(domain=unit_cube, facet_tags=facet_tags,
-                    results_dir=shared_tmpdir / "test_gz", verbose=False)
-        storage = MetricsStorage(cfg, comm)
-
-        storage.register_csv("compressed", ["a", "b"], gz=True)
-        storage.record("compressed", {"a": 10, "b": 20})
-        storage.close()
-
-        comm.Barrier()
-
-        if comm.rank == 0:
-            gz_path = Path(shared_tmpdir) / "test_gz" / "compressed.csv.gz"
-            assert gz_path.exists(), "Gzipped CSV not created"
-
-            # Verify can read gzipped content
-            with gzip.open(gz_path, 'rt') as f:
-                content = f.read()
-                assert "a,b" in content or "a" in content  # Header present
 
     def test_custom_filename(self, shared_tmpdir, unit_cube, facet_tags):
         """Custom filename parameter should be respected."""
@@ -752,17 +731,16 @@ class TestTelemetry:
             # Check is_root flag
             assert tel.is_root == (comm.rank == 0), f"is_root flag incorrect on rank {comm.rank}"
     
-    @pytest.mark.parametrize("gz_flag", [False, True])
-    def test_csv_registration_rank0_only(self, gz_flag):
+    def test_csv_registration_rank0_only(self):
         """CSV registration should only create files on rank 0."""
         comm = MPI.COMM_WORLD
         
         with tempfile.TemporaryDirectory() as tmpdir:
             tel = Telemetry(comm, outdir=tmpdir, verbose=False)
             
-            tel.register_csv("test_stream", ["col1", "col2", "col3"], gz=gz_flag)
+            tel.register_csv("test_stream", ["col1", "col2", "col3"])
             
-            csv_path = Path(tmpdir) / ("test_stream.csv.gz" if gz_flag else "test_stream.csv")
+            csv_path = Path(tmpdir) / "test_stream.csv"
             
             comm.Barrier()
             
@@ -770,17 +748,16 @@ class TestTelemetry:
                 assert csv_path.exists(), "CSV file not created on rank 0"
             # Note: other ranks don't create files, so can't check non-existence reliably in shared tmpdir
     
-    @pytest.mark.parametrize("flush_interval", [1, 5])
-    def test_event_logging_buffering(self, flush_interval):
+    def test_event_logging_buffering(self):
         """Events should be buffered and flushed periodically."""
         comm = MPI.COMM_WORLD
         
         with tempfile.TemporaryDirectory() as tmpdir:
-            tel = Telemetry(comm, outdir=tmpdir, flush_interval=flush_interval, verbose=False)
+            tel = Telemetry(comm, outdir=tmpdir, verbose=False)
             
-            tel.register_csv("events", ["step", "value"], gz=False)
+            tel.register_csv("events", ["step", "value"])
             
-            # Log events (less than flush_interval)
+            # Log events
             for i in range(3):
                 tel.record("events", {"step": i, "value": i*10})
             
@@ -813,24 +790,7 @@ class TestTelemetry:
                     reader = csv_module.DictReader(f)
                     rows = list(reader)
                     assert len(rows) == 3, f"Expected 3 events, got {len(rows)}"
-    
-    def test_gzip_compression(self):
-        """CSV with gz=True should create .csv.gz files."""
-        comm = MPI.COMM_WORLD
-        
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tel = Telemetry(comm, outdir=tmpdir, verbose=False)
-            
-            tel.register_csv("compressed", ["x", "y"], gz=True)
-            tel.record("compressed", {"x": 1, "y": 2})
-            tel.flush_all()
-            
-            comm.Barrier()
-            
-            if comm.rank == 0:
-                gz_path = Path(tmpdir) / "compressed.csv.gz"
-                assert gz_path.exists(), "Gzipped CSV not created"
-    
+
     def test_telemetry_integration_in_config(self):
         """Config should always create telemetry."""
         comm = MPI.COMM_WORLD
