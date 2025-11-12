@@ -1,11 +1,7 @@
-"""
-Type-I Anderson (Pulay) acceleration with equality-constrained least squares.
+"""Anderson (Pulay) acceleration for fixed-point iteration.
 
-Key features:
-- Global Gram matrix construction (MPI collective)
-- Tikhonov regularization scaled by residual energy
-- Restart heuristics (rejection, stalling, conditioning)
-- Backtracking safeguard with weighted projected residual
+MPI-collective Gram matrix, Tikhonov regularization, restart heuristics,
+and backtracking safeguard for monotone convergence.
 """
 
 from collections import deque
@@ -17,7 +13,7 @@ from simulation.logger import get_logger
 
 
 class _Anderson:
-    """Anderson acceleration with restart heuristics."""
+    """Anderson acceleration with adaptive restart."""
 
     def __init__(
         self,
@@ -67,7 +63,7 @@ class _Anderson:
         self.pending_reset = False
 
     def _build_gram(self, r_list: Sequence[np.ndarray]) -> np.ndarray:
-        """Global Gram matrix H = R R^T (MPI collective)."""
+        """MPI-global Gram matrix H = R R^T."""
         if len(r_list) == 0:
             return np.zeros((0, 0), dtype=float)
         R_loc = np.vstack(r_list)  # (p, n_loc)
@@ -76,10 +72,7 @@ class _Anderson:
 
     
     def _solve_kkt(self, H: np.ndarray, lam_eff: float) -> np.ndarray:
-        """Solve min ||alpha||_{H+lam I} s.t. 1^T alpha = 1 using closed-form.
-        
-        alpha = (H+lam I)^{-1} 1 / (1^T (H+lam I)^{-1} 1)
-        """
+        """Solve equality-constrained LS: min ||α||²_{H+λI} s.t. 1ᵀα=1."""
         p = H.shape[0]
         if p == 0:
             return np.zeros(0, dtype=float)
@@ -98,7 +91,7 @@ class _Anderson:
 
 
     def _condition_number(self, H: np.ndarray, lam_eff: float) -> float:
-        """Estimate condition number of H + lam*I."""
+        """Condition number κ(H + λI) via eigenvalues."""
         p = H.shape[0]
         if p == 0:
             return 1.0
@@ -116,20 +109,9 @@ class _Anderson:
         use_safeguard: bool = True,
         backtrack_max: int = 6,
     ) -> Tuple[np.ndarray, Dict]:
-        """
-        Mix iterate using Anderson acceleration.
+        """Mix iterate via Anderson or damped Picard.
         
-        Args:
-            x_old: Previous iterate
-            x_raw: Raw Picard/GS output
-            mask_fixed: Boolean mask for Dirichlet DOFs
-            proj_residual_norm: Callable for weighted projected residual
-            gamma: Safeguard threshold
-            use_safeguard: Enable backtracking
-            backtrack_max: Max backtracking iterations
-            
-        Returns:
-            (x_new, info_dict)
+        Returns (x_new, info_dict) with acceptance, backtracking, and restart info.
         """
         # Execute pending reset
         if self.pending_reset:
@@ -227,7 +209,7 @@ class _Anderson:
         use_safeguard: bool,
         info: Dict,
     ) -> Tuple[np.ndarray, Dict]:
-        """Damped Picard step (used when history insufficient)."""
+        """Damped Picard step when history is insufficient."""
         x_new = x_old + self.beta * r
         if mask_fixed is not None and mask_fixed.any():
             x_new[mask_fixed] = x_raw[mask_fixed]
@@ -260,7 +242,7 @@ class _Anderson:
         proj_residual_norm: Callable,
         backtrack_max: int,
     ) -> Tuple[np.ndarray, bool, int]:
-        """Backtrack along step direction."""
+        """Backtrack along step direction with linesearch."""
         theta = 0.5
         for bt in range(backtrack_max):
             x_try = x_old + theta * s
@@ -272,7 +254,7 @@ class _Anderson:
         return x_raw.copy(), False, backtrack_max
 
     def _check_restart(self, r_norm: float, condH: float, info: Dict) -> None:
-        """Check restart conditions and schedule reset."""
+        """Check restart heuristics (rejection streak, stalling, conditioning)."""
         if self.reject_streak >= self.restart_on_reject_k:
             self.pending_reset = True
             info["restart_reason"] = f"reject_streak>={self.restart_on_reject_k}"

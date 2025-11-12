@@ -1,4 +1,4 @@
-"""Parse FEBio .feb files and create DOLFINx meshes with boundary tags."""
+"""Parse FEBio .feb files and build DOLFINx meshes with boundary tags."""
 import logging
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -12,10 +12,10 @@ from scipy.spatial import KDTree
 
 
 class FEBio2Dolfinx:
-    """Parse FEBio .feb file and create DOLFINx mesh with surface tags."""
+    """Parse FEBio XML and build DOLFINx mesh with surface boundary tags via KDTree matching."""
 
     def __init__(self, feb_file: str):
-        """Parse FEBio file, create DOLFINx mesh, and match surface tags."""
+        """Parse FEBio file and build DOLFINx mesh with matched surface tags."""
         self.logger = logging.getLogger(__name__)
         self.feb_file = Path(feb_file)
         self.logger.info("Parsing FEBio file: %s", self.feb_file)
@@ -32,7 +32,7 @@ class FEBio2Dolfinx:
         self.logger.info("FEBio import complete: %d surfaces", len(self.surface_tags))
 
     def _extract_nodes_and_elements(self) -> None:
-        """Extract nodes and tet4 elements from FEBio XML."""
+        """Extract nodes and tet4 elements from XML (1-indexed → 0-indexed)."""
         node_elems = self.mesh_xml.findall(".//Nodes/node")
         if not node_elems:
             raise ValueError("No nodes found in FEBio mesh")
@@ -59,7 +59,7 @@ class FEBio2Dolfinx:
         self.logger.debug("Extracted %d nodes, %d tet4 elements", len(self.nodes), len(self.elements))
     
     def _extract_surfaces(self) -> None:
-        """Extract surface triangle definitions from FEBio XML."""
+        """Extract surface triangle facets from XML."""
         self.surfaces = {}
         for surf in self.mesh_xml.findall("Surface"):
             name = surf.get("name")
@@ -80,14 +80,14 @@ class FEBio2Dolfinx:
         self.logger.debug("Extracted %d surfaces: %s", len(self.surfaces), list(self.surfaces.keys()))
 
     def _create_dolfinx_mesh(self) -> mesh.Mesh:
-        """Create DOLFINx mesh from tet4 elements and nodes."""
+        """Build DOLFINx mesh from tet4 connectivity and node coordinates."""
         element = basix_element("Lagrange", "tetrahedron", 1, shape=(3,))
         domain = mesh.create_mesh(MPI.COMM_WORLD, self.elements, element, self.nodes)
         self.logger.debug("Created DOLFINx mesh: %d cells", domain.topology.index_map(3).size_global)
         return domain
 
     def _match_surface_tags(self) -> mesh.MeshTags:
-        """Match FEBio surface triangles to DOLFINx boundary facets using KDTree."""
+        """Match FEBio surface triangles to DOLFINx boundary facets via midpoint KDTree."""
         fdim = 2  # Facet dimension for 3D mesh
         tdim = 3  # Cell dimension
         self.mesh_dolfinx.topology.create_entities(fdim)
@@ -142,7 +142,7 @@ class FEBio2Dolfinx:
                              facet_values[sort_order])
 
     def save_mesh_vtk(self, output_path: str | Path) -> None:
-        """Save boundary facets with surface tags as VTK surface mesh."""
+        """Save tagged boundary facets as VTK PolyData."""
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         

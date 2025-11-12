@@ -1,4 +1,4 @@
-"""Telemetry system for experiment tracking and reproducibility."""
+"""Experiment tracking: metadata JSON and buffered CSV streams (rank-0 only)."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ def _iso_utc(dt: datetime) -> str:
 
 
 class Telemetry:
-    """Experiment tracking and telemetry system."""
+    """Buffered CSV event streams and JSON metadata (rank-0 I/O)."""
 
     def __init__(
         self,
@@ -56,7 +56,7 @@ class Telemetry:
         gz: bool = False,
         filename: Optional[str] = None,
     ) -> None:
-        """Register a CSV event stream."""
+        """Register CSV stream with header (rank-0 only)."""
         if self.comm.rank != 0:
             return
 
@@ -78,7 +78,7 @@ class Telemetry:
         self.logger.debug(lambda: f"Registered CSV stream '{stream_name}' at {path}")
 
     def record(self, stream_name: str, data: Dict[str, Any], csv_event: bool = True) -> None:
-        """Record an event to a registered stream."""
+        """Buffer event row (rank-0 only)."""
         if self.comm.rank != 0 or not csv_event:
             return
         if stream_name not in self._csv_writers:
@@ -89,7 +89,7 @@ class Telemetry:
             self._flush(stream_name)
 
     def _flush(self, stream_name: str) -> None:
-        """Flush buffered events to disk."""
+        """Write buffered events to CSV (rank-0 only)."""
         if self.comm.rank != 0 or stream_name not in self._buffers:
             return
 
@@ -101,7 +101,7 @@ class Telemetry:
         self._csv_files[stream_name].flush()
 
     def flush_all(self) -> None:
-        """Flush all buffered events."""
+        """Flush all streams (rank-0 only)."""
         for stream_name in list(self._buffers.keys()):
             self._flush(stream_name)
 
@@ -113,7 +113,7 @@ class Telemetry:
         *,
         inject_standard_fields: bool = True,
     ) -> None:
-        """Write run metadata to JSON file."""
+        """Write/merge JSON metadata (rank-0 only)."""
         if self.comm.rank != 0:
             return
 
@@ -135,7 +135,7 @@ class Telemetry:
         self.logger.debug(lambda: f"Wrote telemetry metadata JSON to {path}")
 
     def close(self) -> None:
-        """Flush and close all streams."""
+        """Flush and close all streams (rank-0 only)."""
         self.flush_all()
 
         if self.comm.rank == 0:

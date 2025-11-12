@@ -3,7 +3,8 @@ from petsc4py import PETSc
 import dolfinx.fem.petsc
 import ufl
 
-class Projector:
+class L2Projector:
+    """Reusable L2 projector: builds mass matrix once, solves M*u = RHS."""
 
     _A: PETSc.Mat  # The mass matrix
     _b: PETSc.Vec  # The rhs vector
@@ -84,14 +85,9 @@ class Projector:
         self._b.x.petsc_vec.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)
         self._b.x.petsc_vec.ghostUpdate(addv=PETSc.InsertMode.INSERT_VALUES, mode=PETSc.ScatterMode.FORWARD)
 
-    def project(self, h: ufl.core.expr.Expr) -> dolfinx.fem.Function:
-        """
-        Compute projection using a PETSc KSP solver
-
-        Args:
-            assemble_rhs: Re-assemble RHS and re-apply boundary conditions if true
-        """
-        self.assemble_rhs(h)
+    def project(self, expr, result: Optional[dolfinx.fem.Function] = None) -> dolfinx.fem.Function:
+        """Project UFL expression to function space via mass matrix solve."""
+        self.assemble_rhs(expr)
         self._ksp.solve(self._b.x.petsc_vec, self._x.x.petsc_vec)
         return self._x
 

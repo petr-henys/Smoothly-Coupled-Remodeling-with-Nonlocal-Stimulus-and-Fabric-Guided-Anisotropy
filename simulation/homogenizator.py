@@ -1,11 +1,6 @@
 from __future__ import annotations
 
-"""
-Homogenization solvers (KUBC/SUBC) for linear elasticity with density- and
-fabric-modulated stiffness. Numerical behavior is preserved; this refactor
-adds structure, documentation, and removes duplication while keeping the
-public API intact.
-"""
+"""Homogenization: KUBC (Dirichlet/Nitsche) and SUBC (traction-controlled) elasticity solvers."""
 
 from dataclasses import dataclass
 from typing import Dict, List, Tuple, Optional
@@ -30,11 +25,7 @@ __all__ = ["KUBCHomogenizer", "SUBCHomogenizer"]
 
 @dataclass
 class _NDMechanics:
-    """Constitutive helper for the 3D microscopic elasticity problem.
-
-    Encapsulates the stress-strain relation and associated UFL forms that are
-    reused by both KUBC and SUBC homogenizers.
-    """
+    """Constitutive helper: anisotropic elasticity with density and fabric modulation."""
     V: fem.FunctionSpace
     rho: fem.Function
     A_dir: fem.Function
@@ -60,11 +51,11 @@ class _NDMechanics:
         )
 
     def eps(self, u):
-        """Return the symmetric gradient of the displacement field."""
+        """Symmetric gradient ε(u)."""
         return ufl.sym(ufl.grad(u))
 
     def sigma(self, u, rho):
-        """Compute Cauchy stress with smooth density regularisation."""
+        """Cauchy stress: smoothed density, anisotropic fabric reinforcement."""
         rho_eff = smooth_max(rho, self.cfg.rho_min_nd, self.smooth_eps)
         E_nd = self.cfg.E0_nd * (rho_eff ** self.cfg.n_power_c)
 
@@ -86,10 +77,7 @@ class _NDMechanics:
         return 2 * mu * eps_ten + lmbda * ufl.tr(eps_ten) * I + sigma_aniso
 
     def sigma_const_strain(self, Eps_np: np.ndarray):
-        """Stress field for a prescribed constant macroscopic strain tensor.
-
-        Constructs σ_E(x) = C(x) : Eps, avoiding kinematic affine fields.
-        """
+        """Stress field for constant macroscopic strain tensor Ē."""
         rho_eff = smooth_max(self.rho, self.cfg.rho_min_nd, self.smooth_eps)
         E_nd = self.cfg.E0_nd * (rho_eff ** self.cfg.n_power_c)
 
@@ -107,11 +95,7 @@ class _NDMechanics:
 
 
 class _HomogCommon:
-    """Shared logic for Dirichlet (KUBC) and stress-controlled (SUBC) homogenizers.
-
-    Provides helpers for averaging, Voigt/tensor conversions, SPD inverse, and
-    solver utilities common to both boundary condition types.
-    """
+    """Shared helpers for Voigt notation, averaging, SPD inverse, KSP setup."""
     _VOIGT_IDX = ((0, 0), (1, 1), (2, 2), (1, 2), (0, 2), (0, 1))
     _SHEAR_PAIRS = ((1, 2), (0, 2), (0, 1))
 
@@ -361,12 +345,7 @@ class _HomogCommon:
 
 
 class KUBCHomogenizer(_HomogCommon):
-    """Kinematic Uniform Boundary Conditions (Dirichlet/Nitsche) homogenizer.
-
-    Solves six canonical macroscopic strain tests via an affine displacement
-    field imposed weakly by Nitsche's method, and averages the stress response
-    to construct the 6x6 stiffness in Voigt notation.
-    """
+    """Kinematic Uniform BC: affine displacement via Nitsche method, extract C from ⟨σ⟩."""
     def __init__(
         self,
         rho: fem.Function,
@@ -497,12 +476,7 @@ class KUBCHomogenizer(_HomogCommon):
 
 
 class SUBCHomogenizer(_HomogCommon):
-    """Static Uniform Boundary Conditions (traction-controlled) homogenizer.
-
-    Applies six canonical macroscopic stress states via surface tractions and
-    averages the engineering strains to build the compliance and stiffness in
-    Voigt notation.
-    """
+    """Static Uniform BC: traction-controlled tests, extract S from ⟨ε⟩."""
     def __init__(
         self,
         rho: fem.Function,

@@ -1,4 +1,4 @@
-"""Fixed-point solver orchestrating four coupled PDE subsolvers via Anderson acceleration or Picard iteration."""
+"""Fixed-point solver orchestrating coupled PDE subsolvers with Anderson acceleration."""
 
 from __future__ import annotations
 from typing import Sequence, Optional
@@ -16,6 +16,7 @@ from simulation.drivers import StrainDriver
 
 
 class FixedPointSolver:
+    """Orchestrate Gauss-Seidel iteration over four coupled PDEs with Anderson or Picard."""
     def __init__(self, comm: MPI.Comm, cfg: Config,
                  mechsolver: MechanicsSolver,
                  stimsolver: StimulusSolver,
@@ -127,7 +128,7 @@ class FixedPointSolver:
             )
 
     def _build_state_slices(self) -> None:
-        """Build slice indices for flattened state vector (u, rho, A, S)."""
+        """Build slice indices for flattened (u, ρ, A, S) state vector."""
         offs = [0]
         offs.append(offs[-1] + self.n_u)
         offs.append(offs[-1] + self.n_rho)
@@ -142,7 +143,7 @@ class FixedPointSolver:
         )
 
     def _flatten_state(self, copy: bool = True) -> np.ndarray:
-        """Flatten current fields to 1D array (local DOFs only)."""
+        """Flatten current fields (u, ρ, A, S) to 1D array (local DOFs)."""
         s_u, s_rho, s_A, s_S = self.state_slices
         buf = self.state_buffer
         buf[s_u]  = self.u.x.array[:self.n_u]
@@ -164,7 +165,7 @@ class FixedPointSolver:
         return self.comm.allreduce(MPI.Wtime() - t0, op=MPI.MAX)
 
     def _gauss_seidel_sweep(self) -> tuple[float, float, float, float, int, int, int, int, int, int, int, int]:
-        """One Gauss-Seidel sweep: solve mechanics → stimulus → density → direction."""
+        """One GS sweep: u → S → ρ → A (sequential subsolver calls)."""
         mech_time_total = stim_time_total = dens_time_total = dir_time_total = 0.0
 
         # Mechanics
@@ -200,7 +201,7 @@ class FixedPointSolver:
 
     def _proj_residual_norm(self, x_old: np.ndarray, x_test: np.ndarray,
                            x_raw: np.ndarray, weights: Sequence[float]) -> float:
-        """Weighted projected-residual norm ||P (x_test - x_base)||_W, where P projects out Dirichlet DOFs."""
+        """Weighted projected-residual ||P(x_test - x_base)||_W, P projects out Dirichlet DOFs."""
         s_u, s_rho, s_A, s_S = self.state_slices
         w_u, w_rho, w_A, w_S = weights
         
@@ -228,7 +229,7 @@ class FixedPointSolver:
         return self.comm.rank == 0
 
     def _one_sweep_map(self, flat_in: np.ndarray) -> np.ndarray:
-        """Perform one GS sweep on copy of state, return flattened result."""
+        """Evaluate GS map on state copy: x ↦ G(x)."""
         x_backup = self._flatten_state(copy=True)
         self._restore_state(flat_in)
         self._gauss_seidel_sweep()
@@ -237,7 +238,7 @@ class FixedPointSolver:
         return out
 
     def _block_norm(self, vec: np.ndarray, block: int, project_u_dirichlet: bool = True) -> float:
-        """Global L2 norm of a block. Optionally projects out Dirichlet DOFs from mechanics."""
+        """Global L2 norm of block (u, ρ, A, or S), projecting out Dirichlet DOFs if block=u."""
         s_u, s_rho, s_A, s_S = self.state_slices
         slices = (s_u, s_rho, s_A, s_S)
         part = vec[slices[block]].copy()
@@ -249,10 +250,7 @@ class FixedPointSolver:
 
     def compute_interaction_gains(self, eps: float = 1e-3, project_u_dirichlet: bool = True
                                   ) -> tuple[np.ndarray, float]:
-        """Estimate 4×4 block interaction-gain matrix J for GS map G at current state.
-        
-        Returns (J, rho) where J[i,j] ≈ ||G_i(x + δ_j) - G_i(x)|| / ||δ_j|| and rho is spectral radius.
-        """
+        """Finite-difference Jacobian J of GS map G; returns (J, ρ(J))."""
         x0 = self._flatten_state(copy=True)
         Gx0 = self._one_sweep_map(x0)
 
@@ -293,7 +291,7 @@ class FixedPointSolver:
         return J, rho
 
     def run(self, *, time_days: Optional[float] = None, step_index: Optional[int] = None) -> None:
-        """Execute inner fixed-point loop (Gauss-Seidel + Anderson acceleration)."""
+        """Inner fixed-point loop: GS + Anderson acceleration until coupling_tol met."""
         # Read configuration
         accel_type = str(self.cfg.accel_type).lower()
         m = int(self.cfg.m)

@@ -1,4 +1,4 @@
-"""Remodeller: main driver class orchestrating coupled bone remodeling simulation."""
+"""Remodeller: main class orchestrating bone remodeling simulation."""
 
 import sys
 from pathlib import Path
@@ -30,8 +30,9 @@ _SCALED_MESH_IDS: set[int] = set()
 
 
 class Remodeller:
+    """Main simulation driver: coupled u-ρ-A-S evolution with gait loading."""
     def __init__(self, cfg: Config):
-        """Initialize remodeling simulation with configuration."""
+        """Initialize with Config; setup fields, solvers, storage."""
         self.cfg = cfg
         self.domain = self.cfg.domain
         self.closed = False
@@ -169,7 +170,7 @@ class Remodeller:
 
         self._current_dt: float | None = None
     def close(self):
-        """Free PETSc resources and close I/O."""
+        """Release PETSc resources and close I/O."""
         if getattr(self, "closed", False):
             return
 
@@ -196,12 +197,12 @@ class Remodeller:
         self.close()
 
     def _scatter_forward(self):
-        """Scatter all fields forward (halo update)."""
+        """Ghost update: scatter all fields."""
         for f in self.scatter_fields:
             f.x.scatter_forward()
 
     def _field_minmax(self, field: fem.Function) -> Tuple[float, float]:
-        """Parallel min/max via MPI reduction."""
+        """MPI global min/max."""
         if len(field.x.array) > 0:
             field_min_local = field.x.array.min()
             field_max_local = field.x.array.max()
@@ -213,7 +214,7 @@ class Remodeller:
         return field_min, field_max
 
     def _reset_iters_window(self) -> None:
-        """Start new accounting window from current cumulative counters."""
+        """Snapshot cumulative iteration counters for statistics window."""
         self.iters_snap["mech"]["iters"] = getattr(self.mechsolver, "total_iters", 0)
         self.iters_snap["stim"]["iters"] = getattr(self.stimsolver, "total_iters", 0)
         self.iters_snap["dens"]["iters"] = getattr(self.densolver,  "total_iters", 0)
@@ -222,7 +223,7 @@ class Remodeller:
         self.acc_steps = 0
 
     def _iters_window_stats(self) -> Dict[str, float]:
-        """Average KSP iterations per GS iteration in current window."""
+        """Avg KSP iterations per GS iteration in current window."""
         steps = max(self.acc_steps, 1)
         d_gs = getattr(self.fixedsolver, "total_gs_iters", 0) - self.iters_snap["gs"]["iters"]
 
@@ -239,7 +240,7 @@ class Remodeller:
         return dict(mech_gs=mech, stim_gs=stim, dens_gs=dens, dir_gs=ddir, gs_per_step=gs_per_step)
 
     def _collect_field_stats(self) -> Dict[str, float]:
-        """Gather field statistics for reporting."""
+        """Gather field min/max and energy for reporting."""
         rho_min, rho_max = self._field_minmax(self.rho)
         u_min, u_max = self._field_minmax(self.u)
         S_min, S_max = self._field_minmax(self.S)
@@ -259,7 +260,7 @@ class Remodeller:
         return (step + 1) % self.cfg.saving_interval == 0
 
     def _output(self, t: float, step: int):
-        """Scatter, collect stats, print, and write (called only on output steps)."""
+        """Scatter, stats, log, write (saving_interval steps)."""
         self._scatter_forward()
 
         iters = self._iters_window_stats()
@@ -314,7 +315,7 @@ class Remodeller:
         self._reset_iters_window()
 
     def step(self, dt: float, *, step_index: Optional[int] = None, time_days: Optional[float] = None) -> None:
-        """Single external time step with inner coupling iterations."""
+        """Single timestep: fixed-point iteration until coupling tolerance met."""
         assign(self.rho_old, self.rho)
         assign(self.A_old, self.A)
         assign(self.S_old, self.S)
@@ -398,7 +399,7 @@ class Remodeller:
     def _print_final_summary(self, num_steps: int, overall_elapsed: float,
                             mech_times: List[float], stim_times: List[float],
                             dens_times: List[float], dir_times: List[float]):
-        """Print final timing summary and record telemetry."""
+        """Log median timing per step and write run_summary.json."""
         avg_mech = float(np.median(mech_times)) if mech_times else 0.0
         avg_stim = float(np.median(stim_times)) if stim_times else 0.0
         avg_dens = float(np.median(dens_times)) if dens_times else 0.0
@@ -465,7 +466,7 @@ class Remodeller:
             self.telemetry.write_metadata(data, filename="run_summary.json", overwrite=True)
 
     def simulate(self, dt: float, total_time: float):
-        """Run remodeling simulation for specified total physical time."""
+        """Run remodeling loop for total_time with timestep dt."""
         t = 0.0
         num_steps = int(total_time / dt)
 

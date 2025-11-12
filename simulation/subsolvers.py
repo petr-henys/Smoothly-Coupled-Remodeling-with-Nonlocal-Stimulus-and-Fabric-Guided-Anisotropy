@@ -1,3 +1,5 @@
+"""PDE subsolvers: mechanics (u), stimulus (S), density (ρ), direction (A)."""
+
 from __future__ import annotations
 
 from typing import Tuple, List, Optional, Dict
@@ -20,49 +22,53 @@ from simulation.utils import build_nullspace
 from simulation.config import Config
 from simulation.logger import get_logger
 
-
-# --------------------------- Smooth helpers (C∞-ish) -------------------------
+# --- Smooth regularization helpers (C∞ approximations) ---
 def smooth_abs(x, eps: float):
+    """C∞ approximation of |x|."""
     return ufl.sqrt(x * x + eps * eps)
 
 
 def smooth_plus(x, eps: float):
+    """C∞ approximation of max(x, 0)."""
     sabs = smooth_abs(x, eps)
     return 0.5 * (x + sabs)
 
 
 def smooth_max(x, xmin, eps: float):
+    """C∞ approximation of max(x, xmin)."""
     dx = x - xmin
     return xmin + 0.5 * (dx + ufl.sqrt(dx * dx + eps * eps))
 
 
 def smooth_heaviside(x, eps: float):
+    """C∞ approximation of step function H(x)."""
     return 0.5 * (1.0 + x / ufl.sqrt(x * x + eps * eps))
 
-
-# --------------------------- PSD + unit-trace helpers ------------------------
+# --- PSD + unit-trace projection helpers ---
 def unittrace_psd_from_any(T, dim: int, eps: float):
+    """Project arbitrary tensor T to unit-trace PSD via TᵀT + εI."""
     I = ufl.Identity(dim)
     M = ufl.dot(ufl.transpose(T), T) + eps * I
     return M / ufl.tr(M)
 
 
 def unittrace_psd(B, dim: int, eps: float):
+    """Project PSD tensor B to unit-trace via B + εI."""
     I = ufl.Identity(dim)
     M = B + eps * I
     return M / ufl.tr(M)
 
-
-# --------------------------- Helpers: robust value extraction -----------------
+# --- Helper for extracting constant values ---
 def _val(x):
+    """Extract float from fem.Constant or scalar."""
     try:
         return float(x.value)
     except AttributeError:
         return float(x)
 
-
-# --------------------------- Base KSP wrapper --------------------------------
+# --- Base linear solver class ---
 class _BaseLinearSolver:
+    """Base KSP solver with setup, assembly, solve, and stats tracking."""
     def __init__(
         self,
         cfg: Config,
@@ -160,10 +166,9 @@ class _BaseLinearSolver:
         self.ksp.setFromOptions()
         self.ksp.setUp()
         return self.ksp
-
-
-# --------------------------- Mechanics ---------------------------------------
+# --- Subsolver implementations ---
 class MechanicsSolver(_BaseLinearSolver):
+    """Elastic equilibrium with anisotropic fabric reinforcement."""
     def __init__(
         self,
         u: fem.Function,
@@ -190,9 +195,11 @@ class MechanicsSolver(_BaseLinearSolver):
         self.L_form = fem.form(L_form)
 
     def eps(self, u):
+        """Symmetric gradient ε(u)."""
         return ufl.sym(ufl.grad(u))
 
     def sigma(self, u, rho, A_dir):
+        """Cauchy stress: density-modulated stiffness + anisotropic reinforcement."""
         rho_eff = smooth_max(rho, self.cfg.rho_min_nd, self.smooth_eps)
         E_nd = self.cfg.E0_nd * (rho_eff ** self.cfg.n_power_c)
 
@@ -210,12 +217,12 @@ class MechanicsSolver(_BaseLinearSolver):
 
 
     def get_strain_tensor(self, u=None):
-        """Small-strain tensor ε(u) (ND)."""
+        """Strain tensor ε(u) (ND)."""
         uu = self.u if u is None else u
         return self.eps(uu)
 
     def get_strain_energy_density(self, u=None):
-        """Strain energy density ψ(u) = 0.5 σ:ε (ND)."""
+        """Strain energy density ψ = 0.5 σ:ε (ND)."""
         uu = self.u if u is None else u
         sig = self.sigma(uu, self.rho, self.A_dir)
         e = self.eps(uu)
@@ -264,6 +271,7 @@ class MechanicsSolver(_BaseLinearSolver):
         return float((psi_nd / max(vol, 1e-300)) * self.cfg.psi_c)
     
     def energy_balance_nd(self) -> tuple[float, float, float]:
+        """Internal vs. external work: (W_int, W_ext, rel_error)."""
         self.u.x.scatter_forward()
         self.rho.x.scatter_forward()
 
@@ -282,9 +290,8 @@ class MechanicsSolver(_BaseLinearSolver):
 
         rel_err = abs(W_ext_nd - W_int_nd) / max(W_ext_nd, W_int_nd, 1e-30)
         return W_int_nd, W_ext_nd, rel_err
-
-# --------------------------- Stimulus S --------------------------------------
 class StimulusSolver(_BaseLinearSolver):
+    """Reaction-diffusion stimulus S driven by mechanical energy density."""
     def __init__(
         self,
         S: fem.Function,
@@ -333,6 +340,7 @@ class StimulusSolver(_BaseLinearSolver):
         return its, reason
 
     def power_balance_residual(self, psi_expr) -> tuple[float, float]:
+        """Power balance check: (abs_residual, rel_residual)."""
         self.S.x.scatter_forward()
         self.S_old.x.scatter_forward()
         one = fem.Constant(self.mesh, default_scalar_type(1.0))
@@ -349,10 +357,8 @@ class StimulusSolver(_BaseLinearSolver):
         R = (storage + decay) - (source + flux)
         denom = abs(storage) + abs(decay) + abs(source) + 1e-30
         return abs(R), abs(R) / denom
-
-
-# --------------------------- Density rho -------------------------------------
 class DensitySolver(_BaseLinearSolver):
+    """Density evolution ρ: anisotropic diffusion with stimulus-gated relaxation to bounds."""
     def __init__(
         self,
         rho: fem.Function,
@@ -419,6 +425,7 @@ class DensitySolver(_BaseLinearSolver):
         return its, reason
     
     def mass_balance_residual(self) -> tuple[float, float]:
+        """Mass conservation check: (abs_residual, rel_residual)."""
         self.rho.x.scatter_forward()
         self.rho_old.x.scatter_forward()
         self.S.x.scatter_forward()
@@ -439,10 +446,8 @@ class DensitySolver(_BaseLinearSolver):
         R = (M_new - M_old) / max(dt_val, 1e-30) + decay - src
         denom = abs((M_new - M_old) / max(dt_val, 1e-30)) + abs(decay) + abs(src) + 1e-30
         return abs(R), abs(R) / denom
-
-
-# --------------------------- Direction tensor A -------------------------------
 class DirectionSolver(_BaseLinearSolver):
+    """Fabric tensor A: reaction-diffusion relaxing to strain-aligned target."""
     def __init__(
         self,
         A_dir: fem.Function,
@@ -490,6 +495,7 @@ class DirectionSolver(_BaseLinearSolver):
         return its, reason
 
     def trace_balance_residual(self, Mhat_expr) -> tuple[float, float, float]:
+        """Trace balance: (⟨tr(A)⟩, ⟨tr(M̂)⟩, |difference|)."""
         self.A_dir.x.scatter_forward()
         one = fem.Constant(self.mesh, default_scalar_type(1.0))
         trA_loc = fem.assemble_scalar(fem.form(ufl.tr(self.A_dir) * one * self.dx))

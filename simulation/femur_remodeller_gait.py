@@ -30,7 +30,8 @@ MM_TO_M = 1e-3
 STRESS_N_PER_MM2_TO_PA = 1e6
 
 
-class FemurGaitLoader:
+class FemurRemodellerGait:
+    """Gait-cycle integrator: accumulates multi-load strain energy for remodelling."""
     """Concrete implementation of GaitQuadrature using femurloader for gait-phase-dependent loads.
     
     Parameters

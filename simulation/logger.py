@@ -1,17 +1,4 @@
-"""
-MPI-aware logging - rank 0 only output via PETSc.Sys.Print.
-
-Simple, explicit design:
-- Only rank 0 prints (MPI-safe by default)
-- Lazy message evaluation via callables
-- Standard levels: DEBUG < INFO < WARNING < ERROR
-- No environment variables, no fallbacks
-
-Usage:
-    logger = get_logger(comm, verbose=True, name="Solver")
-    logger.info("Iteration {0}", iter_count)
-    logger.debug(lambda: f"Expensive: {compute_stats()}")
-"""
+"""MPI-safe logging: rank-0 only output via PETSc.Sys.Print with lazy evaluation."""
 
 from enum import IntEnum
 from typing import Any, Callable, Union
@@ -28,7 +15,7 @@ class Level(IntEnum):
 
 
 class Logger:
-    """Rank-0 only logger with lazy evaluation."""
+    """Rank-0 logger with lazy string evaluation."""
 
     __slots__ = ("comm", "level", "name", "prefix")
 
@@ -39,16 +26,16 @@ class Logger:
         self.prefix = f"[{name}] " if name else ""
 
     def is_enabled_for(self, lvl: Level) -> bool:
-        """Check if level is enabled."""
+        """Check if level enabled."""
         return lvl >= self.level
 
     def _format(self, msg: Union[str, Callable[[], str]], args: tuple) -> str:
-        """Evaluate message (lazy if callable) and format with args."""
+        """Evaluate lazy message and format args."""
         text = msg() if callable(msg) else str(msg)
         return self.prefix + (text.format(*args) if args else text)
 
     def log(self, lvl: Level, msg: Union[str, Callable[[], str]], *args: Any) -> None:
-        """Log message if level enabled. Rank-0 only output."""
+        """Log if level enabled (rank-0 only output)."""
         if self.is_enabled_for(lvl):
             PETSc.Sys.Print(self._format(msg, args), comm=self.comm)
 
@@ -66,7 +53,7 @@ class Logger:
 
 
 def get_logger(comm: MPI.Comm, verbose: bool, name: str = "") -> Logger:
-    """Create logger. verbose=True → INFO, verbose=False → WARNING."""
+    """Create logger with level INFO (verbose=True) or WARNING (verbose=False)."""
     level = Level.INFO if verbose else Level.WARNING
     return Logger(comm, level, name)
 

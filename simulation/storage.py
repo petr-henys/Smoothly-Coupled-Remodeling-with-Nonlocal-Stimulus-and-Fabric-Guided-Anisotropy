@@ -1,4 +1,4 @@
-"""Universal storage system for field I/O and metrics tracking."""
+"""Unified field (VTX) and metrics (CSV) storage with MPI-safe I/O."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from simulation.logger import get_logger
 
 
 class FieldStorage:
-    """VTX field output. COLLECTIVE operations only."""
+    """VTX field output manager (COLLECTIVE operations)."""
 
     __slots__ = ("comm", "logger", "output_dir", "_writers", "_write_counts")
 
@@ -42,7 +42,7 @@ class FieldStorage:
         filename: Optional[str] = None,
         engine: str = "bp4",
     ) -> None:
-        """Register VTX writer. COLLECTIVE operation."""
+        """Register VTX writer for field group (COLLECTIVE)."""
         path = self.output_dir / (filename or f"{key}.bp")
         writer = VTXWriter(self.comm, str(path), list(fields), engine=engine)
         self._writers[key] = writer
@@ -50,12 +50,12 @@ class FieldStorage:
         self.logger.debug(lambda: f"Registered '{key}': {path}")
 
     def write(self, key: str, t: float) -> None:
-        """Write field group. COLLECTIVE operation."""
+        """Write timestep (COLLECTIVE)."""
         self._writers[key].write(t)
         self._write_counts[key] += 1
 
     def close(self) -> None:
-        """Close all writers. COLLECTIVE operation."""
+        """Close all VTX writers (COLLECTIVE)."""
         self.comm.Barrier()
         for writer in self._writers.values():
             writer.close()
@@ -71,7 +71,7 @@ class FieldStorage:
 
 
 class MetricsStorage:
-    """CSV metrics writer. Rank-0 only operations."""
+    """CSV metrics writer (rank-0 only)."""
 
     __slots__ = ("comm", "logger", "output_dir", "_flush_interval", "_buffers", "_files", "_writers")
 
@@ -96,7 +96,7 @@ class MetricsStorage:
         gz: bool = False,
         filename: Optional[str] = None,
     ) -> None:
-        """Register CSV file. Rank-0 only."""
+        """Register CSV with header (rank-0 only)."""
         if self.comm.rank != 0:
             return
 
@@ -111,7 +111,7 @@ class MetricsStorage:
         self.logger.debug(lambda: f"Registered CSV '{name}': {path}")
 
     def record(self, name: str, data: Dict) -> None:
-        """Record data row. Rank-0 only."""
+        """Buffer data row (rank-0 only)."""
         if self.comm.rank != 0:
             return
 
@@ -120,7 +120,7 @@ class MetricsStorage:
             self._flush(name)
 
     def _flush(self, name: str) -> None:
-        """Flush buffer to disk. Rank-0 only."""
+        """Flush buffer to disk (rank-0 only)."""
         if self.comm.rank != 0:
             return
         
@@ -134,14 +134,14 @@ class MetricsStorage:
         handle.flush()
 
     def flush_all(self) -> None:
-        """Flush all buffers. Rank-0 only."""
+        """Flush all CSV buffers (rank-0 only)."""
         if self.comm.rank != 0:
             return
         for name in list(self._buffers.keys()):
             self._flush(name)
 
     def close(self) -> None:
-        """Close all CSV files. Rank-0 only."""
+        """Flush and close all CSV files (rank-0 only)."""
         if self.comm.rank != 0:
             return
         
@@ -160,7 +160,7 @@ class MetricsStorage:
 
 
 class UnifiedStorage:
-    """Unified field + metrics storage."""
+    """Combined field (VTX) and metrics (CSV) storage."""
 
     __slots__ = ("comm", "fields", "metrics")
 
@@ -189,7 +189,7 @@ class UnifiedStorage:
         solver_stats: Dict[str, int],
         coupling_stats: Dict[str, float],
     ) -> None:
-        """Write timestep data. COLLECTIVE operation (field writes)."""
+        """Write fields (COLLECTIVE) and record metrics (rank-0)."""
         # Field writes (COLLECTIVE) - fields already registered in Remodeller
         self.fields.write("u", time_days)
         self.fields.write("scalars", time_days)
@@ -211,7 +211,7 @@ class UnifiedStorage:
         })
 
     def close(self) -> None:
-        """Close storage. COLLECTIVE operation."""
+        """Close all storage (COLLECTIVE)."""
         self.fields.close()
         self.metrics.close()
 

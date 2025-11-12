@@ -1,3 +1,5 @@
+"""Utility functions: nullspace, projection, Dirichlet BCs, field operations, memory tracking."""
+
 from typing import List, Tuple
 import resource
 
@@ -9,8 +11,9 @@ from mpi4py import MPI
 
 dtype = PETSc.ScalarType
 
+
 def build_nullspace(V: FunctionSpace):
-    """Build PETSc nullspace for 3D elasticity."""
+    """Build PETSc nullspace for 3D elasticity (3 translations + 3 rotations)."""
     bs = V.dofmap.index_map_bs
     length0 = V.dofmap.index_map.size_local
     basis = [la.vector(V.dofmap.index_map, bs=bs, dtype=dtype) for i in range(6)]
@@ -43,7 +46,7 @@ def compute_principal_dirs_and_vals_vec(
     V_vec: fem.FunctionSpace,
     Q_sca: fem.FunctionSpace,
 ) -> Tuple[List[fem.Function], List[fem.Function]]:
-    """Nodewise eigen-decomposition of tensor field A via NumPy."""
+    """Nodewise eigendecomposition of tensor field A; returns (eigenvectors, eigenvalues)."""
     A_func.x.scatter_forward()
 
     T = A_func.function_space
@@ -91,7 +94,7 @@ def compute_principal_dirs_and_vals_vec(
     return eigvec_funcs, eigval_funcs
 
 def build_facetag(m: mesh.Mesh) -> mesh.MeshTags:
-    """Create facet tags for unit-cube-like domains (MPI-safe)."""
+    """Create boundary facet tags for unit-cube domains (MPI-safe)."""
     boundaries = [
         (1, lambda x: np.isclose(x[0], 0)),
         (2, lambda x: np.isclose(x[0], 1)),
@@ -115,7 +118,7 @@ def build_facetag(m: mesh.Mesh) -> mesh.MeshTags:
 def build_dirichlet_bcs(
     V: fem.FunctionSpace, facet_tags: mesh.MeshTags, id_tag: int, value: float = 0.0
 ) -> List[fem.DirichletBC]:
-    """Homogeneous Dirichlet on facets with tag id_tag."""
+    """Homogeneous Dirichlet BCs on all components of V for facets tagged id_tag."""
     fdim = V.mesh.topology.dim - 1
     facets = facet_tags.find(id_tag)
     bcs = []
@@ -126,6 +129,7 @@ def build_dirichlet_bcs(
     return bcs
 
 def assign(f: fem.Function, v) -> None:
+    """Assign scalar or array to owned DOFs and scatter forward."""
     owned = f.function_space.dofmap.index_map.size_local * f.function_space.dofmap.index_map_bs
     if isinstance(v, fem.Function):
         f.x.array[:owned] = v.x.array[:owned]
@@ -140,11 +144,11 @@ def assign(f: fem.Function, v) -> None:
     f.x.scatter_forward()
 
 def get_owned_size(field: fem.Function) -> int:
-    """Return count of locally owned scalar DOFs."""
+    """Count of locally owned scalar DOFs."""
     return int(field.function_space.dofmap.index_map.size_local * field.function_space.dofmap.index_map_bs)
 
 def collect_dirichlet_dofs(bcs, n_owned: int) -> np.ndarray:
-    """Return unique owned Dirichlet DOFs."""
+    """Unique owned DOF indices from list of DirichletBC objects."""
     chunks = []
     for bc in bcs:
         idx, first_ghost = bc.dof_indices()
@@ -157,14 +161,14 @@ def collect_dirichlet_dofs(bcs, n_owned: int) -> np.ndarray:
 
 
 def _global_dot(comm: MPI.Comm, a: np.ndarray, b: np.ndarray) -> float:
-    """MPI global dot product."""
+    """MPI-global dot product."""
     return comm.allreduce(float(a @ b), op=MPI.SUM)
 
 def _global_norm(comm: MPI.Comm, v: np.ndarray) -> float:
-    """MPI global norm."""
+    """MPI-global L2 norm."""
     return _global_dot(comm, v, v) ** 0.5
 
 def current_memory_mb() -> float:
-    """Return current process RSS memory in MB."""
+    """Current process resident memory (RSS) in MB."""
     mem_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     return mem_kb / 1024.0
