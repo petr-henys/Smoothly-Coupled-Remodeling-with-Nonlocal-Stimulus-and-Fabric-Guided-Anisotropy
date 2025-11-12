@@ -14,12 +14,14 @@ from typing import Dict, Any
 from unittest.mock import Mock, patch
 
 import numpy as np
-import pyvista as pv
 import pytest
+
+
+import pyvista as pv
 from numpy.testing import assert_array_almost_equal, assert_almost_equal
 from scipy.interpolate import interp1d
 
-from femurloader.femur_loads import (
+from simulation.femur_loads import (
     build_load,
     vector_from_angles,
     gait_interpolator, 
@@ -28,7 +30,7 @@ from femurloader.femur_loads import (
     HIPJointLoad,
     MuscleLoad
 )
-from femurloader.femur_css import FemurCSS
+from simulation.femur_css import FemurCSS
 
 
 # Fixtures and test data generators
@@ -225,7 +227,7 @@ class TestUtilityFunctions:
             [50, 200, 300, 400]
         ])
         # Patch interp1d to raise an error
-        import femurloader.femur_loads as femur_loads_mod
+        import simulation.femur_loads as femur_loads_mod
         monkeypatch.setattr(femur_loads_mod, "interp1d", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("interp1d failed")))
         with pytest.raises(RuntimeError, match="interp1d failed"):
             femur_loads_mod.gait_interpolator(gait_data)

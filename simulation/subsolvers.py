@@ -213,6 +213,19 @@ class MechanicsSolver(_BaseLinearSolver):
         sigma_aniso = (self.cfg.xi_aniso_c * E_nd) * ufl.inner(Ahat, eps_ten) * Ahat
         return 2 * mu * eps_ten + lmbda * ufl.tr(eps_ten) * I + sigma_aniso
 
+
+    def get_strain_tensor(self, u=None):
+        """Small-strain tensor ε(u) (ND)."""
+        uu = self.u if u is None else u
+        return self.eps(uu)
+
+    def get_strain_energy_density(self, u=None):
+        """Strain energy density ψ(u) = 0.5 σ:ε (ND)."""
+        uu = self.u if u is None else u
+        sig = self.sigma(uu, self.rho, self.A_dir)
+        e = self.eps(uu)
+        return 0.5 * ufl.inner(sig, e)
+    
     def setup(self):
         self.rho.x.scatter_forward()
         self.A_dir.x.scatter_forward()
@@ -274,45 +287,6 @@ class MechanicsSolver(_BaseLinearSolver):
 
         rel_err = abs(W_ext_nd - W_int_nd) / max(W_ext_nd, W_int_nd, 1e-30)
         return W_int_nd, W_ext_nd, rel_err
-    
-    def accumulated_strain_energy_gait(self, gait_loader) -> float:
-        """Compute daily accumulated strain energy over gait cycle.
-        
-        Uses bone adaptation convention: accumulate strain energy density
-        over gait cycle using trapezoid quadrature. This represents the
-        daily mechanical stimulus that drives remodeling.
-        
-        Parameters
-        ----------
-        gait_loader : FemurGaitLoader
-            Gait loading object with get_quadrature() and update_loads()
-        
-        Returns
-        -------
-        float
-            Accumulated average strain energy density [Pa] over one day
-        """
-        quadrature = gait_loader.get_quadrature()
-        accumulated_psi = 0.0
-        
-        for phase, weight in quadrature:
-            # Update loads for this gait phase
-            gait_loader.update_loads(phase)
-            
-            # Reassemble RHS with updated loads
-            self.assemble_rhs()
-            
-            # Solve mechanics
-            self.solve()
-            
-            # Compute average strain energy density for this phase
-            psi_phase = self.average_strain_energy()
-            
-            # Accumulate weighted contribution
-            accumulated_psi += weight * psi_phase
-        
-        return accumulated_psi
-    
 
 # --------------------------- Stimulus S --------------------------------------
 class StimulusSolver(_BaseLinearSolver):

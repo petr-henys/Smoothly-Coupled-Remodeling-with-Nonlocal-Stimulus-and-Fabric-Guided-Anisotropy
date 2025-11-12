@@ -17,7 +17,7 @@ from pathlib import Path
 from io import StringIO
 import pytest
 
-from femurloader.logging_config import setup_logging, get_logger, get_class_logger
+from simulation.logging_config import setup_logging, get_logger, get_class_logger
 
 
 class TestSetupLogging:

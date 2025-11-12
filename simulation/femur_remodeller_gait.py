@@ -3,7 +3,7 @@ from typing import List, Tuple, Callable
 import sys
 from pathlib import Path
 
-# Add repository root to path to allow importing simulation and femurloader packages
+# Add repository root to path to allow importing simulation package
 repo_root = Path(__file__).parent.parent
 if str(repo_root) not in sys.path:
     sys.path.insert(0, str(repo_root))
@@ -13,17 +13,18 @@ import numpy as np
 from dolfinx import fem, plot
 
 from simulation.config import Config
+from simulation.drivers import GaitEnergyDriver
 
-from femurloader.femur_css import FemurCSS, load_json_points
-from femurloader.paths import FemurPaths, GaitPaths, get_output_path
-from femurloader.femur_loads import (
+from simulation.femur_css import FemurCSS, load_json_points
+from simulation.paths import FemurPaths, GaitPaths, get_output_path
+from simulation.femur_loads import (
     HIPJointLoad, gait_interpolator, orthoload2ISB, MuscleLoad, build_load
 )
-from femurloader.process_gait_data import (
+from simulation.process_gait_data import (
     parse_hip_file, load_xy_datasets, segment_curves_grid, rescale_curve
 )
 
-from femurloader.febio_parser import FEBio2Dolfinx
+from simulation.febio_parser import FEBio2Dolfinx
 import pyvista as pv
 
 
@@ -183,3 +184,7 @@ if __name__ == "__main__":
         t_hip_vals = gait_loader.t_hip.x.array.reshape((-1, 3))
         grid["t_hip"] = t_hip_vals
         grid.save(f"{folder}/t_hip_phase_{int(phase):03d}.vtk")
+
+def make_gait_energy_driver(mechsolver, gait_loader, cfg: Config):
+    """Helper to construct a gait-averaged energy driver."""
+    return GaitEnergyDriver(mechsolver, gait_loader, cycles_per_day=cfg.gait_cycles_per_day)

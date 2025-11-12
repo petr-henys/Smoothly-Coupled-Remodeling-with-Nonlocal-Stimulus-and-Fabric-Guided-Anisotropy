@@ -23,8 +23,6 @@ Tests:
 """
 
 import pytest
-pytest.importorskip("dolfinx")
-pytest.importorskip("mpi4py")
 
 import numpy as np
 from mpi4py import MPI
@@ -522,7 +520,6 @@ Tests:
 """
 
 import pytest
-pytest.importorskip("mpi4py")
 
 import logging
 from mpi4py import MPI
@@ -732,7 +729,7 @@ class TestLoggerIntegration:
         bc_mech = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
 
         # Solver initialization should use logger
-        mech = MechanicsSolver(V, rho, A, bc_mech, [], cfg)
+        mech = MechanicsSolver(V, rho, A, cfg, bc_mech, [])
 
         mech.destroy()
 
@@ -756,8 +753,6 @@ Tests:
 """
 
 import pytest
-pytest.importorskip("dolfinx")
-pytest.importorskip("mpi4py")
 pytestmark = [pytest.mark.slow, pytest.mark.integration]
 
 import numpy as np

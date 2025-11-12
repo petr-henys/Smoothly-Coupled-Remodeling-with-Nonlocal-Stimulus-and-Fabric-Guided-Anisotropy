@@ -15,11 +15,13 @@ from pathlib import Path
 from typing import Dict, Any
 
 import numpy as np
-import pyvista as pv
 import pytest
+
+
+import pyvista as pv
 from numpy.testing import assert_array_almost_equal, assert_almost_equal
 
-from femurloader.femur_css import FemurCSS, load_json_points, _fit_femoral_head, _unit
+from simulation.femur_css import FemurCSS, load_json_points, _fit_femoral_head, _unit
 
 
 # Fixtures and test data generators

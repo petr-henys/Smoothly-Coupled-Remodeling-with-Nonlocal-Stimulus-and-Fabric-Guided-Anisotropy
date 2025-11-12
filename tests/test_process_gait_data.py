@@ -13,7 +13,7 @@ import pandas as pd
 import pytest
 from numpy.testing import assert_array_almost_equal, assert_almost_equal
 
-from femurloader.process_gait_data import (
+from simulation.process_gait_data import (
     load_xy_datasets,
     segment_curves_grid,
     parse_hip_file,

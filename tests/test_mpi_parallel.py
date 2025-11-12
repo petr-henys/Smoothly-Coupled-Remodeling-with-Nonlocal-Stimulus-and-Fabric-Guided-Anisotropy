@@ -21,8 +21,6 @@ Tests:
 """
 
 import pytest
-pytest.importorskip("dolfinx")
-pytest.importorskip("mpi4py")
 pytestmark = [pytest.mark.integration]
 import numpy as np
 from mpi4py import MPI
@@ -164,9 +162,9 @@ class TestDomainDecomposition:
             
             traction = traction_factory(-0.5, facet_id=2, axis=0)
             bc_mech = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
-            mech = MechanicsSolver(V, rho, A, bc_mech, [traction], cfg)
-            mech.solver_setup()
-            mech.solve(u)
+            mech = MechanicsSolver(V, rho, A, cfg, bc_mech, [traction])
+            mech.setup()
+            mech.solve()
             
             # Global L2 norm
             u_norm_sq_local = fem.assemble_scalar(fem.form(ufl.inner(u, u) * cfg.dx))
@@ -474,8 +472,6 @@ Tests:
 """
 
 import pytest
-pytest.importorskip("dolfinx")
-pytest.importorskip("mpi4py")
 pytestmark = [pytest.mark.slow, pytest.mark.performance]
 import numpy as np
 np.random.seed(1234)
@@ -534,10 +530,10 @@ class TestSolverIterations:
             traction = (fem.Constant(domain, t_vec), 2)
             
             bc_mech = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
-            mech = MechanicsSolver(V, rho, A, bc_mech, [traction], cfg)
+            mech = MechanicsSolver(V, rho, A, cfg, bc_mech, [traction])
             
-            mech.solver_setup()
-            its, _ = mech.solve(u)
+            mech.setup()
+            its, _ = mech.solve()
             
             iteration_counts.append(its)
             mech.destroy()
@@ -572,11 +568,11 @@ class TestSolverIterations:
         psi_density = fem.Constant(domain, 50.0)  # Dummy source
         
         stim = StimulusSolver(Q, S_old, cfg)
-        stim.solver_setup()
+        stim.setup()
         stim.update_rhs(psi_density)
         
         S = Function(Q, name="S")
-        its, _ = stim.solve(S)
+        its, _ = stim.solve()
         
         # Should converge in reasonable iterations
         assert its < 500, f"Stimulus solver took too many iterations: {its}"
@@ -696,12 +692,12 @@ class TestPreconditioners:
         traction = (fem.Constant(domain, t_vec), 2)
         
         bc_mech = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
-        mech = MechanicsSolver(V, rho, A, bc_mech, [traction], cfg)
+        mech = MechanicsSolver(V, rho, A, cfg, bc_mech, [traction])
         
-        mech.solver_setup()
+        mech.setup()
         
         # Solve with fresh preconditioner
-        its1, _ = mech.solve(u)
+        its1, _ = mech.solve()
         
         # Slightly modify rho
         rho.x.array[:] = 0.51
@@ -709,7 +705,7 @@ class TestPreconditioners:
         mech.update_stiffness()
         
         # Solve with reused preconditioner
-        its2, _ = mech.solve(u)
+        its2, _ = mech.solve()
         
         # Reused preconditioner should still work (may take more iters but not excessive)
         assert its2 < its1 * 3, f"Preconditioner reuse degraded too much: {its1} → {its2}"
@@ -748,7 +744,7 @@ class TestMemoryUsage:
         S_old = Function(Q, name="S_old")
         
         bc_mech = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
-        mech = MechanicsSolver(V, rho, A, bc_mech, [], cfg)
+        mech = MechanicsSolver(V, rho, A, cfg, bc_mech, [])
         stim = StimulusSolver(Q, S_old, cfg)
         dens = DensitySolver(Q, rho_old, A, S, cfg)
         dirn = DirectionSolver(T, A_old, cfg)

@@ -13,8 +13,6 @@ Tests:
 """
 
 import pytest
-pytest.importorskip("dolfinx")
-pytest.importorskip("mpi4py")
 
 import numpy as np
 from mpi4py import MPI
@@ -85,7 +83,7 @@ class TestConstitutiveLaw:
         A.x.scatter_forward()
         
         bc_mech = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
-        mech = MechanicsSolver(V, rho, A, bc_mech, [], cfg)
+        mech = MechanicsSolver(u, rho, A, cfg, bc_mech, [])
         
         # Compute stress tensor components
         sigma = mech.sigma(u, rho)
@@ -182,8 +180,8 @@ class TestConstitutiveLaw:
         u_test.interpolate(lambda x: np.vstack([0.003 * x[0], 0.0 * x[1], 0.0 * x[2]]))
         u_test.x.scatter_forward()
 
-        mech_iso = MechanicsSolver(V, rho, A_iso, [], [], cfg)
-        mech_aniso = MechanicsSolver(V, rho, A_fiber, [], [], cfg)
+        mech_iso = MechanicsSolver(u, rho, A_iso, cfg, [], [])
+        mech_aniso = MechanicsSolver(u, rho, A_fiber, cfg, [], [])
 
         energy_iso = mech_iso.average_strain_energy(u_test)
         energy_aniso = mech_aniso.average_strain_energy(u_test)
@@ -233,7 +231,7 @@ class TestThermodynamics:
         A.x.scatter_forward()
         
         bc_mech = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
-        mech = MechanicsSolver(V, rho, A, bc_mech, [], cfg)
+        mech = MechanicsSolver(u, rho, A, cfg, bc_mech, [])
         
         psi = 0.5 * ufl.inner(mech.sigma(u, rho), mech.eps(u))
         
@@ -290,9 +288,9 @@ class TestThermodynamics:
         bc_mech = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
         t_const, t_tag = traction_factory(-0.4, facet_id=2, axis=0)
 
-        mech = MechanicsSolver(V, rho, A, bc_mech, [(t_const, t_tag)], cfg)
-        mech.solver_setup()
-        mech.solve(u)
+        mech = MechanicsSolver(u, rho, A, cfg, bc_mech, [(t_const, t_tag)])
+        mech.setup()
+        mech.solve()
 
         # Internal work: a(u,u) = ∫ σ:ε dx
         a_uu_local = fem.assemble_scalar(fem.form(ufl.inner(mech.sigma(u, rho), mech.eps(u)) * cfg.dx))
@@ -342,10 +340,10 @@ class TestConservation:
         
         # BCs: left fixed, no traction on right
         bc_mech = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
-        mech = MechanicsSolver(V, rho, A, bc_mech, [], cfg)
+        mech = MechanicsSolver(u, rho, A, cfg, bc_mech, [])
         
-        mech.solver_setup()
-        mech.solve(u)
+        mech.setup()
+        mech.solve()
         
         # Check residual: ∫ σ:∇v dx should be zero for all v (satisfied by FEM)
         # Instead, verify displacement is approximately zero when no load applied
@@ -382,10 +380,10 @@ class TestConservation:
         S.x.array[:] = 0.1
         S.x.scatter_forward()
         
-        densolver = DensitySolver(Q, rho_old, A, S, cfg)
-        densolver.solver_setup()
+        densolver = DensitySolver(rho, rho_old, A, S, cfg)
+        densolver.setup()
         densolver.update_system()
-        densolver.solve(rho)
+        densolver.solve()
         
         rho_min_nd = float(cfg.rho_min_nd)
         rho_max_nd = float(cfg.rho_max_nd)
@@ -425,10 +423,10 @@ class TestConservation:
             S_field.x.array[:] = stimulus_value
             S_field.x.scatter_forward()
 
-            dens = DensitySolver(Q, rho_old, A_field, S_field, cfg)
-            dens.solver_setup()
+            dens = DensitySolver(rho, rho_old, A_field, S_field, cfg)
+            dens.setup()
             dens.update_system()
-            dens.solve(rho)
+            dens.solve()
             rho.x.scatter_forward()
             return mean_value_factory(rho)
 
@@ -481,10 +479,10 @@ class TestConservation:
 
         # Solve one implicit diffusion step with natural BCs
         rho = Function(Q, name="rho")
-        dens = DensitySolver(Q, rho_old, A_iso, S, cfg)
-        dens.solver_setup()
+        dens = DensitySolver(rho, rho_old, A_iso, S, cfg)
+        dens.setup()
         dens.update_system()
-        dens.solve(rho)
+        dens.solve()
         rho.x.scatter_forward()
 
         m_new_local = fem.assemble_scalar(fem.form(rho * cfg.dx))
@@ -531,16 +529,16 @@ class TestDirectionSolverProperties:
         bc_mech = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
         traction = traction_factory(-0.4, facet_id=2, axis=0)
 
-        mech = MechanicsSolver(V, rho, A_old, bc_mech, [traction], cfg)
-        mech.solver_setup()
-        mech.solve(u)
+        mech = MechanicsSolver(u, rho, A_old, cfg, bc_mech, [traction])
+        mech.setup()
+        mech.solve()
 
-        dir_solver = DirectionSolver(T, A_old, cfg)
-        dir_solver.solver_setup()
+        dir_solver = DirectionSolver(A, A_old, cfg)
+        dir_solver.setup()
         dir_solver.update_rhs(mech, u)
 
         A_new = Function(T, name="A_new")
-        dir_solver.solve(A_new)
+        dir_solver.solve()
         A_new.x.scatter_forward()
 
         n_owned = T.dofmap.index_map.size_local * T.dofmap.index_map_bs
@@ -799,10 +797,10 @@ class TestBoundaryConditions:
         traction = traction_factory(-0.1, facet_id=2, axis=0)
         
         bc_mech = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
-        mech = MechanicsSolver(V, rho, A, bc_mech, [traction], cfg)
+        mech = MechanicsSolver(u, rho, A, cfg, bc_mech, [traction])
         
-        mech.solver_setup()
-        mech.solve(u)
+        mech.setup()
+        mech.solve()
         
         # Extract DOFs on left boundary (tag=1, x=0)
         bc_dofs = collect_dirichlet_dofs(bc_mech, mech.V.dofmap.index_map.size_local)
@@ -841,10 +839,10 @@ class TestBoundaryConditions:
         traction = traction_factory(-0.5, facet_id=2, axis=0)
         
         bc_mech = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
-        mech = MechanicsSolver(V, rho, A, bc_mech, [traction], cfg)
+        mech = MechanicsSolver(u, rho, A, cfg, bc_mech, [traction])
         
-        mech.solver_setup()
-        mech.solve(u)
+        mech.setup()
+        mech.solve()
         
         # Under compression, expect negative x-displacement (compression)
         u_x = u.sub(0).collapse()
@@ -892,13 +890,13 @@ class TestConservationChecks:
         traction = traction_factory(-0.1, facet_id=2, axis=0)
         
         bc_mech = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
-        mech = MechanicsSolver(V, rho, A, bc_mech, [traction], cfg)
+        mech = MechanicsSolver(u, rho, A, cfg, bc_mech, [traction])
         
-        mech.solver_setup()
-        mech.solve(u)
+        mech.setup()
+        mech.solve()
         
         # Check energy balance
-        W_int, W_ext, rel_error = mech.energy_balance_nd(u)
+        W_int, W_ext, rel_error = mech.energy_balance_nd()
         
         assert rel_error < 0.05, (
             f"Energy balance violated: W_int={W_int:.3e}, W_ext={W_ext:.3e}, rel_error={rel_error:.3e}"
@@ -921,15 +919,15 @@ class TestConservationChecks:
         S_old.x.scatter_forward()
         
         from simulation.subsolvers import StimulusSolver
-        stim = StimulusSolver(Q, S_old, cfg)
-        stim.solver_setup()
+        stim = StimulusSolver(S, S_old, cfg)
+        stim.setup()
         
         # Create a psi field (supra-homeostatic in one region)
         psi_expr = fem.Constant(domain, 1.2 * float(cfg.psi_ref_nd))
         
         S_new = Function(Q, name="S_new")
         stim.update_rhs(psi_expr)
-        stim.solve(S_new)
+        stim.solve()
         
         # Check power balance
         power_abs, power_rel = stim.power_balance_residual(S_new, psi_expr)
@@ -965,12 +963,12 @@ class TestConservationChecks:
         S.x.array[:] = 0.2  # Positive stimulus -> formation
         S.x.scatter_forward()
         
-        dens = DensitySolver(Q, rho_old, A, S, cfg)
-        dens.solver_setup()
+        dens = DensitySolver(rho, rho_old, A, S, cfg)
+        dens.setup()
         
         rho_new = Function(Q, name="rho_new")
         dens.update_system()
-        dens.solve(rho_new)
+        dens.solve()
         
         # Check mass balance
         mass_abs, mass_rel = dens.mass_balance_residual(rho_new)
@@ -1000,8 +998,8 @@ class TestConservationChecks:
         A_old.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:, None] * np.ones((1, x.shape[1])))
         A_old.x.scatter_forward()
         
-        dir_solver = DirectionSolver(T, A_old, cfg)
-        dir_solver.solver_setup()
+        dir_solver = DirectionSolver(A, A_old, cfg)
+        dir_solver.setup()
         
         # Create simple displacement field
         u = Function(V, name="u")
@@ -1014,11 +1012,11 @@ class TestConservationChecks:
         rho.x.scatter_forward()
         
         bc_mech = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
-        mech = MechanicsSolver(V, rho, A_old, bc_mech, [], cfg)
+        mech = MechanicsSolver(u, rho, A_old, cfg, bc_mech, [])
         
         A_new = Function(T, name="A_new")
         dir_solver.update_rhs(mech, u)
-        dir_solver.solve(A_new)
+        dir_solver.solve()
         
         # Create M̂ expression
         eps_ten = mech.eps(u)
@@ -1070,18 +1068,19 @@ def test_mechanics_force_equilibrium():
     t0 = fem.Constant(m, np.array([1.0, 0.0, 0.0], dtype=float))
     neumanns = [(t0, 2)]
 
-    # Solve mechanics
-    mech = MechanicsSolver(V, rho, Afield, bcs, neumanns, cfg)
-    mech.solver_setup()
-
+    # Create solution function
     u = fem.Function(V, name="u")
-    its, reason = mech.solve(u)
+    
+    # Solve mechanics
+    mech = MechanicsSolver(u, rho, Afield, cfg, bcs, neumanns)
+    mech.setup()
+    its, reason = mech.solve()
 
     # Check solver converged
     assert reason > 0, f"KSP failed to converge, reason={reason}"
 
     # Check energy balance from solver
-    W_int, W_ext, rel_err = mech.energy_balance_nd(u)
+    W_int, W_ext, rel_err = mech.energy_balance_nd()
     assert rel_err < 1e-6, f"Energy balance violated: rel_err={rel_err:.2e} (W_int={W_int:.3e}, W_ext={W_ext:.3e})"
 
 
@@ -1125,12 +1124,13 @@ def test_mechanics_uniform_extension():
     bc_x1 = fem.dirichletbc(default_scalar_type(eps), dofs_x1, V0)
     bcs.append(bc_x1)
 
-    # Solve
-    mech = MechanicsSolver(V, rho, Afield, bcs, [], cfg)
-    mech.solver_setup()
-
+    # Create solution function
     u = fem.Function(V, name="u")
-    its, reason = mech.solve(u)
+    
+    # Solve
+    mech = MechanicsSolver(u, rho, Afield, cfg, bcs, [])
+    mech.setup()
+    its, reason = mech.solve()
     assert reason > 0, f"KSP failed to converge, reason={reason}"
 
     # Check solution is nonzero (should have extension)
@@ -1159,7 +1159,8 @@ def test_stimulus_power_residual_scales_with_dt():
     S_old.x.array[:] = 0.2
     S_old.x.scatter_forward()
 
-    stim = StimulusSolver(Q, S_old, cfg)
+    S = fem.Function(Q, name="S")
+    stim = StimulusSolver(S, S_old, cfg)
 
     # Constant psi > psi_ref for positive source
     psi_val = 1.5 * float(cfg.psi_ref_nd.value)
@@ -1181,4 +1182,3 @@ def test_stimulus_power_residual_scales_with_dt():
     # Expect scaling: R2 ~ R1/2, R3 ~ R1/4
     assert R2 <= R1 * 0.7 + 1e-14, f"Residual didn't scale ~O(dt): R2={R2:.3e}, R1={R1:.3e}"
     assert R3 <= R1 * 0.4 + 1e-14, f"Residual didn't scale ~O(dt): R3={R3:.3e}, R1={R1:.3e}"
-

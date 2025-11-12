@@ -21,8 +21,6 @@ Tests:
 """
 
 import pytest
-pytest.importorskip("dolfinx")
-pytest.importorskip("mpi4py")
 
 import numpy as np
 np.random.seed(1234)
@@ -50,10 +48,10 @@ class TestDOFOrdering:
         comm = MPI.COMM_WORLD
         V, Q, T = spaces.V, spaces.Q, spaces.T
         u, rho, rho_old, A, A_old, S, S_old = fields
-        mech = MechanicsSolver(V, rho, A, bc_mech, [], cfg)
-        stim = StimulusSolver(Q, S_old, cfg)
-        dens = DensitySolver(Q, rho_old, A, S, cfg)
-        dirn = DirectionSolver(T, A_old, cfg)
+        mech = MechanicsSolver(u, rho, A, cfg, bc_mech, [])
+        stim = StimulusSolver(S, S_old, cfg)
+        dens = DensitySolver(rho, rho_old, A, S, cfg)
+        dirn = DirectionSolver(A, A_old, cfg)
         fps = FixedPointSolver(comm, cfg, mech, stim, dens, dirn,
                                u, rho, rho_old, A, A_old, S, S_old)
         
@@ -87,10 +85,10 @@ class TestDOFOrdering:
         S.x.array[:] = 0.3; S.x.scatter_forward()
         # Store originals
         u_orig = u.x.array.copy(); rho_orig = rho.x.array.copy(); A_orig = A.x.array.copy(); S_orig = S.x.array.copy()
-        mech = MechanicsSolver(V, rho, A, bc_mech, [], cfg)
-        stim = StimulusSolver(Q, S_old, cfg)
-        dens = DensitySolver(Q, rho_old, A, S, cfg)
-        dirn = DirectionSolver(T, A_old, cfg)
+        mech = MechanicsSolver(u, rho, A, cfg, bc_mech, [])
+        stim = StimulusSolver(S, S_old, cfg)
+        dens = DensitySolver(rho, rho_old, A, S, cfg)
+        dirn = DirectionSolver(A, A_old, cfg)
         fps = FixedPointSolver(comm, cfg, mech, stim, dens, dirn,
                                u, rho, rho_old, A, A_old, S, S_old)
         flat = fps._flatten_state(copy=True)
@@ -108,10 +106,10 @@ class TestDOFOrdering:
         comm = MPI.COMM_WORLD
         V, Q, T = spaces.V, spaces.Q, spaces.T
         u, rho, rho_old, A, A_old, S, S_old = fields
-        mech = MechanicsSolver(V, rho, A, bc_mech, [], cfg)
-        stim = StimulusSolver(Q, S_old, cfg)
-        dens = DensitySolver(Q, rho_old, A, S, cfg)
-        dirn = DirectionSolver(T, A_old, cfg)
+        mech = MechanicsSolver(u, rho, A, cfg, bc_mech, [])
+        stim = StimulusSolver(S, S_old, cfg)
+        dens = DensitySolver(rho, rho_old, A, S, cfg)
+        dirn = DirectionSolver(A, A_old, cfg)
         fps = FixedPointSolver(comm, cfg, mech, stim, dens, dirn,
                                u, rho, rho_old, A, A_old, S, S_old)
         
@@ -286,9 +284,9 @@ class TestSolverStatistics:
         V, Q, T = spaces.V, spaces.Q, spaces.T
         u, rho, _, A, _, _, _ = fields
         traction = traction_factory(-0.1, facet_id=2, axis=0)
-        mech = MechanicsSolver(V, rho, A, bc_mech, [traction], cfg)
+        mech = MechanicsSolver(u, rho, A, cfg, bc_mech, [traction])
         
-        mech.solver_setup()
+        mech.setup()
         
         # Reset stats before solve
         mech._reset_stats()
@@ -296,7 +294,7 @@ class TestSolverStatistics:
         assert mech.ksp_steps == 0, "Stats not reset"
         
         # Solve
-        its, reason = mech.solve(u)
+        its, reason = mech.solve()
         
         # Check stats updated
         assert mech.total_iters == its, f"total_iters ({mech.total_iters}) ≠ returned iters ({its})"
@@ -316,9 +314,9 @@ class TestMatrixAssembly:
         """Mechanics stiffness matrix should be symmetric positive definite (modulo BCs)."""
         V, Q, T = spaces.V, spaces.Q, spaces.T
         _, rho, _, A, _, _, _ = fields
-        mech = MechanicsSolver(V, rho, A, bc_mech, [], cfg)
+        mech = MechanicsSolver(u, rho, A, cfg, bc_mech, [])
         
-        mech.solver_setup()
+        mech.setup()
         
         # Check matrix is symmetric
         from petsc4py import PETSc
@@ -335,8 +333,8 @@ class TestMatrixAssembly:
         cfg.set_dt_dim(10.0)
         Q = spaces.Q
         S_old = Function(Q, name="S_old")
-        stim = StimulusSolver(Q, S_old, cfg)
-        stim.solver_setup()
+        stim = StimulusSolver(S, S_old, cfg)
+        stim.setup()
         
         from petsc4py import PETSc
         norm = stim.A.norm(PETSc.NormType.FROBENIUS)
@@ -348,14 +346,14 @@ class TestMatrixAssembly:
         cfg.set_dt_dim(10.0)
         Q = spaces.Q
         S_old = Function(Q, name="S_old")
-        stim = StimulusSolver(Q, S_old, cfg)
-        stim.solver_setup()
+        stim = StimulusSolver(S, S_old, cfg)
+        stim.setup()
         from petsc4py import PETSc
         n1 = stim.A.norm(PETSc.NormType.FROBENIUS)
 
         # Change dt significantly and update LHS
         cfg.set_dt_dim(100.0)
-        stim.update_lhs()
+        stim.assemble_lhs()
         n2 = stim.A.norm(PETSc.NormType.FROBENIUS)
         assert abs(n2 - n1) / max(1.0, n1) > 1e-6, "Stimulus matrix norm unchanged after dt update"
 
@@ -373,8 +371,8 @@ class TestMatrixAssembly:
             # Mechanics solver: positive-definite for non-Dirichlet DOFs
             rho = Function(Q, name="rho"); rho.x.array[:] = 0.6; rho.x.scatter_forward()
             A = Function(T, name="A"); A.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:, None] * np.ones((1, x.shape[1]))); A.x.scatter_forward()
-            solver = MechanicsSolver(V, rho, A, bc_mech, [], cfg)
-            solver.solver_setup()
+            solver = MechanicsSolver(u, rho, A, cfg, bc_mech, [])
+            solver.setup()
             
             # Random vector with Dirichlet DOFs zeroed
             z = Function(V, name="z")
@@ -395,8 +393,8 @@ class TestMatrixAssembly:
             # Stimulus solver: positive semi-definite
             cfg.set_dt_dim(10.0)
             S_old = Function(Q, name="S_old"); S_old.x.array[:] = 0.0; S_old.x.scatter_forward()
-            solver = StimulusSolver(Q, S_old, cfg)
-            solver.solver_setup()
+            solver = StimulusSolver(S, S_old, cfg)
+            solver.setup()
             
             # Random vector
             z = Function(Q, name="z")
@@ -414,8 +412,8 @@ class TestMatrixAssembly:
             rho_old = Function(Q, name="rho_old"); rho_old.x.array[:] = 0.5; rho_old.x.scatter_forward()
             A_tens = Function(T, name="A"); A_tens.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:, None] * np.ones((1, x.shape[1]))); A_tens.x.scatter_forward()
             S = Function(Q, name="S"); S.x.array[:] = 0.0; S.x.scatter_forward()
-            solver = DensitySolver(Q, rho_old, A_tens, S, cfg)
-            solver.solver_setup()
+            solver = DensitySolver(rho, rho_old, A_tens, S, cfg)
+            solver.setup()
             solver.update_system()
             
             # Random vector
@@ -443,10 +441,10 @@ class TestProjectedResidual:
         rho.x.array[:] = 0.5; rho.x.scatter_forward()
         A.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:, None] * np.ones((1, x.shape[1])))
         A.x.scatter_forward()
-        mech = MechanicsSolver(V, rho, A, bc_mech, [], cfg)
-        stim = StimulusSolver(Q, S_old, cfg)
-        dens = DensitySolver(Q, rho_old, A, S, cfg)
-        dirn = DirectionSolver(T, A_old, cfg)
+        mech = MechanicsSolver(u, rho, A, cfg, bc_mech, [])
+        stim = StimulusSolver(S, S_old, cfg)
+        dens = DensitySolver(rho, rho_old, A, S, cfg)
+        dirn = DirectionSolver(A, A_old, cfg)
         fps = FixedPointSolver(comm, cfg, mech, stim, dens, dirn,
                                u, rho, rho_old, A, A_old, S, S_old)
 
@@ -653,8 +651,6 @@ We keep these very light to avoid duplicating the heavy invariance tests.
 """
 import numpy as np
 import pytest
-pytest.importorskip("dolfinx")
-pytest.importorskip("mpi4py")
 
 from mpi4py import MPI
 from dolfinx import mesh, fem
@@ -684,13 +680,14 @@ def test_stimulus_matrix_changes_with_dt():
     P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
     Q = fem.functionspace(domain, P1)
 
+    S = fem.Function(Q, name="S")
     S_old = fem.Function(Q, name="S_old")
-    solver = StimulusSolver(Q, S_old, cfg)
-    solver.solver_setup()
+    solver = StimulusSolver(S, S_old, cfg)
+    solver.setup()
 
     n1 = solver.A.norm()
     cfg.set_dt_dim(50.0)
-    solver.update_lhs()
+    solver.assemble_lhs()
     n2 = solver.A.norm()
     # Require a noticeable change
     assert abs(n2 - n1) / max(1.0, n1) > 1e-6, "Stimulus LHS norm did not change with dt"
@@ -714,8 +711,8 @@ def test_mechanics_operator_action_nonzero():
     rho = fem.Function(Q, name="rho"); rho.x.array[:] = 0.5; rho.x.scatter_forward()
     A = fem.Function(T, name="A"); A.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:,None] * np.ones((1, x.shape[1]))); A.x.scatter_forward()
     bcs = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
-    mech = MechanicsSolver(V, rho, A, bcs, [], cfg)
-    mech.solver_setup()
+    mech = MechanicsSolver(u, rho, A, cfg, bcs, [])
+    mech.setup()
 
     z = u.x.petsc_vec.duplicate()
     z.setRandom()
@@ -734,11 +731,12 @@ def test_density_matrix_psd_action():
     Q = fem.functionspace(domain, ("P", 1))
     T = fem.functionspace(domain, basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3,3)))
 
+    rho = fem.Function(Q, name="rho")
     rho_old = fem.Function(Q, name="rho_old"); rho_old.x.array[:] = 0.5; rho_old.x.scatter_forward()
     A = fem.Function(T, name="A"); A.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:,None] * np.ones((1, x.shape[1]))); A.x.scatter_forward()
     S = fem.Function(Q, name="S"); S.x.array[:] = 0.0; S.x.scatter_forward()
 
-    dens = DensitySolver(Q, rho_old, A, S, cfg)
+    dens = DensitySolver(rho, rho_old, A, S, cfg)
     # Only do matrix assembly, skip KSP setup to avoid GAMG segfault on small mesh
     dens.A = create_matrix(dens.a_form)
     assemble_matrix(dens.A, dens.a_form)
@@ -780,7 +778,7 @@ def test_mechanics_matrix_symmetry_rayleigh_psd_small():
     cfg = Config(domain=m, facet_tags=facets, verbose=False); cfg.xi_aniso = 0.0; cfg._build_constants()
     bcs = build_dirichlet_bcs(V, facets, id_tag=1, value=0.0)
 
-    mech = MechanicsSolver(V, rho, A, bcs, [], cfg)
+    mech = MechanicsSolver(u, rho, A, cfg, bcs, [])
     K = create_matrix(mech.a_form); assemble_matrix(K, mech.a_form, bcs=bcs); K.assemble()
 
     KT = K.transpose()

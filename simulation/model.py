@@ -329,8 +329,8 @@ class Remodeller:
         if self._current_dt is None or float(dt) != float(self._current_dt):
             self.cfg.set_dt_dim(float(dt))
             if self.solvers_initialized:
-                self.stimsolver.update_lhs()
-                self.dirsolver.update_lhs()
+                self.stimsolver.assemble_lhs()
+                self.dirsolver.assemble_lhs()
             self._current_dt = float(dt)
         self.fixedsolver.run(time_days=time_days, step_index=step_index)
 

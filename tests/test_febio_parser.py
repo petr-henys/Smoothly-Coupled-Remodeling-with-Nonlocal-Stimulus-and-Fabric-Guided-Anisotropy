@@ -9,12 +9,14 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
-import pyvista as pv
 import pytest
+
+
+import pyvista as pv
 from mpi4py import MPI
 from numpy.testing import assert_array_almost_equal, assert_almost_equal
 
-from femurloader.febio_parser import FEBio2Dolfinx
+from simulation.febio_parser import FEBio2Dolfinx
 
 
 # ============================================================================
@@ -30,23 +32,21 @@ class TestBasicParsing:
         parser = FEBio2Dolfinx(str(temp_febio_file))
         
         # Check basic attributes exist
-        assert parser.feb_file == str(temp_febio_file)
+        assert str(parser.feb_file) == str(temp_febio_file)
         assert parser.nodes is not None
         assert parser.elements is not None
         assert parser.surfaces is not None
         assert parser.mesh_dolfinx is not None
         
-        # Check node extraction
-        assert "AllNodes" in parser.nodes
-        assert parser.nodes["AllNodes"].shape == (4, 3)  # 4 nodes, 3D coords
+        # Check node extraction (nodes is now numpy array, not dict)
+        assert isinstance(parser.nodes, np.ndarray)
+        assert parser.nodes.shape == (4, 3)  # 4 nodes, 3D coords
         
-        # Check element extraction
-        assert "Part1" in parser.elements
-        conn, etype = parser.elements["Part1"]
-        assert etype == "tet4"
-        assert conn.shape == (1, 4)  # 1 element, 4 nodes
+        # Check element extraction (elements is now numpy array, not dict)
+        assert isinstance(parser.elements, np.ndarray)
+        assert parser.elements.shape == (1, 4)  # 1 element, 4 nodes
         
-        # Check surface extraction
+        # Check surface extraction (surfaces is still dict)
         assert "Surface1" in parser.surfaces
         assert parser.surfaces["Surface1"].shape == (1, 3)  # 1 triangle, 3 nodes
     
@@ -88,7 +88,7 @@ class TestBasicParsing:
             temp_path = Path(f.name)
         
         try:
-            with pytest.raises(ValueError, match="No <node> elements found"):
+            with pytest.raises(ValueError, match="No nodes found in FEBio mesh"):
                 FEBio2Dolfinx(str(temp_path))
         finally:
             temp_path.unlink()
@@ -138,13 +138,12 @@ class TestNodeReindexing:
         try:
             parser = FEBio2Dolfinx(str(temp_path))
             
-            # Nodes should be re-indexed to 1-based contiguous
-            assert parser.nodes["AllNodes"].shape == (4, 3)
+            # Nodes should be re-indexed to contiguous array
+            assert parser.nodes.shape == (45, 3)  # max_id=45, so array has 45 rows
             
-            # Elements should use re-indexed IDs
-            conn, _ = parser.elements["Part1"]
-            assert np.all(conn >= 0)  # 0-based in Python
-            assert np.all(conn < 4)   # Valid range
+            # Elements should use re-indexed IDs (0-based in parser.elements)
+            assert np.all(parser.elements >= 0)
+            assert np.all(parser.elements < 45)
             
         finally:
             temp_path.unlink()
@@ -182,10 +181,9 @@ class TestNodeReindexing:
         try:
             parser = FEBio2Dolfinx(str(temp_path))
             
-            # Should handle re-indexing correctly
-            assert parser.nodes["AllNodes"].shape == (4, 3)
-            conn, _ = parser.elements["Part1"]
-            assert conn.shape == (1, 4)
+            # Should handle re-indexing correctly (nodes is numpy array)
+            assert parser.nodes.shape == (4, 3)
+            assert parser.elements.shape == (1, 4)
             
         finally:
             temp_path.unlink()

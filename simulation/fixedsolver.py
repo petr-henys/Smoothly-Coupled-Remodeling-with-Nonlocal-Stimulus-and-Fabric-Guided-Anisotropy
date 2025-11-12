@@ -12,6 +12,7 @@ from simulation.subsolvers import MechanicsSolver, StimulusSolver, DensitySolver
 from simulation.utils import assign, get_owned_size, collect_dirichlet_dofs, _global_dot, current_memory_mb
 from simulation.logger import get_logger
 from simulation.anderson import _Anderson
+from simulation.drivers import StrainDriver
 
 
 class FixedPointSolver:
@@ -20,6 +21,7 @@ class FixedPointSolver:
                  stimsolver: StimulusSolver,
                  densolver: DensitySolver,
                  dirsolver: DirectionSolver,
+                 driver: StrainDriver,
                  u: fem.Function,
                  rho: fem.Function, rho_old: fem.Function,
                  A: fem.Function, A_old: fem.Function,
@@ -28,6 +30,7 @@ class FixedPointSolver:
         self.cfg = cfg
 
         self.mech = mechsolver
+        self.driver = driver
         self.stim = stimsolver
         self.den  = densolver
         self.dir  = dirsolver
@@ -167,28 +170,28 @@ class FixedPointSolver:
         # Mechanics
         t0 = MPI.Wtime()
         self.mech.assemble_lhs()
-        mech_iters, mech_reason = self.mech.solve(self.u)
+        mech_iters, mech_reason = self.mech.solve()
         mech_time_total += self._elapsed_max(t0)
 
-        # Stimulus (query strain energy from mechanics solver)
+        # Stimulus (energy-driven via driver)
         t0 = MPI.Wtime()
-        psi_expr = self.mech.get_strain_energy_density()
-        self.stim.update_rhs(psi_expr)
-        stim_iters, stim_reason = self.stim.solve(self.S)
+        psi_expr = self.driver.energy_expr()
+        self.stim.assemble_rhs(psi_expr)
+        stim_iters, stim_reason = self.stim.solve()
         stim_time_total += self._elapsed_max(t0)
 
         # Density
         t0 = MPI.Wtime()
         self.den.assemble_lhs()
         self.den.assemble_rhs()
-        dens_iters, dens_reason = self.den.solve(self.rho)
+        dens_iters, dens_reason = self.den.solve()
         dens_time_total += self._elapsed_max(t0)
 
-        # Direction (query strain tensor from mechanics solver)
+        # Direction (structure tensor via driver)
         t0 = MPI.Wtime()
-        B_expr = self.mech.get_strain_tensor()
-        self.dir.update_rhs(B_expr)
-        dir_iters, dir_reason = self.dir.solve(self.A)
+        M_expr = self.driver.structure_expr()
+        self.dir.assemble_rhs(M_expr)
+        dir_iters, dir_reason = self.dir.solve()
         dir_time_total += self._elapsed_max(t0)
 
         return (mech_time_total, stim_time_total, dens_time_total, dir_time_total,
@@ -372,14 +375,14 @@ class FixedPointSolver:
 
             x_raw = self._flatten_state(copy=True)
             # --- Diagnostics: all subsolvers have conservation/balance checks ---
-            W_int_nd, W_ext_nd, energy_rel = self.mech.energy_balance_nd(self.u)
-            psi_density = self.mech.get_strain_energy_density(self.u)
-            power_abs, power_rel = self.stim.power_balance_residual(self.S, psi_density)
-            mass_abs, mass_rel = self.den.mass_balance_residual(self.rho)
-            B = self.mech.get_strain_tensor(self.u)
+            W_int_nd, W_ext_nd, energy_rel = self.mech.energy_balance_nd()
+            psi_density_expr = self.driver.energy_expr()
+            power_abs, power_rel = self.stim.power_balance_residual(psi_density_expr)
+            mass_abs, mass_rel = self.den.mass_balance_residual()
+            B = self.driver.structure_expr()
             gdim = self.u.function_space.mesh.geometry.dim
             Mhat_expr = unittrace_psd(B, gdim, eps=self.cfg.smooth_eps)
-            trA_avg, trMhat_avg, trace_res = self.dir.trace_balance_residual(self.A, Mhat_expr)
+            trA_avg, trMhat_avg, trace_res = self.dir.trace_balance_residual(Mhat_expr)
 
 
             # Mix iterate (Anderson or Picard)

@@ -21,8 +21,6 @@ Covers:
 import math
 import pytest
 
-pytest.importorskip("dolfinx")
-pytest.importorskip("mpi4py")
 
 from dolfinx import fem
 
@@ -103,13 +101,13 @@ def test_dimensional_to_nondimensional_mapping_exact(unit_cube, facet_tags):
     psi_c = cfg.E0_dim * (strain_scale ** 2)
     t_c = 1.0 / cfg.tauS_dim
 
-    # Expected ND constants (updated scaling: cS and cA no longer scaled by t_c)
+    # Expected ND constants (current implementation: cS_c scaled by 1/t_c)
     expect = {
         "E0_nd": 1.0,
         "psi_ref_nd": cfg.psi_ref_dim / psi_c,
         "beta_par_nd": cfg.beta_par_dim * t_c / (cfg.L_c ** 2),
         "beta_perp_nd": cfg.beta_perp_dim * t_c / (cfg.L_c ** 2),
-        "cS_c": cfg.cS_dim,
+        "cS_c": cfg.cS_dim / t_c,  # Updated: now scaled by 1/t_c
         "tauS_c": 1.0,
         "kappaS_c": cfg.kappaS_dim * t_c / (cfg.L_c ** 2),
         "rS_gain_c": cfg.rS_dim * psi_c * t_c,
@@ -145,10 +143,10 @@ def test_roundtrip_reconstruct_dimensionals(unit_cube, facet_tags):
     t_c = 1.0 / cfg.tauS_dim
     psi_c = cfg.psi_c
 
-    # Reconstruct dimensionals from ND constants (updated scaling)
+    # Reconstruct dimensionals from ND constants (current implementation)
     beta_par_dim_rt = _float(cfg.beta_par_nd) * (cfg.L_c ** 2) / t_c
     beta_perp_dim_rt = _float(cfg.beta_perp_nd) * (cfg.L_c ** 2) / t_c
-    cS_dim_rt = _float(cfg.cS_c)
+    cS_dim_rt = _float(cfg.cS_c) * t_c  # Updated: cS_c now scaled by 1/t_c, so multiply back
     kappaS_dim_rt = _float(cfg.kappaS_c) * (cfg.L_c ** 2) / t_c
     rS_dim_rt = _float(cfg.rS_gain_c) / (psi_c * t_c)
     cA_dim_rt = _float(cfg.cA_c)
@@ -196,10 +194,13 @@ def test_scaling_with_tc(unit_cube, facet_tags):
 
     t_ratio = (1.0 / slower.tauS_dim) / (1.0 / base.tauS_dim)  # t_c(slower)/t_c(base) = 0.5
 
-    # cS_c and cA_c are now dimensional constants (no t_c scaling)
-    for name in ("cS_c", "cA_c"):
-        r = _float(getattr(slower, name)) / _float(getattr(base, name))
-        assert r == pytest.approx(1.0)  # unchanged with t_c
+    # cS_c now scales with 1/t_c (updated implementation)
+    r_cS = _float(slower.cS_c) / _float(base.cS_c)
+    assert r_cS == pytest.approx(1.0 / t_ratio)  # cS_c ~ 1/t_c, so ratio is inverted
+    
+    # cA_c is dimensional constant (no t_c scaling)
+    r_cA = _float(slower.cA_c) / _float(base.cA_c)
+    assert r_cA == pytest.approx(1.0)  # unchanged with t_c
 
     # Quantities ~ t_c
     for name in ("tauA_c", "rS_gain_c"):
@@ -248,8 +249,6 @@ Covered solvers:
 import numpy as np
 import pytest
 
-pytest.importorskip("dolfinx")
-pytest.importorskip("mpi4py")
 
 from dolfinx import fem
 import basix
@@ -324,11 +323,11 @@ def test_mechanics_energy_invariant_under_Lu_scale(unit_cube, facet_tags):
         tvec = np.zeros(gdim, dtype=np.float64)
         tvec[0] = -t_dim / cfg.sigma_c
         traction = (fem.Constant(cfg.domain, tvec), 2)
-        mech = MechanicsSolver(V, rho, A_iso, bcs, [traction], cfg)
-        mech.solver_setup()
-        its, reason = mech.solve(uA)
+        mech = MechanicsSolver(uA, rho, A_iso, cfg, bcs, [traction])
+        mech.setup()
+        its, reason = mech.solve()
         assert reason >= 0, "Mechanics KSP did not converge"
-        return mech.average_strain_energy(uA)
+        return mech.average_strain_energy()
 
     E_A = solve_and_energy(cfgA)
     E_B = solve_and_energy(cfgB)
@@ -364,11 +363,11 @@ def test_mechanics_energy_scales_with_psi_c_for_equal_nd_load(unit_cube, facet_t
     def energy(cfg):
         tvec = np.zeros(gdim, dtype=np.float64)
         tvec[0] = t_nd
-        mech = MechanicsSolver(V, rho, A_iso, bcs, [(fem.Constant(cfg.domain, tvec), 2)], cfg)
-        mech.solver_setup()
-        its, reason = mech.solve(uA)
+        mech = MechanicsSolver(uA, rho, A_iso, cfg, bcs, [(fem.Constant(cfg.domain, tvec), 2)])
+        mech.setup()
+        its, reason = mech.solve()
         assert reason >= 0
-        return mech.average_strain_energy(uA)
+        return mech.average_strain_energy()
 
     E1 = energy(cfg1)
     E2 = energy(cfg2)
@@ -389,8 +388,8 @@ def test_mechanics_energy_matches_direct_nd_assembly(unit_cube, facet_tags):
 
     cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False)
     tvec = np.zeros(gdim, dtype=np.float64); tvec[0] = -0.15
-    mech = MechanicsSolver(V, rho, A_iso, bcs, [(fem.Constant(domain, tvec), 2)], cfg)
-    mech.solver_setup(); its, reason = mech.solve(u); assert reason >= 0
+    mech = MechanicsSolver(u, rho, A_iso, cfg, bcs, [(fem.Constant(domain, tvec), 2)])
+    mech.setup(); its, reason = mech.solve(); assert reason >= 0
 
     # Direct ND assembly -> physical units
     strain_energy_nd_expr = 0.5 * ufl.inner(mech.sigma(u, rho), mech.eps(u))
@@ -398,7 +397,7 @@ def test_mechanics_energy_matches_direct_nd_assembly(unit_cube, facet_tags):
     psi_nd = mech.comm.allreduce(psi_local_nd, op=MPI.SUM)
     psi_dim_direct = float((psi_nd / max(mech.total_vol, 1e-300)) * cfg.psi_c)
 
-    assert mech.average_strain_energy(u) == pytest.approx(psi_dim_direct, rel=5e-6, abs=5e-8)
+    assert mech.average_strain_energy() == pytest.approx(psi_dim_direct, rel=5e-6, abs=5e-8)
 
 
 @pytest.mark.unit
@@ -432,16 +431,16 @@ def test_stimulus_invariance_under_E0_scaling_compensated(unit_cube, facet_tags)
     S_A = fem.Function(Q)
     S_B = fem.Function(Q)
 
-    solA = StimulusSolver(Q, S_old_A, cfgA)
-    solA.solver_setup()
-    solA.update_rhs(psi_nd)
-    itsA, reasonA = solA.solve(S_A)
+    solA = StimulusSolver(S_A, S_old_A, cfgA)
+    solA.setup()
+    solA.assemble_rhs(psi_nd)
+    itsA, reasonA = solA.solve()
     assert reasonA >= 0
 
-    solB = StimulusSolver(Q, S_old_B, cfgB)
-    solB.solver_setup()
-    solB.update_rhs(psi_nd)
-    itsB, reasonB = solB.solve(S_B)
+    solB = StimulusSolver(S_B, S_old_B, cfgB)
+    solB.setup()
+    solB.assemble_rhs(psi_nd)
+    itsB, reasonB = solB.solve()
     assert reasonB >= 0
 
     assert np.allclose(S_A.x.array, S_B.x.array, rtol=5e-6, atol=5e-8)
@@ -473,14 +472,16 @@ def test_density_invariance_under_Lc_tc_scaling(unit_cube, facet_tags):
                   L_c=a * 1.0, tauS_dim=cfgA.tauS_dim / (a * a), verbose=False)
 
     # dt_nd defaults to 1 in both, ensuring equality; set S field into solver
-    densA = DensitySolver(Q, rho_old_A, A_iso, S_zero, cfgA)
-    densA.solver_setup(); densA.update_system();
-    itsA, reasonA = densA.solve(rho_A)
+    densA = DensitySolver(rho_A, rho_old_A, A_iso, S_zero, cfgA)
+    densA.setup()
+    densA.assemble_rhs()
+    itsA, reasonA = densA.solve()
     assert reasonA >= 0
 
-    densB = DensitySolver(Q, rho_old_B, A_iso, S_zero, cfgB)
-    densB.solver_setup(); densB.update_system();
-    itsB, reasonB = densB.solve(rho_B)
+    densB = DensitySolver(rho_B, rho_old_B, A_iso, S_zero, cfgB)
+    densB.setup()
+    densB.assemble_rhs()
+    itsB, reasonB = densB.solve()
     assert reasonB >= 0
 
     assert np.allclose(rho_A.x.array, rho_B.x.array, rtol=5e-6, atol=5e-8)
@@ -522,18 +523,18 @@ def test_direction_invariance_under_joint_scaling(unit_cube, facet_tags):
                   ell_dim=a * cfgA.ell_dim,
                   verbose=False)
 
-    mechA = MechanicsSolver(V, rho, A_iso, bcs, [], cfgA)
-    mechA.solver_setup()
-    dirA = DirectionSolver(T, A_old_A, cfgA)
-    dirA.solver_setup(); dirA.update_rhs(mechA, u_zero)
-    itsA, reasonA = dirA.solve(A_sol_A)
+    mechA = MechanicsSolver(u_zero, rho, A_iso, cfgA, bcs, [])
+    mechA.setup()
+    dirA = DirectionSolver(A_sol_A, A_old_A, cfgA)
+    dirA.setup(); dirA.assemble_rhs(mechA.get_strain_tensor(u_zero))
+    itsA, reasonA = dirA.solve()
     assert reasonA >= 0
 
-    mechB = MechanicsSolver(V, rho, A_iso, bcs, [], cfgB)
-    mechB.solver_setup()
-    dirB = DirectionSolver(T, A_old_B, cfgB)
-    dirB.solver_setup(); dirB.update_rhs(mechB, u_zero)
-    itsB, reasonB = dirB.solve(A_sol_B)
+    mechB = MechanicsSolver(u_zero, rho, A_iso, cfgB, bcs, [])
+    mechB.setup()
+    dirB = DirectionSolver(A_sol_B, A_old_B, cfgB)
+    dirB.setup(); dirB.assemble_rhs(mechB.get_strain_tensor(u_zero))
+    itsB, reasonB = dirB.solve()
     assert reasonB >= 0
 
     assert np.allclose(A_sol_A.x.array, A_sol_B.x.array, rtol=5e-6, atol=5e-8)

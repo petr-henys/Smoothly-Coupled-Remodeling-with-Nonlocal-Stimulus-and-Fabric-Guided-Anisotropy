@@ -1,22 +1,17 @@
 """Tests for femur_remodeller_gait.py: coordinate scaling and physical force validation."""
 import pytest
 import numpy as np
+
+
 import basix
 from dolfinx import fem
-from pathlib import Path
-import sys
 
-# Add parent directory for imports
-femurloader_dir = Path(__file__).parent.parent.parent / "femurloader"
-if str(femurloader_dir.parent) not in sys.path:
-    sys.path.insert(0, str(femurloader_dir.parent))
-
-from femurloader.febio_parser import FEBio2Dolfinx
-from femurloader.paths import FemurPaths
+from simulation.febio_parser import FEBio2Dolfinx
+from simulation.paths import FemurPaths
 from simulation.config import Config
 
 # Import the module under test
-from femurloader.femur_remodeller_gait import setup_femur_gait_loading
+from simulation.femur_remodeller_gait import setup_femur_gait_loading
 
 
 @pytest.fixture(scope="module")

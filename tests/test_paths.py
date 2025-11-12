@@ -16,7 +16,7 @@ import tempfile
 import shutil
 
 # Import after sys.path manipulation in conftest
-from femurloader.paths import (
+from simulation.paths import (
     PROJECT_ROOT,
     ANATOMY_DIR,
     ANATOMY_RAW_DIR,
@@ -375,9 +375,9 @@ class TestPathResolution:
     
     def test_project_root_parent_resolution(self):
         """Test that PROJECT_ROOT is correctly resolved from paths.py location."""
-        # PROJECT_ROOT should be parent of femurloader directory
-        assert (PROJECT_ROOT / "femurloader").exists()
-        assert (PROJECT_ROOT / "femurloader").is_dir()
+        # PROJECT_ROOT should be parent of simulation directory
+        assert (PROJECT_ROOT / "simulation").exists()
+        assert (PROJECT_ROOT / "simulation").is_dir()
 
 
 class TestEdgeCases:

@@ -14,10 +14,12 @@ Merged from:
 import tempfile
 import shutil
 from pathlib import Path
-from mpi4py import MPI
+
 import numpy as np
 import pytest
 
+
+from mpi4py import MPI
 from dolfinx import mesh, fem
 import basix.ufl
 from analysis.analysis_utils import (

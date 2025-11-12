@@ -1,9 +1,8 @@
 import numpy as np
 import pytest
-import basix
 
-pytest.importorskip("dolfinx")
-pytest.importorskip("mpi4py")
+
+import basix
 
 from mpi4py import MPI
 from dolfinx import mesh, fem, default_scalar_type

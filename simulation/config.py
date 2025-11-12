@@ -193,7 +193,7 @@ class Config:
         self.beta_perp_nd = fem.Constant(self.domain, self._cast(self.beta_perp_dim * t_c_val / (self.L_c**2)))
 
         # Stimulus S (ND)
-        cS_nd = self.cS_dim
+        cS_nd = self.cS_dim / t_c_val
         tauS_nd = 1.0
         kappaS_nd = self.kappaS_dim * t_c_val / (self.L_c**2)
         rS_nd = self.rS_dim * self.psi_c * t_c_val
