@@ -275,10 +275,44 @@ class MechanicsSolver(_BaseLinearSolver):
         rel_err = abs(W_ext_nd - W_int_nd) / max(W_ext_nd, W_int_nd, 1e-30)
         return W_int_nd, W_ext_nd, rel_err
     
-    def update_load(self, loader):
-        pass
-
-
+    def accumulated_strain_energy_gait(self, gait_loader) -> float:
+        """Compute daily accumulated strain energy over gait cycle.
+        
+        Uses bone adaptation convention: accumulate strain energy density
+        over gait cycle using trapezoid quadrature. This represents the
+        daily mechanical stimulus that drives remodeling.
+        
+        Parameters
+        ----------
+        gait_loader : FemurGaitLoader
+            Gait loading object with get_quadrature() and update_loads()
+        
+        Returns
+        -------
+        float
+            Accumulated average strain energy density [Pa] over one day
+        """
+        quadrature = gait_loader.get_quadrature()
+        accumulated_psi = 0.0
+        
+        for phase, weight in quadrature:
+            # Update loads for this gait phase
+            gait_loader.update_loads(phase)
+            
+            # Reassemble RHS with updated loads
+            self.assemble_rhs()
+            
+            # Solve mechanics
+            self.solve()
+            
+            # Compute average strain energy density for this phase
+            psi_phase = self.average_strain_energy()
+            
+            # Accumulate weighted contribution
+            accumulated_psi += weight * psi_phase
+        
+        return accumulated_psi
+    
 
 # --------------------------- Stimulus S --------------------------------------
 class StimulusSolver(_BaseLinearSolver):

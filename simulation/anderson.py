@@ -13,7 +13,6 @@ from typing import Callable, Dict, Optional, Sequence, Tuple
 import numpy as np
 from mpi4py import MPI
 
-from simulation.utils import _global_norm
 from simulation.logger import get_logger
 
 

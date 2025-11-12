@@ -1,18 +1,18 @@
 
 from typing import List, Tuple, Callable
+import sys
+from pathlib import Path
+
+# Add repository root to path to allow importing simulation and femurloader packages
+repo_root = Path(__file__).parent.parent
+if str(repo_root) not in sys.path:
+    sys.path.insert(0, str(repo_root))
+
 import basix
 import numpy as np
 from dolfinx import fem, plot
 
 from simulation.config import Config
-
-# Import from femurloader package (directory, not this file)
-import sys
-from pathlib import Path
-# Add parent directory to path to allow importing from femurloader package
-femurloader_dir = Path(__file__).parent / "femurloader"
-if str(femurloader_dir.parent) not in sys.path:
-    sys.path.insert(0, str(femurloader_dir.parent))
 
 from femurloader.femur_css import FemurCSS, load_json_points
 from femurloader.paths import FemurPaths, GaitPaths, get_output_path
@@ -157,9 +157,6 @@ def setup_femur_gait_loading(V: fem.functionspace, config: Config, BW_kg: float 
     t_glmed = fem.Function(V, name="t_glmed")
     t_glmax = fem.Function(V, name="t_glmax")
     
-    # Create and return gait loader
-    # NOTE: DOLFINx mesh is in mm (not scaled to meters), femurloader also expects mm
-    # Therefore coord_scale = 1.0 (no conversion needed)
     return FemurGaitLoader(
         t_hip=t_hip, t_glmed=t_glmed, t_glmax=t_glmax,
         hip=hip, gl_med=gl_med, gl_max=gl_max, hip_gait=hip_gait,
