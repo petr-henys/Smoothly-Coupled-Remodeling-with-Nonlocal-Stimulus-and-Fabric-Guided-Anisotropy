@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+
+import sys
+from pathlib import Path
+
+# Add repository root to path to allow importing simulation package
+repo_root = Path(__file__).parent.parent
+if str(repo_root) not in sys.path:
+    sys.path.insert(0, str(repo_root))
 from typing import Optional, Tuple, TYPE_CHECKING
 import numpy as np
 import pyvista as pv

@@ -3,6 +3,12 @@ from pathlib import Path
 from typing import Literal, Tuple
 import json
 
+import sys
+
+# Add repository root to path to allow importing simulation package
+repo_root = Path(__file__).parent.parent
+if str(repo_root) not in sys.path:
+    sys.path.insert(0, str(repo_root))
 import numpy as np
 import pyvista as pv
 from mpi4py import MPI
@@ -10,7 +16,7 @@ from scipy.optimize import least_squares
 from scipy.spatial import KDTree
 
 from simulation.logger import get_logger
-from .paths import FemurPaths
+from simulation.paths import FemurPaths
 
 # Module-level logger for standalone functions
 _logger = get_logger(MPI.COMM_WORLD, verbose=True, name="femur_css")
