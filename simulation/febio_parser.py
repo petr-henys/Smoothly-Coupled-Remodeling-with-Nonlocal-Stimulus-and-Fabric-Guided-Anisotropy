@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import pyvista as pv
 from basix.ufl import element as basix_element
-from dolfinx import mesh, plot
+from dolfinx import mesh
 from mpi4py import MPI
 from scipy.spatial import KDTree
 

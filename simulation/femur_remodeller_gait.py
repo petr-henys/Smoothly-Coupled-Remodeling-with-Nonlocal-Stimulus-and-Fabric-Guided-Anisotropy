@@ -13,10 +13,8 @@ import numpy as np
 from dolfinx import fem, plot
 
 from simulation.config import Config
-from simulation.drivers import GaitEnergyDriver
-
 from simulation.femur_css import FemurCSS, load_json_points
-from simulation.paths import FemurPaths, GaitPaths, get_output_path
+from simulation.paths import FemurPaths, GaitPaths
 from simulation.femur_loads import (
     HIPJointLoad, gait_interpolator, orthoload2ISB, MuscleLoad, build_load
 )
@@ -184,7 +182,3 @@ if __name__ == "__main__":
         t_hip_vals = gait_loader.t_hip.x.array.reshape((-1, 3))
         grid["t_hip"] = t_hip_vals
         grid.save(f"{folder}/t_hip_phase_{int(phase):03d}.vtk")
-
-def make_gait_energy_driver(mechsolver, gait_loader, cfg: Config):
-    """Helper to construct a gait-averaged energy driver."""
-    return GaitEnergyDriver(mechsolver, gait_loader, cycles_per_day=cfg.gait_cycles_per_day)

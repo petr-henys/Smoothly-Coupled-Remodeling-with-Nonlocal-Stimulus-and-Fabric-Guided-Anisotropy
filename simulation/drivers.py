@@ -1,6 +1,6 @@
 
 from __future__ import annotations
-from typing import Protocol, Optional
+from typing import Protocol
 from dolfinx import fem
 import ufl
 

@@ -31,11 +31,6 @@ def smooth_plus(x, eps: float):
     return 0.5 * (x + sabs)
 
 
-def smooth_minus(x, eps: float):
-    sabs = smooth_abs(x, eps)
-    return 0.5 * (sabs - x)
-
-
 def smooth_max(x, xmin, eps: float):
     dx = x - xmin
     return xmin + 0.5 * (dx + ufl.sqrt(dx * dx + eps * eps))
