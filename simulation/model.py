@@ -121,6 +121,8 @@ class Remodeller:
         bc_mech = build_dirichlet_bcs(self.V, self.cfg.facet_tags, id_tag=1, value=0.0)
 
         # Gait loader: hip + muscles applied on femur surface (tag 2)
+        # Note: All ranks build loaders (file I/O duplicated) but produce identical
+        # interpolators. Serializing PyVista/KDTree state is complex; this is acceptable.
         BW = float(getattr(self.cfg, "body_mass_kg", 75.0))
         n_samples = int(getattr(self.cfg, "gait_samples", 9))
         gait_loader = setup_femur_gait_loading(self.V, self.cfg, BW_kg=BW, n_samples=n_samples)
@@ -504,13 +506,52 @@ class Remodeller:
         self._print_final_summary(num_steps, overall_elapsed, mech_times, stim_times, dens_times, dir_times)
 
 
+def load_femur_mesh_parallel(comm: MPI.Comm, feb_path: Path) -> Tuple:
+    """Load FEBio mesh on rank 0, broadcast topology/geometry to all ranks.
+    
+    Returns (domain, facet_tags) on all ranks with minimal I/O overhead.
+    """
+    from basix.ufl import element as basix_element
+    from dolfinx import mesh
+    
+    if comm.rank == 0:
+        # Rank 0: parse FEBio file (XML parsing, PyVista, KDTree matching)
+        mdl = FEBio2Dolfinx(feb_path)
+        nodes = mdl.nodes
+        elements = mdl.elements
+        facet_indices = mdl.meshtags.indices
+        facet_values = mdl.meshtags.values
+    else:
+        # Other ranks: placeholders (will be broadcast)
+        nodes = None
+        elements = None
+        facet_indices = None
+        facet_values = None
+    
+    # Broadcast mesh topology and geometry
+    nodes = comm.bcast(nodes, root=0)
+    elements = comm.bcast(elements, root=0)
+    facet_indices = comm.bcast(facet_indices, root=0)
+    facet_values = comm.bcast(facet_values, root=0)
+    
+    # All ranks: build DOLFINx mesh (internally partitioned)
+    element = basix_element("Lagrange", "tetrahedron", 1, shape=(3,))
+    domain = mesh.create_mesh(comm, elements, element, nodes)
+    
+    # All ranks: rebuild meshtags
+    fdim = 2
+    domain.topology.create_entities(fdim)
+    domain.topology.create_connectivity(fdim, domain.topology.dim)
+    facet_tags = mesh.meshtags(domain, fdim, facet_indices, facet_values)
+    
+    return domain, facet_tags
+
+
 if __name__ == "__main__":
     comm = MPI.COMM_WORLD
 
-    # Load femur mesh and meshtags from FEBio file (as in tests)
-    mdl = FEBio2Dolfinx(FemurPaths.FEMUR_MESH_FEB)
-    domain = mdl.mesh_dolfinx
-    facet_tags = mdl.meshtags
+    # Load femur mesh (optimized: rank 0 only parses, then broadcast)
+    domain, facet_tags = load_femur_mesh_parallel(comm, FemurPaths.FEMUR_MESH_FEB)
 
     cfg = Config(domain=domain, facet_tags=facet_tags, verbose=True)
     with Remodeller(cfg) as remodeller:
