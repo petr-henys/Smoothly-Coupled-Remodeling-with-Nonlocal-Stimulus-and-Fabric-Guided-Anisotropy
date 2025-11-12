@@ -7,7 +7,7 @@ from typing import Dict, Tuple, List, Optional
 import numpy as np
 from mpi4py import MPI
 import basix
-from dolfinx import mesh, fem
+from dolfinx import fem
 from dolfinx.fem import Function, functionspace
 
 # Add parent directory to sys.path for script execution
@@ -17,10 +17,14 @@ if str(_repo_root) not in sys.path:
 
 from simulation.storage import UnifiedStorage
 from simulation.logger import get_logger, Level
-from simulation.utils import build_dirichlet_bcs, build_facetag, assign, current_memory_mb
+from simulation.utils import build_dirichlet_bcs, assign, current_memory_mb
 from simulation.config import Config
+from simulation.febio_parser import FEBio2Dolfinx
+from simulation.paths import FemurPaths
 from simulation.subsolvers import MechanicsSolver, StimulusSolver, DensitySolver, DirectionSolver
+from simulation.femur_remodeller_gait import setup_femur_gait_loading
 from simulation.fixedsolver import FixedPointSolver
+from simulation.drivers import GaitEnergyDriver
 
 _SCALED_MESH_IDS: set[int] = set()
 
@@ -113,22 +117,35 @@ class Remodeller:
         self.storage.fields.register("A", [self.A], filename="A.bp")
 
         # Boundary conditions
+        # Dirichlet BCs: fix distal end (tag 1)
         bc_mech = build_dirichlet_bcs(self.V, self.cfg.facet_tags, id_tag=1, value=0.0)
 
-        t_vec = np.zeros(self.gdim, dtype=np.float64)
-        t_vec[0] = -self.cfg.t_p / self.cfg.sigma_c
-        traction = (fem.Constant(self.domain, t_vec), 2)
+        # Gait loader: hip + muscles applied on femur surface (tag 2)
+        BW = float(getattr(self.cfg, "body_mass_kg", 75.0))
+        n_samples = int(getattr(self.cfg, "gait_samples", 9))
+        gait_loader = setup_femur_gait_loading(self.V, self.cfg, BW_kg=BW, n_samples=n_samples)
 
-        self.mechsolver = MechanicsSolver(self.V, self.rho, self.A, bc_mech, [traction], self.cfg)
-        self.stimsolver = StimulusSolver(self.Q, self.S_old, self.cfg)
-        self.densolver = DensitySolver(self.Q, self.rho_old, self.A, self.S, self.cfg)
-        self.dirsolver = DirectionSolver(self.T, self.A_old, self.cfg)
+        neumann_bcs = [
+            (gait_loader.t_hip, 2),
+            (gait_loader.t_glmed, 2),
+            (gait_loader.t_glmax, 2),
+        ]
+
+        self.mechsolver = MechanicsSolver(self.u, self.rho, self.A, self.cfg, bc_mech, neumann_bcs)
+
+        self.stimsolver = StimulusSolver(self.S, self.S_old, self.cfg)
+        self.densolver = DensitySolver(self.rho, self.rho_old, self.A, self.S, self.cfg)
+        self.dirsolver = DirectionSolver(self.A, self.A_old, self.cfg)
+
+        # Energy-driven driver (gait-averaged, pure UFL)
+        self.driver = GaitEnergyDriver(self.mechsolver, gait_loader, cycles_per_day=float(getattr(self.cfg, "gait_cycles_per_day", 1.0)))
 
         self.fixedsolver = FixedPointSolver(
             self.comm, self.cfg,
-            self.mechsolver, self.stimsolver, self.densolver, self.dirsolver,
+            self.mechsolver, self.stimsolver, self.densolver, self.dirsolver, self.driver,
             self.u, self.rho, self.rho_old, self.A, self.A_old, self.S, self.S_old
         )
+
 
         # Iteration accounting window
         self.acc_steps = 0
@@ -226,7 +243,7 @@ class Remodeller:
         rho_min, rho_max = self._field_minmax(self.rho)
         u_min, u_max = self._field_minmax(self.u)
         S_min, S_max = self._field_minmax(self.S)
-        psi_avg_dim = self.mechsolver.average_strain_energy(self.u)
+        psi_avg_dim = self.mechsolver.average_strain_energy()
 
         return dict(
             rho_min=rho_min * self.cfg.rho_c,
@@ -458,10 +475,10 @@ class Remodeller:
 
         self.cfg.set_dt_dim(dt)
 
-        self.mechsolver.solver_setup()
-        self.stimsolver.solver_setup()
-        self.densolver.solver_setup()
-        self.dirsolver.solver_setup()
+        self.mechsolver.setup()
+        self.stimsolver.setup()
+        self.densolver.setup()
+        self.dirsolver.setup()
         self.solvers_initialized = True
 
         self._reset_iters_window()
@@ -493,13 +510,13 @@ class Remodeller:
 
 if __name__ == "__main__":
     comm = MPI.COMM_WORLD
-    m = mesh.create_unit_cube(
-        comm, 33, 33, 33,
-        cell_type=mesh.CellType.hexahedron,
-        ghost_mode=mesh.GhostMode.shared_facet
-    )
 
-    facet_tags = build_facetag(m)
-    config = Config(facet_tags=facet_tags, domain=m, verbose=True)
-    with Remodeller(config) as remodeller:
-        remodeller.simulate(dt=50, total_time=100)
+    # Load femur mesh and meshtags from FEBio file (as in tests)
+    mdl = FEBio2Dolfinx(FemurPaths.FEMUR_MESH_FEB)
+    domain = mdl.mesh_dolfinx
+    facet_tags = mdl.meshtags
+
+    cfg = Config(domain=domain, facet_tags=facet_tags, verbose=True)
+    with Remodeller(cfg) as remodeller:
+        # Example: 50 days step, total 100 days (adjust as needed)
+        remodeller.simulate(dt=50.0, total_time=100.0)

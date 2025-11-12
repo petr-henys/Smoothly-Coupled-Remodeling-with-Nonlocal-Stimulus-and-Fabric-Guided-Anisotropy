@@ -365,6 +365,7 @@ def test_mechanics_energy_scales_with_psi_c_for_equal_nd_load(unit_cube, facet_t
         tvec[0] = t_nd
         mech = MechanicsSolver(uA, rho, A_iso, cfg, bcs, [(fem.Constant(cfg.domain, tvec), 2)])
         mech.setup()
+        mech.assemble_rhs()
         its, reason = mech.solve()
         assert reason >= 0
         return mech.average_strain_energy()
@@ -389,10 +390,13 @@ def test_mechanics_energy_matches_direct_nd_assembly(unit_cube, facet_tags):
     cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False)
     tvec = np.zeros(gdim, dtype=np.float64); tvec[0] = -0.15
     mech = MechanicsSolver(u, rho, A_iso, cfg, bcs, [(fem.Constant(domain, tvec), 2)])
-    mech.setup(); its, reason = mech.solve(); assert reason >= 0
+    mech.setup()
+    mech.assemble_rhs()
+    its, reason = mech.solve()
+    assert reason >= 0
 
     # Direct ND assembly -> physical units
-    strain_energy_nd_expr = 0.5 * ufl.inner(mech.sigma(u, rho), mech.eps(u))
+    strain_energy_nd_expr = 0.5 * ufl.inner(mech.sigma(u, rho, A_iso), mech.eps(u))
     psi_local_nd = fem.assemble_scalar(fem.form(strain_energy_nd_expr * cfg.dx))
     psi_nd = mech.comm.allreduce(psi_local_nd, op=MPI.SUM)
     psi_dim_direct = float((psi_nd / max(mech.total_vol, 1e-300)) * cfg.psi_c)
