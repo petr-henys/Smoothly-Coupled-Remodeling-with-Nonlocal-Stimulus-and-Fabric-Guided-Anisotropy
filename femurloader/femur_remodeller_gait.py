@@ -1,0 +1,188 @@
+
+from typing import List, Tuple, Callable
+import basix
+import numpy as np
+from dolfinx import fem, plot
+
+from simulation.config import Config
+
+# Import from femurloader package (directory, not this file)
+import sys
+from pathlib import Path
+# Add parent directory to path to allow importing from femurloader package
+femurloader_dir = Path(__file__).parent / "femurloader"
+if str(femurloader_dir.parent) not in sys.path:
+    sys.path.insert(0, str(femurloader_dir.parent))
+
+from femurloader.femur_css import FemurCSS, load_json_points
+from femurloader.paths import FemurPaths, GaitPaths, get_output_path
+from femurloader.femur_loads import (
+    HIPJointLoad, gait_interpolator, orthoload2ISB, MuscleLoad, build_load
+)
+from femurloader.process_gait_data import (
+    parse_hip_file, load_xy_datasets, segment_curves_grid, rescale_curve
+)
+
+from femurloader.febio_parser import FEBio2Dolfinx
+import pyvista as pv
+
+
+MM_TO_M = 1e-3
+STRESS_N_PER_MM2_TO_PA = 1e6
+
+
+class FemurGaitLoader:
+    """Concrete implementation of GaitQuadrature using femurloader for gait-phase-dependent loads.
+    
+    Parameters
+    ----------
+    t_hip, t_glmed, t_glmax : fem.Function
+        Traction vector functions (updated by this loader)
+    hip, gl_med, gl_max : HIPJointLoad | MuscleLoad
+        femurloader objects with apply_gaussian_load(...) and __call__(points)->(N,3).
+    hip_gait, glmed_gait, glmax_gait : Callable[[float], np.ndarray]
+        Interpolators that accept gait percentage in [0,100] and return force vectors in CSS.
+    n_samples : int
+        Number of quadrature points over gait cycle
+    coord_scale : float
+        Coordinate scaling factor (L_c / mm)
+    stress_scale : float
+        Stress scaling factor (Pa / stress_unit)
+    load_scale : float
+        Load magnitude multiplier
+    """
+
+    def __init__(
+        self,
+        t_hip: fem.Function,
+        t_glmed: fem.Function,
+        t_glmax: fem.Function,
+        hip,
+        gl_med,
+        gl_max,
+        hip_gait: Callable[[float], np.ndarray],
+        glmed_gait: Callable[[float], np.ndarray],
+        glmax_gait: Callable[[float], np.ndarray],
+        n_samples: int = 9,
+        coord_scale: float = 1.0,
+        stress_scale: float = 1.0,
+        load_scale: float = 1.0,
+        flip_hip: bool = True,
+        flip_glmed: bool = False,
+        flip_glmax: bool = False,
+    ):
+        self.t_hip = t_hip
+        self.t_glmed = t_glmed
+        self.t_glmax = t_glmax
+        
+        self.hip = hip
+        self.gl_med = gl_med
+        self.gl_max = gl_max
+        
+        self.hip_gait = hip_gait
+        self.glmed_gait = glmed_gait
+        self.glmax_gait = glmax_gait
+        
+        self.n_samples = n_samples
+        self.coord_scale = coord_scale
+        self.stress_scale = stress_scale
+        self.load_scale = load_scale
+        
+        self.flip_hip = flip_hip
+        self.flip_glmed = flip_glmed
+        self.flip_glmax = flip_glmax
+    
+    def get_quadrature(self) -> List[Tuple[float, float]]:
+        """Return trapezoid quadrature over gait cycle [0, 100]%."""
+        ps = np.linspace(0.0, 100.0, self.n_samples)
+        ws = np.ones(self.n_samples) / (self.n_samples - 1)
+        ws[0] *= 0.5
+        ws[-1] *= 0.5
+        ws = ws / ws.sum()
+        return [(float(p), float(w)) for p, w in zip(ps, ws)]
+    
+    def update_loads(self, phase_percent: float) -> None:
+        """Update traction functions to given gait phase."""
+        # Update femurloader sources with phase-specific CSS force vectors
+        self.hip.apply_gaussian_load(force_vector_css=self.hip_gait(phase_percent), flip=self.flip_hip)
+        self.gl_med.apply_gaussian_load(force_vector_css=self.glmed_gait(phase_percent), flip=self.flip_glmed)
+        self.gl_max.apply_gaussian_load(force_vector_css=self.glmax_gait(phase_percent), flip=self.flip_glmax)
+        
+        # Interpolate to FE functions with scaling
+        scale = self.stress_scale * self.load_scale
+        self.t_hip.interpolate(lambda x: self.hip((x.T * self.coord_scale)).T * scale)
+        self.t_glmed.interpolate(lambda x: self.gl_med((x.T * self.coord_scale)).T * scale)
+        self.t_glmax.interpolate(lambda x: self.gl_max((x.T * self.coord_scale)).T * scale)
+
+
+def setup_femur_gait_loading(V: fem.functionspace, config: Config, BW_kg: float = 75.0, n_samples: int = 9
+                             ) -> FemurGaitLoader:
+    """
+    
+    This function shows HOW to set up loading. Users must adapt this
+    to their own geometry, loading conditions, and data sources.
+    """
+    # Load PyVista mesh and build coordinate system
+    vtk_path = FemurPaths.FEMUR_MESH_VTK
+    pv_mesh = pv.read(str(vtk_path))
+    head_line = load_json_points(FemurPaths.HEAD_LINE_JSON)
+    le_me_line = load_json_points(FemurPaths.LE_ME_LINE_JSON)
+    css = FemurCSS(pv_mesh, head_line, le_me_line, side='left')
+
+    # Hip joint reaction force (from OrthoLoad database)
+    hip = HIPJointLoad(pv_mesh, css, use_cell_data=False)
+    hip_data = parse_hip_file(GaitPaths.HIP99_WALKING)["data"]
+    hip_gait = gait_interpolator(orthoload2ISB(hip_data))
+
+    # Muscle forces (from Amiri 2020 dataset)
+    F_mag = BW_kg * 9.81
+    muscle_data = load_xy_datasets(GaitPaths.AMIRI_EXCEL, flip_y=True)["Dataset_WN"]
+    curves = segment_curves_grid(muscle_data, 4, 9)
+
+    # Gluteus medius
+    gl_med = MuscleLoad(pv_mesh, css, use_cell_data=False)
+    gl_med.set_attachment_points(load_json_points(FemurPaths.GL_MED_JSON))
+    curve = rescale_curve(curves[0], x_scale=(0, 100), y_scale=(-1, 0.))
+    load_vec = np.array([1.1, 1.87, 0.89]) * F_mag
+    gl_med_gait = gait_interpolator(build_load(curve, load_vec))
+
+    # Gluteus maximus
+    gl_max = MuscleLoad(pv_mesh, css, use_cell_data=False)
+    gl_max.set_attachment_points(load_json_points(FemurPaths.GL_MAX_JSON))
+    curve = rescale_curve(curves[3], x_scale=(0, 100), y_scale=(-1, 0.))
+    load_vec = np.array([-0.3, 1.27, 0.39]) * F_mag
+    gl_max_gait = gait_interpolator(build_load(curve, load_vec))
+
+    t_hip = fem.Function(V, name="t_hip")
+    t_glmed = fem.Function(V, name="t_glmed")
+    t_glmax = fem.Function(V, name="t_glmax")
+    
+    # Create and return gait loader
+    # NOTE: DOLFINx mesh is in mm (not scaled to meters), femurloader also expects mm
+    # Therefore coord_scale = 1.0 (no conversion needed)
+    return FemurGaitLoader(
+        t_hip=t_hip, t_glmed=t_glmed, t_glmax=t_glmax,
+        hip=hip, gl_med=gl_med, gl_max=gl_max, hip_gait=hip_gait,
+        glmed_gait=gl_med_gait, glmax_gait=gl_max_gait,
+        n_samples=n_samples, coord_scale=1.0,
+        stress_scale=STRESS_N_PER_MM2_TO_PA / float(config.sigma_c),
+    )
+
+
+if __name__ == "__main__":
+    mdl = FEBio2Dolfinx(FemurPaths.FEMUR_MESH_FEB)
+    mdl.save_mesh_vtk("tt.vtk")
+    domain = mdl.mesh_dolfinx
+    P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(domain.geometry.dim,))
+    V = fem.functionspace(domain, P1_vec)
+    cfg = Config(domain=domain)
+    gait_loader = setup_femur_gait_loading(V, cfg)
+    topology, cells, geometry = plot.vtk_mesh(V)
+    grid = pv.UnstructuredGrid(topology, cells, geometry)
+    folder = Path("gait_load_outputs")
+    folder.mkdir(exist_ok=True)
+    for phase, weight in gait_loader.get_quadrature():
+        gait_loader.update_loads(phase)
+        t_hip_vals = gait_loader.t_hip.x.array.reshape((-1, 3))
+        grid["t_hip"] = t_hip_vals
+        grid.save(f"{folder}/t_hip_phase_{int(phase):03d}.vtk")

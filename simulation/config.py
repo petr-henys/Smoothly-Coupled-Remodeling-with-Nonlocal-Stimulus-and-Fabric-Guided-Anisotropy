@@ -63,8 +63,8 @@ class Config:
     ksp_max_it: int = 100
 
     # Convergence acceleration (Anderson/Picard)
-    accel_type: str = "anderson"           # "anderson" | "picard" | "none"
-    m: int = 8                              # AA window size
+    accel_type: str = "anderson"             # "anderson" | "picard" | "none"
+    m: int = 8                               # AA window size
     beta: float = 1.0                        # AA/Picard mixing for newest residual
     lam: float = 1e-10                       # AA Tikhonov regularization (aligned with solver)
     gamma: float = 0.05                      # safeguard slack

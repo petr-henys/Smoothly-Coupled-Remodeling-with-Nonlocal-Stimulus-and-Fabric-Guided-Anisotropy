@@ -6,7 +6,6 @@ from typing import Sequence, Optional
 import numpy as np
 from mpi4py import MPI
 from dolfinx import fem
-import ufl
 
 from simulation.config import Config
 from simulation.subsolvers import MechanicsSolver, StimulusSolver, DensitySolver, DirectionSolver, unittrace_psd
@@ -55,7 +54,7 @@ class FixedPointSolver:
         self.state_buffer = np.empty(self.state_size, dtype=self.u.x.array.dtype)
 
         # Dirichlet mask for mechanics block
-        self.dirichlet_dofs_u = collect_dirichlet_dofs(self.mech.bcs, n_owned=self.n_u)
+        self.dirichlet_dofs_u = collect_dirichlet_dofs(self.mech.dirichlet_bcs, n_owned=self.n_u)
         self.mask_u = np.zeros(self.n_u, dtype=bool)
         if self.dirichlet_dofs_u.size:
             self.mask_u[self.dirichlet_dofs_u] = True
@@ -167,7 +166,7 @@ class FixedPointSolver:
 
         # Mechanics
         t0 = MPI.Wtime()
-        self.mech.update_stiffness()
+        self.mech.assemble_lhs()
         mech_iters, mech_reason = self.mech.solve(self.u)
         mech_time_total += self._elapsed_max(t0)
 
@@ -180,14 +179,15 @@ class FixedPointSolver:
 
         # Density
         t0 = MPI.Wtime()
-        self.den.update_system()
+        self.den.assemble_lhs()
+        self.den.assemble_rhs()
         dens_iters, dens_reason = self.den.solve(self.rho)
         dens_time_total += self._elapsed_max(t0)
 
         # Direction (query strain tensor from mechanics solver)
         t0 = MPI.Wtime()
         B_expr = self.mech.get_strain_tensor()
-        self.dir.update_rhs_from_Bexpr(B_expr)
+        self.dir.update_rhs(B_expr)
         dir_iters, dir_reason = self.dir.solve(self.A)
         dir_time_total += self._elapsed_max(t0)
 

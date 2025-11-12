@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 from typing import Tuple, List, Optional, Dict
-from abc import ABC, abstractmethod
 
-import numpy as np
 from mpi4py import MPI
 from petsc4py import PETSc
 from dolfinx import fem
@@ -18,137 +16,120 @@ from dolfinx.fem.petsc import (
 from dolfinx import default_scalar_type
 import ufl
 
-from simulation.utils import build_nullspace, assign
+from simulation.utils import build_nullspace
 from simulation.config import Config
 from simulation.logger import get_logger
-
-Scalar = PETSc.ScalarType
-
-
-# --------------------------- Gait Loading Interface --------------------------
-class GaitQuadrature(ABC):
-    """Abstract interface for time-varying gait loading patterns."""
-    
-    @abstractmethod
-    def get_quadrature(self) -> List[Tuple[float, float]]:
-        """Return [(phase_percent, weight), ...] where weights sum to 1.
-        
-        Returns
-        -------
-        List[Tuple[float, float]]
-            List of (gait_phase_percent, quadrature_weight) pairs.
-            phase_percent in [0, 100], weights sum to 1.0.
-        """
-        pass
-    
-    @abstractmethod
-    def update_loads(self, phase_percent: float) -> None:
-        """Update traction fem.Functions to given gait phase percentage.
-        
-        Parameters
-        ----------
-        phase_percent : float
-            Gait cycle phase in [0, 100] percent.
-        """
-        pass
 
 
 # --------------------------- Smooth helpers (C∞-ish) -------------------------
 def smooth_abs(x, eps: float):
-    """C∞ approximation of |x| with smoothing width ~ eps."""
     return ufl.sqrt(x * x + eps * eps)
 
 
 def smooth_plus(x, eps: float):
-    """Smooth approximation of max(x, 0)."""
     sabs = smooth_abs(x, eps)
     return 0.5 * (x + sabs)
 
 
 def smooth_minus(x, eps: float):
-    """Smooth approximation of max(-x, 0)."""
     sabs = smooth_abs(x, eps)
     return 0.5 * (sabs - x)
 
 
 def smooth_max(x, xmin, eps: float):
-    """Smooth clamp: approx max(x, xmin)."""
     dx = x - xmin
     return xmin + 0.5 * (dx + ufl.sqrt(dx * dx + eps * eps))
 
 
 def smooth_heaviside(x, eps: float):
-    """Smooth Heaviside H(x) ~ 0.5 * (1 + x/sqrt(x^2 + eps^2)).
-    Useful for robust volume-fraction style QoIs."""
     return 0.5 * (1.0 + x / ufl.sqrt(x * x + eps * eps))
 
 
 # --------------------------- PSD + unit-trace helpers ------------------------
 def unittrace_psd_from_any(T, dim: int, eps: float):
-    """
-    Smooth PSD enforcement + unit-trace normalisation for arbitrary T.
-    Returns: Ahat = (T^T T + eps I) / tr(T^T T + eps I)
-    Properties: symmetric, SPD (eps>0), unit trace, C∞ in T.
-    """
     I = ufl.Identity(dim)
-    M = ufl.dot(ufl.transpose(T), T) + eps * I   # Gram + shift: SPD
-    return M / ufl.tr(M)                         # unit trace
+    M = ufl.dot(ufl.transpose(T), T) + eps * I
+    return M / ufl.tr(M)
 
 
 def unittrace_psd(B, dim: int, eps: float):
-    """
-    Unit-trace normalisation for a PSD input B (e.g. B = E^T E).
-    Returns: Bhat = (B + eps I) / tr(B + eps I)
-    Also SPD and C∞ in B (for eps>0).
-    """
     I = ufl.Identity(dim)
     M = B + eps * I
     return M / ufl.tr(M)
 
 
+# --------------------------- Helpers: robust value extraction -----------------
+def _val(x):
+    try:
+        return float(x.value)
+    except AttributeError:
+        return float(x)
+
+
 # --------------------------- Base KSP wrapper --------------------------------
 class _BaseLinearSolver:
-    """Common PETSc KSP wrapper + stats for repeatedly-solved linear systems."""
+    def __init__(
+        self,
+        cfg: Config,
+        state_function: fem.Function,
+        dirichlet_bcs: List[fem.DirichletBC],
+        neumann_bcs: List[Tuple[fem.Function, int]],
+    ):
+        self.state = state_function
+        self.function_space = state_function.function_space
+        self.mesh = self.function_space.mesh
+        self.comm = self.mesh.comm
+        self.rank = self.comm.rank
+        self.gdim = self.mesh.geometry.dim
 
-    def __init__(self, comm: MPI.Intracomm, cfg: Config):
-        self.comm = comm
-        self.A: Optional[PETSc.Mat] = None
-        self.b: Optional[PETSc.Vec] = None
-        self.ksp: Optional[PETSc.KSP] = None
         self.cfg = cfg
-        # Logger obeys cfg.verbose for INFO/DEBUG; warnings/errors always shown
-        self.logger = get_logger(self.comm, verbose=bool(getattr(cfg, "verbose", True)), name=self.__class__.__name__)
-
-        # Unified smoothness parameters for the whole model
+        self.dx = self.cfg.dx
+        self.ds = self.cfg.ds
+        self.logger = get_logger(self.comm, verbose=self.cfg.verbose, name=self.__class__.__name__)
         self.smooth_eps: float = self.cfg.smooth_eps
+
+        self.trial = ufl.TrialFunction(self.function_space)
+        self.test = ufl.TestFunction(self.function_space)
 
         self.total_iters = 0
         self.ksp_steps = 0
-        self.precond_updates = 0
         self.last_reason: Optional[int] = None
         self.last_iters: Optional[int] = None
 
+        self.dirichlet_bcs = dirichlet_bcs
+        self.neumann_bcs = neumann_bcs
+
+        self.ksp: Optional[PETSc.KSP] = None
+        self.A: Optional[PETSc.Mat] = None
+        self.b: Optional[PETSc.Vec] = create_vector(self.function_space)
+        self.a_form: Optional[ufl.Form] = None
+
     def destroy(self):
         if self.ksp is not None:
-            self.ksp.destroy()
-            self.ksp = None
+            self.ksp.destroy(); self.ksp = None
         if self.A is not None:
-            self.A.destroy()
-            self.A = None
+            self.A.destroy(); self.A = None
         if self.b is not None:
-            self.b.destroy()
-            self.b = None
+            self.b.destroy(); self.b = None
 
     def _reset_stats(self):
         self.total_iters = 0
         self.ksp_steps = 0
-        self.precond_updates = 0
         self.last_reason = None
         self.last_iters = None
 
-    def _solve(self, x: fem.Function) -> Tuple[int, int]:
-        self.ksp.solve(self.b, x.x.petsc_vec)
-        x.x.scatter_forward()
+    def assemble_lhs(self):
+        self.A.zeroEntries()
+        assemble_matrix(self.A, self.a_form, bcs=self.dirichlet_bcs)
+        self.A.assemble()
+        if self.ksp is not None:
+            self.ksp.setOperators(self.A)
+            self.ksp.setUp()
+        self._reset_stats()
+
+    def _solve(self) -> Tuple[int, int]:
+        self.ksp.solve(self.b, self.state.x.petsc_vec)
+        self.state.x.scatter_forward()
         its = self.ksp.getIterationNumber()
         reason = self.ksp.getConvergedReason()
         self.total_iters += its
@@ -157,10 +138,8 @@ class _BaseLinearSolver:
         self.last_reason = reason
         return its, reason
 
-    # Convenience properties for external reporting (tests, summaries)
     @property
     def ksp_its(self) -> int:
-        """Total KSP iterations accumulated across solves."""
         return int(self.total_iters)
 
     def _maybe_warn(self, reason: int, label: str):
@@ -173,13 +152,15 @@ class _BaseLinearSolver:
 
         opts = PETSc.Options()
         for k, v in ksp_options.items():
-            opts[f"{prefix}_{k}"] = v
+            if v is not None:
+                opts[f"{prefix}_{k}"] = v
         opts[f"{prefix}_ksp_rtol"] = self.cfg.ksp_rtol
         opts[f"{prefix}_ksp_atol"] = self.cfg.ksp_atol
         opts[f"{prefix}_ksp_max_it"] = self.cfg.ksp_max_it
 
         self.ksp.setInitialGuessNonzero(True)
-        self.ksp.setOperators(self.A)
+        if self.A is not None:
+            self.ksp.setOperators(self.A)
 
         self.ksp.setFromOptions()
         self.ksp.setUp()
@@ -190,53 +171,34 @@ class _BaseLinearSolver:
 class MechanicsSolver(_BaseLinearSolver):
     def __init__(
         self,
-        V: fem.FunctionSpace,
+        u: fem.Function,
         rho: fem.Function,
         A_dir: fem.Function,
-        dirichlets: List[fem.DirichletBC],
         config: Config,
-        neumanns: Optional[List[Tuple[fem.Function, int]]] = None,
+        dirichlet_bcs: List[fem.DirichletBC],
+        neumann_bcs: List[Tuple[fem.Function, int]],
     ):
-        super().__init__(V.mesh.comm, config)
-        self.V = V
-        self.mesh = V.mesh
-        self.rank = self.comm.rank
-        self.gdim = self.mesh.geometry.dim
-        self.dx = self.cfg.dx
-        self.ds = self.cfg.ds
-
+        super().__init__(config, u, dirichlet_bcs, neumann_bcs)
+        self.u = self.state
         self.rho = rho
         self.A_dir = A_dir
-        self.bcs = dirichlets
-        self.neumanns: List[Tuple[fem.Function, int]] = neumanns if neumanns is not None else []
         
-        # Gait accumulation mode
-        self.gait_mode: Optional[GaitQuadrature] = None
-        self._cached_gait_solutions: List[Tuple[fem.Function, float]] = []
-
         vol_local = fem.assemble_scalar(fem.form(1 * self.dx))
         self.total_vol = self.comm.allreduce(vol_local, op=MPI.SUM)
 
-        self.u = ufl.TrialFunction(self.V)
-        self.v = ufl.TestFunction(self.V)
+        self.a_form = fem.form(ufl.inner(self.sigma(self.trial, self.rho, self.A_dir), self.eps(self.test)) * self.dx)
 
-        self.a = ufl.inner(self.sigma(self.u, self.rho), self.eps(self.v)) * self.dx
-        self.a_form = fem.form(self.a)
-
-        L_neu = ufl.inner(fem.Constant(self.mesh, (0., 0., 0.)), self.v) * self.ds
-        for t, tag in self.neumanns:
-            L_neu += ufl.inner(t, self.v) * self.ds(tag)
-        self.L = L_neu    
-        self.L_form = fem.form(self.L)
+        zero_vec = fem.Constant(self.mesh, (0.0,) * self.gdim)
+        L_form = ufl.inner(zero_vec, self.test) * self.ds
+        for t, tag in self.neumann_bcs:
+            L_form = L_form + ufl.inner(t, self.test) * self.ds(tag)
+        self.L_form = fem.form(L_form)
 
     def eps(self, u):
         return ufl.sym(ufl.grad(u))
 
-    def sigma(self, u, rho):
-        # Smooth clamp to avoid non-differentiability and log(0)
+    def sigma(self, u, rho, A_dir):
         rho_eff = smooth_max(rho, self.cfg.rho_min_nd, self.smooth_eps)
-
-        # Elastic modulus as a power-law of density (avoids ln/exp pathologies)
         E_nd = self.cfg.E0_nd * (rho_eff ** self.cfg.n_power_c)
 
         eps_ten = self.eps(u)
@@ -245,42 +207,20 @@ class MechanicsSolver(_BaseLinearSolver):
         lmbda = E_nd * nu / ((1 + nu) * (1 - 2 * nu))
         mu = E_nd / (2 * (1 + nu))
 
-        # Smooth, normalized direction tensor (unit trace), PSD by construction
-        Asym = 0.5 * (self.A_dir + ufl.transpose(self.A_dir))
+        Asym = 0.5 * (A_dir + ufl.transpose(A_dir))
         Ahat = unittrace_psd_from_any(Asym, self.gdim, self.smooth_eps)
 
         sigma_aniso = (self.cfg.xi_aniso_c * E_nd) * ufl.inner(Ahat, eps_ten) * Ahat
         return 2 * mu * eps_ten + lmbda * ufl.tr(eps_ten) * I + sigma_aniso
 
-    def solver_setup(self):
+    def setup(self):
         self.rho.x.scatter_forward()
         self.A_dir.x.scatter_forward()
 
         self.A = create_matrix(self.a_form)
-        assemble_matrix(self.A, self.a_form, bcs=self.bcs)
-        self.A.assemble()
+        self.assemble_lhs()
 
-
-        self.b = assemble_vector(self.L_form)
-        apply_lifting(self.b, [self.a_form], bcs=[self.bcs])
-        self.b.ghostUpdate(PETSc.InsertMode.ADD, PETSc.ScatterMode.REVERSE)
-        set_bc(self.b, self.bcs)
-        self.b.ghostUpdate(PETSc.InsertMode.INSERT, PETSc.ScatterMode.FORWARD)
-
-        # Validate Dirichlet boundary conditions
-        # In some contexts (e.g., matrix-only tests), it's valid to proceed
-        # without Dirichlet DOFs. Emit a warning instead of raising.
-        from simulation.utils import collect_dirichlet_dofs
-        owned_fix = collect_dirichlet_dofs(self.bcs, self.V.dofmap.index_map.size_local)
-        n_fix_local = int(owned_fix.size)
-        n_fix = self.comm.allreduce(n_fix_local, op=MPI.SUM)
-        if n_fix == 0:
-            if self.comm.rank == 0:
-                self.logger.warning(
-                    "No mechanics Dirichlet DOFs found (facet tag 'fixed' missing/empty). Proceeding with free system."
-                )
-
-        ns = build_nullspace(self.V)
+        ns = build_nullspace(self.function_space)
         self.A.setBlockSize(self.gdim)
         self.A.setNearNullSpace(ns)
         self.A.setOption(PETSc.Mat.Option.SPD, True)
@@ -289,288 +229,121 @@ class MechanicsSolver(_BaseLinearSolver):
         self.create_ksp(prefix="mechanics", ksp_options=ksp_options)
         self._reset_stats()
 
-    def update_stiffness(self):
-        self.rho.x.scatter_forward()
-        self.A_dir.x.scatter_forward()
-        self.A.zeroEntries()
-        assemble_matrix(self.A, self.a_form, bcs=self.bcs)
-        self.A.assemble()
-        if self.ksp is not None:
-            self.ksp.setOperators(self.A)
-
-    def update_rhs(self):
+    def assemble_rhs(self):
         with self.b.localForm() as b_loc:
             b_loc.set(0.0)
         assemble_vector(self.b, self.L_form)
-        apply_lifting(self.b, [self.a_form], bcs=[self.bcs])
+        apply_lifting(self.b, [self.a_form], bcs=[self.dirichlet_bcs])
         self.b.ghostUpdate(PETSc.InsertMode.ADD, PETSc.ScatterMode.REVERSE)
-        set_bc(self.b, self.bcs)
+        set_bc(self.b, self.dirichlet_bcs)
         self.b.ghostUpdate(PETSc.InsertMode.INSERT, PETSc.ScatterMode.FORWARD)
 
-    # --------------------------- Gait Mode API -------------------------------
-    def add_neumann_bc(self, traction_func: fem.Function, facet_tag: int):
-        """Add a Neumann boundary condition (traction on tagged facets).
-        
-        Must be called before solver_setup().
-        """
-        self.neumanns.append((traction_func, facet_tag))
-    
-    def set_gait_mode(self, quadrature: GaitQuadrature):
-        """Enable gait accumulation mode with time-varying loads.
-        
-        Parameters
-        ----------
-        quadrature : GaitQuadrature
-            Object that provides (phase, weight) pairs and updates traction functions.
-        """
-        self.gait_mode = quadrature
-    
-    def clear_gait_cache(self):
-        """Clear cached gait solutions (call at start of each timestep)."""
-        self._cached_gait_solutions = []
+    def solve(self):
+        its, reason = self._solve()
+        self._maybe_warn(reason, "Mechanics")
+        return its, reason
 
-    # --------------------------- Core Solve ----------------------------------
-    def solve(self, u_func: fem.Function):
-        """Solve mechanics (single-phase or gait-accumulated).
-        
-        Parameters
-        ----------
-        u_func : fem.Function
-            Output displacement function. If gait_mode is active, contains
-            mid-gait displacement for visualization; otherwise single-load solution.
-        
-        Returns
-        -------
-        total_iters : int
-            Total KSP iterations (sum across all gait phases if applicable)
-        reason : int
-            Convergence reason from last solve
-        """
-        if self.gait_mode is None:
-            # Simple single-load solve
-            self.update_rhs()
-            its, reason = self._solve(u_func)
-            self._maybe_warn(reason, "Mechanics")
-            return its, reason
-        else:
-            # Gait accumulation mode
-            return self._solve_gait_accumulated(u_func)
-    
-    def _solve_gait_accumulated(self, u_out: fem.Function) -> Tuple[int, int]:
-        """Solve mechanics at multiple gait phases and store mid-gait u in u_out."""
-        quad = self.gait_mode.get_quadrature()
-        u_list: List[Tuple[fem.Function, float]] = []
-        total_iters = 0
-        last_reason = 0
-        
-        mid_idx = len(quad) // 2
-        
-        for idx, (phase_pct, weight) in enumerate(quad):
-            # Update traction functions for this phase
-            self.gait_mode.update_loads(phase_pct)
-            
-            # Reassemble RHS with updated tractions
-            self.update_rhs()
-            
-            # Solve at this phase
-            u_phase = fem.Function(self.V, name=f"u_{phase_pct:.1f}")
-            iters, reason = self._solve(u_phase)
-            total_iters += iters
-            last_reason = reason
-            
-            # Store mid-gait displacement for visualization
-            if idx == mid_idx:
-                assign(u_out, u_phase.x.array)
-            
-            u_list.append((u_phase, weight))
-        
-        # Cache solutions for strain energy / strain tensor queries
-        self._cached_gait_solutions = u_list
-        
-        if last_reason < 0:
-            self.logger.warning(f"Mechanics (gait) failed to converge (reason: {last_reason})")
-        
-        return total_iters, last_reason
-
-    def average_strain_energy(self, u_func: fem.Function) -> float:
-        """Average strain-energy density in physical units."""
-        u_func.x.scatter_forward()
+    def average_strain_energy(self) -> float:
+        self.u.x.scatter_forward()
         self.rho.x.scatter_forward()
         self.A_dir.x.scatter_forward()
 
-        strain_energy_nd = 0.5 * ufl.inner(self.sigma(u_func, self.rho), self.eps(u_func))
-        dx = self.dx
-        vol_local = fem.assemble_scalar(fem.form(1.0 * dx))
+        strain_energy_nd = 0.5 * ufl.inner(self.sigma(self.u, self.rho, self.A_dir), self.eps(self.u))
+        vol_local = fem.assemble_scalar(fem.form(1.0 * self.dx))
         vol = self.comm.allreduce(vol_local, op=MPI.SUM)
-
-        psi_local_nd = fem.assemble_scalar(fem.form(strain_energy_nd * dx))
+        psi_local_nd = fem.assemble_scalar(fem.form(strain_energy_nd * self.dx))
         psi_nd = self.comm.allreduce(psi_local_nd, op=MPI.SUM)
-        # Scale to physical units [J/m^3] once
         return float((psi_nd / max(vol, 1e-300)) * self.cfg.psi_c)
     
-    def energy_balance_nd(self, u_func: fem.Function) -> tuple[float, float, float]:
-        u_func.x.scatter_forward()
+    def energy_balance_nd(self) -> tuple[float, float, float]:
+        self.u.x.scatter_forward()
         self.rho.x.scatter_forward()
 
-        sigma_u = self.sigma(u_func, self.rho)
-        eps_u = self.eps(u_func)
-
+        sigma_u = self.sigma(self.u, self.rho, self.A_dir)
+        eps_u = self.eps(self.u)
         Wint_local = fem.assemble_scalar(fem.form(ufl.inner(sigma_u, eps_u) * self.dx))
         W_int_nd = float(self.comm.allreduce(Wint_local, op=MPI.SUM))
 
         zero_vec = fem.Constant(self.mesh, (0.0,) * self.gdim)
-        Wext_form = ufl.inner(zero_vec, u_func) * self.ds
-        if hasattr(self, "neumanns") and self.neumanns:
-            for t, tag in self.neumanns:
-                Wext_form = Wext_form + ufl.inner(t, u_func) * self.ds(tag)
+        Wext_form = ufl.inner(zero_vec, self.u) * self.ds
+        if self.neumann_bcs:
+            for t, tag in self.neumann_bcs:
+                Wext_form = Wext_form + ufl.inner(t, self.u) * self.ds(tag)
         Wext_local = fem.assemble_scalar(fem.form(Wext_form))
         W_ext_nd = float(self.comm.allreduce(Wext_local, op=MPI.SUM))
 
         rel_err = abs(W_ext_nd - W_int_nd) / max(W_ext_nd, W_int_nd, 1e-30)
         return W_int_nd, W_ext_nd, rel_err
-
-    # --------------------------- Query Methods -------------------------------
-    def get_strain_energy_density(self, u: Optional[fem.Function] = None):
-        """Return strain energy density expression.
-        
-        Parameters
-        ----------
-        u : Optional[fem.Function]
-            Displacement for which to compute strain energy.
-            If None, uses gait-averaged expression from cached solutions if available,
-            otherwise falls back to self.u (last solve result).
-        
-        Returns
-        -------
-        ufl expression for strain energy density ψ = 0.5 σ:ε
-        """
-        if u is not None:
-            # Explicit displacement provided
-            return 0.5 * ufl.inner(self.sigma(u, self.rho), self.eps(u))
-        
-        # No explicit u provided - use gait cache if available
-        if self.gait_mode is not None and self._cached_gait_solutions:
-            # Return gait-averaged expression using cached solutions
-            psi_terms = []
-            for u_phase, weight in self._cached_gait_solutions:
-                psi_k = 0.5 * ufl.inner(self.sigma(u_phase, self.rho), self.eps(u_phase))
-                psi_terms.append(weight * psi_k)
-            return sum(psi_terms)
-        
-        # Fallback: no gait mode or cache not ready - must provide u explicitly
-        raise ValueError("get_strain_energy_density() requires displacement argument when gait cache is empty")
     
-    def get_strain_tensor(self, u: Optional[fem.Function] = None):
-        """Return strain tensor B = ε^T ε for direction solver.
-        
-        Parameters
-        ----------
-        u : Optional[fem.Function]
-            Displacement for which to compute strain tensor.
-            If None, uses gait-averaged expression from cached solutions if available.
-        
-        Returns
-        -------
-        ufl expression for B = ε^T ε
-        """
-        if u is not None:
-            eps = self.eps(u)
-            return ufl.dot(ufl.transpose(eps), eps)
-        
-        # No explicit u provided - use gait cache if available
-        if self.gait_mode is not None and self._cached_gait_solutions:
-            B_terms = []
-            for u_phase, weight in self._cached_gait_solutions:
-                eps_k = self.eps(u_phase)
-                B_k = ufl.dot(ufl.transpose(eps_k), eps_k)
-                B_terms.append(weight * B_k)
-            return sum(B_terms)
-        
-        # Fallback: no gait mode or cache not ready
-        raise ValueError("get_strain_tensor() requires displacement argument when gait cache is empty")
+    def update_load(self, loader):
+        pass
 
 
 
 # --------------------------- Stimulus S --------------------------------------
 class StimulusSolver(_BaseLinearSolver):
-    def __init__(self, Q: fem.FunctionSpace, S_old: fem.Function, config: Config):
-        super().__init__(Q.mesh.comm, config)
-        self.mesh = Q.mesh
-        self.rank = self.comm.rank
-        self.Q = Q
+    def __init__(
+        self,
+        S: fem.Function,
+        S_old: fem.Function,
+        config: Config,
+    ):
+        super().__init__(config, S, [], [])
+        self.S = self.state
         self.S_old = S_old
-        self.dx = self.cfg.dx
 
-        # domain volume for normalized QoIs
         vol_local = fem.assemble_scalar(fem.form(1.0 * self.dx))
         self.total_vol = self.comm.allreduce(vol_local, op=MPI.SUM)
 
-        self.Str = ufl.TrialFunction(self.Q)
-        self.q = ufl.TestFunction(self.Q)
-
         a = (
-            (self.cfg.cS_c / self.cfg.dt_nd + self.cfg.tauS_c) * self.Str * self.q * self.dx
-            + self.cfg.kappaS_c * ufl.inner(ufl.grad(self.Str), ufl.grad(self.q)) * self.dx
+            (self.cfg.cS_c / self.cfg.dt_nd + self.cfg.tauS_c) * self.trial * self.test * self.dx
+            + self.cfg.kappaS_c * ufl.inner(ufl.grad(self.trial), ufl.grad(self.test)) * self.dx
         )
         self.a_form = fem.form(a)
-        self._rhs_form: Optional[fem.Form] = None
+        self._rhs_form = None
 
-    def solver_setup(self):
+    def setup(self):
         self.A = create_matrix(self.a_form)
-        assemble_matrix(self.A, self.a_form)
-        self.A.assemble()
+        self.assemble_lhs()
+
         self.A.setOption(PETSc.Mat.Option.SPD, True)
-        self.b = create_vector(self.Q)
         ksp_options = {"ksp_type": self.cfg.ksp_type, "pc_type": self.cfg.pc_type}
         self.create_ksp(prefix="stimulus", ksp_options=ksp_options)
         self._reset_stats()
 
-    def update_lhs(self):
-        self.A.zeroEntries()
-        assemble_matrix(self.A, self.a_form)
-        self.A.assemble()
-        self.ksp.setOperators(self.A)
-        self.ksp.setUp()
-        self._reset_stats()
-
-    def update_rhs(self, psi_expr):
+    def assemble_rhs(self, psi_expr):
         with self.b.localForm() as b_local:
             b_local.set(0.0)
         self.S_old.x.scatter_forward()
         rhs = (self.cfg.cS_c / self.cfg.dt_nd) * self.S_old + self.cfg.rS_gain_c * (
             psi_expr - self.cfg.psi_ref_nd
         )
-        self._rhs_form = fem.form(rhs * self.q * self.dx)
+        self._rhs_form = fem.form(rhs * self.test * self.dx)
         assemble_vector(self.b, self._rhs_form)
         self.b.ghostUpdate(PETSc.InsertMode.ADD, PETSc.ScatterMode.REVERSE)
         self.b.ghostUpdate(PETSc.InsertMode.INSERT, PETSc.ScatterMode.FORWARD)
 
-    def solve(self, S_func: fem.Function):
-        S_func.x.scatter_forward()
-        its, reason = self._solve(S_func)
+    def solve(self):
+        self.S.x.scatter_forward()
+        its, reason = self._solve()
         self._maybe_warn(reason, "Stimulus")
         return its, reason
 
-    def power_balance_residual(self, S_current: fem.Function, psi_expr) -> tuple[float, float]:
-        """Power balance check: storage + decay ≈ source + diffusion flux."""
-        S_current.x.scatter_forward()
+    def power_balance_residual(self, psi_expr) -> tuple[float, float]:
+        self.S.x.scatter_forward()
         self.S_old.x.scatter_forward()
         one = fem.Constant(self.mesh, default_scalar_type(1.0))
-        dt_val = float(self.cfg.dt_nd.value)
-        # Storage term: c_S * (S - S_old)/dt
-        storage_loc = fem.assemble_scalar(fem.form((self.cfg.cS_c / dt_val) * (S_current - self.S_old) * one * self.dx))
+        dt_val = _val(self.cfg.dt_nd)
+        storage_loc = fem.assemble_scalar(fem.form((self.cfg.cS_c / dt_val) * (self.S - self.S_old) * one * self.dx))
         storage = float(self.comm.allreduce(storage_loc, op=MPI.SUM))
-        # Decay term: tau_S * S
-        decay_loc = fem.assemble_scalar(fem.form(self.cfg.tauS_c * S_current * one * self.dx))
+        decay_loc = fem.assemble_scalar(fem.form(self.cfg.tauS_c * self.S * one * self.dx))
         decay = float(self.comm.allreduce(decay_loc, op=MPI.SUM))
-        # Source term: r_S * (psi - psi_ref)
         source_loc = fem.assemble_scalar(fem.form(self.cfg.rS_gain_c * (psi_expr - self.cfg.psi_ref_nd) * one * self.dx))
         source = float(self.comm.allreduce(source_loc, op=MPI.SUM))
-        # Diffusion flux through domain (should be ~0 with Neumann BCs)
-        flux_loc = fem.assemble_scalar(fem.form(self.cfg.kappaS_c * ufl.inner(ufl.grad(S_current), ufl.grad(S_current)) * self.dx))
+        n = ufl.FacetNormal(self.mesh)
+        flux_loc = fem.assemble_scalar(fem.form(self.cfg.kappaS_c * ufl.dot(ufl.grad(self.S), n) * self.ds))
         flux = float(self.comm.allreduce(flux_loc, op=MPI.SUM))
-        # Residual: (storage + decay) - (source + 0) since ∫∇·(κ∇S) = 0 with Neumann BC
-        R = (storage + decay) - source
+        R = (storage + decay) - (source + flux)
         denom = abs(storage) + abs(decay) + abs(source) + 1e-30
         return abs(R), abs(R) / denom
 
@@ -579,47 +352,37 @@ class StimulusSolver(_BaseLinearSolver):
 class DensitySolver(_BaseLinearSolver):
     def __init__(
         self,
-        Q: fem.FunctionSpace,
+        rho: fem.Function,
         rho_old: fem.Function,
-        A_field: fem.Function,
-        S_func: fem.Function,
+        A_dir: fem.Function,
+        S: fem.Function,
         config: Config,
     ):
-        super().__init__(Q.mesh.comm, config)
-        self.mesh = Q.mesh
-        self.rank = self.comm.rank
-        self.Q = Q
+        super().__init__(config, rho, [], [])
+        self.rho = self.state
         self.rho_old = rho_old
-        self.A_field = A_field
-        self.S = S_func
-        self.dx = self.cfg.dx
+        self.A_dir = A_dir
+        self.S = S
 
-        # domain volume for normalized QoIs
         vol_local = fem.assemble_scalar(fem.form(1.0 * self.dx))
         self.total_vol = self.comm.allreduce(vol_local, op=MPI.SUM)
 
-        self.rho = ufl.TrialFunction(self.Q)
-        self.q = ufl.TestFunction(self.Q)
-
-        d = self.Q.mesh.geometry.dim
+        d = self.mesh.geometry.dim  # fixed: self.Q not defined
         I = ufl.Identity(d)
 
-        # Smooth, normalized direction tensor (unit trace) for transport tensor (PSD by construction)
-        Asym = 0.5 * (self.A_field + ufl.transpose(self.A_field))
+        Asym = 0.5 * (self.A_dir + ufl.transpose(self.A_dir))
         Ahat = unittrace_psd_from_any(Asym, d, eps=self.smooth_eps)
 
         Bten = self.cfg.beta_perp_nd * I + (self.cfg.beta_par_nd - self.cfg.beta_perp_nd) * Ahat
 
-        # --- Smooth S+, S-, |S| (unified epsilon) ---
-        S = self.S
-        Sabs_smooth = smooth_abs(S, self.smooth_eps)
-        Splus_smooth = 0.5 * (S + Sabs_smooth)
-        Sminus_smooth = 0.5 * (Sabs_smooth - S)
+        Sabs_smooth = smooth_abs(self.S, self.smooth_eps)
+        Splus_smooth = 0.5 * (self.S + Sabs_smooth)
+        Sminus_smooth = 0.5 * (Sabs_smooth - self.S)
 
         a = (
-            (self.rho / self.cfg.dt_nd) * self.q * self.dx
-            + ufl.inner(Bten * ufl.grad(self.rho), ufl.grad(self.q)) * self.dx
-            + Sabs_smooth * self.rho * self.q * self.dx
+            (self.trial / self.cfg.dt_nd) * self.test * self.dx
+            + ufl.inner(Bten * ufl.grad(self.trial), ufl.grad(self.test)) * self.dx
+            + Sabs_smooth * self.trial * self.test * self.dx
         )
         self.a_form = fem.form(a)
 
@@ -628,154 +391,107 @@ class DensitySolver(_BaseLinearSolver):
             + Splus_smooth * self.cfg.rho_max_nd
             + Sminus_smooth * self.cfg.rho_min_nd
         )
-        self.L_form_template = fem.form(rhs_expr * self.q * self.dx)
+        self.L_form_template = fem.form(rhs_expr * self.test * self.dx)
 
-    def solver_setup(self):
+    def setup(self):
         self.A = create_matrix(self.a_form)
-        assemble_matrix(self.A, self.a_form)
-        self.A.assemble()
+        self.assemble_lhs()
         self.A.setOption(PETSc.Mat.Option.SPD, True)
-        self.b = create_vector(self.Q)
         ksp_options = {"ksp_type": self.cfg.ksp_type, "pc_type": self.cfg.pc_type}
         self.create_ksp(prefix="density", ksp_options=ksp_options)
         self._reset_stats()
 
-    def update_system(self):
-        self.rho_old.x.scatter_forward()
-        self.A_field.x.scatter_forward()
-        self.S.x.scatter_forward()
-
-        self.A.zeroEntries()
-        assemble_matrix(self.A, self.a_form)
-        self.A.assemble()
-        self.ksp.setOperators(self.A)
-        self.ksp.setUp()
-
+    def assemble_rhs(self):
         with self.b.localForm() as b_local:
             b_local.set(0.0)
         assemble_vector(self.b, self.L_form_template)
         self.b.ghostUpdate(PETSc.InsertMode.ADD, PETSc.ScatterMode.REVERSE)
         self.b.ghostUpdate(PETSc.InsertMode.INSERT, PETSc.ScatterMode.FORWARD)
 
-    def solve(self, rho_func: fem.Function):
-        rho_func.x.scatter_forward()
-        its, reason = self._solve(rho_func)
+    def solve(self):
+        self.rho.x.scatter_forward()
+        its, reason = self._solve()
         self._maybe_warn(reason, "Density")
-        rho_func.x.scatter_forward()
+        self.rho.x.scatter_forward()
         return its, reason
     
-    def mass_balance_residual(self, rho_current: fem.Function) -> tuple[float, float]:
-        """Mass balance check for density: returns (abs_residual, relative_error) in ND units."""
-        rho_current.x.scatter_forward()
+    def mass_balance_residual(self) -> tuple[float, float]:
+        self.rho.x.scatter_forward()
         self.rho_old.x.scatter_forward()
         self.S.x.scatter_forward()
-        self.A_field.x.scatter_forward()
+        self.A_dir.x.scatter_forward()
         one = fem.Constant(self.mesh, default_scalar_type(1.0))
-        M_new_loc = fem.assemble_scalar(fem.form(rho_current * one * self.dx))
+        M_new_loc = fem.assemble_scalar(fem.form(self.rho * one * self.dx))
         M_old_loc = fem.assemble_scalar(fem.form(self.rho_old * one * self.dx))
         M_new = float(self.comm.allreduce(M_new_loc, op=MPI.SUM))
         M_old = float(self.comm.allreduce(M_old_loc, op=MPI.SUM))
-        S = self.S
-        Sabs = smooth_abs(S, self.smooth_eps)
-        Splus = 0.5 * (S + Sabs)
-        Sminus = 0.5 * (Sabs - S)
-        decay_loc = fem.assemble_scalar(fem.form(Sabs * rho_current * self.dx))
+        Sabs = smooth_abs(self.S, self.smooth_eps)
+        Splus = 0.5 * (self.S + Sabs)
+        Sminus = 0.5 * (Sabs - self.S)
+        decay_loc = fem.assemble_scalar(fem.form(Sabs * self.rho * self.dx))
         src_loc = fem.assemble_scalar(fem.form((Splus * self.cfg.rho_max_nd + Sminus * self.cfg.rho_min_nd) * self.dx))
         decay = float(self.comm.allreduce(decay_loc, op=MPI.SUM))
         src = float(self.comm.allreduce(src_loc, op=MPI.SUM))
-        dt_val = float(self.cfg.dt_nd.value)
+        dt_val = _val(self.cfg.dt_nd)
         R = (M_new - M_old) / max(dt_val, 1e-30) + decay - src
         denom = abs((M_new - M_old) / max(dt_val, 1e-30)) + abs(decay) + abs(src) + 1e-30
         return abs(R), abs(R) / denom
 
 
-
 # --------------------------- Direction tensor A -------------------------------
 class DirectionSolver(_BaseLinearSolver):
-    def __init__(self, T: fem.FunctionSpace, A_old: fem.Function, config: Config):
-        super().__init__(T.mesh.comm, config)
-        self.T = T
+    def __init__(
+        self,
+        A_dir: fem.Function,
+        A_old: fem.Function,
+        config: Config,
+    ):
+        super().__init__(config, A_dir, [], [])
+        self.A_dir = self.state
         self.A_old = A_old
-        self.dx = self.cfg.dx
-        self.gdim = T.mesh.geometry.dim
 
-        # domain volume for normalized QoIs
         vol_local = fem.assemble_scalar(fem.form(1.0 * self.dx))
         self.total_vol = self.comm.allreduce(vol_local, op=MPI.SUM)
 
-        self.Atr = ufl.TrialFunction(self.T)
-        self.Q = ufl.TestFunction(self.T)
-
         ell2 = self.cfg.ell_c ** 2
         a = (
-            (self.cfg.cA_c / self.cfg.dt_nd + self.cfg.tauA_c) * ufl.inner(self.Atr, self.Q) * self.dx
-            + self.cfg.cA_c * ell2 * ufl.inner(ufl.grad(self.Atr), ufl.grad(self.Q)) * self.dx
+            (self.cfg.cA_c / self.cfg.dt_nd + self.cfg.tauA_c) * ufl.inner(self.trial, self.test) * self.dx
+            + self.cfg.cA_c * ell2 * ufl.inner(ufl.grad(self.trial), ufl.grad(self.test)) * self.dx
         )
         self.a_form = fem.form(a)
-        self._rhs_form: Optional[fem.Form] = None
+        self._rhs_form = None
 
-    def solver_setup(self):
+    def setup(self):
         self.A = create_matrix(self.a_form)
-        assemble_matrix(self.A, self.a_form)
-        self.A.assemble()
+        self.assemble_lhs()
         self.A.setOption(PETSc.Mat.Option.SPD, True)
-        self.b = create_vector(self.T)
         ksp_options = {"ksp_type": self.cfg.ksp_type, "pc_type": self.cfg.pc_type}
         self.create_ksp(prefix="direction", ksp_options=ksp_options)
         self._reset_stats()
 
-    def update_lhs(self):
-        self.A.zeroEntries()
-        assemble_matrix(self.A, self.a_form)
-        self.A.assemble()
-        self.ksp.setOperators(self.A)
-        self.ksp.setUp()
-        self._reset_stats()
-
-    def update_rhs(self, mech: MechanicsSolver, u_func: fem.Function):
-        u_func.x.scatter_forward()
-        self.A_old.x.scatter_forward()
-
-        eps_ten = mech.eps(u_func)
-        B = ufl.dot(ufl.transpose(eps_ten), eps_ten)     # symmetric PSD
-        B_hat = unittrace_psd(B, self.gdim, eps=self.smooth_eps)
+    def assemble_rhs(self, B_sum_expr):
+        B_hat = unittrace_psd(B_sum_expr, self.gdim, eps=self.smooth_eps)
+        rhs_ten = (self.cfg.cA_c / self.cfg.dt_nd) * self.A_old + self.cfg.tauA_c * B_hat
+        self._rhs_form = fem.form(ufl.inner(rhs_ten, self.test) * self.dx)
 
         with self.b.localForm() as b_local:
             b_local.set(0.0)
-        rhs_ten = (self.cfg.cA_c / self.cfg.dt_nd) * self.A_old + self.cfg.tauA_c * B_hat
-        self._rhs_form = fem.form(ufl.inner(rhs_ten, self.Q) * self.dx)
-
         assemble_vector(self.b, self._rhs_form)
         self.b.ghostUpdate(PETSc.InsertMode.ADD, PETSc.ScatterMode.REVERSE)
         self.b.ghostUpdate(PETSc.InsertMode.INSERT, PETSc.ScatterMode.FORWARD)
 
-    def solve(self, A_func: fem.Function):
-        A_func.x.scatter_forward()
-        its, reason = self._solve(A_func)
+    def solve(self):
+        self.A_dir.x.scatter_forward()
+        its, reason = self._solve()
         self._maybe_warn(reason, "Direction")
         return its, reason
 
-    def trace_balance_residual(self, A_current: fem.Function, Mhat_expr) -> tuple[float, float, float]:
-        """Trace conservation check: tr(A) should relax to tr(M̂)=1."""
-        A_current.x.scatter_forward()
-        mesh = A_current.function_space.mesh
-        one = fem.Constant(mesh, default_scalar_type(1.0))
-        # Volume-averaged trace of A
-        trA_loc = fem.assemble_scalar(fem.form(ufl.tr(A_current) * one * self.dx))
+    def trace_balance_residual(self, Mhat_expr) -> tuple[float, float, float]:
+        self.A_dir.x.scatter_forward()
+        one = fem.Constant(self.mesh, default_scalar_type(1.0))
+        trA_loc = fem.assemble_scalar(fem.form(ufl.tr(self.A_dir) * one * self.dx))
         trA_vol = float(self.comm.allreduce(trA_loc, op=MPI.SUM)) / self.total_vol
-        # Volume-averaged trace of M̂ (should be 1 by construction)
         trMhat_loc = fem.assemble_scalar(fem.form(ufl.tr(Mhat_expr) * one * self.dx))
         trMhat_vol = float(self.comm.allreduce(trMhat_loc, op=MPI.SUM)) / self.total_vol
-        # Residual: how far tr(A) deviates from target tr(M̂)
         R = trA_vol - trMhat_vol
         return trA_vol, trMhat_vol, abs(R)
-    
-    def update_rhs_from_Bexpr(self, B_sum_expr):
-        B_hat = unittrace_psd(B_sum_expr, self.gdim, eps=self.smooth_eps)
-        with self.b.localForm() as b_local:
-            b_local.set(0.0)
-        rhs_ten = (self.cfg.cA_c / self.cfg.dt_nd) * self.A_old + self.cfg.tauA_c * B_hat
-        self._rhs_form = fem.form(ufl.inner(rhs_ten, self.Q) * self.dx)
-        assemble_vector(self.b, self._rhs_form)
-        self.b.ghostUpdate(PETSc.InsertMode.ADD, PETSc.ScatterMode.REVERSE)
-        self.b.ghostUpdate(PETSc.InsertMode.INSERT, PETSc.ScatterMode.FORWARD)
