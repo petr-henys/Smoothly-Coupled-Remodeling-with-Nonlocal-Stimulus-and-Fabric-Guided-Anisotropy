@@ -115,8 +115,8 @@ class FemurRemodellerGait:
         self.t_glmax.interpolate(lambda x: self.gl_max((x.T * self.coord_scale)).T * scale)
 
 
-def setup_femur_gait_loading(V: fem.functionspace, config: Config, BW_kg: float = 75.0, n_samples: int = 9
-                             ) -> FemurGaitLoader:
+def setup_femur_gait_loading(V: fem.FunctionSpace, config: Config, BW_kg: float = 75.0, n_samples: int = 9
+                             ) -> "FemurRemodellerGait":
     """
     
     This function shows HOW to set up loading. Users must adapt this
@@ -157,7 +157,7 @@ def setup_femur_gait_loading(V: fem.functionspace, config: Config, BW_kg: float 
     t_glmed = fem.Function(V, name="t_glmed")
     t_glmax = fem.Function(V, name="t_glmax")
     
-    return FemurGaitLoader(
+    return FemurRemodellerGait(
         t_hip=t_hip, t_glmed=t_glmed, t_glmax=t_glmax,
         hip=hip, gl_med=gl_med, gl_max=gl_max, hip_gait=hip_gait,
         glmed_gait=gl_med_gait, glmax_gait=gl_max_gait,

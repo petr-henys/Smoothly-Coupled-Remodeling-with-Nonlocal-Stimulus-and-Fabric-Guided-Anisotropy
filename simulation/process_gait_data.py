@@ -4,11 +4,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 import re
+from mpi4py import MPI
 
-from .logging_config import get_logger
+from simulation.logger import get_logger
 from .paths import GaitPaths
 
-logger = get_logger(__name__)
+# Module-level logger
+_logger = get_logger(MPI.COMM_WORLD, verbose=True, name="process_gait_data")
 
 def load_xy_datasets(xlsx_path: str | Path, sheet: str | int | None = 0, flip_y: bool = False) -> Dict[str, np.ndarray]:
     df = pd.read_excel(xlsx_path, sheet_name=sheet, header=[0, 1], engine="openpyxl")
@@ -170,7 +172,7 @@ def hip_to_xy_datasets(hip_path: str | Path, components: List[str] = None, vs_ti
             y_data = data[:, component_map[comp]]
             datasets[f"{comp}_vs_{x_label}"] = np.column_stack((x_data, y_data))
         else:
-            logger.warning(f"Unknown component: {comp}")
+            _logger.warning(f"Unknown component: {comp}")
     
     return datasets
 
@@ -183,9 +185,9 @@ def plot_hip_data(hip_path: str | Path, components: List[str] = None, vs_time: b
     datasets = hip_to_xy_datasets(hip_path, components, vs_time)
     
     if show_warnings and result['physics_warnings']:
-        logger.warning("Physics warnings found:")
+        _logger.warning("Physics warnings found:")
         for warning in result['physics_warnings']:
-            logger.warning(f"  - {warning}")
+            _logger.warning(f"  - {warning}")
     
     plt.figure(figsize=(10, 6))
     colors = ['red', 'blue', 'green', 'orange']
@@ -236,40 +238,31 @@ def demo_hip_parser() -> None:
     hip_file = GaitPaths.HIP99_WALKING
     
     if not hip_file.exists():
-        logger.error(f"HIP file not found: {hip_file}")
+        _logger.error(f"HIP file not found: {hip_file}")
         return
     
-    logger.info("=== HIP Parser Demo ===")
+    _logger.info("=== HIP Parser Demo ===")
     
     result = parse_hip_file(hip_file)
     data = result['data']
     
-    logger.info(f"File: {result['metadata']['file_name']}")
-    logger.info(f"Data shape: {data.shape}")
-    logger.info(f"Columns: {result['column_names']}")
+    _logger.info(f"File: {result['metadata']['file_name']}")
+    _logger.info(f"Data shape: {data.shape}")
+    _logger.info(f"Columns: {result['column_names']}")
 
     fx, fy, fz, f = data[:, 1], data[:, 2], data[:, 3], data[:, 4]
-    logger.info("Force Statistics:")
-    logger.info(f"  Max |Fx|: {np.max(np.abs(fx)):.1f} N")
-    logger.info(f"  Max |Fy|: {np.max(np.abs(fy)):.1f} N")
-    logger.info(f"  Max |Fz|: {np.max(np.abs(fz)):.1f} N")
-    logger.info(f"  Max |F|:  {np.max(f):.1f} N")
+    _logger.info("Force Statistics:")
+    _logger.info(f"  Max |Fx|: {np.max(np.abs(fx)):.1f} N")
+    _logger.info(f"  Max |Fy|: {np.max(np.abs(fy)):.1f} N")
+    _logger.info(f"  Max |Fz|: {np.max(np.abs(fz)):.1f} N")
+    _logger.info(f"  Max |F|:  {np.max(f):.1f} N")
     
-    logger.info("--- Plotting All Force Components ---")
+    _logger.info("--- Plotting All Force Components ---")
     plot_hip_data(hip_file, show_warnings=False)
 
 
 def main() -> int:
-    try:
-        from .logging_config import setup_logging
-    except ImportError:
-        import sys
-        sys.path.append(str(Path(__file__).parent))
-        from logging_config import setup_logging
-    
-    setup_logging(level="INFO")
-    
-    logger.info("=== Excel Data Processing Demo ===")
+    _logger.info("=== Excel Data Processing Demo ===")
     xlsx_file = GaitPaths.AMIRI_EXCEL
     n_vertical, m_horizontal = 4, 9
 
@@ -277,11 +270,11 @@ def main() -> int:
     points = points["Dataset_WS"]
 
     curves = segment_curves_grid(points, n_vertical, m_horizontal)
-    logger.info(f"Detected {len(curves)} curves on a {n_vertical}×{m_horizontal} grid")
+    _logger.info(f"Detected {len(curves)} curves on a {n_vertical}×{m_horizontal} grid")
 
     plot_curves(curves, title=f"Grid {n_vertical}×{m_horizontal}")
     
-    logger.info("=" * 50)
+    _logger.info("=" * 50)
     demo_hip_parser()
     
     return 0

@@ -5,13 +5,15 @@ import json
 
 import numpy as np
 import pyvista as pv
+from mpi4py import MPI
 from scipy.optimize import least_squares
 from scipy.spatial import KDTree
 
-from .logging_config import get_logger, get_class_logger
+from simulation.logger import get_logger
 from .paths import FemurPaths
 
-logger = get_logger(__name__)
+# Module-level logger for standalone functions
+_logger = get_logger(MPI.COMM_WORLD, verbose=True, name="femur_css")
 
 NDArrayF = np.ndarray
 
@@ -66,7 +68,7 @@ class FemurCSS:
         if self.side not in {"left", "right"}:
             raise ValueError("side must be 'left' or 'right'")
 
-        self.logger = get_class_logger(self)
+        self.logger = get_logger(MPI.COMM_WORLD, verbose=True, name="FemurCSS")
 
         self.fhc, self.head_radius = _fit_femoral_head(femur, head_line, save_head_sphere)
         self._build_axes(le_me)
@@ -88,7 +90,7 @@ class FemurCSS:
         for k, v in self.axes.items():
             point[k] = v[np.newaxis, :]
         point.save(str(filename))
-        self.logger.info("CSS axes written to %s", filename)
+        self.logger.info(f"CSS axes written to {filename}")
 
     # ------------------------------------------------------------------
     # Internals

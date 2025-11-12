@@ -1,5 +1,4 @@
 """Parse FEBio .feb files and build DOLFINx meshes with boundary tags."""
-import logging
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -10,15 +9,17 @@ from dolfinx import mesh
 from mpi4py import MPI
 from scipy.spatial import KDTree
 
+from simulation.logger import get_logger
+
 
 class FEBio2Dolfinx:
     """Parse FEBio XML and build DOLFINx mesh with surface boundary tags via KDTree matching."""
 
     def __init__(self, feb_file: str):
         """Parse FEBio file and build DOLFINx mesh with matched surface tags."""
-        self.logger = logging.getLogger(__name__)
+        self.logger = get_logger(MPI.COMM_WORLD, verbose=True, name="FEBio2Dolfinx")
         self.feb_file = Path(feb_file)
-        self.logger.info("Parsing FEBio file: %s", self.feb_file)
+        self.logger.info(f"Parsing FEBio file: {self.feb_file}")
         
         tree = ET.parse(self.feb_file)
         self.mesh_xml = tree.getroot().find("Mesh")
@@ -29,7 +30,7 @@ class FEBio2Dolfinx:
         self.mesh_dolfinx = self._create_dolfinx_mesh()
         self.meshtags = self._match_surface_tags()
         
-        self.logger.info("FEBio import complete: %d surfaces", len(self.surface_tags))
+        self.logger.info(f"FEBio import complete: {len(self.surface_tags)} surfaces")
 
     def _extract_nodes_and_elements(self) -> None:
         """Extract nodes and tet4 elements from XML (1-indexed → 0-indexed)."""
@@ -56,7 +57,7 @@ class FEBio2Dolfinx:
                 tet_elements.append(node_ids)
         
         self.elements = np.array(tet_elements, dtype=np.int64)
-        self.logger.debug("Extracted %d nodes, %d tet4 elements", len(self.nodes), len(self.elements))
+        self.logger.debug(f"Extracted {len(self.nodes)} nodes, {len(self.elements)} tet4 elements")
     
     def _extract_surfaces(self) -> None:
         """Extract surface triangle facets from XML."""
@@ -77,13 +78,13 @@ class FEBio2Dolfinx:
             
             self.surfaces[name] = np.array(triangles, dtype=np.int64)
         
-        self.logger.debug("Extracted %d surfaces: %s", len(self.surfaces), list(self.surfaces.keys()))
+        self.logger.debug(f"Extracted {len(self.surfaces)} surfaces: {list(self.surfaces.keys())}")
 
     def _create_dolfinx_mesh(self) -> mesh.Mesh:
         """Build DOLFINx mesh from tet4 connectivity and node coordinates."""
         element = basix_element("Lagrange", "tetrahedron", 1, shape=(3,))
         domain = mesh.create_mesh(MPI.COMM_WORLD, self.elements, element, self.nodes)
-        self.logger.debug("Created DOLFINx mesh: %d cells", domain.topology.index_map(3).size_global)
+        self.logger.debug(f"Created DOLFINx mesh: {domain.topology.index_map(3).size_global} cells")
         return domain
 
     def _match_surface_tags(self) -> mesh.MeshTags:
@@ -124,8 +125,7 @@ class FEBio2Dolfinx:
             all_facet_indices.append(matched_facets)
             all_facet_markers.append(np.full(len(matched_facets), marker, dtype=np.int32))
             
-            self.logger.info("Surface '%s' (tag=%d): matched %d/%d triangles (%d rejected)",
-                             surf_name, marker, len(matched_facets), len(surf_triangles), n_rejected)
+            self.logger.info(f"Surface '{surf_name}' (tag={marker}): matched {len(matched_facets)}/{len(surf_triangles)} triangles ({n_rejected} rejected)")
         
         # Combine all tags
         if not all_facet_indices:
@@ -171,7 +171,7 @@ class FEBio2Dolfinx:
         surface_mesh.cell_data["SurfaceName"] = np.array(tag_names, dtype=str)
         surface_mesh.save(str(output_path))
         
-        self.logger.info("Saved %d surface facets to %s", len(triangles), output_path)
+        self.logger.info(f"Saved {len(triangles)} surface facets to {output_path}")
 
     def __repr__(self) -> str:
         return f"FEBio2Dolfinx({self.feb_file.name}, surfaces={list(self.surface_tags.keys())})"

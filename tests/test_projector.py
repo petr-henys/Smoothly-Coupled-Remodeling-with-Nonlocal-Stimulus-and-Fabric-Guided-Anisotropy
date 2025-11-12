@@ -6,7 +6,7 @@ from mpi4py import MPI
 from dolfinx import mesh, fem
 import ufl
 
-from simulation.projector import Projector
+from simulation.projector import L2Projector as Projector
 
 # Test tolerances
 ABS_TOL = 1e-12

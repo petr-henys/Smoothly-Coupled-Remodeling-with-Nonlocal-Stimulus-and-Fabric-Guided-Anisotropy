@@ -3,15 +3,17 @@ from __future__ import annotations
 from typing import Optional, Tuple, TYPE_CHECKING
 import numpy as np
 import pyvista as pv
+from mpi4py import MPI
 from scipy.interpolate import RBFInterpolator, splprep, splev, interp1d
 from scipy.spatial import cKDTree
 
-from .logging_config import get_logger, get_class_logger
+from simulation.logger import get_logger
 
 if TYPE_CHECKING:
     from .femur_css import FemurCSS
 
-logger = get_logger(__name__)
+# Module-level logger for standalone functions
+_logger = get_logger(MPI.COMM_WORLD, verbose=True, name="femur_loads")
 def build_load(gait_data, force_vector):
     gait_cycle = gait_data[:, 0]
     gait_values = gait_data[:, 1]
@@ -29,7 +31,7 @@ def vector_from_angles(magnitude: float, alpha_sag: float = 0.0, alpha_front: fl
     denom = np.sqrt(1.0 + t_sag**2 + t_front**2)
     y = magnitude / denom
     vector = np.array([t_sag * y, y, t_front * y])
-    logger.debug(f"vector_from_angles → mag={magnitude}, sag={alpha_sag}, front={alpha_front}, vec={vector}")
+    _logger.debug(f"vector_from_angles → mag={magnitude}, sag={alpha_sag}, front={alpha_front}, vec={vector}")
     return vector
 
 def gait_interpolator(gait_vs_force: np.ndarray) -> np.ndarray:
@@ -53,7 +55,7 @@ def gait_interpolator(gait_vs_force: np.ndarray) -> np.ndarray:
     try:
         t_interp = interp1d(pts[:, 0], pts[:, 1:], axis=0, kind='cubic', fill_value='extrapolate')
     except Exception as e:
-        logger.error(f"Failed to create gait interpolator: {e}")
+        _logger.error(f"Failed to create gait interpolator: {e}")
         raise
     return t_interp
 
@@ -73,7 +75,7 @@ class GaussianSurfaceLoad:
         
         # Prepare surface mesh
         # create a class‐named logger for this instance
-        self.logger = get_class_logger(self)
+        self.logger = get_logger(MPI.COMM_WORLD, verbose=True, name="GaussianSurfaceLoad")
 
         self.logger.info(f"Init {self.__class__.__name__} (use_cell_data={use_cell_data})")
         self._setup_mesh(femur_mesh)

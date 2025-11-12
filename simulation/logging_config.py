@@ -1,4 +1,11 @@
-"""Standard Python logging setup for non-MPI modules (deprecated in favor of logger.py)."""
+"""DEPRECATED: Standard Python logging setup for non-MPI modules.
+
+This module is deprecated. Use simulation.logger for all new code.
+The logger.py module provides MPI-safe logging with rank-0 only output
+and lazy string evaluation, which is the recommended approach for this codebase.
+
+This module is retained only for backward compatibility with existing tests.
+"""
 
 import logging
 import sys
