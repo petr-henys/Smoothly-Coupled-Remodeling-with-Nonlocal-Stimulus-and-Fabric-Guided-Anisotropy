@@ -123,7 +123,6 @@ class FixedPointSolver:
                     "rhoJ",
                     "J_gs",
                 ],
-                gz=False,
                 filename="subiterations.csv",
             )
 

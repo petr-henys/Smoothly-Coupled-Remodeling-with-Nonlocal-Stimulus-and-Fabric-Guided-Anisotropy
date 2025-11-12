@@ -62,7 +62,6 @@ class Remodeller:
                     "proj_res_last",
                     "rhoJ_last",
                 ],
-                gz=False,
                 filename="steps.csv",
             )
 
