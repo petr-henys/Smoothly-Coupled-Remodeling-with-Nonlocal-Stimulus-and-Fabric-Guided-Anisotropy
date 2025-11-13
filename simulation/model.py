@@ -65,13 +65,6 @@ class Remodeller:
                 filename="steps.csv",
             )
 
-        # Scale geometry to nondimensional (once per mesh object)
-        if float(self.cfg.L_c) != 1.0:
-            mid = id(self.domain)
-            if mid not in _SCALED_MESH_IDS:
-                self.domain.geometry.x[:] /= self.cfg.L_c
-                _SCALED_MESH_IDS.add(mid)
-
         self.dx = self.cfg.dx
         self.ds = self.cfg.ds
         self.gdim = self.domain.geometry.dim
@@ -96,7 +89,7 @@ class Remodeller:
 
         self.scatter_fields: Tuple[fem.Function, ...] = ()
 
-        assign(self.rho, self.cfg.rho0 / self.cfg.rho_c)
+        assign(self.rho, self.cfg.rho0)
 
         d = self.gdim
 
@@ -245,16 +238,16 @@ class Remodeller:
         rho_min, rho_max = self._field_minmax(self.rho)
         u_min, u_max = self._field_minmax(self.u)
         S_min, S_max = self._field_minmax(self.S)
-        psi_avg_dim = self.mechsolver.average_strain_energy()
+        psi_avg = self.mechsolver.average_strain_energy()
 
         return dict(
-            rho_min=rho_min * self.cfg.rho_c,
-            rho_max=rho_max * self.cfg.rho_c,
-            u_min=u_min * self.cfg.u_c * 1e3,
-            u_max=u_max * self.cfg.u_c * 1e3,
+            rho_min=rho_min,
+            rho_max=rho_max,
+            u_min=u_min * 1e3,  # convert to mm
+            u_max=u_max * 1e3,  # convert to mm
             S_min=S_min,
             S_max=S_max,
-            psi=psi_avg_dim,
+            psi=psi_avg,
         )
 
     def _is_output_step(self, step: int) -> bool:
@@ -340,13 +333,15 @@ class Remodeller:
             self.solvers_initialized = True
 
 
-        # Update nondimensional dt and reassemble LHS for time-dependent solvers if dt changed
-        if self._current_dt is None or float(dt) != float(self._current_dt):
-            self.cfg.set_dt_dim(float(dt))
+        # Update dt (convert from days to seconds) and reassemble LHS for time-dependent solvers if dt changed
+        DAY_TO_SEC = 86400.0
+        dt_seconds = float(dt) * DAY_TO_SEC
+        if self._current_dt is None or abs(dt_seconds - float(self._current_dt)) > 1e-12:
+            self.cfg.set_dt(dt_seconds)
             if self.solvers_initialized:
                 self.stimsolver.assemble_lhs()
                 self.dirsolver.assemble_lhs()
-            self._current_dt = float(dt)
+            self._current_dt = dt_seconds
         self.fixedsolver.run(time_days=time_days, step_index=step_index)
 
         metrics = list(self.fixedsolver.subiter_metrics)
@@ -467,43 +462,14 @@ class Remodeller:
             self.telemetry.write_metadata(data, filename="run_summary.json", overwrite=True)
 
     def simulate(self, dt: float, total_time: float):
-        """Run remodeling loop for total_time with timestep dt."""
+        """Run remodeling loop: total_time [days], time step dt [days]."""
         t = 0.0
-        num_steps = int(total_time / dt)
+        step = 0
+        n_steps = int(np.ceil(total_time / dt))
 
-        self.cfg.set_dt_dim(dt)
-
-        self.mechsolver.setup()
-        self.stimsolver.setup()
-        self.densolver.setup()
-        self.dirsolver.setup()
-        self.solvers_initialized = True
-
-        self._reset_iters_window()
-
-        self.comm.Barrier()
-        overall_start = MPI.Wtime()
-        mech_times, stim_times, dens_times, dir_times = [], [], [], []
-
-        for step in range(num_steps):
-            step_time = t + dt
-            self.step(dt, step_index=step, time_days=step_time)
-            self.acc_steps += 1
-
-            mech_times.append(self.fixedsolver.mech_time_total)
-            stim_times.append(self.fixedsolver.stim_time_total)
-            dens_times.append(self.fixedsolver.dens_time_total)
-            dir_times.append(self.fixedsolver.dir_time_total)
-
-            t = step_time
-            if self._is_output_step(step):
-                self._output(t, step)
-
-        self.comm.Barrier()
-        overall_elapsed = MPI.Wtime() - overall_start
-        overall_elapsed = self.comm.allreduce(overall_elapsed, op=MPI.MAX)
-
-        self._print_final_summary(num_steps, overall_elapsed, mech_times, stim_times, dens_times, dir_times)
+        # Convert to seconds for internal consistency
+        DAY_TO_SEC = 86400.0
+        self.cfg.set_dt(dt * DAY_TO_SEC)
 
 
 def load_femur_mesh_parallel(comm: MPI.Comm, feb_path: Path) -> Tuple:

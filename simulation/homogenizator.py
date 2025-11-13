@@ -56,41 +56,41 @@ class _NDMechanics:
 
     def sigma(self, u, rho):
         """Cauchy stress: smoothed density, anisotropic fabric reinforcement."""
-        rho_eff = smooth_max(rho, self.cfg.rho_min_nd, self.smooth_eps)
-        E_nd = self.cfg.E0_nd * (rho_eff ** self.cfg.n_power_c)
+        rho_eff = smooth_max(rho, self.cfg.rho_min, self.smooth_eps)
+        E = self.cfg.E0_c * (rho_eff ** self.cfg.n_power_c)
 
         eps_ten = self.eps(u)
         I = ufl.Identity(self.gdim)
         nu = self.cfg.nu_c
 
-        lmbda = E_nd * nu / ((1 + nu) * (1 - 2 * nu))
-        mu = E_nd / (2 * (1 + nu))
+        lmbda = E * nu / ((1 + nu) * (1 - 2 * nu))
+        mu = E / (2 * (1 + nu))
 
         Asym = 0.5 * (self.A_dir + ufl.transpose(self.A_dir))
         Ahat = unittrace_psd_from_any(Asym, self.gdim, self.smooth_eps)
 
         # Anisotropic projected contribution
         sigma_aniso = (
-            self.cfg.xi_aniso_c * E_nd
+            self.cfg.xi_aniso_c * E
         ) * ufl.inner(Ahat, eps_ten) * Ahat
 
         return 2 * mu * eps_ten + lmbda * ufl.tr(eps_ten) * I + sigma_aniso
 
     def sigma_const_strain(self, Eps_np: np.ndarray):
         """Stress field for constant macroscopic strain tensor Ē."""
-        rho_eff = smooth_max(self.rho, self.cfg.rho_min_nd, self.smooth_eps)
-        E_nd = self.cfg.E0_nd * (rho_eff ** self.cfg.n_power_c)
+        rho_eff = smooth_max(self.rho, self.cfg.rho_min, self.smooth_eps)
+        E = self.cfg.E0_c * (rho_eff ** self.cfg.n_power_c)
 
         I = ufl.Identity(self.gdim)
         nu = self.cfg.nu_c
-        lmbda = E_nd * nu / ((1 + nu) * (1 - 2 * nu))
-        mu = E_nd / (2 * (1 + nu))
+        lmbda = E * nu / ((1 + nu) * (1 - 2 * nu))
+        mu = E / (2 * (1 + nu))
 
         Asym = 0.5 * (self.A_dir + ufl.transpose(self.A_dir))
         Ahat = unittrace_psd_from_any(Asym, self.gdim, self.smooth_eps)
 
         Eps = ufl.as_tensor(np.asarray(Eps_np, dtype=float).tolist())
-        sigma_aniso = (self.cfg.xi_aniso_c * E_nd) * ufl.inner(Ahat, Eps) * Ahat
+        sigma_aniso = (self.cfg.xi_aniso_c * E) * ufl.inner(Ahat, Eps) * Ahat
         return 2 * mu * Eps + lmbda * ufl.tr(Eps) * I + sigma_aniso
 
 

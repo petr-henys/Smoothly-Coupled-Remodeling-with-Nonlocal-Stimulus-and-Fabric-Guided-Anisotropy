@@ -14,45 +14,48 @@ if TYPE_CHECKING:
 class Config:
     """Global configuration for bone remodeling simulation.
     
-    All DIM (dimensional) parameters use SI-derived units unless noted.
-    ND (nondimensional) Constants are built during __post_init__.
+    All parameters use SI units:
+    - Length: meters [m]
+    - Mass: kilograms [kg]
+    - Time: seconds [s] (or days [day] where explicitly noted)
+    - Stress/Pressure: Pascals [Pa]
+    - Density: kg/m³
     """
 
-    # --- base scales (DIM) ---
-    L_c: float = 1.0
-    rho_c: float = 1000.0
-    u_c: float = 1e-3
-    E0_dim: float = 6.5e9
-    psi_ref_dim: float = 300.0
+    # --- Material properties ---
+    E0: float = 6.5e9             # Young's modulus [Pa]
+    nu: float = 0.3               # Poisson's ratio [-]
+    n_power: float = 2.0          # density-stiffness power law exponent [-]
+    xi_aniso: float = 0.2         # anisotropic reinforcement factor [-]
 
-    # --- density: anisotropic diffusion (DIM) ---
-    beta_par_dim: float = 2.8e-6
-    beta_perp_dim: float = 8.5e-7
+    # --- Density bounds ---
+    rho_min: float = 350.0        # minimum density [kg/m³]
+    rho_max: float = 1850.0       # maximum density [kg/m³]
+    rho0: float = 1200.0          # initial density [kg/m³]
 
-    # --- stimulus S (DIM) ---
-    # Reaction-diffusion, driven by mechanical energy density.
-    cS_dim: float = 32.0          # signaling capacity [Pa·day]
-    tauS_dim: float = 0.04        # decay rate [1/day] → 25-day time constant
-    kappaS_dim: float = 2.5e-4    # diffusion [m^2/day]
-    rS_dim: float = 2.0e-7        # mechano-transduction gain [1/(Pa·day)]
+    # --- Density: anisotropic diffusion ---
+    beta_par: float = 2.8e-6      # parallel diffusion [m²/day]
+    beta_perp: float = 8.5e-7     # perpendicular diffusion [m²/day]
 
-    # --- orientation A (DIM) ---
-    cA_dim: float = 1.4
-    tauA_dim: float = 0.6
-    ell_dim: float = 0.35
+    # --- Stimulus S: reaction-diffusion ---
+    psi_ref: float = 300.0        # reference energy density [Pa]
+    cS: float = 32.0              # signaling capacity [Pa·day]
+    tauS: float = 0.04            # decay rate [1/day] → 25-day time constant
+    kappaS: float = 2.5e-4        # diffusion [m²/day]
+    rS: float = 2.0e-7            # mechano-transduction gain [1/(Pa·day)]
 
-    # --- nondimensional material/mechanics params ---
-    nu: float = 0.3               # Poisson's ratio
-    n_power: float = 2.0          # density-stiffness power law exponent
-    xi_aniso: float = 0.2         # anisotropic reinforcement factor
+    # --- Orientation A: fabric tensor evolution ---
+    cA: float = 1.4               # orientation capacity [-]
+    tauA: float = 0.6             # orientation relaxation time [day]
+    ell: float = 0.35             # orientation diffusion length [m]
 
-    # --- density/load limits (DIM) ---
-    rho_min_dim: float = 350.0
-    rho_max_dim: float = 1850.0
-    t_p: float = 3e6
-    rho0: float = 1200.0
+    # --- Load scaling ---
+    t_p: float = 3e6              # reference peak stress [Pa]
 
-    # --- numerics / I-O ---
+    # --- Load scaling ---
+    t_p: float = 3e6              # reference peak stress [Pa]
+
+    # --- Numerics / I-O ---
     quadrature_degree: int = 6
     saving_interval: int = 1
     results_dir: str = ".results"
@@ -113,13 +116,13 @@ class Config:
     dx: Optional[ufl.Measure] = field(init=False, default=None, repr=False)
     ds: Optional[ufl.Measure] = field(init=False, default=None, repr=False)
 
-    # --- UFL Constants (nondimensional) ---
-    E0_nd: Optional[fem.Constant] = field(init=False, default=None, repr=False)
-    dt_nd: Optional[fem.Constant] = field(init=False, default=None, repr=False)
-    psi_ref_nd: Optional[fem.Constant] = field(init=False, default=None, repr=False)
+    # --- UFL Constants (SI units) ---
+    E0_c: Optional[fem.Constant] = field(init=False, default=None, repr=False)
+    dt_c: Optional[fem.Constant] = field(init=False, default=None, repr=False)
+    psi_ref_c: Optional[fem.Constant] = field(init=False, default=None, repr=False)
 
-    beta_par_nd: Optional[fem.Constant] = field(init=False, default=None, repr=False)
-    beta_perp_nd: Optional[fem.Constant] = field(init=False, default=None, repr=False)
+    beta_par_c: Optional[fem.Constant] = field(init=False, default=None, repr=False)
+    beta_perp_c: Optional[fem.Constant] = field(init=False, default=None, repr=False)
 
     cS_c: Optional[fem.Constant] = field(init=False, default=None, repr=False)
     tauS_c: Optional[fem.Constant] = field(init=False, default=None, repr=False)
@@ -142,8 +145,8 @@ class Config:
         if not (-1.0 < self.nu < 0.5):
             raise ValueError(f"Poisson ratio nu={self.nu} must be in range (-1, 0.5) for physical validity.")
         
-        if self.E0_dim <= 0:
-            raise ValueError(f"Young's modulus E0_dim={self.E0_dim} must be positive.")
+        if self.E0 <= 0:
+            raise ValueError(f"Young's modulus E0={self.E0} must be positive.")
         
         self._build_measures()
         self._build_constants()
@@ -166,44 +169,35 @@ class Config:
         )
 
     def _build_constants(self):
-        """Build nondimensional UFL Constants from dimensional parameters."""
-        # Basic nondimensional scales
-        t_c_val = self.t_c
-
-        # Mechanics
-        self.E0_nd = fem.Constant(self.domain, self._cast(1.0))
+        """Build UFL Constants from SI-unit parameters."""
+        # Convert time from days to seconds for consistency
+        DAY_TO_SEC = 86400.0
+        
+        # Mechanics (already in SI)
+        self.E0_c = fem.Constant(self.domain, self._cast(self.E0))
         self.nu_c = fem.Constant(self.domain, self._cast(self.nu))
         self.n_power_c = fem.Constant(self.domain, self._cast(self.n_power))
 
-        # Time step (ND)
-        self.dt_nd = fem.Constant(self.domain, self._cast(1.0))
+        # Time step (will be set later in seconds)
+        self.dt_c = fem.Constant(self.domain, self._cast(1.0))
 
-        # Energy reference
-        self.psi_ref_nd = fem.Constant(self.domain, self._cast(self.psi_ref_dim / self.psi_c))
+        # Energy reference [Pa]
+        self.psi_ref_c = fem.Constant(self.domain, self._cast(self.psi_ref))
 
-        # Diffusion
-        self.beta_par_nd = fem.Constant(self.domain, self._cast(self.beta_par_dim * t_c_val / (self.L_c**2)))
-        self.beta_perp_nd = fem.Constant(self.domain, self._cast(self.beta_perp_dim * t_c_val / (self.L_c**2)))
+        # Diffusion [m²/s] - convert from m²/day
+        self.beta_par_c = fem.Constant(self.domain, self._cast(self.beta_par / DAY_TO_SEC))
+        self.beta_perp_c = fem.Constant(self.domain, self._cast(self.beta_perp / DAY_TO_SEC))
 
-        # Stimulus
-        cS_nd = self.cS_dim / t_c_val
-        tauS_nd = 1.0
-        kappaS_nd = self.kappaS_dim * t_c_val / (self.L_c**2)
-        rS_nd = self.rS_dim * self.psi_c * t_c_val
+        # Stimulus (convert from per-day to per-second)
+        self.cS_c = fem.Constant(self.domain, self._cast(self.cS / DAY_TO_SEC))
+        self.tauS_c = fem.Constant(self.domain, self._cast(self.tauS / DAY_TO_SEC))
+        self.kappaS_c = fem.Constant(self.domain, self._cast(self.kappaS / DAY_TO_SEC))
+        self.rS_gain_c = fem.Constant(self.domain, self._cast(self.rS / DAY_TO_SEC))
 
-        self.cS_c = fem.Constant(self.domain, self._cast(cS_nd))
-        self.tauS_c = fem.Constant(self.domain, self._cast(tauS_nd))
-        self.kappaS_c = fem.Constant(self.domain, self._cast(kappaS_nd))
-        self.rS_gain_c = fem.Constant(self.domain, self._cast(rS_nd))
-
-        # Orientation
-        cA_nd = self.cA_dim
-        tauA_nd = self.tauA_dim * t_c_val
-        ell_nd = self.ell_dim / self.L_c
-
-        self.cA_c = fem.Constant(self.domain, self._cast(cA_nd))
-        self.tauA_c = fem.Constant(self.domain, self._cast(tauA_nd))
-        self.ell_c = fem.Constant(self.domain, self._cast(ell_nd))
+        # Orientation (convert tauA from days to seconds)
+        self.cA_c = fem.Constant(self.domain, self._cast(self.cA))
+        self.tauA_c = fem.Constant(self.domain, self._cast(self.tauA / DAY_TO_SEC))
+        self.ell_c = fem.Constant(self.domain, self._cast(self.ell))
 
         # Anisotropy
         self.xi_aniso_c = fem.Constant(self.domain, self._cast(self.xi_aniso))
@@ -226,11 +220,11 @@ class Config:
             overwrite=True,
         )
 
-    def set_dt_dim(self, dt_dim: float):
-        """Update nondimensional Δt constant from dimensional value."""
-        if dt_dim <= 0:
-            raise ValueError(f"Timestep dt_dim={dt_dim} must be positive.")
-        self.dt_nd.value = self._cast(dt_dim / self.t_c)
+    def set_dt(self, dt_seconds: float):
+        """Update Δt constant from value in seconds."""
+        if dt_seconds <= 0:
+            raise ValueError(f"Timestep dt_seconds={dt_seconds} must be positive.")
+        self.dt_c.value = self._cast(dt_seconds)
 
     def update_config_json(self):
         """Re-write config.json with current parameters (rank-0 only)."""
@@ -261,33 +255,3 @@ class Config:
             if isinstance(val, (int, float, bool, str)) or val is None:
                 cfg[name] = val
         return cfg
-
-    @property
-    def strain_scale(self) -> float:
-        """Characteristic strain ε_c."""
-        return self.u_c / self.L_c
-
-    @property
-    def sigma_c(self) -> float:
-        """Characteristic stress σ_c."""
-        return self.E0_dim * self.strain_scale
-
-    @property
-    def psi_c(self) -> float:
-        """Characteristic energy density ψ_c."""
-        return self.E0_dim * (self.strain_scale**2)
-
-    @property
-    def t_c(self) -> float:
-        """Characteristic time t_c = 1/τ_S."""
-        return 1.0 / self.tauS_dim
-
-    @property
-    def rho_min_nd(self) -> float:
-        """Minimum density (ND)."""
-        return self.rho_min_dim / self.rho_c
-
-    @property
-    def rho_max_nd(self) -> float:
-        """Maximum density (ND)."""
-        return self.rho_max_dim / self.rho_c

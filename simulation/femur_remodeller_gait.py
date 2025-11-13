@@ -26,10 +26,6 @@ from simulation.febio_parser import FEBio2Dolfinx
 import pyvista as pv
 
 
-MM_TO_M = 1e-3
-STRESS_N_PER_MM2_TO_PA = 1e6
-
-
 class FemurRemodellerGait:
     """Gait-cycle integrator: accumulates multi-load strain energy for remodelling."""
     """Concrete implementation of GaitQuadrature using femurloader for gait-phase-dependent loads.
@@ -44,10 +40,6 @@ class FemurRemodellerGait:
         Interpolators that accept gait percentage in [0,100] and return force vectors in CSS.
     n_samples : int
         Number of quadrature points over gait cycle
-    coord_scale : float
-        Coordinate scaling factor (L_c / mm)
-    stress_scale : float
-        Stress scaling factor (Pa / stress_unit)
     load_scale : float
         Load magnitude multiplier
     """
@@ -64,8 +56,6 @@ class FemurRemodellerGait:
         glmed_gait: Callable[[float], np.ndarray],
         glmax_gait: Callable[[float], np.ndarray],
         n_samples: int = 9,
-        coord_scale: float = 1.0,
-        stress_scale: float = 1.0,
         load_scale: float = 1.0,
         flip_hip: bool = True,
         flip_glmed: bool = False,
@@ -84,8 +74,6 @@ class FemurRemodellerGait:
         self.glmax_gait = glmax_gait
         
         self.n_samples = n_samples
-        self.coord_scale = coord_scale
-        self.stress_scale = stress_scale
         self.load_scale = load_scale
         
         self.flip_hip = flip_hip
@@ -102,17 +90,16 @@ class FemurRemodellerGait:
         return [(float(p), float(w)) for p, w in zip(ps, ws)]
     
     def update_loads(self, phase_percent: float) -> None:
-        """Update traction functions to given gait phase."""
-        # Update femurloader sources with phase-specific CSS force vectors
-        self.hip.apply_gaussian_load(force_vector_css=self.hip_gait(phase_percent), flip=self.flip_hip)
-        self.gl_med.apply_gaussian_load(force_vector_css=self.glmed_gait(phase_percent), flip=self.flip_glmed)
-        self.gl_max.apply_gaussian_load(force_vector_css=self.glmax_gait(phase_percent), flip=self.flip_glmax)
+        """Update traction functions to given gait phase [%]."""
+        F_hip = self.hip_gait(phase_percent)
+        F_glmed = self.glmed_gait(phase_percent)
+        F_glmax = self.glmax_gait(phase_percent)
         
-        # Interpolate to FE functions with scaling
-        scale = self.stress_scale * self.load_scale
-        self.t_hip.interpolate(lambda x: self.hip((x.T * self.coord_scale)).T * scale)
-        self.t_glmed.interpolate(lambda x: self.gl_med((x.T * self.coord_scale)).T * scale)
-        self.t_glmax.interpolate(lambda x: self.gl_max((x.T * self.coord_scale)).T * scale)
+        scale = self.load_scale
+        # Geometry already in meters, loads already in Pascals
+        self.t_hip.interpolate(lambda x: self.hip(x.T).T * scale)
+        self.t_glmed.interpolate(lambda x: self.gl_med(x.T).T * scale)
+        self.t_glmax.interpolate(lambda x: self.gl_max(x.T).T * scale)
 
 
 def setup_femur_gait_loading(V: fem.FunctionSpace, config: Config, BW_kg: float = 75.0, n_samples: int = 9
@@ -161,8 +148,7 @@ def setup_femur_gait_loading(V: fem.FunctionSpace, config: Config, BW_kg: float 
         t_hip=t_hip, t_glmed=t_glmed, t_glmax=t_glmax,
         hip=hip, gl_med=gl_med, gl_max=gl_max, hip_gait=hip_gait,
         glmed_gait=gl_med_gait, glmax_gait=gl_max_gait,
-        n_samples=n_samples, coord_scale=1.0,
-        stress_scale=STRESS_N_PER_MM2_TO_PA / float(config.sigma_c),
+        n_samples=n_samples,
     )
 
 
