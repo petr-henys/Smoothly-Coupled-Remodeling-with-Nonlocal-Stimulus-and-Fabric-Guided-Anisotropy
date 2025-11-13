@@ -110,8 +110,8 @@ class FixedPointSolver:
                     "dir_iters",
                     "memory_mb",
                     "memory_mb_max",
-                    "energy_Wint_nd",
-                    "energy_Wext_nd",
+                    "energy_Wint",
+                    "energy_Wext",
                     "energy_res_rel",
                     "power_res_abs",
                     "power_res_rel",
@@ -372,7 +372,7 @@ class FixedPointSolver:
 
             x_raw = self._flatten_state(copy=True)
             # --- Diagnostics: all subsolvers have conservation/balance checks ---
-            W_int_nd, W_ext_nd, energy_rel = self.mech.energy_balance_nd()
+            W_int, W_ext, energy_rel = self.mech.energy_balance()
             psi_density_expr = self.driver.energy_expr()
             power_abs, power_rel = self.stim.power_balance_residual(psi_density_expr)
             mass_abs, mass_rel = self.den.mass_balance_residual()
@@ -447,8 +447,8 @@ class FixedPointSolver:
                 "condH": float(info['condH']) if info.get('condH') is not None else float('nan'),
                 "r_norm": float(info['r_norm']) if info.get('r_norm') is not None else float('nan'),
                 "r_proxy_norm": float(info['r_proxy_norm']) if info.get('r_proxy_norm') is not None else float('nan'),
-                "energy_Wint_nd": float(W_int_nd),
-                "energy_Wext_nd": float(W_ext_nd),
+                "energy_Wint": float(W_int),
+                "energy_Wext": float(W_ext),
                 "energy_res_rel": float(energy_rel),
                 "power_res_abs": float(power_abs),
                 "power_res_rel": float(power_rel),

@@ -56,9 +56,9 @@ DT_ALPHAS = {
 # Physical checks configuration
 PHYSICAL_CHECKS = {
     "energy": {
-        "metrics": ["energy_Wint_nd", "energy_Wext_nd"],
+        "metrics": ["energy_Wint", "energy_Wext"],
         "labels": [r"$W_{\mathrm{int}}$", r"$W_{\mathrm{ext}}$"],
-        "ylabel": "Energy [nondimensional]",
+        "ylabel": "Energy [N·mm]",
         "title": r"(a) Mechanical energy balance",
         "loglog": False,
         "subsolver": "mech",  # Mechanics (blue)

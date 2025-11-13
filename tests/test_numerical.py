@@ -13,7 +13,6 @@ Advanced numerical implementation tests for bone remodeling model.
 
 Tests:
 - DOF ordering correctness in fixed-point solver
-- Nondimensionalization consistency
 - Anderson acceleration convergence properties
 - Matrix assembly correctness
 - Preconditioner update logic
@@ -467,15 +466,7 @@ class TestConfigValidation:
         assert cfg.domain is not None
         assert cfg.domain == unit_cube
 
-    def test_config_rejects_negative_rho_min(self, unit_cube, facet_tags):
-        """Minimum density cannot be negative."""
-        # Note: Config uses dataclass, so we check post-init behavior
-        cfg = Config(domain=unit_cube, facet_tags=facet_tags,
-                    rho_min_dim=-1.0, verbose=False)
-        # rho_min_nd should be computed from rho_min_dim/rho_c
-        assert cfg.rho_min_nd is not None
-        # Negative rho_min_dim should result in negative rho_min_nd (physically invalid)
-        # In production, this should be validated - test documents current behavior
+    # Removed legacy nondimensionalization tests (rho_min_nd, rho_min_dim)
 
     def test_config_rejects_negative_timestep(self, unit_cube, facet_tags):
         """set_dt should reject non-positive timestep."""
@@ -516,27 +507,9 @@ class TestConfigValidation:
                     E0=1000.0, verbose=False)
         assert cfg.E0 == 1000.0
 
-    def test_config_positive_characteristic_scales(self, unit_cube, facet_tags):
-        """Characteristic scales must be positive."""
-        cfg = Config(domain=unit_cube, facet_tags=facet_tags, verbose=False)
+    # Removed legacy nondimensionalization characteristic scale tests
 
-        assert cfg.L_c > 0, "L_c not positive"
-        assert cfg.rho_c > 0, "rho_c not positive"
-        assert cfg.u_c > 0, "u_c not positive"
-        assert cfg.t_c > 0, "t_c not positive"
-        assert cfg.sigma_c > 0, "sigma_c not positive"
-        assert cfg.psi_c > 0, "psi_c not positive"
-
-    def test_config_nondimensional_params_reasonable(self, unit_cube, facet_tags):
-        """Nondimensional parameters should be O(1) after scaling."""
-        cfg = Config(domain=unit_cube, facet_tags=facet_tags, verbose=False)
-
-        E0_nd = float(cfg.E0_nd)
-        psi_ref_nd = float(cfg.psi_ref_nd)
-
-        # Should be roughly O(1) after nondimensionalization
-        assert 0.01 < E0_nd < 100.0, f"E0_nd = {E0_nd} not order 1"
-        assert 0.001 < psi_ref_nd < 1000.0, f"psi_ref_nd = {psi_ref_nd} not order 1"
+    # Removed legacy nondimensional parameter O(1) tests
 
     def test_config_solver_type_validation(self, unit_cube, facet_tags):
         """KSP and PC types should be valid."""

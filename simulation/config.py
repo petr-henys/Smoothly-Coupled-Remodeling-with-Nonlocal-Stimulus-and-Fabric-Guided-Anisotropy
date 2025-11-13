@@ -13,13 +13,18 @@ if TYPE_CHECKING:
 @dataclass
 class Config:
     """Global configuration for bone remodeling simulation.
-    
-    All parameters use millimeter-based units:
+
+    Unit convention (consistent and explicit):
     - Length: millimeters [mm]
     - Mass: tonnes [t] (1000 kg)
-    - Time: seconds [s] (or days [day] where explicitly noted)
-    - Stress/Pressure: Pascals [Pa] = [N/mm²]
+    - Time: seconds [s] (days [day] where explicitly noted)
+    - Stress/Energy density: Megapascals [MPa] = [N/mm²]
     - Density: t/mm³ (= kg/m³ × 1e-9)
+
+    Notes:
+    - Using mm for length implies stresses/energy densities are naturally in MPa.
+    - All stress-like quantities (E, σ, ψ, tractions) are in MPa; no Pa/kPa.
+    - When converting to per-second rates, only time units are rescaled (days → seconds).
     """
 
     # --- Material properties ---
@@ -168,11 +173,11 @@ class Config:
         )
 
     def _build_constants(self):
-        """Build UFL Constants from SI-unit parameters."""
+        """Build UFL Constants from model-unit parameters (mm, t, s, MPa)."""
         # Convert time from days to seconds for consistency
         DAY_TO_SEC = 86400.0
         
-        # Mechanics (already in SI)
+        # Mechanics (E0 in MPa, ν dimensionless)
         self.E0_c = fem.Constant(self.domain, self._cast(self.E0))
         self.nu_c = fem.Constant(self.domain, self._cast(self.nu))
         self.n_power_c = fem.Constant(self.domain, self._cast(self.n_power))
@@ -180,14 +185,14 @@ class Config:
         # Time step (will be set later in seconds)
         self.dt_c = fem.Constant(self.domain, self._cast(1.0))
 
-        # Energy reference [Pa]
+        # Energy density reference [MPa]
         self.psi_ref_c = fem.Constant(self.domain, self._cast(self.psi_ref))
 
-        # Diffusion [m²/s] - convert from m²/day
+        # Diffusion [mm²/s] - convert from mm²/day
         self.beta_par_c = fem.Constant(self.domain, self._cast(self.beta_par / DAY_TO_SEC))
         self.beta_perp_c = fem.Constant(self.domain, self._cast(self.beta_perp / DAY_TO_SEC))
 
-        # Stimulus (convert from per-day to per-second)
+        # Stimulus (convert from per-day to per-second). cS in MPa·s, rS in 1/(MPa·s)
         self.cS_c = fem.Constant(self.domain, self._cast(self.cS / DAY_TO_SEC))
         self.tauS_c = fem.Constant(self.domain, self._cast(self.tauS / DAY_TO_SEC))
         self.kappaS_c = fem.Constant(self.domain, self._cast(self.kappaS / DAY_TO_SEC))

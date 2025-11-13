@@ -13,14 +13,14 @@ from types import SimpleNamespace
 from simulation.homogenizator import KUBCHomogenizer, SUBCHomogenizer
 
 def _make_config(domain, E, nu, xi=0.0):
-    """Create minimal config for homogenization tests (SI units)."""
+    """Create minimal config for homogenization tests (MPa stress units)."""
     return SimpleNamespace(
         domain=domain,
         smooth_eps=1e-8,
         dx=ufl.Measure("dx", domain=domain),
         ds=ufl.Measure("ds", domain=domain),
         rho_min=1e-9,  # kg/m³
-        E0_c=fem.Constant(domain, default_scalar_type(E)),  # Pa
+        E0_c=fem.Constant(domain, default_scalar_type(E)),  # MPa
         n_power_c=fem.Constant(domain, default_scalar_type(1.0)),
         nu_c=fem.Constant(domain, default_scalar_type(nu)),
         xi_aniso_c=fem.Constant(domain, default_scalar_type(xi)),
@@ -476,9 +476,9 @@ def _analytical_C_voigt_uniform(E0: float, nu: float, xi: float, rho: float, n: 
     I = np.eye(gdim)
     # Smooth density clamp (rho >> rho_min in tests)
     rho_eff = rho
-    E_nd = E0 * (rho_eff ** n)
-    lam = E_nd * nu / ((1 + nu) * (1 - 2 * nu))
-    mu = E_nd / (2 * (1 + nu))
+    E_eff = E0 * (rho_eff ** n)
+    lam = E_eff * nu / ((1 + nu) * (1 - 2 * nu))
+    mu = E_eff / (2 * (1 + nu))
 
     # Isotropic elasticity tensor
     C_iso = np.zeros((3, 3, 3, 3), dtype=float)
@@ -495,8 +495,8 @@ def _analytical_C_voigt_uniform(E0: float, nu: float, xi: float, rho: float, n: 
     M = (A.T @ A) + smooth_eps * I
     Ahat = M / np.trace(M)
 
-    # Anisotropic rank-one 4th-order addition: xi * E_nd * Ahat_ij * Ahat_kl
-    C_aniso = np.einsum("ij,kl->ijkl", Ahat, Ahat, optimize=True) * (xi * E_nd)
+    # Anisotropic rank-one 4th-order addition: xi * E_eff * Ahat_ij * Ahat_kl
+    C_aniso = np.einsum("ij,kl->ijkl", Ahat, Ahat, optimize=True) * (xi * E_eff)
 
     C4 = C_iso + C_aniso
     return _voigt_from_tensor(C4)

@@ -72,6 +72,7 @@ class FemurRemodellerGait:
         
         self.n_samples = n_samples
         self.load_scale = load_scale
+        self.coord_scale = 1.0  # Both DOLFINx mesh and PyVista mesh in mm
     
     
     def get_quadrature(self) -> List[Tuple[float, float]]:
@@ -89,7 +90,7 @@ class FemurRemodellerGait:
         F_glmed = self.glmed_gait(phase_percent)
         F_glmax = self.glmax_gait(phase_percent)
         
-        # Apply loads to create interpolators (in Pascals)
+        # Apply loads to create interpolators (in MPa = N/mm²)
         self.hip.apply_gaussian_load(force_vector_css=F_hip, sigma_deg=10.0, flip=True)
         self.gl_med.apply_gaussian_load(force_vector_css=F_glmed, sigma=3.0, flip=False)
         self.gl_max.apply_gaussian_load(force_vector_css=F_glmax, sigma=3.0, flip=False)

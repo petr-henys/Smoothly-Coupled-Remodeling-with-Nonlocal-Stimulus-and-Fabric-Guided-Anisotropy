@@ -50,7 +50,7 @@ def test_config_and_mesh_creation():
     # Verify config initialized correctly
     assert cfg is not None
     assert cfg.domain is not None
-    assert float(cfg.E0_c) > 0  # SI units: Pa
+    assert float(cfg.E0_c) > 0  # Stress units: MPa (N/mm²)
     assert cfg.dx is not None
     
     comm.Barrier()

@@ -24,7 +24,7 @@ __all__ = ["KUBCHomogenizer", "SUBCHomogenizer"]
 
 
 @dataclass
-class _NDMechanics:
+class _Elasticity:
     """Constitutive helper: anisotropic elasticity with density and fabric modulation."""
     V: fem.FunctionSpace
     rho: fem.Function
@@ -127,7 +127,7 @@ class _HomogCommon:
         self.dx = cfg.dx
         self.ds = cfg.ds
 
-        self.mech = _NDMechanics(self.V, rho, A_dir, cfg)
+        self.mech = _Elasticity(self.V, rho, A_dir, cfg)
         self._u = fem.Function(self.V, name="u")
         self._nullspace = build_nullspace(self.V)
         # Logger honoring cfg.verbose
@@ -282,8 +282,9 @@ class _HomogCommon:
         else:
             S = S_in
 
-        C_dim = C * self.cfg.sigma_c
-        S_dim = S / self.cfg.sigma_c
+        sigma_c = float(getattr(self.cfg, "sigma_c", 1.0))
+        C_dim = C * sigma_c
+        S_dim = S / max(sigma_c, 1e-300)
 
         Abar, R = self._average_fabric_and_rotation()
         C_f = self._rotate_C_to_basis(C, R)
@@ -379,11 +380,11 @@ class KUBCHomogenizer(_HomogCommon):
         alpha = float(getattr(self.cfg, "nitsche_alpha", 100.0))
         theta = float(getattr(self.cfg, "nitsche_theta", 1.0))
         # Local penalty scaling: gamma/h ~ alpha*(2*mu+lambda)/h (robust across heterogeneity)
-        rho_eff = smooth_max(self.rho, self.cfg.rho_min_nd, self.cfg.smooth_eps)
-        E_nd = self.cfg.E0_nd * (rho_eff ** self.cfg.n_power_c)
+        rho_eff = smooth_max(self.rho, self.cfg.rho_min, self.cfg.smooth_eps)
+        E_dim = self.cfg.E0_c * (rho_eff ** self.cfg.n_power_c)
         nu = self.cfg.nu_c
-        lmbda = E_nd * nu / ((1 + nu) * (1 - 2 * nu))
-        mu = E_nd / (2 * (1 + nu))
+        lmbda = E_dim * nu / ((1 + nu) * (1 - 2 * nu))
+        mu = E_dim / (2 * (1 + nu))
         Kpen = 2 * mu + lmbda
         gamma_over_h = (alpha * Kpen) / h
 
@@ -567,4 +568,3 @@ class SUBCHomogenizer(_HomogCommon):
         )
 
         return out
-

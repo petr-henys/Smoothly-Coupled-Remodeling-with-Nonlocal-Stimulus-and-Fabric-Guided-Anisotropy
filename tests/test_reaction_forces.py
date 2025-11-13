@@ -1,4 +1,4 @@
-"""Reaction force tests with SI units (meters, Pascals)."""
+"""Reaction force tests with model units (mm geometry, MPa stresses)."""
 import pytest
 import numpy as np
 import basix
@@ -19,7 +19,7 @@ from petsc4py import PETSc
 
 @pytest.fixture(scope="module")
 def femur_setup():
-    """Create femur mesh and function space (geometry already in meters)."""
+    """Create femur mesh and function space (geometry already in millimeters)."""
     mdl = FEBio2Dolfinx(FemurPaths.FEMUR_MESH_FEB)
     domain = mdl.mesh_dolfinx
     facet_tags = mdl.meshtags
@@ -28,7 +28,7 @@ def femur_setup():
     V = fem.functionspace(domain, P1_vec)
     Q = fem.functionspace(domain, P1_scalar)
     
-    # Geometry already in meters, Config uses SI units
+    # Geometry already in millimeters; Config uses MPa for stress/SED
     cfg = Config(domain=domain, facet_tags=facet_tags)
     
     return domain, facet_tags, V, Q, cfg
@@ -37,8 +37,8 @@ def femur_setup():
 @pytest.fixture(scope="module")
 def gait_loader(femur_setup):
     """Create gait loader."""
-    _, _, V, _, cfg = femur_setup
-    return setup_femur_gait_loading(V, cfg, BW_kg=75.0, n_samples=9)
+    _, _, V, _, _ = femur_setup
+    return setup_femur_gait_loading(V, BW_kg=75.0, n_samples=9)
 
 
 class TestReactionForces:
@@ -56,7 +56,7 @@ class TestReactionForces:
         # Update to peak stance (50%)
         gait_loader.update_loads(50.0)
         
-        # Integrate total applied force over surface [Pa · m² = N]
+        # Integrate total applied force over surface [MPa · mm² = N]
         import ufl
         t_total = gait_loader.t_hip + gait_loader.t_glmed + gait_loader.t_glmax
         
@@ -112,11 +112,11 @@ class TestReactionForces:
         # Compute applied force (integrate tractions over surface tag=2)
         import ufl
         t_total = gait_loader.t_hip + gait_loader.t_glmed + gait_loader.t_glmax
-        F_applied_nd = np.zeros(3)
+        F_applied_N = np.zeros(3)
         for i in range(3):
             F_i_form = fem.form(t_total[i] * cfg.ds(2))
             F_i_local = fem.assemble_scalar(F_i_form)
-            F_applied_nd[i] = domain.comm.allreduce(F_i_local, op=4)
+            F_applied_N[i] = domain.comm.allreduce(F_i_local, op=4)
         
         # Compute consistent reactions from unconstrained residual on Dirichlet DOFs
         # A0 u − b0 (no lifting / no set_bc)
@@ -137,31 +137,26 @@ class TestReactionForces:
         r.axpy(-1.0, b0)  # r = A0 u − b0
 
         # Sum reactions per component over Dirichlet DOFs (tag=1)
-        F_reaction_nd = np.zeros(3)
+        F_reaction_N = np.zeros(3)
         for i, bc in enumerate(dirichlet_bcs):
             idx_all, first_ghost = bc.dof_indices()
             idx_owned = idx_all[:first_ghost]
             if idx_owned.size:
                 r_local = r.getValues(idx_owned)
-                F_reaction_nd[i] += float(np.sum(r_local))
+                F_reaction_N[i] += float(np.sum(r_local))
         # MPI global sum across ranks
-        F_reaction_nd = domain.comm.allreduce(F_reaction_nd, op=4)
-        
-        # Already in Newtons: traction [Pa] integrated over area [m²] = [N]
-        F_applied_N = F_applied_nd
-        F_reaction_N = F_reaction_nd
+        F_reaction_N = domain.comm.allreduce(F_reaction_N, op=4)
 
         # Independent verification via stress traction on Γ_D
         import ufl
         n = ufl.FacetNormal(domain)
         sigma_u = solver.sigma(u, rho, A_dir)
         t_reac = ufl.dot(sigma_u, n)  # vector traction on Γ_D
-        F_reaction_sigma_nd = np.zeros(3)
+        F_reaction_sigma_N = np.zeros(3)
         for i in range(3):
             Fi_form = fem.form(t_reac[i] * cfg.ds(1))
             Fi_loc = fem.assemble_scalar(Fi_form)
-            F_reaction_sigma_nd[i] = domain.comm.allreduce(Fi_loc, op=4)
-        F_reaction_sigma_N = F_reaction_sigma_nd
+            F_reaction_sigma_N[i] = domain.comm.allreduce(Fi_loc, op=4)
         
         F_total_N = F_applied_N + F_reaction_N  # Should be exactly zero
         F_total_magnitude = np.linalg.norm(F_total_N)

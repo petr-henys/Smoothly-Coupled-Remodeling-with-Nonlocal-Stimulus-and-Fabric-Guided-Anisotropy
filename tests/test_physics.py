@@ -268,7 +268,7 @@ class TestThermodynamics:
     def test_linear_elastic_energy_balance(self, unit_cube, facet_tags, traction_factory):
         """For the linear system, internal work equals external work: W_int ≈ W_ext.
         
-        Tests both manual calculation (a(u,u) vs l(u)) and solver method (energy_balance_nd()).
+        Tests both manual calculation (a(u,u) vs l(u)) and solver method (energy_balance()).
         """
         comm = MPI.COMM_WORLD
         domain = unit_cube
@@ -308,13 +308,13 @@ class TestThermodynamics:
         l_u_local = fem.assemble_scalar(fem.form(ufl.inner(t_const, u) * cfg.ds(t_tag)))
         l_u = comm.allreduce(l_u_local, op=MPI.SUM)
 
-        # Energy balance in nondimensional units: a(u,u) ≈ l(u)
+        # Energy balance: a(u,u) ≈ l(u)
         denom = max(abs(l_u), abs(a_uu), 1e-300)
         rel_gap = abs(a_uu - l_u) / denom
         assert rel_gap < 5e-9, f"Energy balance violated: a(u,u)={a_uu:.6e}, l(u)={l_u:.6e}, rel_gap={rel_gap:.3e}"
         
-        # Test 2: Solver method energy_balance_nd()
-        W_int, W_ext, rel_error = mech.energy_balance_nd()
+        # Test 2: Solver method energy_balance()
+        W_int, W_ext, rel_error = mech.energy_balance()
         assert rel_error < 0.05, f"Solver energy balance: W_int={W_int:.3e}, W_ext={W_ext:.3e}, rel_error={rel_error:.3e}"
 
 
@@ -379,7 +379,7 @@ class TestConservation:
         assert reason > 0, f"KSP failed to converge, reason={reason}"
         
         # Check energy balance
-        W_int, W_ext, rel_err = mech2.energy_balance_nd()
+        W_int, W_ext, rel_err = mech2.energy_balance()
         assert rel_err < 1e-6, f"Energy balance violated: rel_err={rel_err:.2e} (W_int={W_int:.3e}, W_ext={W_ext:.3e})"
 
     
@@ -918,7 +918,7 @@ class TestConservationChecks:
         stim = StimulusSolver(S, S_old, cfg)
         stim.setup()
         
-        # Create a psi field (supra-homeostatic in one region) [Pa]
+        # Create a psi field (supra-homeostatic in one region) [MPa]
         psi_expr = fem.Constant(domain, 1.2 * float(cfg.psi_ref_c))
         
         stim.assemble_rhs(psi_expr)
@@ -1108,7 +1108,7 @@ def test_stimulus_power_residual_scales_with_dt():
     S = fem.Function(Q, name="S")
     stim = StimulusSolver(S, S_old, cfg)
 
-    # Constant psi > psi_ref for positive source [Pa]
+    # Constant psi > psi_ref for positive source [MPa]
     psi_val = 1.5 * float(cfg.psi_ref_c.value)
     psi = fem.Constant(m, default_scalar_type(psi_val))
 

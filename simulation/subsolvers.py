@@ -199,7 +199,7 @@ class MechanicsSolver(_BaseLinearSolver):
         return ufl.sym(ufl.grad(u))
 
     def sigma(self, u, rho, A_dir):
-        """Cauchy stress: density-modulated stiffness + anisotropic reinforcement."""
+        """Cauchy stress σ(u) in MPa: density-modulated isotropic stiffness + anisotropic reinforcement."""
         rho_eff = smooth_max(rho, self.cfg.rho_min, self.smooth_eps)
         E = self.cfg.E0_c * (rho_eff ** self.cfg.n_power_c)
 
@@ -217,12 +217,12 @@ class MechanicsSolver(_BaseLinearSolver):
 
 
     def get_strain_tensor(self, u=None):
-        """Strain tensor ε(u) (ND)."""
+        """Strain tensor ε(u)."""
         uu = self.u if u is None else u
         return self.eps(uu)
 
     def get_strain_energy_density(self, u=None):
-        """Strain energy density ψ = 0.5 σ:ε [Pa]."""
+        """Strain energy density ψ = 0.5 σ:ε [MPa]."""
         uu = self.u if u is None else u
         sig = self.sigma(uu, self.rho, self.A_dir)
         e = self.eps(uu)
@@ -259,7 +259,7 @@ class MechanicsSolver(_BaseLinearSolver):
         return its, reason
 
     def average_strain_energy(self) -> float:
-        """Average strain energy density [Pa]."""
+        """Average strain energy density [MPa]."""
         self.u.x.scatter_forward()
         self.rho.x.scatter_forward()
         self.A_dir.x.scatter_forward()
@@ -271,8 +271,8 @@ class MechanicsSolver(_BaseLinearSolver):
         psi = self.comm.allreduce(psi_local, op=MPI.SUM)
         return float(psi / max(vol, 1e-300))
     
-    def energy_balance_nd(self) -> tuple[float, float, float]:
-        """Internal vs. external work: (W_int, W_ext, rel_error) [J or N·m]."""
+    def energy_balance(self) -> tuple[float, float, float]:
+        """Internal vs. external work: (W_int, W_ext, rel_error) [N·mm]."""
         self.u.x.scatter_forward()
         self.rho.x.scatter_forward()
 
@@ -291,6 +291,7 @@ class MechanicsSolver(_BaseLinearSolver):
 
         rel_err = abs(W_ext - W_int) / max(W_ext, W_int, 1e-30)
         return W_int, W_ext, rel_err
+    
 class StimulusSolver(_BaseLinearSolver):
     """Reaction-diffusion stimulus S driven by mechanical energy density."""
     def __init__(
