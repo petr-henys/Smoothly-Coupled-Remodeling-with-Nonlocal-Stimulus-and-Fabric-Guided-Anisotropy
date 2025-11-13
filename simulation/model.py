@@ -117,7 +117,7 @@ class Remodeller:
         # interpolators. Serializing PyVista/KDTree state is complex; this is acceptable.
         BW = float(getattr(self.cfg, "body_mass_kg", 75.0))
         n_samples = int(getattr(self.cfg, "gait_samples", 9))
-        gait_loader = setup_femur_gait_loading(self.V, self.cfg, BW_kg=BW, n_samples=n_samples)
+        gait_loader = setup_femur_gait_loading(self.V, BW_kg=BW, n_samples=n_samples)
 
         neumann_bcs = [
             (gait_loader.t_hip, 2),
@@ -332,13 +332,13 @@ class Remodeller:
             self.solvers_initialized = True
 
 
-        # Update dt (convert from days to seconds) and reassemble LHS for time-dependent solvers if dt changed
-        DAY_TO_SEC = 86400.0
-        dt_seconds = float(dt) * DAY_TO_SEC
+        # Update dt in seconds and reassemble LHS for time-dependent solvers if dt changed
+        dt_seconds = float(dt)
         if self._current_dt is None or abs(dt_seconds - float(self._current_dt)) > 1e-12:
             self.cfg.set_dt(dt_seconds)
             if self.solvers_initialized:
                 self.stimsolver.assemble_lhs()
+                self.densolver.assemble_lhs()
                 self.dirsolver.assemble_lhs()
             self._current_dt = dt_seconds
         self.fixedsolver.run(time_days=time_days, step_index=step_index)
@@ -466,9 +466,8 @@ class Remodeller:
         step = 0
         n_steps = int(np.ceil(total_time / dt))
 
-        # Convert to seconds for internal consistency
-        DAY_TO_SEC = 86400.0
-        self.cfg.set_dt(dt * DAY_TO_SEC)
+        # Set timestep in seconds
+        self.cfg.set_dt(dt)
 
         self.mechsolver.setup()
         self.stimsolver.setup()

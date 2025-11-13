@@ -50,7 +50,17 @@ class GaitEnergyDriver:
         return self._M_expr
 
     def _build_energy_expr(self):
-        """Build gait-averaged energy UFL expression via phase quadrature."""
+        """Build gait-averaged energy density UFL expression via phase quadrature.
+        
+        Returns weighted average energy density over gait cycle [MPa].
+        Does NOT include cycles_per_day scaling - that's handled by rS_gain parameter.
+        
+        CRITICAL: Saves and restores current displacement to avoid corrupting fixed-point state.
+        """
+        # Save current state before gait loop
+        u_saved = fem.Function(self.mech.u.function_space)
+        u_saved.x.array[:] = self.mech.u.x.array
+        
         psi_eff = ufl.as_ufl(0.0)
         for phase, w in self.gait.get_quadrature():
             self.gait.update_loads(phase)
@@ -59,10 +69,22 @@ class GaitEnergyDriver:
             u_snap = fem.Function(self.mech.u.function_space)
             u_snap.x.array[:] = self.mech.u.x.array
             psi_eff += w * self.mech.get_strain_energy_density(u_snap)
-        return self.cpd * psi_eff
+        
+        # Restore saved state
+        self.mech.u.x.array[:] = u_saved.x.array
+        self.mech.u.x.scatter_forward()
+        
+        return psi_eff  # Return average energy density [MPa], not daily accumulated
 
     def _build_structure_expr(self):
-        """Build gait-averaged structure tensor UFL expression via phase quadrature."""
+        """Build gait-averaged structure tensor UFL expression via phase quadrature.
+        
+        CRITICAL: Saves and restores current displacement to avoid corrupting fixed-point state.
+        """
+        # Save current state before gait loop
+        u_saved = fem.Function(self.mech.u.function_space)
+        u_saved.x.array[:] = self.mech.u.x.array
+        
         d = self.mech.gdim
         M_eff = ufl.zero((d, d))
         for phase, w in self.gait.get_quadrature():
@@ -73,4 +95,9 @@ class GaitEnergyDriver:
             u_snap.x.array[:] = self.mech.u.x.array
             e = self.mech.get_strain_tensor(u_snap)
             M_eff = M_eff + w * ufl.dot(ufl.transpose(e), e)
+        
+        # Restore saved state
+        self.mech.u.x.array[:] = u_saved.x.array
+        self.mech.u.x.scatter_forward()
+        
         return M_eff

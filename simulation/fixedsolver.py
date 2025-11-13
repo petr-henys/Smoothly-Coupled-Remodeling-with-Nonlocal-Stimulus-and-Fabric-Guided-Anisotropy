@@ -343,6 +343,9 @@ class FixedPointSolver:
         if accelerator is not None:
             accelerator.reset()
 
+        # Invalidate driver cache (forces rebuild of gait-averaged expressions with current state)
+        self.driver.invalidate()
+
         x_k = self._flatten_state(copy=True)
 
         # Reset per-step cumulative timings

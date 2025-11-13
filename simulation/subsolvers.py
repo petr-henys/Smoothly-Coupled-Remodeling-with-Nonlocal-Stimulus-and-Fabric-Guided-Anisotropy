@@ -201,18 +201,18 @@ class MechanicsSolver(_BaseLinearSolver):
     def sigma(self, u, rho, A_dir):
         """Cauchy stress σ(u) in MPa: density-modulated isotropic stiffness + anisotropic reinforcement."""
         rho_eff = smooth_max(rho, self.cfg.rho_min, self.smooth_eps)
-        E = self.cfg.E0_c * (rho_eff ** self.cfg.n_power_c)
+        E = self.cfg.E0 * (rho_eff ** self.cfg.n_power)
 
         eps_ten = self.eps(u)
         I = ufl.Identity(self.gdim)
-        nu = self.cfg.nu_c
+        nu = self.cfg.nu
         lmbda = E * nu / ((1 + nu) * (1 - 2 * nu))
         mu = E / (2 * (1 + nu))
 
         Asym = 0.5 * (A_dir + ufl.transpose(A_dir))
         Ahat = unittrace_psd_from_any(Asym, self.gdim, self.smooth_eps)
 
-        sigma_aniso = (self.cfg.xi_aniso_c * E) * ufl.inner(Ahat, eps_ten) * Ahat
+        sigma_aniso = (self.cfg.xi_aniso * E) * ufl.inner(Ahat, eps_ten) * Ahat
         return 2 * mu * eps_ten + lmbda * ufl.tr(eps_ten) * I + sigma_aniso
 
 
@@ -307,9 +307,10 @@ class StimulusSolver(_BaseLinearSolver):
         vol_local = fem.assemble_scalar(fem.form(1.0 * self.dx))
         self.total_vol = self.comm.allreduce(vol_local, op=MPI.SUM)
 
+        # Use day-based parameters directly (no conversion needed)
         a = (
-            (self.cfg.cS_c / self.cfg.dt_c + self.cfg.tauS_c) * self.trial * self.test * self.dx
-            + self.cfg.kappaS_c * ufl.inner(ufl.grad(self.trial), ufl.grad(self.test)) * self.dx
+            (self.cfg.cS / 1.0 + self.cfg.tauS) * self.trial * self.test * self.dx
+            + self.cfg.kappaS * ufl.inner(ufl.grad(self.trial), ufl.grad(self.test)) * self.dx
         )
         self.a_form = fem.form(a)
         self._rhs_form = None
@@ -322,13 +323,36 @@ class StimulusSolver(_BaseLinearSolver):
         ksp_options = {"ksp_type": self.cfg.ksp_type, "pc_type": self.cfg.pc_type}
         self.create_ksp(prefix="stimulus", ksp_options=ksp_options)
         self._reset_stats()
+    
+    def assemble_lhs(self):
+        """Reassemble LHS with current dt."""
+        dt = self.cfg.dt
+        if dt <= 0:
+            raise ValueError(f"dt must be positive, got {dt}")
+        
+        # Rebuild form with current dt (all params in days)
+        a = (
+            (self.cfg.cS / dt + self.cfg.tauS) * self.trial * self.test * self.dx
+            + self.cfg.kappaS * ufl.inner(ufl.grad(self.trial), ufl.grad(self.test)) * self.dx
+        )
+        self.a_form = fem.form(a)
+        
+        # Reassemble matrix
+        self.A.zeroEntries()
+        assemble_matrix(self.A, self.a_form, bcs=self.dirichlet_bcs)
+        self.A.assemble()
+        if self.ksp is not None:
+            self.ksp.setOperators(self.A)
+            self.ksp.setUp()
+        self._reset_stats()
 
     def assemble_rhs(self, psi_expr):
         with self.b.localForm() as b_local:
             b_local.set(0.0)
         self.S_old.x.scatter_forward()
-        rhs = (self.cfg.cS_c / self.cfg.dt_c) * self.S_old + self.cfg.rS_gain_c * (
-            psi_expr - self.cfg.psi_ref_c
+        dt = self.cfg.dt
+        rhs = (self.cfg.cS / dt) * self.S_old + self.cfg.rS_gain * (
+            psi_expr - self.cfg.psi_ref
         )
         self._rhs_form = fem.form(rhs * self.test * self.dx)
         assemble_vector(self.b, self._rhs_form)
@@ -346,15 +370,15 @@ class StimulusSolver(_BaseLinearSolver):
         self.S.x.scatter_forward()
         self.S_old.x.scatter_forward()
         one = fem.Constant(self.mesh, default_scalar_type(1.0))
-        dt_val = _val(self.cfg.dt_c)
-        storage_loc = fem.assemble_scalar(fem.form((self.cfg.cS_c / dt_val) * (self.S - self.S_old) * one * self.dx))
+        dt = self.cfg.dt
+        storage_loc = fem.assemble_scalar(fem.form((self.cfg.cS / dt) * (self.S - self.S_old) * one * self.dx))
         storage = float(self.comm.allreduce(storage_loc, op=MPI.SUM))
-        decay_loc = fem.assemble_scalar(fem.form(self.cfg.tauS_c * self.S * one * self.dx))
+        decay_loc = fem.assemble_scalar(fem.form(self.cfg.tauS * self.S * one * self.dx))
         decay = float(self.comm.allreduce(decay_loc, op=MPI.SUM))
-        source_loc = fem.assemble_scalar(fem.form(self.cfg.rS_gain_c * (psi_expr - self.cfg.psi_ref_c) * one * self.dx))
+        source_loc = fem.assemble_scalar(fem.form(self.cfg.rS_gain * (psi_expr - self.cfg.psi_ref) * one * self.dx))
         source = float(self.comm.allreduce(source_loc, op=MPI.SUM))
         n = ufl.FacetNormal(self.mesh)
-        flux_loc = fem.assemble_scalar(fem.form(self.cfg.kappaS_c * ufl.dot(ufl.grad(self.S), n) * self.ds))
+        flux_loc = fem.assemble_scalar(fem.form(self.cfg.kappaS * ufl.dot(ufl.grad(self.S), n) * self.ds))
         flux = float(self.comm.allreduce(flux_loc, op=MPI.SUM))
         R = (storage + decay) - (source + flux)
         denom = abs(storage) + abs(decay) + abs(source) + 1e-30
@@ -378,27 +402,28 @@ class DensitySolver(_BaseLinearSolver):
         vol_local = fem.assemble_scalar(fem.form(1.0 * self.dx))
         self.total_vol = self.comm.allreduce(vol_local, op=MPI.SUM)
 
-        d = self.mesh.geometry.dim  # fixed: self.Q not defined
+        d = self.mesh.geometry.dim
         I = ufl.Identity(d)
 
         Asym = 0.5 * (self.A_dir + ufl.transpose(self.A_dir))
         Ahat = unittrace_psd_from_any(Asym, d, eps=self.smooth_eps)
 
-        Bten = self.cfg.beta_perp_c * I + (self.cfg.beta_par_c - self.cfg.beta_perp_c) * Ahat
+        Bten = self.cfg.beta_perp * I + (self.cfg.beta_par - self.cfg.beta_perp) * Ahat
 
         Sabs_smooth = smooth_abs(self.S, self.smooth_eps)
         Splus_smooth = 0.5 * (self.S + Sabs_smooth)
         Sminus_smooth = 0.5 * (Sabs_smooth - self.S)
 
+        # dt will be set later, use placeholder
         a = (
-            (self.trial / self.cfg.dt_c) * self.test * self.dx
+            (self.trial / 1.0) * self.test * self.dx
             + ufl.inner(Bten * ufl.grad(self.trial), ufl.grad(self.test)) * self.dx
             + Sabs_smooth * self.trial * self.test * self.dx
         )
         self.a_form = fem.form(a)
 
         rhs_expr = (
-            (self.rho_old / self.cfg.dt_c)
+            (self.rho_old / 1.0)
             + Splus_smooth * self.cfg.rho_max
             + Sminus_smooth * self.cfg.rho_min
         )
@@ -411,10 +436,52 @@ class DensitySolver(_BaseLinearSolver):
         ksp_options = {"ksp_type": self.cfg.ksp_type, "pc_type": self.cfg.pc_type}
         self.create_ksp(prefix="density", ksp_options=ksp_options)
         self._reset_stats()
+    
+    def assemble_lhs(self):
+        """Reassemble LHS with current dt."""
+        dt = self.cfg.dt
+        if dt <= 0:
+            raise ValueError(f"dt must be positive, got {dt}")
+        
+        d = self.mesh.geometry.dim
+        I = ufl.Identity(d)
+        Asym = 0.5 * (self.A_dir + ufl.transpose(self.A_dir))
+        Ahat = unittrace_psd_from_any(Asym, d, eps=self.smooth_eps)
+        Bten = self.cfg.beta_perp * I + (self.cfg.beta_par - self.cfg.beta_perp) * Ahat
+        Sabs_smooth = smooth_abs(self.S, self.smooth_eps)
+        
+        a = (
+            (self.trial / dt) * self.test * self.dx
+            + ufl.inner(Bten * ufl.grad(self.trial), ufl.grad(self.test)) * self.dx
+            + Sabs_smooth * self.trial * self.test * self.dx
+        )
+        self.a_form = fem.form(a)
+        
+        # Reassemble matrix
+        self.A.zeroEntries()
+        assemble_matrix(self.A, self.a_form, bcs=self.dirichlet_bcs)
+        self.A.assemble()
+        if self.ksp is not None:
+            self.ksp.setOperators(self.A)
+            self.ksp.setUp()
+        self._reset_stats()
 
     def assemble_rhs(self):
         with self.b.localForm() as b_local:
             b_local.set(0.0)
+        
+        dt = self.cfg.dt
+        Sabs_smooth = smooth_abs(self.S, self.smooth_eps)
+        Splus_smooth = 0.5 * (self.S + Sabs_smooth)
+        Sminus_smooth = 0.5 * (Sabs_smooth - self.S)
+        
+        rhs_expr = (
+            (self.rho_old / dt)
+            + Splus_smooth * self.cfg.rho_max
+            + Sminus_smooth * self.cfg.rho_min
+        )
+        self.L_form_template = fem.form(rhs_expr * self.test * self.dx)
+        
         assemble_vector(self.b, self.L_form_template)
         self.b.ghostUpdate(PETSc.InsertMode.ADD, PETSc.ScatterMode.REVERSE)
         self.b.ghostUpdate(PETSc.InsertMode.INSERT, PETSc.ScatterMode.FORWARD)
@@ -444,9 +511,9 @@ class DensitySolver(_BaseLinearSolver):
         src_loc = fem.assemble_scalar(fem.form((Splus * self.cfg.rho_max + Sminus * self.cfg.rho_min) * self.dx))
         decay = float(self.comm.allreduce(decay_loc, op=MPI.SUM))
         src = float(self.comm.allreduce(src_loc, op=MPI.SUM))
-        dt_val = _val(self.cfg.dt_c)
-        R = (M_new - M_old) / max(dt_val, 1e-30) + decay - src
-        denom = abs((M_new - M_old) / max(dt_val, 1e-30)) + abs(decay) + abs(src) + 1e-30
+        dt = self.cfg.dt
+        R = (M_new - M_old) / max(dt, 1e-30) + decay - src
+        denom = abs((M_new - M_old) / max(dt, 1e-30)) + abs(decay) + abs(src) + 1e-30
         return abs(R), abs(R) / denom
 class DirectionSolver(_BaseLinearSolver):
     """Fabric tensor A: reaction-diffusion relaxing to strain-aligned target."""
@@ -463,10 +530,12 @@ class DirectionSolver(_BaseLinearSolver):
         vol_local = fem.assemble_scalar(fem.form(1.0 * self.dx))
         self.total_vol = self.comm.allreduce(vol_local, op=MPI.SUM)
 
-        ell2 = self.cfg.ell_c ** 2
+        ell2 = self.cfg.ell ** 2
+
+        # dt will be set later, use placeholder
         a = (
-            (self.cfg.cA_c / self.cfg.dt_c + self.cfg.tauA_c) * ufl.inner(self.trial, self.test) * self.dx
-            + self.cfg.cA_c * ell2 * ufl.inner(ufl.grad(self.trial), ufl.grad(self.test)) * self.dx
+            (self.cfg.cA / 1.0 + self.cfg.tauA) * ufl.inner(self.trial, self.test) * self.dx
+            + self.cfg.cA * ell2 * ufl.inner(ufl.grad(self.trial), ufl.grad(self.test)) * self.dx
         )
         self.a_form = fem.form(a)
         self._rhs_form = None
@@ -478,10 +547,33 @@ class DirectionSolver(_BaseLinearSolver):
         ksp_options = {"ksp_type": self.cfg.ksp_type, "pc_type": self.cfg.pc_type}
         self.create_ksp(prefix="direction", ksp_options=ksp_options)
         self._reset_stats()
+    
+    def assemble_lhs(self):
+        """Reassemble LHS with current dt."""
+        dt = self.cfg.dt
+        if dt <= 0:
+            raise ValueError(f"dt must be positive, got {dt}")
+        
+        ell2 = self.cfg.ell ** 2
+        a = (
+            (self.cfg.cA / dt + self.cfg.tauA) * ufl.inner(self.trial, self.test) * self.dx
+            + self.cfg.cA * ell2 * ufl.inner(ufl.grad(self.trial), ufl.grad(self.test)) * self.dx
+        )
+        self.a_form = fem.form(a)
+        
+        # Reassemble matrix
+        self.A.zeroEntries()
+        assemble_matrix(self.A, self.a_form, bcs=self.dirichlet_bcs)
+        self.A.assemble()
+        if self.ksp is not None:
+            self.ksp.setOperators(self.A)
+            self.ksp.setUp()
+        self._reset_stats()
 
     def assemble_rhs(self, B_sum_expr):
         B_hat = unittrace_psd(B_sum_expr, self.gdim, eps=self.smooth_eps)
-        rhs_ten = (self.cfg.cA_c / self.cfg.dt_c) * self.A_old + self.cfg.tauA_c * B_hat
+        dt = self.cfg.dt
+        rhs_ten = (self.cfg.cA / dt) * self.A_old + self.cfg.tauA * B_hat
         self._rhs_form = fem.form(ufl.inner(rhs_ten, self.test) * self.dx)
 
         with self.b.localForm() as b_local:

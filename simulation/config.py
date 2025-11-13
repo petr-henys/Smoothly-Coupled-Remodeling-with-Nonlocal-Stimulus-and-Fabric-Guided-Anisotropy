@@ -17,14 +17,14 @@ class Config:
     Unit convention (consistent and explicit):
     - Length: millimeters [mm]
     - Mass: tonnes [t] (1000 kg)
-    - Time: seconds [s] (days [day] where explicitly noted)
+    - Time: days [day]
     - Stress/Energy density: Megapascals [MPa] = [N/mm²]
     - Density: t/mm³ (= kg/m³ × 1e-9)
 
     Notes:
     - Using mm for length implies stresses/energy densities are naturally in MPa.
     - All stress-like quantities (E, σ, ψ, tractions) are in MPa; no Pa/kPa.
-    - When converting to per-second rates, only time units are rescaled (days → seconds).
+    - Time is in days for remodeling simulations.
     """
 
     # --- Material properties ---
@@ -47,7 +47,7 @@ class Config:
     cS: float = 32e-6              # signaling capacity [MPa·day]
     tauS: float = 0.04            # decay rate [1/day] → 25-day time constant
     kappaS: float = 250.0         # diffusion [mm²/day]
-    rS: float = 2.0e3            # mechano-transduction gain [1/(MPa·day)]
+    rS_gain: float = 2.0e3        # mechano-transduction gain [1/(MPa·day)]
 
     # --- Orientation A: fabric tensor evolution ---
     cA: float = 1.4               # orientation capacity [-]
@@ -116,26 +116,8 @@ class Config:
     dx: Optional[ufl.Measure] = field(init=False, default=None, repr=False)
     ds: Optional[ufl.Measure] = field(init=False, default=None, repr=False)
 
-    # --- UFL Constants (SI units) ---
-    E0_c: Optional[fem.Constant] = field(init=False, default=None, repr=False)
-    dt_c: Optional[fem.Constant] = field(init=False, default=None, repr=False)
-    psi_ref_c: Optional[fem.Constant] = field(init=False, default=None, repr=False)
-
-    beta_par_c: Optional[fem.Constant] = field(init=False, default=None, repr=False)
-    beta_perp_c: Optional[fem.Constant] = field(init=False, default=None, repr=False)
-
-    cS_c: Optional[fem.Constant] = field(init=False, default=None, repr=False)
-    tauS_c: Optional[fem.Constant] = field(init=False, default=None, repr=False)
-    kappaS_c: Optional[fem.Constant] = field(init=False, default=None, repr=False)
-    rS_gain_c: Optional[fem.Constant] = field(init=False, default=None, repr=False)
-
-    cA_c: Optional[fem.Constant] = field(init=False, default=None, repr=False)
-    tauA_c: Optional[fem.Constant] = field(init=False, default=None, repr=False)
-    ell_c: Optional[fem.Constant] = field(init=False, default=None, repr=False)
-
-    xi_aniso_c: Optional[fem.Constant] = field(init=False, default=None, repr=False)
-    nu_c: Optional[fem.Constant] = field(init=False, default=None, repr=False)
-    n_power_c: Optional[fem.Constant] = field(init=False, default=None, repr=False)
+    # --- Timestep (days) ---
+    dt: float = field(init=False, default=1.0)
 
     def __post_init__(self):
         if self.domain is None:
@@ -153,7 +135,6 @@ class Config:
             raise ValueError(f"accel_type must be 'anderson' or 'picard', got {self.accel_type!r}")
         
         self._build_measures()
-        self._build_constants()
         self._init_telemetry()
 
     @staticmethod
@@ -171,40 +152,6 @@ class Config:
             subdomain_data=self.facet_tags,
             metadata=metadata,
         )
-
-    def _build_constants(self):
-        """Build UFL Constants from model-unit parameters (mm, t, s, MPa)."""
-        # Convert time from days to seconds for consistency
-        DAY_TO_SEC = 86400.0
-        
-        # Mechanics (E0 in MPa, ν dimensionless)
-        self.E0_c = fem.Constant(self.domain, self._cast(self.E0))
-        self.nu_c = fem.Constant(self.domain, self._cast(self.nu))
-        self.n_power_c = fem.Constant(self.domain, self._cast(self.n_power))
-
-        # Time step (will be set later in seconds)
-        self.dt_c = fem.Constant(self.domain, self._cast(1.0))
-
-        # Energy density reference [MPa]
-        self.psi_ref_c = fem.Constant(self.domain, self._cast(self.psi_ref))
-
-        # Diffusion [mm²/s] - convert from mm²/day
-        self.beta_par_c = fem.Constant(self.domain, self._cast(self.beta_par / DAY_TO_SEC))
-        self.beta_perp_c = fem.Constant(self.domain, self._cast(self.beta_perp / DAY_TO_SEC))
-
-        # Stimulus (convert from per-day to per-second). cS in MPa·s, rS in 1/(MPa·s)
-        self.cS_c = fem.Constant(self.domain, self._cast(self.cS / DAY_TO_SEC))
-        self.tauS_c = fem.Constant(self.domain, self._cast(self.tauS / DAY_TO_SEC))
-        self.kappaS_c = fem.Constant(self.domain, self._cast(self.kappaS / DAY_TO_SEC))
-        self.rS_gain_c = fem.Constant(self.domain, self._cast(self.rS / DAY_TO_SEC))
-
-        # Orientation (convert tauA from days to seconds)
-        self.cA_c = fem.Constant(self.domain, self._cast(self.cA))
-        self.tauA_c = fem.Constant(self.domain, self._cast(self.tauA / DAY_TO_SEC))
-        self.ell_c = fem.Constant(self.domain, self._cast(self.ell))
-
-        # Anisotropy
-        self.xi_aniso_c = fem.Constant(self.domain, self._cast(self.xi_aniso))
 
     def _init_telemetry(self) -> None:
         """Initialize telemetry and persist config.json (rank-0 only)."""
@@ -224,11 +171,11 @@ class Config:
             overwrite=True,
         )
 
-    def set_dt(self, dt_seconds: float):
-        """Update Δt constant from value in seconds."""
-        if dt_seconds <= 0:
-            raise ValueError(f"Timestep dt_seconds={dt_seconds} must be positive.")
-        self.dt_c.value = self._cast(dt_seconds)
+    def set_dt(self, dt_days: float):
+        """Update timestep in days."""
+        if dt_days <= 0:
+            raise ValueError(f"Timestep dt_days={dt_days} must be positive.")
+        self.dt = float(dt_days)
 
     def update_config_json(self):
         """Re-write config.json with current parameters (rank-0 only)."""
@@ -242,11 +189,10 @@ class Config:
         )
 
     def rebuild(self, domain: mesh.Mesh, facet_tags: Optional[mesh.MeshTags] = None):
-        """Rebuild measures and constants after domain change."""
+        """Rebuild measures after domain change."""
         self.domain = domain
         self.facet_tags = facet_tags
         self._build_measures()
-        self._build_constants()
 
     def to_json_dict(self) -> dict:
         """Serialize init-time parameters to JSON-compatible dict."""
