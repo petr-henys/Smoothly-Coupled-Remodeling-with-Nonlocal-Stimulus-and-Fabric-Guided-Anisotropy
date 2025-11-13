@@ -167,14 +167,18 @@ class FixedPointSolver:
         """One GS sweep: u → S → ρ → A (sequential subsolver calls)."""
         mech_time_total = stim_time_total = dens_time_total = dir_time_total = 0.0
 
-        # Mechanics
         t0 = MPI.Wtime()
-        self.mech.assemble_lhs()
-        mech_iters, mech_reason = self.mech.solve()
+        self.mech.assemble_lhs()  # K(ρ,A) reassembled; solves happen inside driver.update_snapshots()
         mech_time_total += self._elapsed_max(t0)
 
         # Stimulus (energy-driven via driver)
         t0 = MPI.Wtime()
+        # refresh gait snapshots for current (rho, A)
+        try:
+            self.driver.update_snapshots()
+        except AttributeError:
+            # drivers without snapshots (instant) just ignore
+            pass
         psi_expr = self.driver.energy_expr()
         self.stim.assemble_rhs(psi_expr)
         stim_iters, stim_reason = self.stim.solve()
@@ -189,14 +193,15 @@ class FixedPointSolver:
 
         # Direction (structure tensor via driver)
         t0 = MPI.Wtime()
+        self.driver.update_snapshots()
         M_expr = self.driver.structure_expr()
         self.dir.assemble_rhs(M_expr)
         dir_iters, dir_reason = self.dir.solve()
         dir_time_total += self._elapsed_max(t0)
 
         return (mech_time_total, stim_time_total, dens_time_total, dir_time_total,
-                mech_reason, stim_reason, dens_reason, dir_reason,
-                mech_iters, stim_iters, dens_iters, dir_iters)
+                stim_reason, dens_reason, dir_reason,
+                stim_iters, dens_iters, dir_iters)
 
     def _proj_residual_norm(self, x_old: np.ndarray, x_test: np.ndarray,
                            x_raw: np.ndarray, weights: Sequence[float]) -> float:
@@ -206,7 +211,6 @@ class FixedPointSolver:
         
         is_picard = (x_test is x_raw)
         
-        # Mechanics block
         base_u = x_old[s_u] if is_picard else x_raw[s_u]
         diff_u = x_test[s_u] - base_u
         if self.mask_u_any:
@@ -343,6 +347,8 @@ class FixedPointSolver:
         if accelerator is not None:
             accelerator.reset()
 
+        # Invalidate driver cache (forces rebuild of gait-averaged expressions with current state)
+        self.driver.invalidate()
 
         x_k = self._flatten_state(copy=True)
 

@@ -41,6 +41,8 @@ class Config:
     rho_min: float = 0.30         # minimum relative density [-]
     rho_max: float = 1.00         # maximum relative density [-]
     rho0: float = 0.60            # initial relative density [-]
+    lambda_rho: float = 0.1       # [1/day] váha reakčního členu ~ |S| v rovnici pro ρ
+
 
     # --- Density: anisotropic diffusion ---
     beta_par: float = 1.5          # parallel diffusion [mm²/day]
@@ -81,6 +83,7 @@ class Config:
     safeguard: bool = True                   # enable backtracking
     backtrack_max: int = 6                   # max backtracking steps
     coupling_tol: float = 1e-6               # fixed-point tolerance
+    
     # Anderson restarts and step limiting
     restart_on_reject_k: int = 2             # restart after k rejections
     restart_on_stall: float = 1.10           # restart if residual stalls by this factor
