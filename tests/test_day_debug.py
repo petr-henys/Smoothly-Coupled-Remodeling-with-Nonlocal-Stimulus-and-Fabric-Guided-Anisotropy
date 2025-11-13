@@ -42,7 +42,7 @@ def _shim_gait_loader(monkeypatch):
             self.t_hip = fem.Function(V, name="t_hip")
             self.t_glmed = fem.Function(V, name="t_glmed")
             self.t_glmax = fem.Function(V, name="t_glmax")
-            self.load_scale = 2.0e-5  # [MPa] - tuned for psi ~ psi_ref
+            self.load_scale = 0.5  # [MPa] - tuned for psi ~ psi_ref
 
         def get_quadrature(self):
             return [(0.0, 0.5), (50.0, 0.5)]

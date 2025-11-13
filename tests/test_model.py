@@ -34,10 +34,10 @@ class _DummyGaitLoader:
         self.t_hip = fem.Function(V, name="t_hip")
         self.t_glmed = fem.Function(V, name="t_glmed")
         self.t_glmax = fem.Function(V, name="t_glmax")
-        # Scale to produce physiological strain energy density (~psi_ref = 300e-6 MPa)
-        # With E=6500 MPa, psi ~ σ²/(2E), so σ ~ sqrt(2*E*psi) ~ sqrt(2*6500*3e-4) ~ 2 MPa
-        # But unit cube geometry amplifies this, so use smaller tractions
-        self.load_scale = 2.0e-5  # [MPa] - tuned for psi ~ psi_ref
+        # Scale to produce physiological strain energy density (~psi_ref = 3.0e-3 MPa)
+        # With E=1.5e4 MPa, psi ~ σ²/(2E), so σ ~ sqrt(2*E*psi) ~ sqrt(2*1.5e4*3e-3) ~ 9.5 MPa
+        # For unit cube geometry, use smaller effective tractions
+        self.load_scale = 0.5  # [MPa] - tuned for psi ~ psi_ref
 
     def get_quadrature(self):
         # Two phases: peak loading (0%) and mid-stance (50%)
@@ -166,7 +166,7 @@ def test_density_evolves_with_stimulus(tmp_path):
     domain = _unit_cube(5)
     facet_tags = build_facetag(domain)
     cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False, results_dir=str(tmp_path), 
-                 max_subiters=8, rho0=500.0e-9)
+                 max_subiters=8, rho0=0.5)
 
     with Remodeller(cfg) as rem:
         rho_initial = rem.rho.x.array.copy()

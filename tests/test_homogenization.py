@@ -21,9 +21,13 @@ def _make_config(domain, E, nu, xi=0.0):
         ds=ufl.Measure("ds", domain=domain),
         rho_min=1e-9,  # kg/m³
         E0=E,  # MPa
+        E0_c=E,  # MPa (constitutive)
         n_power=1.0,
+        n_power_c=1.0,
         nu=nu,
+        nu_c=nu,
         xi_aniso=xi,
+        xi_aniso_c=xi,
         ksp_type="cg",
         pc_type="gamg",
         ksp_rtol=1e-12,
