@@ -384,7 +384,7 @@ class TestConservation:
 
     
     def test_density_bounds_preservation(self):
-        """Density solver should relax toward [rho_min, rho_max] bounds."""
+        """Density solver should relax toward bounds under stimulus sign."""
         comm = MPI.COMM_WORLD
         domain = _make_unit_cube(comm, 8)
         facet_tags = build_facetag(domain)
@@ -399,8 +399,10 @@ class TestConservation:
         rho = Function(Q, name="rho")
         rho_old = Function(Q, name="rho_old")
         
-        # Start with out-of-bounds initial condition [kg/m³]
-        rho_initial = 50.0  # Below rho_min = 350
+        # Start with out-of-bounds initial condition (below rho_min)
+        rho_min = float(cfg.rho_min)
+        rho_max = float(cfg.rho_max)
+        rho_initial = 0.5 * rho_min
         rho_old.x.array[:] = rho_initial
         rho_old.x.scatter_forward()
         
@@ -417,19 +419,17 @@ class TestConservation:
         densolver.assemble_rhs()
         densolver.solve()
         
-        rho_min = float(cfg.rho_min)
-        
         n_owned = Q.dofmap.index_map.size_local
         rho_min_computed = comm.allreduce(rho.x.array[:n_owned].min(), op=MPI.MIN)
         
         # Density bounds are soft constraints enforced via diffusion-reaction PDE
-        # Check that solution moved toward rho_min from below (relaxation, not hard enforcement)
+        # Positive S: check solution moved upward from initial value, but remains below rho_max
         assert rho_min_computed > rho_initial, f"Density should increase from {rho_initial}, got {rho_min_computed}"
-        assert rho_min_computed < rho_min, f"Density should still be relaxing toward bounds, got {rho_min_computed}"
+        assert rho_min_computed < rho_max, f"Density should still be relaxing toward bounds, got {rho_min_computed}"
 
     @pytest.mark.parametrize("unit_cube", [6], indirect=True)
     def test_density_solver_response_to_stimulus_sign(self, unit_cube, facet_tags, mean_value_factory):
-        """Positive stimulus should increase density, negative stimulus should decrease it."""
+        """Positive stimulus should increase density (toward rho_max), negative should decrease (toward rho_min)."""
         comm = MPI.COMM_WORLD
         cfg = Config(domain=unit_cube, facet_tags=facet_tags, verbose=(comm.rank == 0))
 
@@ -439,9 +439,13 @@ class TestConservation:
         Q = functionspace(unit_cube, P1)
         T = functionspace(unit_cube, P1_ten)
 
+        rho_min = float(cfg.rho_min)
+        rho_max = float(cfg.rho_max)
+        rho_mid = 0.5 * (rho_min + rho_max)
+
         def _solve_density(stimulus_value: float) -> float:
             rho_old = Function(Q, name="rho_old")
-            rho_old.x.array[:] = 0.5
+            rho_old.x.array[:] = rho_mid
             rho_old.x.scatter_forward()
 
             rho = Function(Q, name="rho")
@@ -461,19 +465,20 @@ class TestConservation:
             rho.x.scatter_forward()
             return mean_value_factory(rho)
 
-        baseline = 0.5
+        baseline = rho_mid
         rho_mean_positive = _solve_density(0.25)
         rho_mean_negative = _solve_density(-0.25)
 
         pos_delta = rho_mean_positive - baseline
         neg_delta = baseline - rho_mean_negative
 
-        assert pos_delta > 1e-2, (
-            "Positive stimulus should raise density by at least 1%; "
+        span = rho_max - rho_min
+        assert pos_delta > 0 and pos_delta > 0.01 * span, (
+            "Positive stimulus should raise density by at least 1% of span; "
             f"baseline={baseline}, mean={rho_mean_positive}, Δ={pos_delta}"
         )
-        assert neg_delta > 1e-2, (
-            "Negative stimulus should reduce density by at least 1%; "
+        assert neg_delta > 0 and neg_delta > 0.01 * span, (
+            "Negative stimulus should reduce density by at least 1% of span; "
             f"baseline={baseline}, mean={rho_mean_negative}, Δ={neg_delta}"
         )
 

@@ -22,7 +22,7 @@ from simulation.config import Config
 from simulation.febio_parser import FEBio2Dolfinx
 from simulation.paths import FemurPaths
 from simulation.subsolvers import MechanicsSolver, StimulusSolver, DensitySolver, DirectionSolver
-from simulation.femur_remodeller_gait import setup_femur_gait_loading
+from simulation.femur_gait import setup_femur_gait_loading
 from simulation.fixedsolver import FixedPointSolver
 from simulation.drivers import GaitEnergyDriver
 

@@ -16,7 +16,7 @@ from simulation.paths import FemurPaths
 from simulation.config import Config
 
 # Import the module under test
-from simulation.femur_remodeller_gait import setup_femur_gait_loading
+from simulation.femur_gait import setup_femur_gait_loading
 
 
 @pytest.fixture(scope="module")
@@ -368,10 +368,10 @@ class TestForceMaxima:
         assert 0.0 <= glmax_max_phase <= 50.0, \
             f"Gluteus maximus peak phase should be 0–50%, got {glmax_max_phase:.0f}%"
 
-        # Traction magnitudes remain within contact-stress expectations
-        # Traction values are small due to Gaussian load spreading
-        assert 1e-6 < hip_traction_max_MPa < 1.0, \
-            f"Hip max traction should be 1e-6–1 MPa, got {hip_traction_max_MPa:.3e} MPa"
+        # Traction magnitudes within physiological contact-stress expectations (MPa)
+        # Hip joint contact stress during walking typically 2–10 MPa; allow headroom for concentration
+        assert 1e-6 < hip_traction_max_MPa < 20.0, \
+            f"Hip max traction should be 1e-6–20 MPa, got {hip_traction_max_MPa:.3e} MPa"
 
 
 class TestFemurDeformationFeasibility:

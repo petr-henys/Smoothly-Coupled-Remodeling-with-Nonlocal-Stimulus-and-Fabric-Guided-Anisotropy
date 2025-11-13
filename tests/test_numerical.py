@@ -284,21 +284,25 @@ class TestMatrixAssembly:
         assert norm > 0, "Stimulus matrix is zero"
 
     def test_stimulus_update_lhs_changes_matrix(self, cfg, spaces):
-        """Changing dt via set_dt and update_lhs should alter matrix norm."""
-        cfg.set_dt(10.0 * 86400.0)  # 10 days in seconds
+        """Changing dt via set_dt and assemble_lhs should alter matrix norm measurably."""
+        # Build a local Config that accentuates dt effect (mass-only term)
+        cfg2 = Config(domain=cfg.domain, facet_tags=cfg.facet_tags, verbose=False,
+                      cS=1.0, tauS=0.0, kappaS=0.0)
+        cfg2.set_dt(1.0 * 86400.0)  # 1 day baseline
         Q = spaces.Q
         S = Function(Q, name="S")
         S_old = Function(Q, name="S_old")
-        stim = StimulusSolver(S, S_old, cfg)
+        stim = StimulusSolver(S, S_old, cfg2)
         stim.setup()
         from petsc4py import PETSc
         n1 = stim.A.norm(PETSc.NormType.FROBENIUS)
 
         # Change dt significantly and update LHS
-        cfg.set_dt(100.0 * 86400.0)  # 100 days in seconds
+        cfg2.set_dt(100.0 * 86400.0)  # 100 days
         stim.assemble_lhs()
         n2 = stim.A.norm(PETSc.NormType.FROBENIUS)
-        assert abs(n2 - n1) / max(1.0, n1) > 1e-6, "Stimulus matrix norm unchanged after dt update"
+        rel_change = abs(n2 - n1) / max(n1, 1e-300)
+        assert rel_change > 0.5, f"Stimulus matrix norm unchanged after dt update (rel={rel_change:.3e}, n1={n1:.3e}, n2={n2:.3e})"
 
     @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
     @pytest.mark.parametrize("solver_type", ["mechanics", "stimulus", "density"])
@@ -525,12 +529,14 @@ class TestConfigValidation:
         # Note: PETSc validates solver types at runtime, not at config creation
 
     def test_config_accel_type_validation(self, unit_cube, facet_tags):
-        """Acceleration type must be valid choice."""
-        for accel in ["anderson", "picard", "none"]:
+        """Acceleration type must be valid choice ('anderson' or 'picard')."""
+        for accel in ["anderson", "picard"]:
             cfg = Config(domain=unit_cube, facet_tags=facet_tags,
                         accel_type=accel, verbose=False)
             assert cfg.accel_type == accel
-        # Note: Invalid accel_type not validated at config level, handled at runtime
+        # 'none' is not accepted at config time
+        with pytest.raises((ValueError, RuntimeError)):
+            Config(domain=unit_cube, facet_tags=facet_tags, accel_type="none", verbose=False)
 
     def test_config_tolerance_values_positive(self, unit_cube, facet_tags):
         """Solver tolerances must be positive."""
@@ -581,27 +587,32 @@ def _mat_action_norm(A, x_petsc):
     return float(y.norm())
 
 def test_stimulus_matrix_changes_with_dt():
-    """Changing dt (dimensional) and calling update_lhs should change the LHS norm significantly."""
+    """Changing dt and calling assemble_lhs should measurably change the LHS norm."""
     comm = MPI.COMM_WORLD
     domain = mesh.create_unit_cube(comm, 4, 4, 4, ghost_mode=mesh.GhostMode.shared_facet)
     facet_tags = build_facetag(domain)
-    cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False)
+    # Amplify dt sensitivity: remove diffusion and decay; keep mass term only
+    cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False,
+                 cS=1.0, tauS=0.0, kappaS=0.0)
 
     # Q space
     P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
     Q = fem.functionspace(domain, P1)
 
+    # Set baseline dt before setup
+    cfg.set_dt(1.0 * 86400.0)  # 1 day
     S = fem.Function(Q, name="S")
     S_old = fem.Function(Q, name="S_old")
     solver = StimulusSolver(S, S_old, cfg)
     solver.setup()
 
     n1 = solver.A.norm()
-    cfg.set_dt(50.0 * 86400.0)  # 50 days in seconds
+    cfg.set_dt(100.0 * 86400.0)  # 100 days
     solver.assemble_lhs()
     n2 = solver.A.norm()
-    # Require a noticeable change
-    assert abs(n2 - n1) / max(1.0, n1) > 1e-6, "Stimulus LHS norm did not change with dt"
+    # With mass-only term, norm should change strongly with dt (≈100×)
+    rel_change = abs(n2 - n1) / max(n1, 1e-300)
+    assert rel_change > 0.5, f"Stimulus LHS norm did not change with dt (rel={rel_change:.3e}, n1={n1:.3e}, n2={n2:.3e})"
 
 def test_mechanics_operator_action_nonzero():
     """Mechanics K should produce nonzero action on a random vector when rho>0."""

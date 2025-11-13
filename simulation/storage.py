@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 from collections import defaultdict
+import os
 from pathlib import Path
 from typing import Dict, List, Sequence, TYPE_CHECKING
 
@@ -31,6 +32,12 @@ class FieldStorage:
         self.output_dir = Path(cfg.results_dir)
         self._writers: Dict[str, VTXWriter] = {}
         self._write_counts: Dict[str, int] = defaultdict(int)
+        
+        # Disable ADIOS2 profiling to avoid profiling.json creation in temp dirs
+        # Must be set before any writers are constructed
+        if os.environ.get("ADIOS2_PROFILE", "").lower() not in ("off", "0", "false"):
+            os.environ["ADIOS2_PROFILE"] = "OFF"
+            os.environ["ADIOS2_PROFILE_LEVEL"] = "0"
         
         # Create output directory (rank 0 only, then barrier)
         if comm.rank == 0:

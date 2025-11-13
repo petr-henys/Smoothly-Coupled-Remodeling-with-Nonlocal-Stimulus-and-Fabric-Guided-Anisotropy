@@ -8,7 +8,7 @@ from dolfinx import fem
 
 from simulation.febio_parser import FEBio2Dolfinx
 from simulation.paths import FemurPaths
-from simulation.femur_remodeller_gait import setup_femur_gait_loading
+from simulation.femur_gait import setup_femur_gait_loading
 from simulation.config import Config
 from simulation.subsolvers import MechanicsSolver
 from simulation.drivers import GaitEnergyDriver
@@ -38,7 +38,7 @@ def femur_setup():
 def gait_loader(femur_setup):
     """Create gait loader with hip and muscle loads."""
     _, _, V, _, cfg = femur_setup
-    return setup_femur_gait_loading(V, cfg, BW_kg=75.0, n_samples=9)
+    return setup_femur_gait_loading(V, BW_kg=75.0, n_samples=9)
 
 
 @pytest.fixture

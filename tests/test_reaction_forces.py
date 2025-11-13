@@ -6,7 +6,7 @@ from dolfinx import fem
 from simulation.febio_parser import FEBio2Dolfinx
 from simulation.paths import FemurPaths
 from simulation.config import Config
-from simulation.femur_remodeller_gait import setup_femur_gait_loading
+from simulation.femur_gait import setup_femur_gait_loading
 from simulation.subsolvers import MechanicsSolver
 from simulation.utils import build_dirichlet_bcs
 from dolfinx.fem.petsc import (
