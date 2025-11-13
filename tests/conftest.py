@@ -237,31 +237,20 @@ def shared_tmpdir():
     from pathlib import Path
     
     if not HAS_MPI or MPI is None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            yield Path(tmpdir)
+        path = tempfile.mkdtemp(prefix="remodeller_tests_")
+        yield Path(path)
         return
-    
+
     comm = MPI.COMM_WORLD
-    
-    # Rank 0 creates the temp directory, others set to None
-    tmpdir_obj = None
+
+    # Rank 0 creates a persistent temp directory, broadcast to others
     if comm.rank == 0:
-        tmpdir_obj = tempfile.TemporaryDirectory()
-        tmpdir = tmpdir_obj.name
+        tmpdir = tempfile.mkdtemp(prefix="remodeller_tests_")
     else:
         tmpdir = None
-    
-    # Broadcast path to all ranks
+
     tmpdir = comm.bcast(tmpdir, root=0)
-    
-    try:
-        yield Path(tmpdir)
-    finally:
-        # Barrier before cleanup to ensure all ranks finished using the directory
-        comm.Barrier()
-        # Only rank 0 cleans up (it's the only one with tmpdir_obj)
-        if comm.rank == 0 and tmpdir_obj is not None:
-            tmpdir_obj.cleanup()
+    yield Path(tmpdir)
 
 
 @pytest.fixture
