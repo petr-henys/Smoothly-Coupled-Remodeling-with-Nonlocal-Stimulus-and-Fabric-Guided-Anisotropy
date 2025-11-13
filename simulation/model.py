@@ -101,10 +101,9 @@ class Remodeller:
         self.A.x.scatter_forward()
 
         assign(self.S, 0.0)
-        self.scatter_fields = (self.u, self.rho, self.A, self.S)
+        self.scatter_fields = (self.rho, self.A, self.S)
 
-        # Register fields
-        self.storage.fields.register("u", [self.u], filename="u.bp")
+        # Register fields (rho, S, A only)
         self.storage.fields.register("scalars", [self.rho, self.S], filename="scalars.bp")
         self.storage.fields.register("A", [self.A], filename="A.bp")
 
@@ -137,7 +136,7 @@ class Remodeller:
         self.fixedsolver = FixedPointSolver(
             self.comm, self.cfg,
             self.mechsolver, self.stimsolver, self.densolver, self.dirsolver, self.driver,
-            self.rho, self.rho_old, self.A, self.A_old, self.S, self.S_old
+            self.u, self.rho, self.rho_old, self.A, self.A_old, self.S, self.S_old
         )
 
 
@@ -235,15 +234,12 @@ class Remodeller:
     def _collect_field_stats(self) -> Dict[str, float]:
         """Gather field min/max and energy for reporting."""
         rho_min, rho_max = self._field_minmax(self.rho)
-        u_min, u_max = self._field_minmax(self.u)
         S_min, S_max = self._field_minmax(self.S)
         psi_avg = self.mechsolver.average_strain_energy()
 
         return dict(
             rho_min=rho_min,
             rho_max=rho_max,
-            u_min=u_min * 1e3,  # convert to mm
-            u_max=u_max * 1e3,  # convert to mm
             S_min=S_min,
             S_max=S_max,
             psi=psi_avg,
@@ -263,7 +259,6 @@ class Remodeller:
             lambda: (
                 f"Step {step:2d} | t={t:6.1f}d | "
                 f"ρ=[{fields['rho_min']:.0f},{fields['rho_max']:.0f}] | "
-                f"u=[{fields['u_min']:.2e},{fields['u_max']:.2e}] | "
                 f"S=[{fields['S_min']:.2e},{fields['S_max']:.2e}] | "
                 f"ψ={fields['psi']:.1f} | "
                 f"mech={iters['mech_gs']:.1f} | stim={iters['stim_gs']:.1f} | "
@@ -451,8 +446,6 @@ class Remodeller:
                 "final_field_stats": {
                     "rho_min": float(fields.get("rho_min", 0.0)),
                     "rho_max": float(fields.get("rho_max", 0.0)),
-                    "u_min": float(fields.get("u_min", 0.0)),
-                    "u_max": float(fields.get("u_max", 0.0)),
                     "S_min": float(fields.get("S_min", 0.0)),
                     "S_max": float(fields.get("S_max", 0.0)),
                     "psi": float(fields.get("psi", 0.0)),

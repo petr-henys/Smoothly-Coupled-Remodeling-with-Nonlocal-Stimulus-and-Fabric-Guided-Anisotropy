@@ -198,7 +198,6 @@ class UnifiedStorage:
     ) -> None:
         """Write fields (COLLECTIVE) and record metrics (rank-0)."""
         # Field writes (COLLECTIVE) - fields already registered in Remodeller
-        self.fields.write("u", time_days)
         self.fields.write("scalars", time_days)
         self.fields.write("A", time_days)
         
