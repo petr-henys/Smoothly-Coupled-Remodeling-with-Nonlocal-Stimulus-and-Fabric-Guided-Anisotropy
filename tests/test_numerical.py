@@ -133,86 +133,6 @@ class TestDOFOrdering:
 
 
 # =============================================================================
-# Nondimensionalization Tests
-# =============================================================================
-
-class TestNondimensionalization:
-    """Test consistency of nondimensionalization."""
-    
-    def test_characteristic_scales_positive(self, cfg):
-        """All characteristic scales should be positive."""
-        
-        # Check characteristic scales
-        assert float(cfg.L_c) > 0, "L_c not positive"
-        assert float(cfg.rho_c) > 0, "rho_c not positive"
-        assert float(cfg.u_c) > 0, "u_c not positive"
-        assert float(cfg.E0_dim) > 0, "E0_dim not positive"
-        assert float(cfg.psi_ref_dim) > 0, "psi_ref_dim not positive"
-        assert float(cfg.sigma_c) > 0, "sigma_c not positive"
-        assert float(cfg.psi_c) > 0, "psi_c not positive"
-    
-    def test_nd_parameters_consistent(self, cfg):
-        """Nondimensional parameters should satisfy expected relationships."""
-        
-        # Check ND constants are Constant objects
-        assert isinstance(cfg.E0_nd, fem.Constant), "E0_nd not a Constant"
-        assert isinstance(cfg.psi_ref_nd, fem.Constant), "psi_ref_nd not a Constant"
-        
-        # Check values are reasonable (O(1) after nondimensionalization)
-        E0_nd = float(cfg.E0_nd)
-        psi_ref_nd = float(cfg.psi_ref_nd)
-        
-        assert 0.1 < E0_nd < 10.0, f"E0_nd out of expected range: {E0_nd}"
-        assert 0.01 < psi_ref_nd < 100.0, f"psi_ref_nd out of expected range: {psi_ref_nd}"
-    
-    def test_geometry_scaling_idempotent(self, unit_cube):
-        """Mesh scaling should be idempotent (not double-scale)."""
-        domain = unit_cube
-        facet_tags = build_facetag(domain)
-        
-        # Get initial coordinates
-        coords_initial = domain.geometry.x.copy()
-        
-        # Create config (should scale mesh)
-        cfg1 = Config(domain=domain, facet_tags=facet_tags, verbose=False)
-        coords_after_1 = domain.geometry.x.copy()
-        
-        # Create another config (should NOT scale again)
-        cfg2 = Config(domain=domain, facet_tags=facet_tags, verbose=False)
-        coords_after_2 = domain.geometry.x.copy()
-        
-        # Second config should not change coordinates
-        assert np.allclose(coords_after_1, coords_after_2), "Mesh scaled twice (not idempotent)"
-        
-        # But first config should have scaled
-        if float(cfg1.L_c) != 1.0:
-            scale = float(cfg1.L_c)
-            expected_coords = coords_initial / scale
-            assert np.allclose(coords_after_1, expected_coords, rtol=1e-10), "Mesh not scaled correctly"
-    
-    def test_dt_scaling_updates(self, cfg):
-        """set_dt_dim should update dt_nd correctly."""
-        
-        # Set dimensional timestep
-        dt_days = 10.0
-        cfg.set_dt_dim(dt_days)
-        
-        # Check dt_nd updated
-        dt_nd = float(cfg.dt_nd)
-        assert dt_nd > 0, "dt_nd not positive after set_dt_dim"
-        
-        # Set different timestep
-        dt_days2 = 50.0
-        cfg.set_dt_dim(dt_days2)
-        dt_nd2 = float(cfg.dt_nd)
-        
-        # Should scale linearly
-        ratio = dt_nd2 / dt_nd
-        expected_ratio = dt_days2 / dt_days
-        assert abs(ratio - expected_ratio) < 1e-10, f"dt_nd scaling not linear: {ratio} ≠ {expected_ratio}"
-
-
-# =============================================================================
 # Anderson Acceleration Tests
 # =============================================================================
 
@@ -352,7 +272,7 @@ class TestMatrixAssembly:
     
     def test_stimulus_lhs_spd(self, cfg, spaces):
         """Stimulus LHS matrix should be SPD."""
-        cfg.set_dt_dim(10.0)
+        cfg.set_dt(10.0 * 86400.0)  # 10 days in seconds
         Q = spaces.Q
         S = Function(Q, name="S")
         S_old = Function(Q, name="S_old")
@@ -365,8 +285,8 @@ class TestMatrixAssembly:
         assert norm > 0, "Stimulus matrix is zero"
 
     def test_stimulus_update_lhs_changes_matrix(self, cfg, spaces):
-        """Changing dt via set_dt_dim and update_lhs should alter matrix norm."""
-        cfg.set_dt_dim(10.0)
+        """Changing dt via set_dt and update_lhs should alter matrix norm."""
+        cfg.set_dt(10.0 * 86400.0)  # 10 days in seconds
         Q = spaces.Q
         S = Function(Q, name="S")
         S_old = Function(Q, name="S_old")
@@ -376,7 +296,7 @@ class TestMatrixAssembly:
         n1 = stim.A.norm(PETSc.NormType.FROBENIUS)
 
         # Change dt significantly and update LHS
-        cfg.set_dt_dim(100.0)
+        cfg.set_dt(100.0 * 86400.0)  # 100 days in seconds
         stim.assemble_lhs()
         n2 = stim.A.norm(PETSc.NormType.FROBENIUS)
         assert abs(n2 - n1) / max(1.0, n1) > 1e-6, "Stimulus matrix norm unchanged after dt update"
@@ -416,7 +336,7 @@ class TestMatrixAssembly:
             
         elif solver_type == "stimulus":
             # Stimulus solver: positive semi-definite
-            cfg.set_dt_dim(10.0)
+            cfg.set_dt(10.0 * 86400.0)  # 10 days in seconds
             S = Function(Q, name="S")
             S_old = Function(Q, name="S_old"); S_old.x.array[:] = 0.0; S_old.x.scatter_forward()
             solver = StimulusSolver(S, S_old, cfg)
@@ -558,16 +478,16 @@ class TestConfigValidation:
         # In production, this should be validated - test documents current behavior
 
     def test_config_rejects_negative_timestep(self, unit_cube, facet_tags):
-        """set_dt_dim should reject non-positive timestep."""
+        """set_dt should reject non-positive timestep."""
         cfg = Config(domain=unit_cube, facet_tags=facet_tags, verbose=False)
 
         # Zero timestep
         with pytest.raises((ValueError, ZeroDivisionError)):
-            cfg.set_dt_dim(0.0)
+            cfg.set_dt(0.0)
 
         # Negative timestep
         with pytest.raises((ValueError, RuntimeError)):
-            cfg.set_dt_dim(-1.0)
+            cfg.set_dt(-1.0)
 
     def test_config_poisson_ratio_in_valid_range(self, unit_cube, facet_tags):
         """Poisson ratio must be in physically valid range (-1, 0.5)."""
@@ -589,12 +509,12 @@ class TestConfigValidation:
         """Young's modulus must be positive."""
         with pytest.raises(ValueError):
             cfg = Config(domain=unit_cube, facet_tags=facet_tags,
-                        E0_dim=-1000.0, verbose=False)
+                        E0=-1000.0, verbose=False)
         
         # Positive value should work
         cfg = Config(domain=unit_cube, facet_tags=facet_tags,
-                    E0_dim=1000.0, verbose=False)
-        assert cfg.E0_dim == 1000.0
+                    E0=1000.0, verbose=False)
+        assert cfg.E0 == 1000.0
 
     def test_config_positive_characteristic_scales(self, unit_cube, facet_tags):
         """Characteristic scales must be positive."""
@@ -704,7 +624,7 @@ def test_stimulus_matrix_changes_with_dt():
     solver.setup()
 
     n1 = solver.A.norm()
-    cfg.set_dt_dim(50.0)
+    cfg.set_dt(50.0 * 86400.0)  # 50 days in seconds
     solver.assemble_lhs()
     n2 = solver.A.norm()
     # Require a noticeable change

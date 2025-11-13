@@ -50,7 +50,7 @@ def test_config_and_mesh_creation():
     # Verify config initialized correctly
     assert cfg is not None
     assert cfg.domain is not None
-    assert float(cfg.E0_nd) > 0
+    assert float(cfg.E0_c) > 0  # SI units: Pa
     assert cfg.dx is not None
     
     comm.Barrier()
@@ -87,7 +87,7 @@ def test_solver_initialization():
     domain = mesh.create_unit_cube(comm, 2, 2, 2, ghost_mode=mesh.GhostMode.shared_facet)
     facet_tags = build_facetag(domain)
     cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False)
-    cfg.set_dt_dim(1.0)
+    cfg.set_dt(86400.0)  # 1 day in seconds
 
     P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3,))
     P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)

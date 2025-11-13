@@ -511,7 +511,7 @@ class TestSolverIterations:
         domain = mesh.create_unit_cube(comm, 8, 8, 8, ghost_mode=mesh.GhostMode.shared_facet)
         facet_tags = build_facetag(domain)
         cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False)
-        cfg.set_dt_dim(dt_days)
+        cfg.set_dt(dt_days * 86400.0)  # Convert days to seconds
         
         P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
         Q = functionspace(domain, P1)

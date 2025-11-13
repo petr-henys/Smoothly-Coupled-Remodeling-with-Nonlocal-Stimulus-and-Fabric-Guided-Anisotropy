@@ -56,10 +56,7 @@ class FemurRemodellerGait:
         glmed_gait: Callable[[float], np.ndarray],
         glmax_gait: Callable[[float], np.ndarray],
         n_samples: int = 9,
-        load_scale: float = 1.0,
-        flip_hip: bool = True,
-        flip_glmed: bool = False,
-        flip_glmax: bool = False,
+        load_scale: float = 1.0
     ):
         self.t_hip = t_hip
         self.t_glmed = t_glmed
@@ -75,10 +72,7 @@ class FemurRemodellerGait:
         
         self.n_samples = n_samples
         self.load_scale = load_scale
-        
-        self.flip_hip = flip_hip
-        self.flip_glmed = flip_glmed
-        self.flip_glmax = flip_glmax
+    
     
     def get_quadrature(self) -> List[Tuple[float, float]]:
         """Return trapezoid quadrature over gait cycle [0, 100]%."""
@@ -95,8 +89,13 @@ class FemurRemodellerGait:
         F_glmed = self.glmed_gait(phase_percent)
         F_glmax = self.glmax_gait(phase_percent)
         
+        # Apply loads to create interpolators (in Pascals)
+        self.hip.apply_gaussian_load(force_vector_css=F_hip, sigma_deg=10.0, flip=True)
+        self.gl_med.apply_gaussian_load(force_vector_css=F_glmed, sigma=3.0, flip=False)
+        self.gl_max.apply_gaussian_load(force_vector_css=F_glmax, sigma=3.0, flip=False)
+        
         scale = self.load_scale
-        # Geometry already in meters, loads already in Pascals
+        # Interpolate into DOLFINx functions
         self.t_hip.interpolate(lambda x: self.hip(x.T).T * scale)
         self.t_glmed.interpolate(lambda x: self.gl_med(x.T).T * scale)
         self.t_glmax.interpolate(lambda x: self.gl_max(x.T).T * scale)

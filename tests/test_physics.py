@@ -122,20 +122,20 @@ class TestConstitutiveLaw:
         # Test at different density values
         densities = [0.3, 0.5, 0.8, 1.0]
         n_power = float(cfg.n_power_c)
-        E0_nd = float(cfg.E0_nd)
+        E0 = float(cfg.E0_c)
         
         for rho_val in densities:
             rho = Function(Q, name="rho")
             rho.x.array[:] = rho_val
             rho.x.scatter_forward()
             
-            # Expected modulus (smoothed clamping to rho_min)
-            rho_eff = max(rho_val, float(cfg.rho_min_nd))
-            E_expected = E0_nd * (rho_eff ** n_power)
+            # Expected modulus (smoothed clamping to rho_min) [kg/m³]
+            rho_eff = max(rho_val, float(cfg.rho_min))
+            E_expected = E0 * (rho_eff ** n_power)
             
             # Compute via UFL (using smooth_max as in sigma())
-            rho_eff_ufl = smooth_max(rho, cfg.rho_min_nd, cfg.smooth_eps)
-            E_ufl = cfg.E0_nd * (rho_eff_ufl ** cfg.n_power_c)
+            rho_eff_ufl = smooth_max(rho, cfg.rho_min, cfg.smooth_eps)
+            E_ufl = cfg.E0_c * (rho_eff_ufl ** cfg.n_power_c)
             
             E_computed_local = fem.assemble_scalar(fem.form(E_ufl * cfg.dx))
             vol_local = fem.assemble_scalar(fem.form(1.0 * cfg.dx))
@@ -399,8 +399,8 @@ class TestConservation:
         rho = Function(Q, name="rho")
         rho_old = Function(Q, name="rho_old")
         
-        # Start with out-of-bounds initial condition
-        rho_initial = 0.05  # Below rho_min_nd = 0.35
+        # Start with out-of-bounds initial condition [kg/m³]
+        rho_initial = 50.0  # Below rho_min = 350
         rho_old.x.array[:] = rho_initial
         rho_old.x.scatter_forward()
         
@@ -417,7 +417,7 @@ class TestConservation:
         densolver.assemble_rhs()
         densolver.solve()
         
-        rho_min_nd = float(cfg.rho_min_nd)
+        rho_min = float(cfg.rho_min)
         
         n_owned = Q.dofmap.index_map.size_local
         rho_min_computed = comm.allreduce(rho.x.array[:n_owned].min(), op=MPI.MIN)
@@ -425,7 +425,7 @@ class TestConservation:
         # Density bounds are soft constraints enforced via diffusion-reaction PDE
         # Check that solution moved toward rho_min from below (relaxation, not hard enforcement)
         assert rho_min_computed > rho_initial, f"Density should increase from {rho_initial}, got {rho_min_computed}"
-        assert rho_min_computed < rho_min_nd, f"Density should still be relaxing toward bounds, got {rho_min_computed}"
+        assert rho_min_computed < rho_min, f"Density should still be relaxing toward bounds, got {rho_min_computed}"
 
     @pytest.mark.parametrize("unit_cube", [6], indirect=True)
     def test_density_solver_response_to_stimulus_sign(self, unit_cube, facet_tags, mean_value_factory):
@@ -904,7 +904,7 @@ class TestConservationChecks:
         domain = unit_cube
         facet_tags = build_facetag(domain)
         cfg = Config(domain=domain, facet_tags=facet_tags, verbose=(comm.rank == 0))
-        cfg.set_dt_dim(10.0)  # 10 days
+        cfg.set_dt(10.0 * 86400.0)  # 10 days in seconds
         
         P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
         Q = functionspace(unit_cube, P1)
@@ -918,8 +918,8 @@ class TestConservationChecks:
         stim = StimulusSolver(S, S_old, cfg)
         stim.setup()
         
-        # Create a psi field (supra-homeostatic in one region)
-        psi_expr = fem.Constant(domain, 1.2 * float(cfg.psi_ref_nd))
+        # Create a psi field (supra-homeostatic in one region) [Pa]
+        psi_expr = fem.Constant(domain, 1.2 * float(cfg.psi_ref_c))
         
         stim.assemble_rhs(psi_expr)
         stim.solve()
@@ -939,7 +939,7 @@ class TestConservationChecks:
         domain = unit_cube
         facet_tags = build_facetag(domain)
         cfg = Config(domain=domain, facet_tags=facet_tags, verbose=(comm.rank == 0))
-        cfg.set_dt_dim(10.0)
+        cfg.set_dt(10.0 * 86400.0)  # 10 days in seconds
         
         P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
         P1_ten = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3, 3))
@@ -979,7 +979,7 @@ class TestConservationChecks:
         domain = unit_cube
         facet_tags = build_facetag(domain)
         cfg = Config(domain=domain, facet_tags=facet_tags, verbose=(comm.rank == 0))
-        cfg.set_dt_dim(10.0)
+        cfg.set_dt(10.0 * 86400.0)  # 10 days in seconds
         
         P1_vec = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3,))
         P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
@@ -1108,13 +1108,13 @@ def test_stimulus_power_residual_scales_with_dt():
     S = fem.Function(Q, name="S")
     stim = StimulusSolver(S, S_old, cfg)
 
-    # Constant psi > psi_ref for positive source
-    psi_val = 1.5 * float(cfg.psi_ref_nd.value)
+    # Constant psi > psi_ref for positive source [Pa]
+    psi_val = 1.5 * float(cfg.psi_ref_c.value)
     psi = fem.Constant(m, default_scalar_type(psi_val))
 
     def compute_residual(dt_scale: float) -> float:
-        cfg.dt_nd.value = dt_scale
-        stor = float(cfg.rS_gain_c.value) * (psi_val - float(cfg.psi_ref_nd.value)) - float(cfg.tauS_c.value) * 0.2
+        cfg.dt_c.value = dt_scale
+        stor = float(cfg.rS_gain_c.value) * (psi_val - float(cfg.psi_ref_c.value)) - float(cfg.tauS_c.value) * 0.2
         S.x.array[:] = 0.2 + dt_scale * stor / float(cfg.cS_c.value)
         S.x.scatter_forward()
         R_abs, R_rel = stim.power_balance_residual(psi)

@@ -1,4 +1,4 @@
-"""New reaction force tests with proper unit scaling and integration."""
+"""Reaction force tests with SI units (meters, Pascals)."""
 import pytest
 import numpy as np
 import basix
@@ -17,15 +17,9 @@ from dolfinx.fem.petsc import (
 from petsc4py import PETSc
 
 
-@pytest.fixture(scope="module", params=["mm", "m"])
-def unit_scale(request):
-    """Parametrize tests over two unit systems: mm and m."""
-    return request.param
-
-
 @pytest.fixture(scope="module")
-def femur_setup(unit_scale):
-    """Create femur mesh and function space with specified unit scale."""
+def femur_setup():
+    """Create femur mesh and function space (geometry already in meters)."""
     mdl = FEBio2Dolfinx(FemurPaths.FEMUR_MESH_FEB)
     domain = mdl.mesh_dolfinx
     facet_tags = mdl.meshtags
@@ -34,26 +28,21 @@ def femur_setup(unit_scale):
     V = fem.functionspace(domain, P1_vec)
     Q = fem.functionspace(domain, P1_scalar)
     
-    # Unit-dependent config
-    if unit_scale == "mm":
-        # Mesh in mm, L_c = 1.0 mm, u_c = 1e-3 mm = 1 μm
-        cfg = Config(domain=domain, facet_tags=facet_tags, L_c=1.0, u_c=1e-3)
-    else:  # "m"
-        # Mesh in mm but L_c = 1e-3 m, u_c = 1e-6 m = 1 μm
-        cfg = Config(domain=domain, facet_tags=facet_tags, L_c=1e-3, u_c=1e-6)
+    # Geometry already in meters, Config uses SI units
+    cfg = Config(domain=domain, facet_tags=facet_tags)
     
-    return domain, facet_tags, V, Q, cfg, unit_scale
+    return domain, facet_tags, V, Q, cfg
 
 
 @pytest.fixture(scope="module")
 def gait_loader(femur_setup):
     """Create gait loader."""
-    _, _, V, _, cfg, _ = femur_setup
+    _, _, V, _, cfg = femur_setup
     return setup_femur_gait_loading(V, cfg, BW_kg=75.0, n_samples=9)
 
 
 class TestReactionForces:
-    """Validate reaction forces with proper unit scaling and integration."""
+    """Validate reaction forces with SI units."""
 
     def test_applied_force_integration(self, gait_loader, femur_setup):
         """Applied forces integrated over surface should match physiological expectations.
@@ -62,37 +51,30 @@ class TestReactionForces:
         Muscle forces (glut med + max): ~1-2× BW (~735-1470 N for 75 kg)
         Total applied load should be in range 1-6× BW
         """
-        domain, facet_tags, V, Q, cfg, unit_scale = femur_setup
+        domain, facet_tags, V, Q, cfg = femur_setup
         
         # Update to peak stance (50%)
         gait_loader.update_loads(50.0)
         
-        # Integrate total applied force over surface
+        # Integrate total applied force over surface [Pa · m² = N]
         import ufl
         t_total = gait_loader.t_hip + gait_loader.t_glmed + gait_loader.t_glmax
         
-        F_applied_nd = np.zeros(3)
+        F_applied_N = np.zeros(3)
         for i in range(3):
             F_i_form = fem.form(t_total[i] * cfg.ds(2))
             F_i_local = fem.assemble_scalar(F_i_form)
-            F_applied_nd[i] = domain.comm.allreduce(F_i_local, op=4)  # MPI.SUM
+            F_applied_N[i] = domain.comm.allreduce(F_i_local, op=4)  # MPI.SUM
         
-        # Convert to Newtons: F[N] = F_nd * sigma_c[Pa] * L_c[m]^2
-        # For mm system: L_c = 1.0 mm → L_c_m = 1e-3 m
-        # For m system: L_c = 1e-3 m → L_c_m = 1e-3 m
-        sigma_c_Pa = cfg.sigma_c
-        L_c_m = cfg.L_c * 1e-3 if unit_scale == "mm" else cfg.L_c
-        
-        F_applied_N = F_applied_nd * sigma_c_Pa * (L_c_m ** 2)
         F_magnitude = np.linalg.norm(F_applied_N)
         
         BW_N = 75.0 * 9.81  # 735.8 N
         
         # Applied force should be physiological (1-6× BW at peak stance)
         assert 1.0 * BW_N < F_magnitude < 6.0 * BW_N, \
-            f"[{unit_scale}] Applied force {F_magnitude:.1f} N should be 1-6× BW (736-4415 N)"
+            f"Applied force {F_magnitude:.1f} N should be 1-6× BW (736-4415 N)"
         
-        print(f"\n[{unit_scale}] Applied force at peak: {F_magnitude:.1f} N ({F_magnitude/BW_N:.2f}× BW)")
+        print(f"\nApplied force at peak: {F_magnitude:.1f} N ({F_magnitude/BW_N:.2f}× BW)")
         print(f"  Components [N]: Fx={F_applied_N[0]:.1f}, Fy={F_applied_N[1]:.1f}, Fz={F_applied_N[2]:.1f}")
 
     def test_reaction_force_equilibrium(self, gait_loader, femur_setup):
@@ -102,7 +84,7 @@ class TestReactionForces:
         where A0 and b0 are assembled without applying Dirichlet constraints.
         In global equilibrium (no body forces): F_applied + F_reaction ≈ 0.
         """
-        domain, facet_tags, V, Q, cfg, unit_scale = femur_setup
+        domain, facet_tags, V, Q, cfg = femur_setup
         
         # Setup solver
         u = fem.Function(V, name="u")
@@ -165,12 +147,9 @@ class TestReactionForces:
         # MPI global sum across ranks
         F_reaction_nd = domain.comm.allreduce(F_reaction_nd, op=4)
         
-        # Convert to Newtons
-        sigma_c_Pa = cfg.sigma_c
-        L_c_m = cfg.L_c * 1e-3 if unit_scale == "mm" else cfg.L_c
-        
-        F_applied_N = F_applied_nd * sigma_c_Pa * (L_c_m ** 2)
-        F_reaction_N = F_reaction_nd * sigma_c_Pa * (L_c_m ** 2)
+        # Already in Newtons: traction [Pa] integrated over area [m²] = [N]
+        F_applied_N = F_applied_nd
+        F_reaction_N = F_reaction_nd
 
         # Independent verification via stress traction on Γ_D
         import ufl
@@ -182,14 +161,14 @@ class TestReactionForces:
             Fi_form = fem.form(t_reac[i] * cfg.ds(1))
             Fi_loc = fem.assemble_scalar(Fi_form)
             F_reaction_sigma_nd[i] = domain.comm.allreduce(Fi_loc, op=4)
-        F_reaction_sigma_N = F_reaction_sigma_nd * sigma_c_Pa * (L_c_m ** 2)
+        F_reaction_sigma_N = F_reaction_sigma_nd
         
         F_total_N = F_applied_N + F_reaction_N  # Should be exactly zero
         F_total_magnitude = np.linalg.norm(F_total_N)
         F_applied_magnitude = np.linalg.norm(F_applied_N)
         F_reaction_magnitude = np.linalg.norm(F_reaction_N)
         
-        print(f"\n[{unit_scale}] Force equilibrium (global balance):")
+        print(f"\nForce equilibrium (global balance):")
         print(f"  Applied (∫ t dS over tag=2): {F_applied_N}")
         print(f"  Reaction (A0 u − b0 on Γ_D): {F_reaction_N}")
         print(f"  Reaction (∫_ΓD σ n dS): {F_reaction_sigma_N}")
@@ -200,7 +179,7 @@ class TestReactionForces:
         # Use relative tolerance w.r.t. |F_applied| to accommodate discretization/solve tolerance
         rel_err = F_total_magnitude / max(F_applied_magnitude, 1e-30)
         assert rel_err < 5e-6, \
-            f"[{unit_scale}] Force balance failed: |F_applied+F_reaction|/|F_applied| = {rel_err:.2e}"
+            f"Force balance failed: |F_applied+F_reaction|/|F_applied| = {rel_err:.2e}"
 
         # Cross-check (independent): compare component along net applied load direction.
         # For coarse meshes, ∫_ΓD σ n dS may deviate more; verify consistency along dominant direction.
@@ -210,4 +189,4 @@ class TestReactionForces:
         rel_axis_err = abs(abs(s_sig) - F_applied_magnitude) / max(F_applied_magnitude, 1e-30)
         print(f"  Axis-check: s_res={s_res:.2f} N, s_sig={s_sig:.2f} N, |s_sig|-|F_appl| rel_err={rel_axis_err:.3f}")
         assert rel_axis_err < 0.30, \
-            f"[{unit_scale}] Traction reaction (σ·n) inconsistent along load axis (rel_err={rel_axis_err:.2e})"
+            f"Traction reaction (σ·n) inconsistent along load axis (rel_err={rel_axis_err:.2e})"

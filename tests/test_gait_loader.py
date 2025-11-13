@@ -19,15 +19,9 @@ from simulation.config import Config
 from simulation.femur_remodeller_gait import setup_femur_gait_loading
 
 
-@pytest.fixture(scope="module", params=["mm", "m"])
-def unit_scale(request):
-    """Parametrize tests over two unit systems: mm and m."""
-    return request.param
-
-
 @pytest.fixture(scope="module")
-def femur_setup(unit_scale):
-    """Create femur mesh and function space with specified unit scale."""
+def femur_setup():
+    """Create femur mesh and function space (SI units: meters)."""
     mdl = FEBio2Dolfinx(FemurPaths.FEMUR_MESH_FEB)
     domain = mdl.mesh_dolfinx
     facet_tags = mdl.meshtags
@@ -36,21 +30,16 @@ def femur_setup(unit_scale):
     V = fem.functionspace(domain, P1_vec)
     Q = fem.functionspace(domain, P1_scalar)
     
-    # Unit-dependent config
-    if unit_scale == "mm":
-        # Mesh in mm, use realistic cortical stiffness baseline
-        cfg = Config(domain=domain, facet_tags=facet_tags, L_c=1.0, u_c=1e-3, E0_dim=17e9)
-    else:  # "m"
-        # Mesh in mm but nondimensionalization in meters; same E0 baseline
-        cfg = Config(domain=domain, facet_tags=facet_tags, L_c=1e-3, u_c=1e-6, E0_dim=17e9)
+    # SI units: E0 in Pa
+    cfg = Config(domain=domain, facet_tags=facet_tags, E0=17e9)
     
-    return domain, facet_tags, V, Q, cfg, unit_scale
+    return domain, facet_tags, V, Q, cfg
 
 
 @pytest.fixture(scope="module")
 def gait_loader(femur_setup):
     """Create gait loader (reuse across tests)."""
-    _, _, V, _, cfg, _ = femur_setup
+    _, _, V, _, cfg = femur_setup
     return setup_femur_gait_loading(V, cfg, BW_kg=75.0, n_samples=9)
 
 
@@ -59,7 +48,7 @@ class TestCoordinateScaling:
 
     def test_dolfinx_mesh_in_millimeters(self, femur_setup):
         """Verify DOLFINx mesh coordinates are in millimeters (not meters)."""
-        domain, _, _, _, _, _ = femur_setup
+        domain, _, _, _, _ = femur_setup
         geom = domain.geometry.x
         
         # Femur geometry should be O(100) mm, not O(0.1) m

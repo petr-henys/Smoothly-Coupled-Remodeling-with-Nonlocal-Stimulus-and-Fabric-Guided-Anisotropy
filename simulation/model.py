@@ -26,7 +26,6 @@ from simulation.femur_remodeller_gait import setup_femur_gait_loading
 from simulation.fixedsolver import FixedPointSolver
 from simulation.drivers import GaitEnergyDriver
 
-_SCALED_MESH_IDS: set[int] = set()
 
 
 class Remodeller:
@@ -470,6 +469,38 @@ class Remodeller:
         # Convert to seconds for internal consistency
         DAY_TO_SEC = 86400.0
         self.cfg.set_dt(dt * DAY_TO_SEC)
+
+        self.mechsolver.setup()
+        self.stimsolver.setup()
+        self.densolver.setup()
+        self.dirsolver.setup()
+        self.solvers_initialized = True
+
+        self._reset_iters_window()
+
+        self.comm.Barrier()
+        overall_start = MPI.Wtime()
+        mech_times, stim_times, dens_times, dir_times = [], [], [], []
+
+        for step in range(n_steps):
+            step_time = t + dt
+            self.step(dt, step_index=step, time_days=step_time)
+            self.acc_steps += 1
+
+            mech_times.append(self.fixedsolver.mech_time_total)
+            stim_times.append(self.fixedsolver.stim_time_total)
+            dens_times.append(self.fixedsolver.dens_time_total)
+            dir_times.append(self.fixedsolver.dir_time_total)
+
+            t = step_time
+            if self._is_output_step(step):
+                self._output(t, step)
+
+        self.comm.Barrier()
+        overall_elapsed = MPI.Wtime() - overall_start
+        overall_elapsed = self.comm.allreduce(overall_elapsed, op=MPI.MAX)
+
+        self._print_final_summary(n_steps, overall_elapsed, mech_times, stim_times, dens_times, dir_times)
 
 
 def load_femur_mesh_parallel(comm: MPI.Comm, feb_path: Path) -> Tuple:

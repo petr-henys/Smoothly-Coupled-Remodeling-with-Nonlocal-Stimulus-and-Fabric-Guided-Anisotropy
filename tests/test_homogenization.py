@@ -13,17 +13,17 @@ from types import SimpleNamespace
 from simulation.homogenizator import KUBCHomogenizer, SUBCHomogenizer
 
 def _make_config(domain, E, nu, xi=0.0):
+    """Create minimal config for homogenization tests (SI units)."""
     return SimpleNamespace(
         domain=domain,
         smooth_eps=1e-8,
         dx=ufl.Measure("dx", domain=domain),
         ds=ufl.Measure("ds", domain=domain),
-        rho_min_nd=1e-9,
-        E0_nd=E,
-        n_power_c=1.0,
-        nu_c=nu,
-        xi_aniso_c=xi,   # anisotropy gain (0.0 => isotropy)
-        sigma_c=1.0,
+        rho_min=1e-9,  # kg/m³
+        E0_c=fem.Constant(domain, default_scalar_type(E)),  # Pa
+        n_power_c=fem.Constant(domain, default_scalar_type(1.0)),
+        nu_c=fem.Constant(domain, default_scalar_type(nu)),
+        xi_aniso_c=fem.Constant(domain, default_scalar_type(xi)),
         ksp_type="cg",
         pc_type="gamg",
         ksp_rtol=1e-12,
