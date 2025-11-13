@@ -20,10 +20,10 @@ def _make_config(domain, E, nu, xi=0.0):
         dx=ufl.Measure("dx", domain=domain),
         ds=ufl.Measure("ds", domain=domain),
         rho_min=1e-9,  # kg/m³
-        E0_c=fem.Constant(domain, default_scalar_type(E)),  # MPa
-        n_power_c=fem.Constant(domain, default_scalar_type(1.0)),
-        nu_c=fem.Constant(domain, default_scalar_type(nu)),
-        xi_aniso_c=fem.Constant(domain, default_scalar_type(xi)),
+        E0=E,  # MPa
+        n_power=1.0,
+        nu=nu,
+        xi_aniso=xi,
         ksp_type="cg",
         pc_type="gamg",
         ksp_rtol=1e-12,
@@ -380,7 +380,7 @@ def test_density_scaling_kubc(unit_cube, rho_lo_val):
     C_lo = _run_homogenizer(KUBCHomogenizer, rho_lo, A_dir, cfg_lo, eps_mag=1e-4)["C_voigt"]
 
     ratio = C_lo[0, 0] / C_hi[0, 0]
-    # Expect near linear scaling with rho when n_power_c=1
+    # Expect near linear scaling with rho when n_power=1
     assert np.isclose(ratio, rho_lo_val, rtol=6e-2, atol=1e-2)
     # Shear scales similarly
     assert np.isclose(C_lo[3, 3] / C_hi[3, 3], rho_lo_val, rtol=6e-2, atol=1e-2)

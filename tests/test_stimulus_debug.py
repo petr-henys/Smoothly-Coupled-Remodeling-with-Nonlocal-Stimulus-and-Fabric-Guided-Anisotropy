@@ -44,7 +44,7 @@ def test_stimulus_debug(tmp_path, monkeypatch):
         print(f"\n[Rank {comm.rank}] Initial stimulus max: {S_initial:.3e}")
         
         # Before step
-        print(f"[Rank {comm.rank}] rho0={cfg.rho0}, rS_gain={cfg.rS}, psi_ref={cfg.psi_ref}, dt={cfg.dt}")
+        print(f"[Rank {comm.rank}] rho0={cfg.rho0}, rS_gain={cfg.rS_gain}, psi_ref={cfg.psi_ref}, dt={cfg.dt}")
         
         rem.step(dt=86400.0)  # 1 day in seconds
         
@@ -69,9 +69,8 @@ def test_stimulus_debug(tmp_path, monkeypatch):
         
         print(f"[Rank {comm.rank}] After step: S_max={S_max:.3e}, S_mean={S_mean:.3e}")
         
-        # Check config values
-        DAY_TO_SEC = 86400.0
-        print(f"[Rank {comm.rank}] Config: rS_gain={cfg.rS:.3e} [1/(MPa·day)], rS_sec={cfg.rS/DAY_TO_SEC:.3e} [1/(MPa·s)], psi_ref={cfg.psi_ref:.3e} [MPa]")
+        # Check config values (now using days as time unit)
+        print(f"[Rank {comm.rank}] Config: rS_gain={cfg.rS_gain:.3e} [1/(MPa·day)], psi_ref={cfg.psi_ref:.3e} [MPa]")
         
         # Check stimulus RHS directly
         psi_expr_check = rem.driver.energy_expr()

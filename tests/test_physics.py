@@ -121,8 +121,8 @@ class TestConstitutiveLaw:
         
         # Test at different density values
         densities = [0.3, 0.5, 0.8, 1.0]
-        n_power = float(cfg.n_power_c)
-        E0 = float(cfg.E0_c)
+        n_power = cfg.n_power
+        E0 = cfg.E0
         
         for rho_val in densities:
             rho = Function(Q, name="rho")
@@ -135,7 +135,7 @@ class TestConstitutiveLaw:
             
             # Compute via UFL (using smooth_max as in sigma())
             rho_eff_ufl = smooth_max(rho, cfg.rho_min, cfg.smooth_eps)
-            E_ufl = cfg.E0_c * (rho_eff_ufl ** cfg.n_power_c)
+            E_ufl = cfg.E0 * (rho_eff_ufl ** cfg.n_power)
             
             E_computed_local = fem.assemble_scalar(fem.form(E_ufl * cfg.dx))
             vol_local = fem.assemble_scalar(fem.form(1.0 * cfg.dx))
@@ -259,7 +259,7 @@ class TestThermodynamics:
         S.x.scatter_forward()
         
         # Diffusion dissipation: κ |∇S|²
-        kappa_S = float(cfg.kappaS_c)
+        kappa_S = cfg.kappaS
         dissipation = kappa_S * ufl.inner(ufl.grad(S), ufl.grad(S))
         mean_val = mean_value_factory(dissipation)
         assert mean_val >= -1e-14, f"Diffusion dissipation must be non-negative, got {mean_val}"
@@ -924,7 +924,7 @@ class TestConservationChecks:
         stim.setup()
         
         # Create a psi field (supra-homeostatic in one region) [MPa]
-        psi_expr = fem.Constant(domain, 1.2 * float(cfg.psi_ref_c))
+        psi_expr = fem.Constant(domain, 1.2 * cfg.psi_ref)
         
         stim.assemble_rhs(psi_expr)
         stim.solve()
@@ -1059,7 +1059,6 @@ def test_mechanics_uniform_extension():
     # Config
     cfg = Config(domain=m, facet_tags=facets, verbose=False)
     cfg.xi_aniso = 0.0
-    cfg._build_constants()
 
     # Simple extension test: clamp x=0, prescribe u_x=0.01 on x=1
     fdim = m.topology.dim - 1
@@ -1103,8 +1102,7 @@ def test_stimulus_power_residual_scales_with_dt():
 
     # Config: disable diffusion for algebraic balance
     cfg = Config(domain=m, facet_tags=facets, verbose=False)
-    cfg.kappaS_dim = 0.0
-    cfg._build_constants()
+    cfg.kappaS = 0.0
 
     S_old = fem.Function(Q, name="S_old")
     S_old.x.array[:] = 0.2
@@ -1114,13 +1112,13 @@ def test_stimulus_power_residual_scales_with_dt():
     stim = StimulusSolver(S, S_old, cfg)
 
     # Constant psi > psi_ref for positive source [MPa]
-    psi_val = 1.5 * float(cfg.psi_ref_c.value)
+    psi_val = 1.5 * cfg.psi_ref
     psi = fem.Constant(m, default_scalar_type(psi_val))
 
     def compute_residual(dt_scale: float) -> float:
-        cfg.dt_c.value = dt_scale
-        stor = float(cfg.rS_gain_c.value) * (psi_val - float(cfg.psi_ref_c.value)) - float(cfg.tauS_c.value) * 0.2
-        S.x.array[:] = 0.2 + dt_scale * stor / float(cfg.cS_c.value)
+        cfg.dt = dt_scale
+        stor = cfg.rS_gain * (psi_val - cfg.psi_ref) - cfg.tauS * 0.2
+        S.x.array[:] = 0.2 + dt_scale * stor / cfg.cS
         S.x.scatter_forward()
         R_abs, R_rel = stim.power_balance_residual(psi)
         return abs(R_abs)

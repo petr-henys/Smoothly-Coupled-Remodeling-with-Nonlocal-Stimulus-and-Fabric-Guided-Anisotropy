@@ -23,7 +23,7 @@ class Config:
 
     Notes:
     - Using mm for length implies stresses/energy densities are naturally in MPa.
-    - All stress-like quantities (E, σ, ψ, tractions) are in MPa; no Pa/kPa.
+    - All stress-like quantities (E, σ, ψ, tractions) are in MPa
     - Time is in days for remodeling simulations.
     """
 

@@ -117,7 +117,8 @@ class TestInstantDriver:
 
 
 class TestGaitDriver:
-    def test_energy_scales_with_cpd(self, mech_with_dummy_gait):
+    def test_energy_does_not_scale_with_cpd(self, mech_with_dummy_gait):
+        """Energy density should NOT scale with cpd (cpd scaling moved to rS_gain)."""
         mech, gait = mech_with_dummy_gait
         drv1 = GaitEnergyDriver(mech, gait, cycles_per_day=1.0)
         psi1_loc = fem.assemble_scalar(fem.form(drv1.energy_expr() * mech.cfg.dx))
@@ -128,7 +129,8 @@ class TestGaitDriver:
         psi2 = mech.comm.allreduce(psi2_loc, op=MPI.SUM)
 
         ratio = psi2 / max(psi1, 1e-300)
-        assert 2.5 < ratio < 3.5, f"Energy should scale with cpd; ratio={ratio:.2f}"
+        # Energy density should be the same regardless of cpd (gait-averaged energy per cycle)
+        assert 0.95 < ratio < 1.05, f"Energy density should not scale with cpd; ratio={ratio:.2f}"
 
     def test_energy_scales_with_load(self, mech_with_dummy_gait):
         mech, gait = mech_with_dummy_gait
