@@ -11,7 +11,11 @@ class StrainDriver(Protocol):
     def invalidate(self) -> None: ...
 
 class InstantEnergyDriver:
-    """Instantaneous energy ψ(u) and structure tensor M=εᵀε from current mechanics state."""
+    """Instantaneous energy ψ(u) and structure tensor M = εᵀε from current mechanics state.
+
+    Single-regime, explicit formulation consistent with literature: energy density is
+    directly evaluated from current mechanics without any additional scaling or options.
+    """
     def __init__(self, mech):
         self.mech = mech
     def energy_expr(self):
@@ -25,7 +29,14 @@ class InstantEnergyDriver:
         pass
 
 class GaitEnergyDriver:
-    """Gait-averaged energy and structure via quadrature over frozen displacement snapshots."""
+    """Gait-averaged energy and structure via quadrature over frozen displacement snapshots.
+
+    Single-regime, explicit daily accumulation model:
+    - Computes average strain energy density over the gait cycle by phase quadrature.
+    - Does NOT include cycles-per-day scaling here; literature practice often aggregates
+      cycles externally. In this model, use rS_gain [1/(MPa·day)] to incorporate the
+      effect of daily cycle count into the stimulus source term.
+    """
     def __init__(self, mech, gait_loader, cycles_per_day: float = 1.0):
         self.mech = mech
         self.gait = gait_loader
@@ -51,10 +62,10 @@ class GaitEnergyDriver:
 
     def _build_energy_expr(self):
         """Build gait-averaged energy density UFL expression via phase quadrature.
-        
+
         Returns weighted average energy density over gait cycle [MPa].
-        Does NOT include cycles_per_day scaling - that's handled by rS_gain parameter.
-        
+        No cycles-per-day scaling (handled by rS_gain in the stimulus source).
+
         CRITICAL: Saves and restores current displacement to avoid corrupting fixed-point state.
         """
         # Save current state before gait loop

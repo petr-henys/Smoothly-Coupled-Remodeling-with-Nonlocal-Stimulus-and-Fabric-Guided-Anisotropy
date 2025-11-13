@@ -19,40 +19,44 @@ class Config:
     - Mass: tonnes [t] (1000 kg)
     - Time: days [day]
     - Stress/Energy density: Megapascals [MPa] = [N/mm²]
-    - Density: t/mm³ (= kg/m³ × 1e-9)
+    - Density ρ: dimensionless relative density [-] in [0, 1]
+      (use as structural fraction; E = E0·ρⁿ). If you need physical density
+      [kg/m³], normalize it outside this model.
 
     Notes:
     - Using mm for length implies stresses/energy densities are naturally in MPa.
-    - All stress-like quantities (E, σ, ψ, tractions) are in MPa
+    - All stress-like quantities (E, σ, ψ, tractions) are in MPa.
     - Time is in days for remodeling simulations.
+    - Variant A (chosen): Stimulus S is dimensionless; parameters have units
+      cS [-], τS [1/day], κS [mm²/day], rS_gain [1/(MPa·day)], ψ, ψ_ref [MPa].
     """
 
     # --- Material properties ---
-    E0: float = 6.5e3             # Young's modulus [MPa]
+    E0: float = 1.5e4             # Young's modulus [MPa] at ρ=1 (≈15 GPa)
     nu: float = 0.3               # Poisson's ratio [-]
     n_power: float = 2.0          # density-stiffness power law exponent [-]
-    xi_aniso: float = 0.2         # anisotropic reinforcement factor [-]
+    xi_aniso: float = 1.0         # anisotropic reinforcement factor [-]
 
     # --- Density bounds ---
-    rho_min: float = 350.0e-9     # minimum density [t/mm³] (= 350 kg/m³)
-    rho_max: float = 1850.0e-9    # maximum density [t/mm³] (= 1850 kg/m³)
-    rho0: float = 1200.0e-9       # initial density [t/mm³] (= 1200 kg/m³)
+    rho_min: float = 0.30         # minimum relative density [-]
+    rho_max: float = 1.00         # maximum relative density [-]
+    rho0: float = 0.60            # initial relative density [-]
 
     # --- Density: anisotropic diffusion ---
-    beta_par: float = 2.8          # parallel diffusion [mm²/day]
-    beta_perp: float = 0.85        # perpendicular diffusion [mm²/day]
+    beta_par: float = 1.5          # parallel diffusion [mm²/day]
+    beta_perp: float = 0.5         # perpendicular diffusion [mm²/day]
 
     # --- Stimulus S: reaction-diffusion ---
-    psi_ref: float = 300e-6        # reference energy density [MPa]
-    cS: float = 32e-6              # signaling capacity [MPa·day]
-    tauS: float = 0.04            # decay rate [1/day] → 25-day time constant
-    kappaS: float = 250.0         # diffusion [mm²/day]
-    rS_gain: float = 2.0e3        # mechano-transduction gain [1/(MPa·day)]
+    psi_ref: float = 3.0e-3       # reference energy density [MPa]
+    cS: float = 1.0               # signaling capacity [-]
+    tauS: float = 0.05            # decay rate [1/day] → 20-day time constant
+    kappaS: float = 1.0           # diffusion [mm²/day]
+    rS_gain: float = 20.0         # mechano-transduction gain [1/(MPa·day)]
 
     # --- Orientation A: fabric tensor evolution ---
-    cA: float = 1.4               # orientation capacity [-]
-    tauA: float = 0.6             # orientation relaxation time [day]
-    ell: float = 350.0            # orientation diffusion length [mm]
+    cA: float = 1.0               # orientation capacity [-]
+    tauA: float = 2.0             # orientation relaxation time [day]
+    ell: float = 4.0              # orientation diffusion length [mm]
 
 
     # --- Numerics / I-O ---
@@ -129,6 +133,16 @@ class Config:
         
         if self.E0 <= 0:
             raise ValueError(f"Young's modulus E0={self.E0} must be positive.")
+        if not (0.0 <= self.rho_min < self.rho_max <= 1.0):
+            raise ValueError("rho_min/max must satisfy 0 ≤ rho_min < rho_max ≤ 1 (relative density).")
+        if not (self.rho_min <= self.rho0 <= self.rho_max):
+            raise ValueError("rho0 must lie within [rho_min, rho_max].")
+        if self.beta_par < 0 or self.beta_perp < 0:
+            raise ValueError("beta_par/beta_perp must be non-negative [mm²/day].")
+        if self.cS <= 0 or self.tauS < 0 or self.kappaS < 0 or self.rS_gain < 0:
+            raise ValueError("cS>0, tauS≥0, kappaS≥0, rS_gain≥0 required.")
+        if self.cA <= 0 or self.tauA < 0 or self.ell <= 0:
+            raise ValueError("cA>0, tauA≥0, ell>0 required.")
         
         # Validate acceleration type
         if self.accel_type not in ("anderson", "picard"):

@@ -285,7 +285,13 @@ class MechanicsSolver(_BaseLinearSolver):
         return W_int, W_ext, rel_err
     
 class StimulusSolver(_BaseLinearSolver):
-    """Reaction-diffusion stimulus S driven by mechanical energy density."""
+    """Reaction-diffusion stimulus S driven by mechanical energy density (Variant A).
+
+    Units and meanings:
+    - S: dimensionless signal [-]
+    - cS [-], tauS [1/day], kappaS [mm²/day], rS_gain [1/(MPa·day)]
+    - psi, psi_ref in [MPa]; time step cfg.dt in [day]
+    """
     def __init__(
         self,
         S: fem.Function,
