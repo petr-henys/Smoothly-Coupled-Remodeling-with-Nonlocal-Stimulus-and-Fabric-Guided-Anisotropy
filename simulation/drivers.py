@@ -67,7 +67,7 @@ class GaitEnergyDriver:
         self.mech = mech
         self.gait = gait_loader
         self.m = int(m_exponent)
-        self.psi_ref = float(psi_ref) if psi_ref is not None else None
+        self.psi_ref = float(psi_ref)
 
         # Persistent snapshots and metadata
         self._u_snap: List[fem.Function] | None = None

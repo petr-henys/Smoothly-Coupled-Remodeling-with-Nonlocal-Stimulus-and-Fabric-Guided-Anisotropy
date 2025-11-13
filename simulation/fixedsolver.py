@@ -100,11 +100,9 @@ class FixedPointSolver:
                     "stim_time",
                     "dens_time",
                     "dir_time",
-                    "mech_reason",
                     "stim_reason",
                     "dens_reason",
                     "dir_reason",
-                    "mech_iters",
                     "stim_iters",
                     "dens_iters",
                     "dir_iters",
@@ -364,9 +362,9 @@ class FixedPointSolver:
 
         for itr in range(1, max_subiters + 1):
             # Perform one GS sweep: x_raw = G(x_k)
-            (mech_t, stim_t, dens_t, dir_t, 
-             mech_reason, stim_reason, dens_reason, dir_reason,
-             mech_iters, stim_iters, dens_iters, dir_iters) = self._gauss_seidel_sweep()
+            (mech_t, stim_t, dens_t, dir_t,
+             stim_reason, dens_reason, dir_reason,
+             stim_iters, dens_iters, dir_iters) = self._gauss_seidel_sweep()
             self.mech_time_total += mech_t
             self.stim_time_total += stim_t
             self.dens_time_total += dens_t
@@ -468,11 +466,9 @@ class FixedPointSolver:
                 "stim_time": float(stim_t),
                 "dens_time": float(dens_t),
                 "dir_time": float(dir_t),
-                "mech_reason": int(mech_reason),
                 "stim_reason": int(stim_reason),
                 "dens_reason": int(dens_reason),
                 "dir_reason": int(dir_reason),
-                "mech_iters": int(mech_iters),
                 "stim_iters": int(stim_iters),
                 "dens_iters": int(dens_iters),
                 "dir_iters": int(dir_iters),

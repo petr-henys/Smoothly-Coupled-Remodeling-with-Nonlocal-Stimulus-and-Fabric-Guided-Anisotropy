@@ -101,10 +101,10 @@ class Remodeller:
         self.A.x.scatter_forward()
 
         assign(self.S, 0.0)
-        self.scatter_fields = (self.u, self.rho, self.A, self.S)
+        # Do not track or output displacement 'u' anymore
+        self.scatter_fields = (self.rho, self.A, self.S)
 
-        # Register fields
-        self.storage.fields.register("u", [self.u], filename="u.bp")
+        # Register fields (omit 'u')
         self.storage.fields.register("scalars", [self.rho, self.S], filename="scalars.bp")
         self.storage.fields.register("A", [self.A], filename="A.bp")
 
@@ -144,7 +144,6 @@ class Remodeller:
         # Iteration accounting window
         self.acc_steps = 0
         self.iters_snap = {
-            "mech": {"iters": 0},
             "stim": {"iters": 0},
             "dens": {"iters": 0},
             "dir":  {"iters": 0},
@@ -154,7 +153,7 @@ class Remodeller:
         self.solvers_initialized = False
 
         # Storage bookkeeping
-        self.last_solver_stats: Dict[str, int] = {"mech": 0, "stim": 0, "dens": 0, "dir": 0}
+        self.last_solver_stats: Dict[str, int] = {"stim": 0, "dens": 0, "dir": 0}
         self.last_coupling_stats: Dict[str, float] = {"iters": 0, "time": 0.0}
         self.last_dt: Optional[float] = None
         self.last_step_index: Optional[int] = None
@@ -208,7 +207,6 @@ class Remodeller:
 
     def _reset_iters_window(self) -> None:
         """Snapshot cumulative iteration counters for statistics window."""
-        self.iters_snap["mech"]["iters"] = getattr(self.mechsolver, "total_iters", 0)
         self.iters_snap["stim"]["iters"] = getattr(self.stimsolver, "total_iters", 0)
         self.iters_snap["dens"]["iters"] = getattr(self.densolver,  "total_iters", 0)
         self.iters_snap["dir"]["iters"]  = getattr(self.dirsolver,  "total_iters", 0)
@@ -224,30 +222,17 @@ class Remodeller:
             d_iters = getattr(solver, "total_iters", 0) - self.iters_snap[key]["iters"]
             return (d_iters / d_gs) if d_gs > 0 else 0.0
 
-        mech = per_gs(self.mechsolver, "mech")
         stim = per_gs(self.stimsolver, "stim")
         dens = per_gs(self.densolver,  "dens")
         ddir = per_gs(self.dirsolver,  "dir")
         gs_per_step = (d_gs / steps) if steps > 0 else 0.0
-
-        return dict(mech_gs=mech, stim_gs=stim, dens_gs=dens, dir_gs=ddir, gs_per_step=gs_per_step)
+        return dict(stim_gs=stim, dens_gs=dens, dir_gs=ddir, gs_per_step=gs_per_step)
 
     def _collect_field_stats(self) -> Dict[str, float]:
         """Gather field min/max and energy for reporting."""
         rho_min, rho_max = self._field_minmax(self.rho)
-        u_min, u_max = self._field_minmax(self.u)
         S_min, S_max = self._field_minmax(self.S)
-        psi_avg = self.mechsolver.average_strain_energy()
-
-        return dict(
-            rho_min=rho_min,
-            rho_max=rho_max,
-            u_min=u_min * 1e3,  # convert to mm
-            u_max=u_max * 1e3,  # convert to mm
-            S_min=S_min,
-            S_max=S_max,
-            psi=psi_avg,
-        )
+        return dict(rho_min=rho_min, rho_max=rho_max, S_min=S_min, S_max=S_max)
 
     def _is_output_step(self, step: int) -> bool:
         return (step + 1) % self.cfg.saving_interval == 0
@@ -263,17 +248,14 @@ class Remodeller:
             lambda: (
                 f"Step {step:2d} | t={t:6.1f}d | "
                 f"ρ=[{fields['rho_min']:.0f},{fields['rho_max']:.0f}] | "
-                f"u=[{fields['u_min']:.2e},{fields['u_max']:.2e}] | "
                 f"S=[{fields['S_min']:.2e},{fields['S_max']:.2e}] | "
-                f"ψ={fields['psi']:.1f} | "
-                f"mech={iters['mech_gs']:.1f} | stim={iters['stim_gs']:.1f} | "
+                f"stim={iters['stim_gs']:.1f} | "
                 f"dens={iters['dens_gs']:.1f} | dir={iters['dir_gs']:.1f} | "
                 f"GS={iters['gs_per_step']:.1f}"
             )
         )
 
         solver_stats = {
-            "mech": int(self.last_solver_stats.get("mech", 0)),
             "stim": int(self.last_solver_stats.get("stim", 0)),
             "dens": int(self.last_solver_stats.get("dens", 0)),
             "dir": int(self.last_solver_stats.get("dir", 0)),
@@ -317,7 +299,6 @@ class Remodeller:
         self.last_step_index = step_index
 
         solver_totals_before = {
-            "mech": getattr(self.mechsolver, "total_iters", 0),
             "stim": getattr(self.stimsolver, "total_iters", 0),
             "dens": getattr(self.densolver, "total_iters", 0),
             "dir": getattr(self.dirsolver, "total_iters", 0),
@@ -348,7 +329,6 @@ class Remodeller:
         last_rec = metrics[-1] if metrics else None
 
         solver_stats = {
-            "mech": max(int(getattr(self.mechsolver, "total_iters", 0) - solver_totals_before["mech"]), 0),
             "stim": max(int(getattr(self.stimsolver, "total_iters", 0) - solver_totals_before["stim"]), 0),
             "dens": max(int(getattr(self.densolver, "total_iters", 0) - solver_totals_before["dens"]), 0),
             "dir": max(int(getattr(self.dirsolver, "total_iters", 0) - solver_totals_before["dir"]), 0),
@@ -451,11 +431,8 @@ class Remodeller:
                 "final_field_stats": {
                     "rho_min": float(fields.get("rho_min", 0.0)),
                     "rho_max": float(fields.get("rho_max", 0.0)),
-                    "u_min": float(fields.get("u_min", 0.0)),
-                    "u_max": float(fields.get("u_max", 0.0)),
                     "S_min": float(fields.get("S_min", 0.0)),
                     "S_max": float(fields.get("S_max", 0.0)),
-                    "psi": float(fields.get("psi", 0.0)),
                 },
             }
             self.telemetry.write_metadata(data, filename="run_summary.json", overwrite=True)
