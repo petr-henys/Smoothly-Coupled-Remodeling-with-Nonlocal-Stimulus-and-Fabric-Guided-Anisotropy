@@ -58,14 +58,6 @@ def unittrace_psd(B, dim: int, eps: float):
     M = B + eps * I
     return M / ufl.tr(M)
 
-# --- Helper for extracting constant values ---
-def _val(x):
-    """Extract float from fem.Constant or scalar."""
-    try:
-        return float(x.value)
-    except AttributeError:
-        return float(x)
-
 # --- Base linear solver class ---
 class _BaseLinearSolver:
     """Base KSP solver with setup, assembly, solve, and stats tracking."""
