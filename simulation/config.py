@@ -14,46 +14,41 @@ if TYPE_CHECKING:
 class Config:
     """Global configuration for bone remodeling simulation.
     
-    All parameters use SI units:
-    - Length: meters [m]
-    - Mass: kilograms [kg]
+    All parameters use millimeter-based units:
+    - Length: millimeters [mm]
+    - Mass: tonnes [t] (1000 kg)
     - Time: seconds [s] (or days [day] where explicitly noted)
-    - Stress/Pressure: Pascals [Pa]
-    - Density: kg/m³
+    - Stress/Pressure: Pascals [Pa] = [N/mm²]
+    - Density: t/mm³ (= kg/m³ × 1e-9)
     """
 
     # --- Material properties ---
-    E0: float = 6.5e9             # Young's modulus [Pa]
+    E0: float = 6.5e3             # Young's modulus [MPa]
     nu: float = 0.3               # Poisson's ratio [-]
     n_power: float = 2.0          # density-stiffness power law exponent [-]
     xi_aniso: float = 0.2         # anisotropic reinforcement factor [-]
 
     # --- Density bounds ---
-    rho_min: float = 350.0        # minimum density [kg/m³]
-    rho_max: float = 1850.0       # maximum density [kg/m³]
-    rho0: float = 1200.0          # initial density [kg/m³]
+    rho_min: float = 350.0e-9     # minimum density [t/mm³] (= 350 kg/m³)
+    rho_max: float = 1850.0e-9    # maximum density [t/mm³] (= 1850 kg/m³)
+    rho0: float = 1200.0e-9       # initial density [t/mm³] (= 1200 kg/m³)
 
     # --- Density: anisotropic diffusion ---
-    beta_par: float = 2.8e-6      # parallel diffusion [m²/day]
-    beta_perp: float = 8.5e-7     # perpendicular diffusion [m²/day]
+    beta_par: float = 2.8          # parallel diffusion [mm²/day]
+    beta_perp: float = 0.85        # perpendicular diffusion [mm²/day]
 
     # --- Stimulus S: reaction-diffusion ---
-    psi_ref: float = 300.0        # reference energy density [Pa]
-    cS: float = 32.0              # signaling capacity [Pa·day]
+    psi_ref: float = 300e-6        # reference energy density [MPa]
+    cS: float = 32e-6              # signaling capacity [MPa·day]
     tauS: float = 0.04            # decay rate [1/day] → 25-day time constant
-    kappaS: float = 2.5e-4        # diffusion [m²/day]
-    rS: float = 2.0e-7            # mechano-transduction gain [1/(Pa·day)]
+    kappaS: float = 250.0         # diffusion [mm²/day]
+    rS: float = 2.0e3            # mechano-transduction gain [1/(MPa·day)]
 
     # --- Orientation A: fabric tensor evolution ---
     cA: float = 1.4               # orientation capacity [-]
     tauA: float = 0.6             # orientation relaxation time [day]
-    ell: float = 0.35             # orientation diffusion length [m]
+    ell: float = 350.0            # orientation diffusion length [mm]
 
-    # --- Load scaling ---
-    t_p: float = 3e6              # reference peak stress [Pa]
-
-    # --- Load scaling ---
-    t_p: float = 3e6              # reference peak stress [Pa]
 
     # --- Numerics / I-O ---
     quadrature_degree: int = 6
@@ -69,7 +64,7 @@ class Config:
     ksp_max_it: int = 100
 
     # Convergence acceleration (Anderson/Picard)
-    accel_type: str = "anderson"             # "anderson" | "picard" | "none"
+    accel_type: str = "anderson"             # "anderson" | "picard"
     m: int = 8                               # Anderson window size
     beta: float = 1.0                        # damping for newest residual
     lam: float = 1e-10                       # Tikhonov regularization
@@ -147,6 +142,10 @@ class Config:
         
         if self.E0 <= 0:
             raise ValueError(f"Young's modulus E0={self.E0} must be positive.")
+        
+        # Validate acceleration type
+        if self.accel_type not in ("anderson", "picard"):
+            raise ValueError(f"accel_type must be 'anderson' or 'picard', got {self.accel_type!r}")
         
         self._build_measures()
         self._build_constants()

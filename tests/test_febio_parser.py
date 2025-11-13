@@ -94,5 +94,39 @@ class TestMeshExport:
         assert vtk_file.exists()
 
 
+class TestMeshScaling:
+    """Test mesh coordinate scaling."""
+    def test_scale_factor_applied(self, temp_febio_file):
+        """Test that scale factor correctly scales coordinates."""
+        # Parse with default scale
+        parser_default = FEBio2Dolfinx(str(temp_febio_file), scale=1.0)
+        nodes_default = parser_default.nodes.copy()
+        
+        # Parse with 1000x scale (m to mm)
+        parser_scaled = FEBio2Dolfinx(str(temp_febio_file), scale=1000.0)
+        nodes_scaled = parser_scaled.nodes.copy()
+        
+        # Check that scaled nodes are exactly 1000x the default
+        np.testing.assert_allclose(nodes_scaled, nodes_default * 1000.0, rtol=1e-10)
+    
+    def test_scale_preserves_origin(self, temp_febio_file):
+        """Test that scaling preserves the origin point (0,0,0)."""
+        parser = FEBio2Dolfinx(str(temp_febio_file), scale=1000.0)
+        
+        # First node is at origin in test file
+        np.testing.assert_allclose(parser.nodes[0], [0.0, 0.0, 0.0], atol=1e-10)
+    
+    def test_scale_affects_mesh_dimensions(self, temp_febio_file):
+        """Test that mesh bounding box is scaled correctly."""
+        parser_default = FEBio2Dolfinx(str(temp_febio_file), scale=1.0)
+        parser_scaled = FEBio2Dolfinx(str(temp_febio_file), scale=1000.0)
+        
+        bbox_default = parser_default.nodes.max(axis=0) - parser_default.nodes.min(axis=0)
+        bbox_scaled = parser_scaled.nodes.max(axis=0) - parser_scaled.nodes.min(axis=0)
+        
+        np.testing.assert_allclose(bbox_scaled, bbox_default * 1000.0, rtol=1e-10)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
+

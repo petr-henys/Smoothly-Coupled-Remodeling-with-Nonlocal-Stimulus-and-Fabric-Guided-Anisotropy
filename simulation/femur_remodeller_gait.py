@@ -101,7 +101,7 @@ class FemurRemodellerGait:
         self.t_glmax.interpolate(lambda x: self.gl_max(x.T).T * scale)
 
 
-def setup_femur_gait_loading(V: fem.FunctionSpace, config: Config, BW_kg: float = 75.0, n_samples: int = 9
+def setup_femur_gait_loading(V: fem.FunctionSpace, BW_kg: float = 75.0, n_samples: int = 9
                              ) -> "FemurRemodellerGait":
     """
     
@@ -149,16 +149,14 @@ def setup_femur_gait_loading(V: fem.FunctionSpace, config: Config, BW_kg: float 
         glmed_gait=gl_med_gait, glmax_gait=gl_max_gait,
         n_samples=n_samples,
     )
-
-
 if __name__ == "__main__":
-    mdl = FEBio2Dolfinx(FemurPaths.FEMUR_MESH_FEB)
+    mdl = FEBio2Dolfinx(FemurPaths.FEMUR_MESH_FEB, scale=1000.0)  # Convert m to mm
     mdl.save_mesh_vtk("tt.vtk")
     domain = mdl.mesh_dolfinx
     P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(domain.geometry.dim,))
     V = fem.functionspace(domain, P1_vec)
     cfg = Config(domain=domain)
-    gait_loader = setup_femur_gait_loading(V, cfg)
+    gait_loader = setup_femur_gait_loading(V, BW_kg=75.0, n_samples=9)
     topology, cells, geometry = plot.vtk_mesh(V)
     grid = pv.UnstructuredGrid(topology, cells, geometry)
     folder = Path("gait_load_outputs")

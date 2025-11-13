@@ -503,8 +503,13 @@ class Remodeller:
         self._print_final_summary(n_steps, overall_elapsed, mech_times, stim_times, dens_times, dir_times)
 
 
-def load_femur_mesh_parallel(comm: MPI.Comm, feb_path: Path) -> Tuple:
+def load_femur_mesh_parallel(comm: MPI.Comm, feb_path: Path, mesh_scale: float = 1000.0) -> Tuple:
     """Load FEBio mesh on rank 0, broadcast topology/geometry to all ranks.
+    
+    Args:
+        comm: MPI communicator
+        feb_path: Path to FEBio .feb file
+        mesh_scale: Scale factor for mesh coordinates (default 1000.0 for m→mm)
     
     Returns (domain, facet_tags) on all ranks with minimal I/O overhead.
     """
@@ -513,7 +518,7 @@ def load_femur_mesh_parallel(comm: MPI.Comm, feb_path: Path) -> Tuple:
     
     if comm.rank == 0:
         # Rank 0: parse FEBio file (XML parsing, PyVista, KDTree matching)
-        mdl = FEBio2Dolfinx(feb_path)
+        mdl = FEBio2Dolfinx(feb_path, scale=mesh_scale)
         nodes = mdl.nodes
         elements = mdl.elements
         facet_indices = mdl.meshtags.indices

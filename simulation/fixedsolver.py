@@ -336,8 +336,8 @@ class FixedPointSolver:
                                     restart_on_cond=restart_on_cond,
                                     step_limit_factor=step_limit_factor,
                                     verbose=self.verbose)
-        elif accel_type not in ("none", "picard"):
-            raise ValueError(f"Unknown accel_type={accel_type!r}")
+        elif accel_type != "picard":
+            raise ValueError(f"accel_type must be 'anderson' or 'picard', got {accel_type!r}")
 
         used_iters = 0
         if accelerator is not None:

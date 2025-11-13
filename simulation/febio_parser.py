@@ -15,11 +15,17 @@ from simulation.logger import get_logger
 class FEBio2Dolfinx:
     """Parse FEBio XML and build DOLFINx mesh with surface boundary tags via KDTree matching."""
 
-    def __init__(self, feb_file: str):
-        """Parse FEBio file and build DOLFINx mesh with matched surface tags."""
+    def __init__(self, feb_file: str, scale: float = 1.0):
+        """Parse FEBio file and build DOLFINx mesh with matched surface tags.
+        
+        Args:
+            feb_file: Path to FEBio .feb file
+            scale: Multiplicative scale factor for mesh coordinates (e.g., 1000.0 for m→mm)
+        """
         self.logger = get_logger(MPI.COMM_WORLD, verbose=True, name="FEBio2Dolfinx")
         self.feb_file = Path(feb_file)
-        self.logger.info(f"Parsing FEBio file: {self.feb_file}")
+        self.scale = scale
+        self.logger.info(f"Parsing FEBio file: {self.feb_file} (scale={scale})")
         
         tree = ET.parse(self.feb_file)
         self.mesh_xml = tree.getroot().find("Mesh")
@@ -45,6 +51,11 @@ class FEBio2Dolfinx:
             idx = int(n.get("id")) - 1
             coords = [float(x) for x in n.text.split(",")]
             self.nodes[idx] = coords
+        
+        # Apply scale factor to coordinates (preserves origin)
+        if self.scale != 1.0:
+            self.nodes *= self.scale
+            self.logger.debug(f"Applied scale factor {self.scale} to node coordinates")
         
         # Extract tet4 elements
         tet_elements = []
