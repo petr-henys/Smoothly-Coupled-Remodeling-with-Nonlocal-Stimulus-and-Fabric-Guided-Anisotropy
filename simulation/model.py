@@ -555,5 +555,5 @@ if __name__ == "__main__":
 
     cfg = Config(domain=domain, facet_tags=facet_tags, verbose=True)
     with Remodeller(cfg) as remodeller:
-        # Example: 50 days step, total 100 days (adjust as needed)
-        remodeller.simulate(dt=50.0, total_time=100.0)
+        # Example: 50 days step, total 500 days (adjust as needed)
+        remodeller.simulate(dt=10.0, total_time=500.0)
