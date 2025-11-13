@@ -137,7 +137,7 @@ class Remodeller:
         self.fixedsolver = FixedPointSolver(
             self.comm, self.cfg,
             self.mechsolver, self.stimsolver, self.densolver, self.dirsolver, self.driver,
-            self.u, self.rho, self.rho_old, self.A, self.A_old, self.S, self.S_old
+            self.rho, self.rho_old, self.A, self.A_old, self.S, self.S_old
         )
 
 
