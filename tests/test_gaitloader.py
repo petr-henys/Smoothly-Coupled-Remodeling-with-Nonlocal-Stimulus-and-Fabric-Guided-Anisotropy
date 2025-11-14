@@ -685,34 +685,42 @@ from simulation.utils import build_dirichlet_bcs
 
 @pytest.fixture(scope="module")
 def femur_mechanics_setup():
-    """Create femur mesh, function spaces, and config."""
+    """Create femur mesh, function spaces, config, and shared gait loader.
+
+    All mechanics and loading tests use the same DOLFINx mesh/function
+    space as the gait loader to avoid cross-mesh form assembly issues
+    in DOLFINx 0.10.
+    """
     mdl = FEBio2Dolfinx(FemurPaths.FEMUR_MESH_FEB)
     domain = mdl.mesh_dolfinx
     facet_tags = mdl.meshtags
-    
+
     # Create function spaces
     P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(domain.geometry.dim,))
     P1_scalar = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
     V = fem.functionspace(domain, P1_vec)
     Q = fem.functionspace(domain, P1_scalar)
-    
+
     # Create config
     cfg = Config(domain=domain, facet_tags=facet_tags, verbose=True)
-    
-    return domain, facet_tags, V, Q, cfg
+
+    # Shared gait loader built on the same vector space V
+    gait_loader = setup_femur_gait_loading(V, BW_kg=75.0, n_samples=9)
+
+    return domain, facet_tags, V, Q, cfg, gait_loader
 
 
 @pytest.fixture(scope="module")
 def gait_loader(femur_mechanics_setup):
-    """Create gait loader with hip and muscle loads."""
-    _, _, V, _, _ = femur_mechanics_setup
-    return setup_femur_gait_loading(V, BW_kg=75.0, n_samples=9)
+    """Return shared gait loader built on the femur mechanics space."""
+    _, _, _, _, _, gait_loader = femur_mechanics_setup
+    return gait_loader
 
 
 @pytest.fixture
 def mechanics_solver(femur_mechanics_setup, gait_loader):
     """Create MechanicsSolver with femur geometry and gait loading."""
-    domain, facet_tags, V, Q, cfg = femur_mechanics_setup
+    domain, facet_tags, V, Q, cfg, _ = femur_mechanics_setup
     
     # Create field functions
     u = fem.Function(V, name="u")
@@ -882,20 +890,17 @@ from dolfinx.fem.petsc import (
 
 
 @pytest.fixture(scope="module")
-def femur_geometry_setup():
-    """Create femur mesh and function space (model units: mm geometry)."""
-    mdl = FEBio2Dolfinx(FemurPaths.FEMUR_MESH_FEB)
-    domain = mdl.mesh_dolfinx
-    facet_tags = mdl.meshtags
-    P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(domain.geometry.dim,))
-    P1_scalar = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
-    V = fem.functionspace(domain, P1_vec)
-    Q = fem.functionspace(domain, P1_scalar)
-    
-    # Stress units: E0 in MPa
-    cfg = Config(domain=domain, facet_tags=facet_tags, E0=17e3)
+def femur_geometry_setup(femur_mechanics_setup):
+    """Reuse femur mechanics mesh/space/config for geometry tests.
+
+    Ensures all tests share a single DOLFINx mesh and function spaces.
+    """
+    domain, facet_tags, V, Q, cfg, _ = femur_mechanics_setup
+
+    # Override only material stiffness used in some ranges if needed
+    cfg.E0 = 17e3
     unit_scale = 1.0  # No scaling needed, already in mm
-    
+
     return domain, facet_tags, V, Q, cfg, unit_scale
 
 
@@ -1188,7 +1193,7 @@ class TestFemurDeformationFeasibility:
         from simulation.subsolvers import MechanicsSolver
         from simulation.utils import build_dirichlet_bcs
         
-        domain, facet_tags, V, Q, cfg, unit_scale = femur_geometry_setup
+        domain, facet_tags, V, Q, cfg, _ = femur_geometry_setup
         
         # Setup mechanics solver with uniform density and isotropic fabric
         import basix
@@ -1247,7 +1252,7 @@ class TestFemurDeformationFeasibility:
         from simulation.utils import build_dirichlet_bcs
         import ufl
         
-        domain, facet_tags, V, Q, cfg, unit_scale = femur_geometry_setup
+        domain, facet_tags, V, Q, cfg, _ = femur_geometry_setup
         
         # Setup mechanics solver
         import basix
@@ -1318,7 +1323,7 @@ class TestFemurDeformationFeasibility:
         from simulation.utils import build_dirichlet_bcs
         import ufl
         
-        domain, facet_tags, V, Q, cfg, unit_scale = femur_geometry_setup
+        domain, facet_tags, V, Q, cfg, _ = femur_geometry_setup
         
         # Setup mechanics solver
         import basix
@@ -1393,7 +1398,7 @@ class TestFemurDeformationFeasibility:
         from simulation.subsolvers import MechanicsSolver
         from simulation.utils import build_dirichlet_bcs
         
-        domain, facet_tags, V, Q, cfg, unit_scale = femur_geometry_setup
+        domain, facet_tags, V, Q, cfg, _ = femur_geometry_setup
         
         # Setup mechanics solver
         import basix
@@ -1462,7 +1467,7 @@ class TestReactionForces:
         from simulation.subsolvers import MechanicsSolver
         from simulation.utils import build_dirichlet_bcs
         
-        domain, facet_tags, V, Q, cfg, unit_scale = femur_geometry_setup
+        domain, facet_tags, V, Q, cfg, _ = femur_geometry_setup
         
         # Setup mechanics solver
         import basix
@@ -1550,7 +1555,7 @@ class TestReactionForces:
         from simulation.utils import build_dirichlet_bcs
         from dolfinx.fem.petsc import assemble_vector
         
-        domain, facet_tags, V, Q, cfg, unit_scale = femur_geometry_setup
+        domain, facet_tags, V, Q, cfg, _ = femur_geometry_setup
         
         # Setup mechanics solver
         import basix
@@ -1623,7 +1628,7 @@ class TestReactionForces:
         from simulation.utils import build_dirichlet_bcs
         from dolfinx.fem.petsc import assemble_vector
         
-        domain, facet_tags, V, Q, cfg, unit_scale = femur_geometry_setup
+        domain, facet_tags, V, Q, cfg, _ = femur_geometry_setup
         
         # Setup mechanics solver
         import basix
@@ -1696,7 +1701,7 @@ class TestReactionForces:
         from simulation.utils import build_dirichlet_bcs
         from dolfinx.fem.petsc import assemble_vector
         
-        domain, facet_tags, V, Q, cfg, unit_scale = femur_geometry_setup
+        domain, facet_tags, V, Q, cfg, _ = femur_geometry_setup
         
         # Setup mechanics solver
         import basix
