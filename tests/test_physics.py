@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""
-Advanced tests for physical correctness of the bone remodeling model.
+"""Advanced tests for physical correctness of the bone remodeling model.
 
-Tests:
-- Constitutive law accuracy (stress-strain relationships)
-- Thermodynamic consistency (energy dissipation, non-negative entropy production)
-- Conservation properties (force equilibrium, mass conservation)
-- Boundary condition enforcement
-- Coupling physics verification
-- Smooth function properties (C∞, monotonicity, limiting behavior)
-- PSD tensor enforcement correctness
+This module consolidates physics-related tests that were previously
+scattered across several files:
+
+- `test_physics.py` (core mechanics, density, direction, smooth functions)
+- `test_stimulus_debug.py` (debug stimulus evolution)
+- `test_reaction_forces.py` (femur reaction forces and applied loads)
+
+The goal is to keep all core physics and balance checks in one place
+while preserving the original coverage.
 """
 
 import pytest
@@ -22,12 +22,15 @@ import basix
 import ufl
 
 from simulation.config import Config
-from simulation.utils import build_facetag, build_dirichlet_bcs, collect_dirichlet_dofs
+from simulation.paths import FemurPaths
+from simulation.febio_parser import FEBio2Dolfinx
+from simulation.utils import build_facetag, build_dirichlet_bcs, collect_dirichlet_dofs, assign
 from simulation.subsolvers import (
     MechanicsSolver, StimulusSolver, DensitySolver, DirectionSolver,
     smooth_abs, smooth_plus, smooth_max, smooth_heaviside,
     unittrace_psd_from_any, unittrace_psd
 )
+from simulation.femur_gait import setup_femur_gait_loading
 
 
 def _make_unit_cube(comm: MPI.Comm, n: int = 6):
@@ -45,6 +48,27 @@ def _fiber_tensor(x):
     """Anisotropic unit-trace tensor with fiber in x-direction."""
     mat = np.array([[0.92, 0.0, 0.0], [0.0, 0.04, 0.0], [0.0, 0.0, 0.04]], dtype=float)
     return np.tile(mat.flatten()[:, None], (1, x.shape[1]))
+
+
+@pytest.fixture(scope="module")
+def femur_setup():
+    """Create femur mesh and function spaces (mm geometry, MPa stresses)."""
+    mdl = FEBio2Dolfinx(FemurPaths.FEMUR_MESH_FEB)
+    domain = mdl.mesh_dolfinx
+    facet_tags = mdl.meshtags
+    P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(domain.geometry.dim,))
+    P1_scalar = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
+    V = fem.functionspace(domain, P1_vec)
+    Q = fem.functionspace(domain, P1_scalar)
+    cfg = Config(domain=domain, facet_tags=facet_tags)
+    return domain, facet_tags, V, Q, cfg
+
+
+@pytest.fixture(scope="module")
+def femur_gait_loader(femur_setup):
+    """Gait loader used for femur reaction-force tests."""
+    _, _, V, _, _ = femur_setup
+    return setup_femur_gait_loading(V, BW_kg=75.0, n_samples=9)
 
 
 # =============================================================================
@@ -1033,6 +1057,138 @@ class TestConservationChecks:
         # tr(A) should relax toward 1 (may not be exact in one step)
         assert abs(trA_avg - 1.0) < 0.3, (
             f"tr(A) should approach 1, got {trA_avg:.3f} (residual={trace_res:.3e})"
+        )
+
+
+# =============================================================================
+# Femur Reaction Force Tests (from former test_reaction_forces.py)
+# =============================================================================
+
+
+class TestReactionForcesFemur:
+    """Validate applied and reaction forces on femur geometry."""
+
+    def test_applied_force_integration(self, femur_gait_loader, femur_setup):
+        """Applied forces integrated over surface should match physiological expectations.
+
+        Hip joint forces at peak stance: ~3-4× BW  (~2200-2950 N for 75 kg)
+        Muscle forces (glut med + max): ~1-2× BW (~735-1470 N for 75 kg)
+        Total applied load should be in range 1-6× BW.
+        """
+        domain, facet_tags, V, Q, cfg = femur_setup
+
+        femur_gait_loader.update_loads(50.0)
+
+        import ufl
+
+        t_total = femur_gait_loader.t_hip + femur_gait_loader.t_glmed + femur_gait_loader.t_glmax
+
+        F_applied_N = np.zeros(3)
+        for i in range(3):
+            F_i_form = fem.form(t_total[i] * cfg.ds(2))
+            F_i_local = fem.assemble_scalar(F_i_form)
+            F_applied_N[i] = domain.comm.allreduce(F_i_local, op=MPI.SUM)
+
+        F_magnitude = np.linalg.norm(F_applied_N)
+        BW_N = 75.0 * 9.81
+
+        assert 1.0 * BW_N < F_magnitude < 6.0 * BW_N, (
+            f"Applied force {F_magnitude:.1f} N should be 1-6× BW (736-4415 N)"
+        )
+
+    def test_reaction_force_equilibrium(self, femur_gait_loader, femur_setup):
+        """Consistent reaction forces (from unconstrained residual) balance applied loads."""
+        from dolfinx.fem.petsc import (
+            assemble_matrix as assemble_matrix_petsc,
+            assemble_vector as assemble_vector_petsc,
+            create_vector as create_vector_petsc,
+        )
+        from petsc4py import PETSc
+        import ufl
+
+        domain, facet_tags, V, Q, cfg = femur_setup
+
+        u = fem.Function(V, name="u")
+        rho = fem.Function(Q, name="rho")
+        A_dir = fem.Function(fem.functionspace(domain,
+                             basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3, 3))),
+                             name="A")
+
+        rho.x.array[:] = 1.0
+        A_dir.x.array[:] = 0.0
+        for i in range(3):
+            A_dir.x.array[i::9] = 1.0/3.0
+
+        dirichlet_bcs = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
+        neumann_bcs = [
+            (femur_gait_loader.t_hip, 2),
+            (femur_gait_loader.t_glmed, 2),
+            (femur_gait_loader.t_glmax, 2),
+        ]
+
+        solver = MechanicsSolver(u, rho, A_dir, cfg, dirichlet_bcs, neumann_bcs)
+        solver.setup()
+
+        femur_gait_loader.update_loads(50.0)
+        solver.assemble_rhs()
+        solver.solve()
+
+        t_total = femur_gait_loader.t_hip + femur_gait_loader.t_glmed + femur_gait_loader.t_glmax
+        F_applied_N = np.zeros(3)
+        for i in range(3):
+            F_i_form = fem.form(t_total[i] * cfg.ds(2))
+            F_i_local = fem.assemble_scalar(F_i_form)
+            F_applied_N[i] = domain.comm.allreduce(F_i_local, op=MPI.SUM)
+
+        A0 = assemble_matrix_petsc(solver.a_form)
+        A0.assemble()
+        b0 = create_vector_petsc(V)
+        with b0.localForm() as b0_loc:
+            b0_loc.set(0.0)
+        assemble_vector_petsc(b0, solver.L_form)
+        b0.ghostUpdate(PETSc.InsertMode.ADD, PETSc.ScatterMode.REVERSE)
+        b0.ghostUpdate(PETSc.InsertMode.INSERT, PETSc.ScatterMode.FORWARD)
+
+        r = create_vector_petsc(V)
+        with r.localForm() as r_loc:
+            r_loc.set(0.0)
+        A0.mult(u.x.petsc_vec, r)
+        r.axpy(-1.0, b0)
+
+        F_reaction_N = np.zeros(3)
+        for i, bc in enumerate(dirichlet_bcs):
+            idx_all, first_ghost = bc.dof_indices()
+            idx_owned = idx_all[:first_ghost]
+            if idx_owned.size:
+                r_local = r.getValues(idx_owned)
+                F_reaction_N[i] += float(np.sum(r_local))
+        F_reaction_N = domain.comm.allreduce(F_reaction_N, op=MPI.SUM)
+
+        n = ufl.FacetNormal(domain)
+        sigma_u = solver.sigma(u, rho, A_dir)
+        t_reac = ufl.dot(sigma_u, n)
+        F_reaction_sigma_N = np.zeros(3)
+        for i in range(3):
+            Fi_form = fem.form(t_reac[i] * cfg.ds(1))
+            Fi_loc = fem.assemble_scalar(Fi_form)
+            F_reaction_sigma_N[i] = domain.comm.allreduce(Fi_loc, op=MPI.SUM)
+
+        F_total_N = F_applied_N + F_reaction_N
+        F_total_magnitude = np.linalg.norm(F_total_N)
+        F_applied_magnitude = np.linalg.norm(F_applied_N)
+        F_reaction_magnitude = np.linalg.norm(F_reaction_N)
+
+        rel_err = F_total_magnitude / max(F_applied_magnitude, 1e-30)
+        assert rel_err < 5e-6, (
+            f"Force balance failed: |F_applied+F_reaction|/|F_applied| = {rel_err:.2e}"
+        )
+
+        e = F_applied_N / max(F_applied_magnitude, 1e-30)
+        s_res = float(F_reaction_N @ e)
+        s_sig = float((-F_reaction_sigma_N) @ e)
+        rel_axis_err = abs(abs(s_sig) - F_applied_magnitude) / max(F_applied_magnitude, 1e-30)
+        assert rel_axis_err < 0.30, (
+            f"Traction reaction (σ·n) inconsistent along load axis (rel_err={rel_axis_err:.2e})"
         )
 
 
