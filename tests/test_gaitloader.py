@@ -2103,6 +2103,7 @@ class TestUtilityFunctions:
         """Test vector_from_angles with angle combinations."""
         magnitude = 100.0
         vector = vector_from_angles(magnitude, alpha_sag, alpha_front)
+        desc = f"alpha_sag={alpha_sag}, alpha_front={alpha_front}"
         
         # Verify magnitude is preserved
         assert_almost_equal(np.linalg.norm(vector), magnitude)
