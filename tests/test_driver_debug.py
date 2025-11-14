@@ -60,10 +60,14 @@ def test_driver_produces_nonzero_energy(tmp_path):
     mech.setup()
     
     # Create driver
-    driver = GaitEnergyDriver(mech, gait_loader, cycles_per_day=1.0)
+    driver = GaitEnergyDriver(mech, gait_loader, psi_ref=cfg.psi_ref)
+    
+    # Update snapshots to compute gait-averaged fields
+    print(f"\n[Rank {comm.rank}] Updating snapshots...")
+    driver.update_snapshots()
     
     # Build energy expression
-    print(f"\n[Rank {comm.rank}] Building energy expression...")
+    print(f"[Rank {comm.rank}] Building energy expression...")
     psi_expr = driver.energy_expr()
     print(f"[Rank {comm.rank}] Energy expression type: {type(psi_expr)}")
     

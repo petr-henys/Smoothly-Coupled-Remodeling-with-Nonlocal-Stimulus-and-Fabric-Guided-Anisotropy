@@ -132,7 +132,7 @@ class Remodeller:
         self.dirsolver = DirectionSolver(self.A, self.A_old, self.cfg)
 
         # Energy-driven driver (gait-averaged, pure UFL)
-        self.driver = GaitEnergyDriver(self.mechsolver, gait_loader)
+        self.driver = GaitEnergyDriver(self.mechsolver, gait_loader, psi_ref=self.cfg.psi_ref)
 
         self.fixedsolver = FixedPointSolver(
             self.comm, self.cfg,

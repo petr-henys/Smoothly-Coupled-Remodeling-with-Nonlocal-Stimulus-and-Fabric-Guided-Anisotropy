@@ -118,30 +118,27 @@ class TestInstantDriver:
 
 class TestGaitDriver:
     def test_energy_does_not_scale_with_cpd(self, mech_with_dummy_gait):
-        """Energy density should NOT scale with cpd (cpd scaling moved to rS_gain)."""
+        """Energy expression produces gait-averaged value (no cpd parameter)."""
         mech, gait = mech_with_dummy_gait
-        drv1 = GaitEnergyDriver(mech, gait, cycles_per_day=1.0)
-        psi1_loc = fem.assemble_scalar(fem.form(drv1.energy_expr() * mech.cfg.dx))
-        psi1 = mech.comm.allreduce(psi1_loc, op=MPI.SUM)
-
-        drv2 = GaitEnergyDriver(mech, gait, cycles_per_day=3.0)
-        psi2_loc = fem.assemble_scalar(fem.form(drv2.energy_expr() * mech.cfg.dx))
-        psi2 = mech.comm.allreduce(psi2_loc, op=MPI.SUM)
-
-        ratio = psi2 / max(psi1, 1e-300)
-        # Energy density should be the same regardless of cpd (gait-averaged energy per cycle)
-        assert 0.95 < ratio < 1.05, f"Energy density should not scale with cpd; ratio={ratio:.2f}"
+        drv = GaitEnergyDriver(mech, gait, psi_ref=mech.cfg.psi_ref)
+        drv.update_snapshots()
+        psi_loc = fem.assemble_scalar(fem.form(drv.energy_expr() * mech.cfg.dx))
+        psi = mech.comm.allreduce(psi_loc, op=MPI.SUM)
+        # Just verify positive energy density from gait loading
+        assert psi > 0, f"Expected positive energy, got {psi:.3e}"
 
     def test_energy_scales_with_load(self, mech_with_dummy_gait):
         mech, gait = mech_with_dummy_gait
         gait.load_scale = 1.0
-        drv_base = GaitEnergyDriver(mech, gait, cycles_per_day=1.0)
+        drv_base = GaitEnergyDriver(mech, gait, psi_ref=mech.cfg.psi_ref)
+        drv_base.update_snapshots()
         psi_base_loc = fem.assemble_scalar(fem.form(drv_base.energy_expr() * mech.cfg.dx))
         psi_base = mech.comm.allreduce(psi_base_loc, op=MPI.SUM)
 
         # Double load -> ~4x energy (linear elasticity: ψ ~ ε² ~ load²)
         gait.load_scale = 2.0
-        drv_double = GaitEnergyDriver(mech, gait, cycles_per_day=1.0)
+        drv_double = GaitEnergyDriver(mech, gait, psi_ref=mech.cfg.psi_ref)
+        drv_double.update_snapshots()
         psi_double_loc = fem.assemble_scalar(fem.form(drv_double.energy_expr() * mech.cfg.dx))
         psi_double = mech.comm.allreduce(psi_double_loc, op=MPI.SUM)
 
@@ -151,13 +148,15 @@ class TestGaitDriver:
     def test_structure_psd_and_scaling(self, mech_with_dummy_gait):
         mech, gait = mech_with_dummy_gait
         gait.load_scale = 1.0
-        drv = GaitEnergyDriver(mech, gait, cycles_per_day=1.0)
+        drv = GaitEnergyDriver(mech, gait, psi_ref=mech.cfg.psi_ref)
+        drv.update_snapshots()
         M1 = drv.structure_expr()
         M1_int_loc = fem.assemble_scalar(fem.form(ufl.tr(M1) * mech.cfg.dx))
         M1_int = mech.comm.allreduce(M1_int_loc, op=MPI.SUM)
 
         gait.load_scale = 2.0
         drv.invalidate()
+        drv.update_snapshots()
         M2 = drv.structure_expr()
         M2_int_loc = fem.assemble_scalar(fem.form(ufl.tr(M2) * mech.cfg.dx))
         M2_int = mech.comm.allreduce(M2_int_loc, op=MPI.SUM)

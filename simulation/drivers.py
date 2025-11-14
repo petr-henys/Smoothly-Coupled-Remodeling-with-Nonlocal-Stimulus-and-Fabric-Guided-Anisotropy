@@ -67,7 +67,7 @@ class GaitEnergyDriver:
         self.mech = mech
         self.gait = gait_loader
         self.m = int(m_exponent)
-        self.psi_ref = float(psi_ref)
+        self.psi_ref = float(psi_ref) if psi_ref is not None else None
 
         # Persistent snapshots and metadata
         self._u_snap: List[fem.Function] | None = None
@@ -95,10 +95,6 @@ class GaitEnergyDriver:
         """Recompute u_snap[i] for current (ρ, A) by looping gait phases."""
         self._ensure_prebuilt()
 
-        # Save current u (avoid side-effects)
-        u_saved = fem.Function(self.mech.u.function_space)
-        u_saved.x.array[:] = self.mech.u.x.array
-
         for i, phase in enumerate(self._phases):
             self.gait.update_loads(phase)
             self.mech.assemble_rhs()
@@ -106,8 +102,7 @@ class GaitEnergyDriver:
             self._u_snap[i].x.array[:] = self.mech.u.x.array
             self._u_snap[i].x.scatter_forward()
 
-        # Restore u
-        self.mech.u.x.array[:] = u_saved.x.array
+        # Keep the last phase's displacement in u (no restore - u is useful for diagnostics)
         self.mech.u.x.scatter_forward()
 
     def energy_expr(self) -> ufl.core.expr.Expr:

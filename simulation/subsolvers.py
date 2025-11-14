@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Tuple, List, Optional, Dict
 
+import numpy as np
 from mpi4py import MPI
 from petsc4py import PETSc
 from dolfinx import fem
