@@ -139,18 +139,26 @@ class Remodeller:
         # Dirichlet BCs: fix distal end (tag 1)
         bc_mech = build_dirichlet_bcs(self.V, self.cfg.facet_tags, id_tag=1, value=0.0)
 
-        # Mechanics: boundary conditions and external loading are provided
-        # explicitly by the caller via ``neumann_bcs``.
-        self.mechsolver = MechanicsSolver(u, self.rho, self.A, self.cfg, bc_mech, neumann_bcs=[])
+        # Create gait loader (None means use internal dummy loader)
+        # This must happen before MechanicsSolver to provide traction functions
+        gait_loader = self._create_gait_loader(None)
+        
+        # Neumann BCs: traction from gait loader on tags 2, 3, 4
+        neumann_bcs = [
+            (gait_loader.t_hip, 2),
+            (gait_loader.t_glmed, 3),
+            (gait_loader.t_glmax, 4),
+        ]
+
+        # Mechanics: boundary conditions and external loading
+        self.mechsolver = MechanicsSolver(u, self.rho, self.A, self.cfg, bc_mech, neumann_bcs)
 
         self.stimsolver = StimulusSolver(self.S, self.S_old, self.cfg)
         self.densolver = DensitySolver(self.rho, self.rho_old, self.A, self.S, self.cfg)
         self.dirsolver = DirectionSolver(self.A, self.A_old, self.cfg)
 
-        # Energy-driven driver (gait-averaged, pure UFL); the driver is generic
-        # and does not hard-code femur gait. Users can provide any driver
-        # implementing the same interface if desired.
-        self.driver = GaitEnergyDriver(self.mechsolver, None, self.cfg)
+        # Energy-driven driver with gait loader
+        self.driver = GaitEnergyDriver(self.mechsolver, gait_loader, self.cfg)
 
         self.fixedsolver = FixedPointSolver(
             self.comm,
@@ -189,6 +197,13 @@ class Remodeller:
         self.cfg.update_config_json()
 
         self._current_dt: Optional[float] = None
+
+    def _create_gait_loader(self, gait_loader):
+        """Create or wrap gait loader, ensuring it has required interface."""
+        if gait_loader is None:
+            from simulation.drivers import _DummyGaitLoader
+            return _DummyGaitLoader(self.V)
+        return gait_loader
         
     def close(self):
         """Release PETSc resources and close I/O."""

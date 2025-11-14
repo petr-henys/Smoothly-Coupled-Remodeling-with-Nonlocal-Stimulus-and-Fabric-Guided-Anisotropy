@@ -114,9 +114,9 @@ if workspace_root not in sys.path:
     sys.path.insert(0, workspace_root)
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture(autouse=True, scope="session")
 def _seed_numpy_for_determinism():
-    """Seed numpy RNG for deterministic test behavior."""
+    """Seed numpy RNG once for deterministic test behavior."""
     import numpy as np
     np.random.seed(1234)
 
@@ -211,19 +211,7 @@ def fields(spaces) -> Fields:
     return Fields(u=u, rho=rho, rho_old=rho_old, A=A, A_old=A_old, S=S, S_old=S_old)
 
 
-@pytest.fixture
-def traction_factory(cfg):
-    """Factory to build a constant traction vector on a given facet.
-    
-    Usage: traction = traction_factory(value=-0.3, facet_id=2, axis=0)
-    """
-    def _make(value: float, facet_id: int = 2, axis: int = 0):
-        from dolfinx import fem
-        import numpy as np
-        vec = np.zeros(3, dtype=float)
-        vec[axis] = float(value)
-        return (fem.Constant(cfg.domain, vec), int(facet_id))
-    return _make
+
 
 
 @pytest.fixture
@@ -253,28 +241,7 @@ def shared_tmpdir():
     yield Path(tmpdir)
 
 
-@pytest.fixture
-def mean_value_factory(cfg):
-    """Factory to compute global mean value of a scalar UFL expression.
-    
-    Usage: mean = mean_value_factory(); result = mean(expr)
-    """
-    from dolfinx import fem
 
-    def _mean(expr, *, dx=None) -> float:
-        dxm = dx if dx is not None else cfg.dx
-        local = fem.assemble_scalar(fem.form(expr * dxm))
-        vol_local = fem.assemble_scalar(fem.form(1.0 * dxm))
-        comm = cfg.domain.comm if hasattr(cfg, "domain") else (MPI.COMM_WORLD if HAS_MPI and MPI is not None else None)
-        if comm is None or not HAS_MPI or MPI is None:
-            tot = local
-            vol = vol_local
-        else:
-            tot = comm.allreduce(local, op=MPI.SUM)
-            vol = comm.allreduce(vol_local, op=MPI.SUM)
-        return float(tot / max(vol, 1e-300))
-
-    return _mean
 
 
 @pytest.fixture

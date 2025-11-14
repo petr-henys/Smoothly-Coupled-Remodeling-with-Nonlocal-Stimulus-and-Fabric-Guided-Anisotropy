@@ -133,6 +133,7 @@ class _BaseLinearSolver:
             self.A.zeroEntries()
         assemble_matrix(self.A, self.a_form, bcs=self.dirichlet_bcs)
         self.A.assemble()
+
         if self.ksp is not None:
             self.ksp.setOperators(self.A)
             self.ksp.setUp()
@@ -207,7 +208,8 @@ class MechanicsSolver(_BaseLinearSolver):
         self.L_form = fem.form(L_form)
 
     def build_lhs_form(self):
-        return ufl.inner(self.sigma(self.trial, self.rho, self.A_dir), self.eps(self.test)) * self.dx  # noqa: E501
+        return ufl.inner(self.sigma(self.trial, self.rho, self.A_dir), 
+                         self.eps(self.test)) * self.dx  # noqa: E501
 
     def eps(self, u):
         """Symmetric gradient ε(u)."""

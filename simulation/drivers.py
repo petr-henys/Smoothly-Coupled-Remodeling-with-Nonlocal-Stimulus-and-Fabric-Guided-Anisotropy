@@ -56,11 +56,35 @@ class InstantEnergyDriver:
         return ufl.dot(ufl.transpose(e), e)
 
 
+class _DummyGaitLoader:
+    """Minimal gait loader for testing when no real gait data is available."""
+    def __init__(self, V):
+        self.t_hip = fem.Function(V, name="t_hip")
+        self.t_glmed = fem.Function(V, name="t_glmed")
+        self.t_glmax = fem.Function(V, name="t_glmax")
+        
+    def get_quadrature(self):
+        # Single phase with full weight
+        return [(0.0, 1.0)]
+    
+    def update_loads(self, phase_percent: float) -> None:
+        # Apply minimal constant load to produce measurable deformation
+        load_val = 0.5  # [MPa]
+        vec = np.array([-1.0, -0.5, 0.0], dtype=float) * load_val
+        for t in (self.t_hip, self.t_glmed, self.t_glmax):
+            t.interpolate(lambda x: np.tile(vec.reshape(3, 1), (1, x.shape[1])))
+            t.x.scatter_forward()
+
+
 class GaitEnergyDriver:
     """Gait-averaged driver with eager setup and explicit updates only for `u`."""
 
     def __init__(self, mech, gait_loader, config: Config):
         self.mech = mech
+        # If no gait loader provided, create a dummy one
+        if gait_loader is None:
+            V = mech.u.function_space
+            gait_loader = _DummyGaitLoader(V)
         self.gait = gait_loader
         self.cfg = config
         self.psi_ref = float(config.psi_ref)

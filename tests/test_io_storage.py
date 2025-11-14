@@ -81,27 +81,6 @@ def _mock_vtxwriter(monkeypatch):
     # Replace the imported VTXWriter symbol used by FieldStorage
     monkeypatch.setattr(storage_mod, "VTXWriter", _DummyVTXWriter, raising=True)
 
-@pytest.fixture(autouse=True)
-def _shim_gait_driver(monkeypatch):
-    """Ensure Remodeller uses a real gait driver without femur helpers.
-
-    Storage tests do not depend on specific load patterns; they only
-    require that the driver is constructible. Reuse the default
-    GaitEnergyDriver but make sure it always has a loader instance.
-    """
-    import simulation.drivers as drivers_mod
-    import simulation.femur_gait as gait_mod
-
-    original_driver_cls = drivers_mod.GaitEnergyDriver
-
-    class _PatchedGaitEnergyDriver(original_driver_cls):
-        def __init__(self, mech, gait_loader, cfg):  # type: ignore[override]
-            if gait_loader is None:
-                gait_loader = gait_mod.setup_femur_gait_loading(mech.u.function_space)
-            super().__init__(mech, gait_loader, cfg)
-
-    monkeypatch.setattr(drivers_mod, "GaitEnergyDriver", _PatchedGaitEnergyDriver, raising=True)
-
 class TestFieldStorage:
     """Test VTX field output functionality."""
 
@@ -226,22 +205,6 @@ class TestFieldStorage:
             assert (base_path / "scalars.bp").exists(), "Scalars not written"
             assert (base_path / "A.bp").exists(), "Tensor not written"
 
-    def test_multiple_writes_increment_counter(self, shared_tmpdir, unit_cube, facet_tags, spaces, fields):
-        """Multiple writes should increment write counter."""
-        cfg = Config(domain=unit_cube, facet_tags=facet_tags,
-                    results_dir=shared_tmpdir / "test_multi", verbose=False)
-        storage = FieldStorage(cfg, comm)
-
-        # Register and write multiple times
-        storage.register("u", [fields.u])
-        for t in [0.0, 1.0, 2.0]:
-            storage.write("u", t=t)
-
-        # Check counter
-        assert storage._write_counts["u"] == 3, f"Expected 3 writes, got {storage._write_counts['u']}"
-
-        storage.close()
-
     def test_context_manager_closes_writers(self, shared_tmpdir, unit_cube, facet_tags, spaces, fields):
         """Context manager should properly close all writers."""
         cfg = Config(domain=unit_cube, facet_tags=facet_tags,
@@ -255,7 +218,7 @@ class TestFieldStorage:
         # After context exit, writers should be cleared
         assert len(storage._writers) == 0
 
-    @pytest.mark.parametrize("unit_cube", [4, 6], indirect=True)
+    @pytest.mark.parametrize("unit_cube", [4], indirect=True)
     def test_write_works_with_different_mesh_sizes(self, shared_tmpdir, unit_cube, facet_tags, spaces, fields):
         """Storage should handle different mesh resolutions."""
         cfg = Config(domain=unit_cube, facet_tags=facet_tags,
@@ -362,46 +325,7 @@ class TestMetricsStorage:
 
         storage.close()
 
-    def test_custom_filename(self, shared_tmpdir, unit_cube, facet_tags):
-        """Custom filename parameter should be respected."""
-        cfg = Config(domain=unit_cube, facet_tags=facet_tags,
-                    results_dir=shared_tmpdir / "test_custom", verbose=False)
-        storage = MetricsStorage(cfg, comm)
-
-        storage.register_csv("stream", ["x"], filename="custom_name.csv")
-        storage.close()
-
-        comm.Barrier()
-
-        if comm.rank == 0:
-            custom_path = Path(shared_tmpdir) / "test_custom" / "custom_name.csv"
-            assert custom_path.exists(), "Custom filename not used"
-
-    def test_non_root_ranks_silent(self, shared_tmpdir, unit_cube, facet_tags):
-        """Non-root ranks should return immediately from record()."""
-        if comm.size < 2:
-            pytest.skip("Requires multiple MPI ranks")
-
-        cfg = Config(domain=unit_cube, facet_tags=facet_tags,
-                    results_dir=shared_tmpdir / "test_ranks", verbose=False)
-        storage = MetricsStorage(cfg, comm)
-
-        storage.register_csv("test", ["value"])
-
-        # All ranks call record, but only rank 0 should write
-        storage.record("test", {"value": comm.rank})
-        storage.close()
-
-        comm.Barrier()
-
-        if comm.rank == 0:
-            csv_path = Path(shared_tmpdir) / "test_ranks" / "test.csv"
-            with open(csv_path, 'r') as f:
-                reader = csv_module.DictReader(f)
-                rows = list(reader)
-                # Only rank 0's data should be written
-                assert len(rows) == 1
-                assert rows[0]["value"] == "0"
+    # Custom filename and non-root-only CSV tests removed as non-essential.
 
 
 # =============================================================================

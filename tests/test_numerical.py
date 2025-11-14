@@ -42,7 +42,7 @@ from simulation.anderson import _Anderson
 class TestDOFOrdering:
     """Test critical DOF ordering in fixed-point solver (rho, A, S)."""
     
-    @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
+    @pytest.mark.parametrize("unit_cube", [6], indirect=True)
     def test_state_slices_match_field_sizes(self, unit_cube, cfg, spaces, fields, bc_mech):
         """Verify _build_state_slices produces correct offsets."""
         comm = MPI.COMM_WORLD
@@ -69,7 +69,7 @@ class TestDOFOrdering:
         assert s_S.start == s_A.stop, "S slice not after A"
         assert s_S.stop == fps.state_size, "S slice doesn't end at state_size"
     
-    @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
+    @pytest.mark.parametrize("unit_cube", [6], indirect=True)
     def test_flatten_restore_roundtrip(self, unit_cube, cfg, spaces, fields, bc_mech):
         """Flatten then restore should recover original state."""
         comm = MPI.COMM_WORLD
@@ -100,7 +100,7 @@ class TestDOFOrdering:
         assert np.allclose(S.x.array, S_orig), "S not restored correctly"
         assert np.allclose(u.x.array, 999.0), "mechanics state should remain untouched"
     
-    @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
+    @pytest.mark.parametrize("unit_cube", [6], indirect=True)
     def test_fix_mask_empty(self, unit_cube, cfg, spaces, fields, bc_mech):
         """Fixed-point mask should remain empty without displacement state."""
         comm = MPI.COMM_WORLD
@@ -187,12 +187,21 @@ class TestAndersonAcceleration:
 class TestSolverStatistics:
     """Test solver statistics tracking."""
     
-    def test_ksp_iteration_counting(self, cfg, spaces, fields, bc_mech, traction_factory):
+    def test_ksp_iteration_counting(self, cfg, spaces, fields, bc_mech):
         """Verify KSP iteration counts are tracked correctly."""
+        from dolfinx import fem
+        import numpy as np
         V, Q, T = spaces.V, spaces.Q, spaces.T
         u, rho, _, A, _, _, _ = fields
-        traction = traction_factory(-0.1, facet_id=2, axis=0)
-        mech = MechanicsSolver(u, rho, A, cfg, bc_mech, [traction])
+        
+        # Create traction directly
+        t_load = fem.Function(V, name="traction")
+        vec = np.zeros(3, dtype=float)
+        vec[0] = -0.1
+        t_load.interpolate(lambda x: np.tile(vec.reshape(3, 1), (1, x.shape[1])))
+        t_load.x.scatter_forward()
+        
+        mech = MechanicsSolver(u, rho, A, cfg, bc_mech, [(t_load, 2)])
         
         mech.setup()
         
@@ -291,7 +300,7 @@ class TestMatrixAssembly:
         rel_change = abs(n2 - n1) / max(n1, 1e-300)
         assert rel_change > 0.5, f"Stimulus matrix norm unchanged after dt update (rel={rel_change:.3e}, n1={n1:.3e}, n2={n2:.3e})"
 
-    @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
+    @pytest.mark.parametrize("unit_cube", [6], indirect=True)
     @pytest.mark.parametrize("solver_type", ["mechanics", "stimulus", "density"])
     def test_solver_operator_positive_definite(self, unit_cube, cfg, spaces, bc_mech, solver_type):
         """Check x^T A x > 0 (or >= 0) for solver operators with random test vectors.

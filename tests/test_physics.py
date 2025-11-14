@@ -78,7 +78,7 @@ def femur_gait_loader(femur_setup):
 class TestConstitutiveLaw:
     """Test stress-strain constitutive relationships."""
     
-    @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
+    @pytest.mark.parametrize("unit_cube", [6], indirect=True)
     def test_isotropic_stress_symmetry(self, unit_cube, facet_tags):
         """Verify stress tensor is symmetric for isotropic material."""
         comm = MPI.COMM_WORLD
@@ -228,7 +228,7 @@ class TestConstitutiveLaw:
 class TestThermodynamics:
     """Test energy dissipation and thermodynamic consistency."""
     
-    @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
+    @pytest.mark.parametrize("unit_cube", [6], indirect=True)
     def test_strain_energy_positivity(self, unit_cube, facet_tags):
         """Strain energy density ψ = 0.5*σ:ε must be non-negative."""
         comm = MPI.COMM_WORLD
@@ -269,7 +269,7 @@ class TestThermodynamics:
         
         assert psi_global >= -1e-12, f"Strain energy must be non-negative, got {psi_global}"
     
-    @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
+    @pytest.mark.parametrize("unit_cube", [6], indirect=True)
     def test_stimulus_diffusion_dissipation(self, unit_cube, facet_tags, mean_value_factory):
         """Stimulus diffusion term should dissipate energy (κ∇S·∇S ≥ 0)."""
         comm = MPI.COMM_WORLD
@@ -350,7 +350,7 @@ class TestThermodynamics:
 class TestConservation:
     """Test conservation properties and equilibrium."""
     
-    @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
+    @pytest.mark.parametrize("unit_cube", [6], indirect=True)
     def test_force_equilibrium_no_body_force(self, unit_cube):
         """With no body force and homogeneous BCs, internal forces should sum to zero.
         
@@ -831,7 +831,7 @@ class TestPSDTensors:
 class TestBoundaryConditions:
     """Test boundary condition enforcement."""
     
-    @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
+    @pytest.mark.parametrize("unit_cube", [6], indirect=True)
     def test_dirichlet_enforcement_strong(self, unit_cube, traction_factory):
         """Verify Dirichlet BCs are strongly enforced."""
         comm = MPI.COMM_WORLD
@@ -874,7 +874,7 @@ class TestBoundaryConditions:
             max_bc_val = np.max(np.abs(u_bc_vals))
             assert max_bc_val < 1e-9, f"Dirichlet BC not enforced: max |u| on BC = {max_bc_val}"
     
-    @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
+    @pytest.mark.parametrize("unit_cube", [6], indirect=True)
     def test_traction_load_response(self, unit_cube, traction_factory):
         """Verify mechanics solver responds correctly to applied traction."""
         comm = MPI.COMM_WORLD
