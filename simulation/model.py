@@ -28,7 +28,6 @@ from simulation.storage import UnifiedStorage
 from simulation.logger import get_logger, Level
 from simulation.utils import build_dirichlet_bcs, assign, current_memory_mb
 from simulation.config import Config
-from simulation.febio_parser import FEBio2Dolfinx
 from simulation.subsolvers import MechanicsSolver, StimulusSolver, DensitySolver, DirectionSolver
 from simulation.fixedsolver import FixedPointSolver
 from simulation.drivers import GaitEnergyDriver
@@ -140,9 +139,9 @@ class Remodeller:
         # Dirichlet BCs: fix distal end (tag 1)
         bc_mech = build_dirichlet_bcs(self.V, self.cfg.facet_tags, id_tag=1, value=0.0)
 
-        # Create gait loader (None means use internal dummy loader)
-        # This must happen before MechanicsSolver to provide traction functions
-        gait_loader = self._create_gait_loader(None)
+        # Create gait loader - must be provided explicitly
+        from simulation.femur_gait import setup_femur_gait_loading
+        gait_loader = setup_femur_gait_loading(self.V, BW_kg=75.0, n_samples=9)
         
         # Neumann BCs: traction from gait loader on tags 2, 3, 4
         neumann_bcs = [
@@ -199,13 +198,6 @@ class Remodeller:
 
         self._current_dt: Optional[float] = None
 
-    def _create_gait_loader(self, gait_loader):
-        """Create or wrap gait loader, ensuring it has required interface."""
-        if gait_loader is None:
-            from simulation.drivers import _DummyGaitLoader
-            return _DummyGaitLoader(self.V)
-        return gait_loader
-        
     def close(self):
         """Release PETSc resources and close I/O."""
         if self.closed:

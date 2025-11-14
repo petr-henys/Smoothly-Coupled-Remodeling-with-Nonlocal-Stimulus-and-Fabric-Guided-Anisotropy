@@ -60,11 +60,7 @@ def gait_interpolator(gait_vs_force: np.ndarray) -> np.ndarray:
     # +x: anterior->Orthoload y+
     # +z: medial->Orthoload x+
     # +y: superior->Orthoload z+
-    try:
-        t_interp = interp1d(pts[:, 0], pts[:, 1:], axis=0, kind='cubic', fill_value='extrapolate')
-    except Exception as e:
-        _logger.error(f"Failed to create gait interpolator: {e}")
-        raise
+    t_interp = interp1d(pts[:, 0], pts[:, 1:], axis=0, kind='cubic', fill_value='extrapolate')
     return t_interp
 
 def orthoload2ISB(points: np.ndarray) -> np.ndarray:

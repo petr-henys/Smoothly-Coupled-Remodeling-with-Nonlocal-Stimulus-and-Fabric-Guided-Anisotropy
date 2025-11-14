@@ -40,7 +40,7 @@ class Config:
     # --- Density bounds ---
     rho_min: float = 0.2         # minimum relative density [-]
     rho_max: float = 1.00         # maximum relative density [-]
-    rho0: float = 1.0            # initial relative density [-]
+    rho0: float = 0.5            # initial relative density [-]
     lambda_rho: float = 0.1       # [1/day] váha reakčního členu ~ |S| v rovnici pro ρ
 
 
