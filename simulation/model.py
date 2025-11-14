@@ -529,15 +529,3 @@ class Remodeller:
         overall_elapsed = self.comm.allreduce(float(overall_elapsed), op=MPI.MAX)
 
         self._print_final_summary(n_steps, overall_elapsed, mech_times, stim_times, dens_times, dir_times)
-
-if __name__ == "__main__":
-    comm = MPI.COMM_WORLD
-
-    # Load femur mesh (optimized: rank 0 only parses, then broadcast)
-    mdl = FEBio2Dolfinx(FemurPaths.FEMUR_MESH_FEB)
-
-    cfg = Config(domain=mdl.mesh_dolfinx, 
-                 facet_tags=mdl.meshtags, verbose=True)
-    with Remodeller(cfg) as remodeller:
-        # Example: 50 days step, total 500 days (adjust as needed)
-        remodeller.simulate(dt=50.0, total_time=500.0)
