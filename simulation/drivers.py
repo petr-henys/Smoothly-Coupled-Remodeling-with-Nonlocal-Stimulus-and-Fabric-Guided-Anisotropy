@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from typing import Protocol
 
+import numpy as np
+from mpi4py import MPI
 from simulation.config import Config
 from dolfinx import fem
 import ufl
@@ -25,7 +27,7 @@ class StrainDriver(Protocol):
     def energy_expr(self) -> ufl.core.expr.Expr: ...
     def structure_expr(self) -> ufl.core.expr.Expr: ...
     def invalidate(self) -> None: ...
-    def update_snapshots(self) -> None: ...  # no-op for instantaneous drivers
+    def update_snapshots(self) -> dict | None: ...  # no-op for instantaneous drivers
 
 
 class InstantEnergyDriver:
@@ -63,6 +65,7 @@ class GaitEnergyDriver:
         self.cfg = config
         self.psi_ref = float(config.psi_ref)
         self.exponent = float(config.n_power)
+        self.comm = self.mech.u.function_space.mesh.comm
 
         quad = list(self.gait.get_quadrature())
         if not quad:
@@ -76,19 +79,30 @@ class GaitEnergyDriver:
         self._tractions = (self.gait.t_hip, self.gait.t_glmed, self.gait.t_glmax)
         self.loads = self._precompute_loads()
         self.psi_expr, self.M_expr = self._build_expressions()
+        self._last_stats: dict | None = None
 
     def invalidate(self) -> None:
         return None
 
-    def update_snapshots(self) -> None:
+    def update_snapshots(self) -> dict:
         """Solve mechanics for each gait phase and refresh displacement snapshots."""
+        times: list[float] = []
+        iters: list[float] = []
         for idx in range(len(self.phases)):
+            start = MPI.Wtime()
             self._apply_load(idx)
             self.mech.assemble_rhs()
-            self.mech.solve()
+            its, _ = self.mech.solve()
+            elapsed = self._elapsed_max(start)
+            times.append(float(elapsed))
+            iters.append(float(its))
             self.u_snap[idx].x.array[:] = self.mech.u.x.array
             self.u_snap[idx].x.scatter_forward()
         self.mech.u.x.scatter_forward()
+
+        stats = self._build_stats(iters, times)
+        self._last_stats = stats
+        return stats
 
     def energy_expr(self) -> ufl.core.expr.Expr:
         return self.psi_expr
@@ -118,3 +132,18 @@ class GaitEnergyDriver:
             psi_terms.append(weight * (psi_i / self.psi_ref) ** self.exponent)
             structure_terms.append(weight * structure_i)
         return sum(psi_terms), sum(structure_terms)
+
+    def _build_stats(self, iters: list[float], times: list[float]) -> dict:
+        total_time = float(sum(times))
+        median_time = float(np.median(times)) if times else 0.0
+        median_iters = float(np.median(iters)) if iters else 0.0
+        return {
+            "phase_iters": iters,
+            "phase_times": times,
+            "total_time": total_time,
+            "median_time": median_time,
+            "median_iters": median_iters,
+        }
+
+    def _elapsed_max(self, t0: float) -> float:
+        return self.comm.allreduce(MPI.Wtime() - t0, op=MPI.MAX)

@@ -431,7 +431,6 @@ class TestUnifiedStorage:
         storage = UnifiedStorage(cfg)
 
         # Register field groups BEFORE write_step
-        storage.fields.register("u", [fields.u])
         storage.fields.register("scalars", [fields.rho, fields.S])
         storage.fields.register("A", [fields.A])
 
@@ -459,7 +458,6 @@ class TestUnifiedStorage:
         if comm.rank == 0:
             # Check field files exist
             base = Path(shared_tmpdir) / "test_step"
-            assert (base / "u.bp").exists()
             assert (base / "scalars.bp").exists()
             assert (base / "A.bp").exists()
 
@@ -480,8 +478,8 @@ class TestUnifiedStorage:
                     results_dir=shared_tmpdir / "test_ctx_unified", verbose=False)
 
         with UnifiedStorage(cfg) as storage:
-            storage.fields.register("u", [fields.u])
-            storage.fields.write("u", t=0.0)
+            storage.fields.register("scalars", [fields.rho, fields.S])
+            storage.fields.write("scalars", t=0.0)
             assert len(storage.fields._writers) > 0
 
         # After context exit, storage should be closed
@@ -926,7 +924,6 @@ class TestStorage:
                 assert rem.storage.metrics is not None
                 
                 # Field writers should be registered
-                assert "u" in rem.storage.fields._writers
                 assert "scalars" in rem.storage.fields._writers
                 assert "A" in rem.storage.fields._writers
             
@@ -963,8 +960,7 @@ class TestStorage:
                     coupling_stats={"iters": 3, "time": 0.1},
                 )
                 
-                # Verify write counters incremented
-                assert rem.storage.fields._write_counts["u"] == 1
+                # Verify write counters incremented for registered fields
                 assert rem.storage.fields._write_counts["scalars"] == 1
                 assert rem.storage.fields._write_counts["A"] == 1
             

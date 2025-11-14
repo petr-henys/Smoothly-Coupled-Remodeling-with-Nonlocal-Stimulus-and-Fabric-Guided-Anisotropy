@@ -76,7 +76,7 @@ class Remodeller:
         self.Q = functionspace(self.domain, P1)
         self.T = functionspace(self.domain, P1_ten)
 
-        self.u = Function(self.V, name="u")
+        u = Function(self.V, name="u")
         self.rho = Function(self.Q, name="rho")
         self.rho_old = Function(self.Q, name="rho_old")
 
@@ -125,7 +125,7 @@ class Remodeller:
             (gait_loader.t_glmax, 2),
         ]
 
-        self.mechsolver = MechanicsSolver(self.u, self.rho, self.A, self.cfg, bc_mech, neumann_bcs)
+        self.mechsolver = MechanicsSolver(u, self.rho, self.A, self.cfg, bc_mech, neumann_bcs)
 
         self.stimsolver = StimulusSolver(self.S, self.S_old, self.cfg)
         self.densolver = DensitySolver(self.rho, self.rho_old, self.A, self.S, self.cfg)

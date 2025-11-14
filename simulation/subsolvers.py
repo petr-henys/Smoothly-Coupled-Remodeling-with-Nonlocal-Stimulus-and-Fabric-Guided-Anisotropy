@@ -406,6 +406,8 @@ class DensitySolver(_BaseLinearSolver):
 
         # RHS form will be (re)built in assemble_rhs()
         self.L_form_template = None
+        # Build bilinear form template immediately so low-level tests can access it
+        self.a_form = fem.form(self.build_lhs_form())
 
     def build_lhs_form(self):
         dt = self.cfg.dt
@@ -442,7 +444,10 @@ class DensitySolver(_BaseLinearSolver):
         Splus_smooth = 0.5 * (self.S + Sabs_smooth)
         Sminus_smooth = 0.5 * (Sabs_smooth - self.S)
 
-        rhs_expr = (self.rho_old / dt) + Splus_smooth * self.cfg.rho_max + Sminus_smooth * self.cfg.rho_min
+        rhs_expr = (
+            (self.rho_old / dt)
+            + self.cfg.lambda_rho * (Splus_smooth * self.cfg.rho_max + Sminus_smooth * self.cfg.rho_min)
+        )
         self.L_form_template = fem.form(rhs_expr * self.test * self.dx)
 
         assemble_vector(self.b, self.L_form_template)
@@ -470,8 +475,14 @@ class DensitySolver(_BaseLinearSolver):
         Sabs = smooth_abs(self.S, self.smooth_eps)
         Splus = 0.5 * (self.S + Sabs)
         Sminus = 0.5 * (Sabs - self.S)
-        decay_loc = fem.assemble_scalar(fem.form(Sabs * self.rho * self.dx))
-        src_loc = fem.assemble_scalar(fem.form((Splus * self.cfg.rho_max + Sminus * self.cfg.rho_min) * self.dx))
+        decay_loc = fem.assemble_scalar(
+            fem.form(self.cfg.lambda_rho * Sabs * self.rho * self.dx)
+        )
+        src_loc = fem.assemble_scalar(
+            fem.form(
+                self.cfg.lambda_rho * (Splus * self.cfg.rho_max + Sminus * self.cfg.rho_min) * self.dx
+            )
+        )
         decay = float(self.comm.allreduce(decay_loc, op=MPI.SUM))
         src = float(self.comm.allreduce(src_loc, op=MPI.SUM))
         dt = self.cfg.dt

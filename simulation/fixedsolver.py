@@ -88,6 +88,8 @@ class FixedPointSolver:
                     "stim_time",
                     "dens_time",
                     "dir_time",
+                    "mech_phase_time_median",
+                    "mech_phase_iters_median",
                     "stim_reason",
                     "dens_reason",
                     "dir_reason",
@@ -145,9 +147,11 @@ class FixedPointSolver:
         """Max wall time across ranks since t0."""
         return self.comm.allreduce(MPI.Wtime() - t0, op=MPI.MAX)
 
-    def _gauss_seidel_sweep(self) -> tuple[float, float, float, float, int, int, int, int, int, int, int, int]:
+    def _gauss_seidel_sweep(self) -> tuple[float, float, float, float, float, float, int, int, int, int, int, int]:
         """One GS sweep: mechanics + S → ρ → A (sequential subsolver calls)."""
         mech_time_total = stim_time_total = dens_time_total = dir_time_total = 0.0
+        phase_times: list[float] = []
+        phase_iters: list[float] = []
 
         t0 = MPI.Wtime()
         self.mech.assemble_lhs()  # K(ρ, A) reassembled; solves happen inside driver.update_snapshots()
@@ -155,7 +159,10 @@ class FixedPointSolver:
 
         # Stimulus (energy-driven via driver)
         t0 = MPI.Wtime()
-        self.driver.update_snapshots()
+        stats = self.driver.update_snapshots() or {}
+        mech_time_total += float(stats.get("total_time", 0.0))
+        phase_times.extend(stats.get("phase_times", []))
+        phase_iters.extend(stats.get("phase_iters", []))
         psi_expr = self.driver.energy_expr()
         self.stim.assemble_rhs(psi_expr)
         stim_iters, stim_reason = self.stim.solve()
@@ -170,15 +177,22 @@ class FixedPointSolver:
 
         # Direction (structure tensor via driver)
         t0 = MPI.Wtime()
-        self.driver.update_snapshots()
+        stats = self.driver.update_snapshots() or {}
+        mech_time_total += float(stats.get("total_time", 0.0))
+        phase_times.extend(stats.get("phase_times", []))
+        phase_iters.extend(stats.get("phase_iters", []))
         M_expr = self.driver.structure_expr()
         self.dir.assemble_rhs(M_expr)
         dir_iters, dir_reason = self.dir.solve()
         dir_time_total += self._elapsed_max(t0)
 
-        return (stim_time_total, dens_time_total, dir_time_total,
-                stim_reason, dens_reason, dir_reason,
-                stim_iters, dens_iters, dir_iters)
+        median_time = float(np.median(phase_times)) if phase_times else 0.0
+        median_iters = float(np.median(phase_iters)) if phase_iters else 0.0
+
+        return (mech_time_total, stim_time_total, dens_time_total, dir_time_total,
+            median_time, median_iters,
+            stim_reason, dens_reason, dir_reason,
+            stim_iters, dens_iters, dir_iters)
 
     def _proj_residual_norm(self, x_old: np.ndarray, x_test: np.ndarray,
                            x_raw: np.ndarray, weights: Sequence[float]) -> float:
@@ -320,6 +334,7 @@ class FixedPointSolver:
         for itr in range(1, max_subiters + 1):
             # Perform one GS sweep: x_raw = G(x_k)
             (mech_t, stim_t, dens_t, dir_t,
+             mech_phase_time, mech_phase_iters,
              stim_reason, dens_reason, dir_reason,
              stim_iters, dens_iters, dir_iters) = self._gauss_seidel_sweep()
             self.mech_time_total += mech_t
@@ -420,6 +435,8 @@ class FixedPointSolver:
                 "stim_time": float(stim_t),
                 "dens_time": float(dens_t),
                 "dir_time": float(dir_t),
+                "mech_phase_time_median": float(mech_phase_time),
+                "mech_phase_iters_median": float(mech_phase_iters),
                 "stim_reason": int(stim_reason),
                 "dens_reason": int(dens_reason),
                 "dir_reason": int(dir_reason),
