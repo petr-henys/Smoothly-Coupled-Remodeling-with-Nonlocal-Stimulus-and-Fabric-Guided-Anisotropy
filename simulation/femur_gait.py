@@ -101,6 +101,13 @@ class FemurRemodellerGait:
         self.t_glmed.interpolate(lambda x: self.gl_med(x.T).T * scale)
         self.t_glmax.interpolate(lambda x: self.gl_max(x.T).T * scale)
 
+        # Simple diagnostics: warn if all tractions are numerically zero
+        for name, t in ("t_hip", self.t_hip), ("t_glmed", self.t_glmed), ("t_glmax", self.t_glmax):
+            if not t.x.array.size:
+                continue
+            if np.allclose(t.x.array, 0.0, atol=1e-14):
+                print(f"[FemurRemodellerGait] Warning: {name} is zero at phase {phase_percent:.1f}% (load_scale={scale}).", flush=True)
+
 
 def setup_femur_gait_loading(V: fem.FunctionSpace, BW_kg: float = 75.0, n_samples: int = 9
                              ) -> "FemurRemodellerGait":

@@ -164,6 +164,7 @@ class FixedPointSolver:
         phase_times.extend(stats.get("phase_times", []))
         phase_iters.extend(stats.get("phase_iters", []))
         psi_expr = self.driver.energy_expr()
+        
         self.stim.assemble_rhs(psi_expr)
         stim_iters, stim_reason = self.stim.solve()
         stim_time_total += self._elapsed_max(t0)
