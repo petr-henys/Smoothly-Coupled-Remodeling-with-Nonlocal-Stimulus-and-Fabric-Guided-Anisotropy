@@ -4,6 +4,7 @@ import numpy as np
 
 
 import basix
+from mpi4py import MPI
 from dolfinx import fem
 
 from simulation.febio_parser import FEBio2Dolfinx
@@ -82,66 +83,69 @@ class TestAccumulatedStrainEnergy:
     
     def test_energy_driver_initialization(self, mechanics_solver, gait_loader):
         """GaitEnergyDriver should initialize without errors."""
-        driver = GaitEnergyDriver(mechanics_solver, gait_loader, cycles_per_day=7000.0)
-        assert driver.cpd == 7000.0
+        driver = GaitEnergyDriver(mechanics_solver, gait_loader, mechanics_solver.cfg)
         assert driver.mech is mechanics_solver
         assert driver.gait is gait_loader
+        assert len(driver.phases) == gait_loader.n_samples
+        assert len(driver.weights) == gait_loader.n_samples
     
     def test_energy_expr_builds(self, mechanics_solver, gait_loader):
         """Energy expression should build successfully."""
-        driver = GaitEnergyDriver(mechanics_solver, gait_loader, cycles_per_day=1.0)
+        driver = GaitEnergyDriver(mechanics_solver, gait_loader, mechanics_solver.cfg)
+        driver.update_snapshots()
         psi_expr = driver.energy_expr()
         assert psi_expr is not None, "Energy expression should be created"
     
     def test_energy_positivity(self, mechanics_solver, gait_loader):
         """Accumulated energy should be positive when integrated."""
-        from dolfinx import fem
-        driver = GaitEnergyDriver(mechanics_solver, gait_loader, cycles_per_day=1.0)
+        driver = GaitEnergyDriver(mechanics_solver, gait_loader, mechanics_solver.cfg)
+        driver.update_snapshots()
         psi_expr = driver.energy_expr()
         
         # Integrate energy over domain
         cfg = mechanics_solver.cfg
         psi_total_local = fem.assemble_scalar(fem.form(psi_expr * cfg.dx))
         comm = cfg.domain.comm
-        psi_total = comm.allreduce(psi_total_local, op=4)  # MPI.SUM=4
+        psi_total = comm.allreduce(psi_total_local, op=MPI.SUM)
         
         assert psi_total > 0.0, f"Total strain energy should be positive, got {psi_total}"
     
     def test_energy_increases_with_load_magnitude(self, mechanics_solver, gait_loader):
         """Strain energy should increase with load magnitude."""
-        from simulation.drivers import GaitEnergyDriver
-        
         # Store original load scale
         original_scale = gait_loader.load_scale
         comm = mechanics_solver.cfg.domain.comm
         
         # Compute with base load
         gait_loader.load_scale = 1.0
-        driver_base = GaitEnergyDriver(mechanics_solver, gait_loader)
+        driver_base = GaitEnergyDriver(mechanics_solver, gait_loader, mechanics_solver.cfg)
+        driver_base.update_snapshots()
         psi_expr_base = driver_base.energy_expr()
         psi_base_local = fem.assemble_scalar(fem.form(psi_expr_base * mechanics_solver.cfg.dx))
-        psi_base = comm.allreduce(psi_base_local, op=4)  # MPI.SUM=4
+        psi_base = comm.allreduce(psi_base_local, op=MPI.SUM)
         
         # Compute with 2x load
         gait_loader.load_scale = 2.0
-        driver_double = GaitEnergyDriver(mechanics_solver, gait_loader)
+        driver_double = GaitEnergyDriver(mechanics_solver, gait_loader, mechanics_solver.cfg)
+        driver_double.update_snapshots()
         psi_expr_double = driver_double.energy_expr()
         psi_double_local = fem.assemble_scalar(fem.form(psi_expr_double * mechanics_solver.cfg.dx))
-        psi_double = comm.allreduce(psi_double_local, op=4)  # MPI.SUM=4
+        psi_double = comm.allreduce(psi_double_local, op=MPI.SUM)
         
         # Restore original scale
         gait_loader.load_scale = original_scale
         
         # Energy should scale approximately as load^2 (linear elasticity)
-        # Allow some tolerance due to numerical effects
+        # Driver energy uses (psi/psi_ref)^n formulation, hence load^(2*n_power)
         ratio = psi_double / psi_base
-        assert 3.0 < ratio < 5.0, \
-            f"Energy should scale ~4x with 2x load, got ratio={ratio:.2f}"
+        expected = 2.0 ** (2.0 * mechanics_solver.cfg.n_power)
+        assert 0.5 * expected < ratio < 1.5 * expected, (
+            "Energy should scale with load^(2*n_power); "
+            f"expected≈{expected:.2f}, ratio={ratio:.2f}"
+        )
     
     def test_energy_components_contribution(self, mechanics_solver, gait_loader):
         """Verify that multiple gait phases contribute to accumulated energy."""
-        from simulation.drivers import GaitEnergyDriver
-        
         # Get individual phase energies (integrals over domain)
         quadrature = gait_loader.get_quadrature()
         phase_energies = []
@@ -152,10 +156,10 @@ class TestAccumulatedStrainEnergy:
             gait_loader.update_loads(phase)
             mechanics_solver.assemble_rhs()
             mechanics_solver.solve()
-            # Get strain energy density and integrate
             psi_density = mechanics_solver.get_strain_energy_density(mechanics_solver.u)
-            psi_local = fem.assemble_scalar(fem.form(psi_density * cfg.dx))
-            psi_total = comm.allreduce(psi_local, op=4)  # MPI.SUM=4
+            psi_norm = (psi_density / cfg.psi_ref) ** cfg.n_power
+            psi_local = fem.assemble_scalar(fem.form(psi_norm * cfg.dx))
+            psi_total = comm.allreduce(psi_local, op=MPI.SUM)
             phase_energies.append((phase, weight, psi_total))
         
         # All phases should have positive energy
@@ -166,10 +170,11 @@ class TestAccumulatedStrainEnergy:
         # Both compute weighted sum of energy integrals
         manual_accumulated = sum(w * psi for _, w, psi in phase_energies)
         
-        driver = GaitEnergyDriver(mechanics_solver, gait_loader)
+        driver = GaitEnergyDriver(mechanics_solver, gait_loader, mechanics_solver.cfg)
+        driver.update_snapshots()
         psi_expr = driver.energy_expr()
         method_local = fem.assemble_scalar(fem.form(psi_expr * cfg.dx))
-        method_accumulated = comm.allreduce(method_local, op=4)  # MPI.SUM=4
+        method_accumulated = comm.allreduce(method_local, op=MPI.SUM)
         
         np.testing.assert_allclose(manual_accumulated, method_accumulated, rtol=1e-6,
             err_msg="Manual and method accumulation should match")

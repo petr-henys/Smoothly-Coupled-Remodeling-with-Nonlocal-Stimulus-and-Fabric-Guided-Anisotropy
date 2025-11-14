@@ -132,12 +132,12 @@ class Remodeller:
         self.dirsolver = DirectionSolver(self.A, self.A_old, self.cfg)
 
         # Energy-driven driver (gait-averaged, pure UFL)
-        self.driver = GaitEnergyDriver(self.mechsolver, gait_loader, psi_ref=self.cfg.psi_ref)
+        self.driver = GaitEnergyDriver(self.mechsolver, gait_loader, self.cfg)
 
         self.fixedsolver = FixedPointSolver(
             self.comm, self.cfg,
-            self.mechsolver, self.stimsolver, self.densolver, self.dirsolver, self.driver,
-            self.u, self.rho, self.rho_old, self.A, self.A_old, self.S, self.S_old
+            self.driver, self.stimsolver, self.densolver, self.dirsolver,
+            self.rho, self.rho_old, self.A, self.A_old, self.S, self.S_old
         )
 
 
@@ -161,6 +161,7 @@ class Remodeller:
         self.cfg.update_config_json()
 
         self._current_dt: float | None = None
+        
     def close(self):
         """Release PETSc resources and close I/O."""
         if getattr(self, "closed", False):

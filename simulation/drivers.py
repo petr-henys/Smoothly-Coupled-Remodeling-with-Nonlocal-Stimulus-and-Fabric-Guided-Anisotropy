@@ -12,7 +12,9 @@ Used as inputs for:
 
 from __future__ import annotations
 
-from typing import Protocol, List, Tuple
+from typing import Protocol
+
+from simulation.config import Config
 from dolfinx import fem
 import ufl
 
@@ -53,103 +55,66 @@ class InstantEnergyDriver:
 
 
 class GaitEnergyDriver:
-    """Gait-averaged drivers with a single prebuilt UFL graph.
+    """Gait-averaged driver with eager setup and explicit updates only for `u`."""
 
-    - Builds persistent snapshots u_snap[i] (Functions on the displacement space) and *one*
-      UFL expression for ψ_eff and M_eff that reference these snapshots.
-    - On each GS sweep (i.e. whenever (ρ, A) change), call update_snapshots(), which
-      loops phases: update_loads → assemble_rhs → solve → copy into u_snap[i].
-    - energy_expr() and structure_expr() simply return the prebuilt UFL expressions.
-    - IMPORTANT: No cycles-per-day scaling here (keep units clean: ψ in MPa). Put CPD into rS_gain.
-    """
-
-    def __init__(self, mech, gait_loader, *, m_exponent: int = 2, psi_ref: float | None = None):
+    def __init__(self, mech, gait_loader, config: Config):
         self.mech = mech
         self.gait = gait_loader
-        self.m = int(m_exponent)
-        self.psi_ref = float(psi_ref) if psi_ref is not None else None
+        self.cfg = config
+        self.psi_ref = float(config.psi_ref)
+        self.exponent = float(config.n_power)
 
-        # Persistent snapshots and metadata
-        self._u_snap: List[fem.Function] | None = None
-        self._weights: List[float] | None = None
-        self._phases: List[float] | None = None
+        quad = list(self.gait.get_quadrature())
+        if not quad:
+            raise ValueError("Gait quadrature must provide at least one sample.")
 
-        # Prebuilt UFL
-        self._psi_expr: ufl.core.expr.Expr | None = None
-        self._M_expr: ufl.core.expr.Expr | None = None
+        self.phases = [float(phase) for phase, _ in quad]
+        self.weights = [float(weight) for _, weight in quad]
+        V = self.mech.u.function_space
+        self.u_snap = [fem.Function(V, name=f"u_snap_{i}") for i in range(len(self.phases))]
 
-        # Track displacement space identity (in case mesh/FS changes)
-        self._V_id = id(self.mech.u.function_space)
+        self._tractions = (self.gait.t_hip, self.gait.t_glmed, self.gait.t_glmax)
+        self.loads = self._precompute_loads()
+        self.psi_expr, self.M_expr = self._build_expressions()
 
     def invalidate(self) -> None:
-        """Force rebuild of snapshots and UFL exprs (only if space changed)."""
-        V_id_now = id(self.mech.u.function_space)
-        if V_id_now != self._V_id:
-            self._u_snap = None
-            self._psi_expr = None
-            self._M_expr = None
-            self._V_id = V_id_now
+        return None
 
-    # Public API expected by FixedPointSolver
     def update_snapshots(self) -> None:
-        """Recompute u_snap[i] for current (ρ, A) by looping gait phases."""
-        self._ensure_prebuilt()
-
-        for i, phase in enumerate(self._phases):
-            self.gait.update_loads(phase)
+        """Solve mechanics for each gait phase and refresh displacement snapshots."""
+        for idx in range(len(self.phases)):
+            self._apply_load(idx)
             self.mech.assemble_rhs()
             self.mech.solve()
-            self._u_snap[i].x.array[:] = self.mech.u.x.array
-            self._u_snap[i].x.scatter_forward()
-
-        # Keep the last phase's displacement in u (no restore - u is useful for diagnostics)
+            self.u_snap[idx].x.array[:] = self.mech.u.x.array
+            self.u_snap[idx].x.scatter_forward()
         self.mech.u.x.scatter_forward()
 
     def energy_expr(self) -> ufl.core.expr.Expr:
-        self._ensure_prebuilt()
-        assert self._psi_expr is not None
-        return self._psi_expr
+        return self.psi_expr
 
     def structure_expr(self) -> ufl.core.expr.Expr:
-        self._ensure_prebuilt()
-        assert self._M_expr is not None
-        return self._M_expr
+        return self.M_expr
 
-    # Internal helpers
-    def _ensure_prebuilt(self) -> None:
-        if self._u_snap is not None and self._psi_expr is not None and self._M_expr is not None:
-            return
-        self._build_snapshots_and_exprs()
+    def _precompute_loads(self) -> list[tuple]:
+        loads: list[tuple] = []
+        for phase in self.phases:
+            self.gait.update_loads(phase)
+            loads.append(tuple(traction.x.array.copy() for traction in self._tractions))
+        return loads
 
-    def _build_snapshots_and_exprs(self) -> None:
-        # Create persistent snapshots + quadrature metadata
-        self._u_snap = []
-        self._weights = []
-        self._phases = []
-        for phase, w in self.gait.get_quadrature():
-            self._u_snap.append(fem.Function(self.mech.u.function_space))
-            self._weights.append(float(w))
-            self._phases.append(float(phase))
+    def _apply_load(self, idx: int) -> None:
+        for traction, data in zip(self._tractions, self.loads[idx]):
+            traction.x.array[:] = data
+            traction.x.scatter_forward()
 
-        # Prebuild UFL expressions (one pass used for both ψ and M)
+    def _build_expressions(self) -> tuple[ufl.core.expr.Expr, ufl.core.expr.Expr]:
         psi_terms = []
-        M_terms = []
-        for u_i, w in zip(self._u_snap, self._weights):
-            # scalar energy density (MPa)
+        structure_terms = []
+        for u_i, weight in zip(self.u_snap, self.weights):
             psi_i = self.mech.get_strain_energy_density(u_i)
-
-            # strain tensor for structure proxy
             e_i = self.mech.get_strain_tensor(u_i)
-            M_i = ufl.dot(ufl.transpose(e_i), e_i)
-
-            # optionally normalized and exponentiated
-            if self.psi_ref is not None and self.psi_ref > 0.0:
-                psi_term = (psi_i / self.psi_ref) ** self.m
-            else:
-                psi_term = psi_i ** self.m
-
-            psi_terms.append(w * psi_term)
-            M_terms.append(w * M_i)
-
-        self._psi_expr = sum(psi_terms)
-        self._M_expr = sum(M_terms)
+            structure_i = ufl.dot(ufl.transpose(e_i), e_i)
+            psi_terms.append(weight * (psi_i / self.psi_ref) ** self.exponent)
+            structure_terms.append(weight * structure_i)
+        return sum(psi_terms), sum(structure_terms)

@@ -735,11 +735,11 @@ class TestMemoryUsage:
         driver = InstantEnergyDriver(mech)
         
         fps = FixedPointSolver(
-            comm, cfg, mech, stim, dens, dirn, driver,
-            u, rho, rho_old, A, A_old, S, S_old
+            comm, cfg, driver, stim, dens, dirn,
+            rho, rho_old, A, A_old, S, S_old
         )
         
-        expected_size = fps.n_u + fps.n_rho + fps.n_A + fps.n_S
+        expected_size = fps.n_rho + fps.n_A + fps.n_S
         assert fps.state_size == expected_size, f"State buffer size mismatch: {fps.state_size} ≠ {expected_size}"
         assert len(fps.state_buffer) == expected_size, f"State buffer allocation wrong"
     

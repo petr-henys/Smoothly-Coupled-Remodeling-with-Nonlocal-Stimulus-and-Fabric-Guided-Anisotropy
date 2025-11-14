@@ -60,7 +60,7 @@ def test_driver_produces_nonzero_energy(tmp_path):
     mech.setup()
     
     # Create driver
-    driver = GaitEnergyDriver(mech, gait_loader, psi_ref=cfg.psi_ref)
+    driver = GaitEnergyDriver(mech, gait_loader, cfg)
     
     # Update snapshots to compute gait-averaged fields
     print(f"\n[Rank {comm.rank}] Updating snapshots...")

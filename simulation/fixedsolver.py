@@ -9,7 +9,7 @@ from dolfinx import fem
 
 from simulation.config import Config
 from simulation.subsolvers import MechanicsSolver, StimulusSolver, DensitySolver, DirectionSolver, unittrace_psd
-from simulation.utils import assign, get_owned_size, collect_dirichlet_dofs, _global_dot, current_memory_mb
+from simulation.utils import assign, get_owned_size, _global_dot, current_memory_mb
 from simulation.logger import get_logger
 from simulation.anderson import _Anderson
 from simulation.drivers import StrainDriver
@@ -18,25 +18,25 @@ from simulation.drivers import StrainDriver
 class FixedPointSolver:
     """Orchestrate Gauss-Seidel iteration over four coupled PDEs with Anderson or Picard."""
     def __init__(self, comm: MPI.Comm, cfg: Config,
-                 mechsolver: MechanicsSolver,
+                 driver: StrainDriver,
                  stimsolver: StimulusSolver,
                  densolver: DensitySolver,
                  dirsolver: DirectionSolver,
-                 driver: StrainDriver,
-                 u: fem.Function,
                  rho: fem.Function, rho_old: fem.Function,
                  A: fem.Function, A_old: fem.Function,
                  S: fem.Function, S_old: fem.Function):
         self.comm = comm
         self.cfg = cfg
 
-        self.mech = mechsolver
         self.driver = driver
         self.stim = stimsolver
         self.den  = densolver
         self.dir  = dirsolver
 
-        self.u = u
+        self.mech: MechanicsSolver | None = getattr(self.driver, "mech", None)
+        if self.mech is None:
+            raise ValueError("StrainDriver must expose MechanicsSolver via 'mech'")
+
         self.rho = rho
         self.rho_old = rho_old
         self.A = A
@@ -48,28 +48,16 @@ class FixedPointSolver:
         self.gs_steps = 0
 
         # Local DOF counts
-        self.n_u  = get_owned_size(u)
         self.n_rho = get_owned_size(rho)
         self.n_A  = get_owned_size(A)
         self.n_S  = get_owned_size(S)
 
         self._build_state_slices()
 
-        self.state_buffer = np.empty(self.state_size, dtype=self.u.x.array.dtype)
+        self.state_buffer = np.empty(self.state_size, dtype=self.rho.x.array.dtype)
 
-        # Dirichlet mask for mechanics block
-        self.dirichlet_dofs_u = collect_dirichlet_dofs(self.mech.dirichlet_bcs, n_owned=self.n_u)
-        self.mask_u = np.zeros(self.n_u, dtype=bool)
-        if self.dirichlet_dofs_u.size:
-            self.mask_u[self.dirichlet_dofs_u] = True
-        self.mask_u_any = bool(self.dirichlet_dofs_u.size)
-
-        # Global fix mask (same length as flattened state)
+        # Global fix mask (kept for API compatibility, currently all False)
         self.fix_mask = np.zeros(self.state_size, dtype=bool)
-        s_u, _, _, _ = self.state_slices
-        if self.mask_u_any:
-            idx_u = np.nonzero(self.mask_u)[0]
-            self.fix_mask[s_u.start + idx_u] = True
 
         # Cumulative timings per timestep
         self.mech_time_total = 0.0
@@ -125,25 +113,22 @@ class FixedPointSolver:
             )
 
     def _build_state_slices(self) -> None:
-        """Build slice indices for flattened (u, ρ, A, S) state vector."""
+        """Build slice indices for flattened (ρ, A, S) state vector."""
         offs = [0]
-        offs.append(offs[-1] + self.n_u)
         offs.append(offs[-1] + self.n_rho)
         offs.append(offs[-1] + self.n_A)
         offs.append(offs[-1] + self.n_S)
         self.state_size = offs[-1]
         self.state_slices = (
-            slice(offs[0], offs[1]),  # u
-            slice(offs[1], offs[2]),  # rho
-            slice(offs[2], offs[3]),  # A
-            slice(offs[3], offs[4])   # S
+            slice(offs[0], offs[1]),  # rho
+            slice(offs[1], offs[2]),  # A
+            slice(offs[2], offs[3])   # S
         )
 
     def _flatten_state(self, copy: bool = True) -> np.ndarray:
-        """Flatten current fields (u, ρ, A, S) to 1D array (local DOFs)."""
-        s_u, s_rho, s_A, s_S = self.state_slices
+        """Flatten current fields (ρ, A, S) to 1D array (local DOFs)."""
+        s_rho, s_A, s_S = self.state_slices
         buf = self.state_buffer
-        buf[s_u]  = self.u.x.array[:self.n_u]
         buf[s_rho] = self.rho.x.array[:self.n_rho]
         buf[s_A]  = self.A.x.array[:self.n_A]
         buf[s_S]  = self.S.x.array[:self.n_S]
@@ -151,8 +136,7 @@ class FixedPointSolver:
 
     def _restore_state(self, flat: np.ndarray) -> None:
         """Unpack flattened state back to field functions."""
-        s_u, s_rho, s_A, s_S = self.state_slices
-        assign(self.u, flat[s_u])
+        s_rho, s_A, s_S = self.state_slices
         assign(self.rho, flat[s_rho])
         assign(self.A, flat[s_A])
         assign(self.S, flat[s_S])
@@ -162,21 +146,16 @@ class FixedPointSolver:
         return self.comm.allreduce(MPI.Wtime() - t0, op=MPI.MAX)
 
     def _gauss_seidel_sweep(self) -> tuple[float, float, float, float, int, int, int, int, int, int, int, int]:
-        """One GS sweep: u → S → ρ → A (sequential subsolver calls)."""
+        """One GS sweep: mechanics + S → ρ → A (sequential subsolver calls)."""
         mech_time_total = stim_time_total = dens_time_total = dir_time_total = 0.0
 
         t0 = MPI.Wtime()
-        self.mech.assemble_lhs()  # K(ρ,A) reassembled; solves happen inside driver.update_snapshots()
+        self.mech.assemble_lhs()  # K(ρ, A) reassembled; solves happen inside driver.update_snapshots()
         mech_time_total += self._elapsed_max(t0)
 
         # Stimulus (energy-driven via driver)
         t0 = MPI.Wtime()
-        # refresh gait snapshots for current (rho, A)
-        try:
-            self.driver.update_snapshots()
-        except AttributeError:
-            # drivers without snapshots (instant) just ignore
-            pass
+        self.driver.update_snapshots()
         psi_expr = self.driver.energy_expr()
         self.stim.assemble_rhs(psi_expr)
         stim_iters, stim_reason = self.stim.solve()
@@ -197,33 +176,24 @@ class FixedPointSolver:
         dir_iters, dir_reason = self.dir.solve()
         dir_time_total += self._elapsed_max(t0)
 
-        return (mech_time_total, stim_time_total, dens_time_total, dir_time_total,
+        return (stim_time_total, dens_time_total, dir_time_total,
                 stim_reason, dens_reason, dir_reason,
                 stim_iters, dens_iters, dir_iters)
 
     def _proj_residual_norm(self, x_old: np.ndarray, x_test: np.ndarray,
                            x_raw: np.ndarray, weights: Sequence[float]) -> float:
-        """Weighted projected-residual ||P(x_test - x_base)||_W, P projects out Dirichlet DOFs."""
-        s_u, s_rho, s_A, s_S = self.state_slices
-        w_u, w_rho, w_A, w_S = weights
-        
+        """Weighted residual ||x_test - x_base||_W with per-block weights."""
+        if len(weights) != len(self.state_slices):
+            raise ValueError("weights must match number of state blocks")
+
         is_picard = (x_test is x_raw)
-        
-        base_u = x_old[s_u] if is_picard else x_raw[s_u]
-        diff_u = x_test[s_u] - base_u
-        if self.mask_u_any:
-            diff_u = diff_u.copy()
-            diff_u[self.mask_u] = 0.0
-        norm_u_sq = w_u * _global_dot(self.comm, diff_u, diff_u)
-        
-        # Other blocks
-        total = norm_u_sq
-        for s, w in zip((s_rho, s_A, s_S), (w_rho, w_A, w_S)):
+        total = 0.0
+        for s, w in zip(self.state_slices, weights):
             base = x_old[s] if is_picard else x_raw[s]
             diff = x_test[s] - base
-            total += w * _global_dot(self.comm, diff, diff)
-        
-        return max(total, 0.0) ** 0.5
+            total += float(w) * _global_dot(self.comm, diff, diff)
+
+        return float(max(total, 0.0) ** 0.5)
 
     def rank0(self) -> bool:
         """Check if current rank is 0."""
@@ -238,33 +208,21 @@ class FixedPointSolver:
         self._restore_state(x_backup)
         return out
 
-    def _block_norm(self, vec: np.ndarray, block: int, project_u_dirichlet: bool = True) -> float:
-        """Global L2 norm of block (u, ρ, A, or S), projecting out Dirichlet DOFs if block=u."""
-        s_u, s_rho, s_A, s_S = self.state_slices
-        slices = (s_u, s_rho, s_A, s_S)
-        part = vec[slices[block]].copy()
-        
-        if project_u_dirichlet and block == 0 and self.mask_u_any:
-            part[self.mask_u] = 0.0
-        
+    def _block_norm(self, vec: np.ndarray, block: int) -> float:
+        """Global L2 norm of a state block (ρ, A, or S)."""
+        part = vec[self.state_slices[block]]
         return float((_global_dot(self.comm, part, part)) ** 0.5)
 
-    def compute_interaction_gains(self, eps: float = 1e-3, project_u_dirichlet: bool = True
-                                  ) -> tuple[np.ndarray, float]:
-        """Finite-difference Jacobian J of GS map G; returns (J, ρ(J))."""
+    def compute_interaction_gains(self, eps: float = 1e-3) -> tuple[np.ndarray, float]:
+        """Finite-difference Jacobian J of GS map G over (ρ, A, S); returns (J, ρ(J))."""
         x0 = self._flatten_state(copy=True)
         Gx0 = self._one_sweep_map(x0)
 
-        J = np.zeros((4, 4), dtype=float)
-        s_u, s_rho, s_A, s_S = self.state_slices
-        slices = (s_u, s_rho, s_A, s_S)
+        n_blocks = len(self.state_slices)
+        J = np.zeros((n_blocks, n_blocks), dtype=float)
 
-        for j, sj in enumerate(slices):
+        for j, sj in enumerate(self.state_slices):
             dloc = x0[sj].copy()
-            
-            if project_u_dirichlet and j == 0 and self.mask_u_any:
-                dloc[self.mask_u] = 0.0
-
             base_norm = float((_global_dot(self.comm, dloc, dloc)) ** 0.5)
 
             if base_norm < 1e-20:
@@ -280,10 +238,10 @@ class FixedPointSolver:
             Gx_pert = self._one_sweep_map(x0 + delta)
             diff = Gx_pert - Gx0
 
-            denom = self._block_norm(delta, j, project_u_dirichlet=project_u_dirichlet) + 1e-300
+            denom = self._block_norm(delta, j) + 1e-300
 
-            for i in range(4):
-                numer = self._block_norm(diff, i, project_u_dirichlet=project_u_dirichlet)
+            for i in range(n_blocks):
+                numer = self._block_norm(diff, i)
                 J[i, j] = numer / denom
 
         eigvals = np.linalg.eigvals(J)
@@ -299,14 +257,11 @@ class FixedPointSolver:
         beta = float(self.cfg.beta)
         lam = float(self.cfg.lam)
 
-        # Compute global DOF counts for weight balancing (mechanics uses free DOFs only)
-        n_u_free_loc = self.n_u - int(self.mask_u.sum()) if self.mask_u_any else self.n_u
-        n_u_free = self.comm.allreduce(n_u_free_loc, op=MPI.SUM)
+        # Compute global DOF counts for weight balancing
         n_rho_g = self.comm.allreduce(self.n_rho, op=MPI.SUM)
         n_A_g = self.comm.allreduce(self.n_A, op=MPI.SUM)
         n_S_g = self.comm.allreduce(self.n_S, op=MPI.SUM)
         weights = (
-            1.0 / max(int(n_u_free), 1),
             1.0 / max(int(n_rho_g), 1),
             1.0 / max(int(n_A_g), 1),
             1.0 / max(int(n_S_g), 1),
@@ -350,6 +305,8 @@ class FixedPointSolver:
 
         x_k = self._flatten_state(copy=True)
 
+        mask_for_mix = self.fix_mask if np.any(self.fix_mask) else None
+
         # Reset per-step cumulative timings
         self.mech_time_total = 0.0
         self.stim_time_total = 0.0
@@ -382,7 +339,7 @@ class FixedPointSolver:
             power_abs, power_rel = self.stim.power_balance_residual(psi_density_expr)
             mass_abs, mass_rel = self.den.mass_balance_residual()
             B = self.driver.structure_expr()
-            gdim = self.u.function_space.mesh.geometry.dim
+            gdim = self.mech.u.function_space.mesh.geometry.dim
             Mhat_expr = unittrace_psd(B, gdim, eps=self.cfg.smooth_eps)
             trA_avg, trMhat_avg, trace_res = self.dir.trace_balance_residual(Mhat_expr)
 
@@ -400,7 +357,7 @@ class FixedPointSolver:
                 }
             else:
                 x_next, info = accelerator.mix(
-                    x_old=x_k, x_raw=x_raw, mask_fixed=self.fix_mask,
+                    x_old=x_k, x_raw=x_raw, mask_fixed=mask_for_mix,
                     proj_residual_norm=lambda x_ref, x_test, xR: self._proj_residual_norm(x_ref, x_test, xR, weights),
                     gamma=gamma, use_safeguard=safeguard, backtrack_max=backtrack_max
                 )
@@ -414,12 +371,9 @@ class FixedPointSolver:
             J_gs = None
             rhoJ = None
             if getattr(self.cfg, "coupling_each_iter", False):
-                J_packed, rhoJ = self.compute_interaction_gains(
-                    eps=getattr(self.cfg, "coupling_eps", 1e-3),
-                    project_u_dirichlet=True
+                J_gs, rhoJ = self.compute_interaction_gains(
+                    eps=getattr(self.cfg, "coupling_eps", 1e-3)
                 )
-                p = np.array([0, 3, 1, 2], dtype=int)
-                J_gs = J_packed[np.ix_(p, p)]
 
             if log_enabled:
                 msg_parts = [f"      Substep {itr}: proj-res = {proj_norm:.3e}"]

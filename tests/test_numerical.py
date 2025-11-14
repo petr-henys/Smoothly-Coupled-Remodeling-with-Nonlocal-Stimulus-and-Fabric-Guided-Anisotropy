@@ -40,7 +40,7 @@ from simulation.anderson import _Anderson
 # =============================================================================
 
 class TestDOFOrdering:
-    """Test critical DOF ordering in fixed-point solver (u, rho, A, S)."""
+    """Test critical DOF ordering in fixed-point solver (rho, A, S)."""
     
     @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
     def test_state_slices_match_field_sizes(self, unit_cube, cfg, spaces, fields, bc_mech):
@@ -53,20 +53,18 @@ class TestDOFOrdering:
         dens = DensitySolver(rho, rho_old, A, S, cfg)
         dirn = DirectionSolver(A, A_old, cfg)
         driver = InstantEnergyDriver(mech)
-        fps = FixedPointSolver(comm, cfg, mech, stim, dens, dirn, driver,
-                               u, rho, rho_old, A, A_old, S, S_old)
+        fps = FixedPointSolver(comm, cfg, driver, stim, dens, dirn,
+                       rho, rho_old, A, A_old, S, S_old)
         
         # Check slice sizes
-        s_u, s_rho, s_A, s_S = fps.state_slices
+        s_rho, s_A, s_S = fps.state_slices
         
-        assert (s_u.stop - s_u.start) == fps.n_u, f"u slice size mismatch"
-        assert (s_rho.stop - s_rho.start) == fps.n_rho, f"rho slice size mismatch"
-        assert (s_A.stop - s_A.start) == fps.n_A, f"A slice size mismatch"
-        assert (s_S.stop - s_S.start) == fps.n_S, f"S slice size mismatch"
+        assert (s_rho.stop - s_rho.start) == fps.n_rho, "rho slice size mismatch"
+        assert (s_A.stop - s_A.start) == fps.n_A, "A slice size mismatch"
+        assert (s_S.stop - s_S.start) == fps.n_S, "S slice size mismatch"
         
-        # Check contiguity: slices should be consecutive
-        assert s_u.start == 0, "u slice doesn't start at 0"
-        assert s_rho.start == s_u.stop, "rho slice not after u"
+        # Check contiguity: slices should be consecutive starting at zero
+        assert s_rho.start == 0, "rho slice doesn't start at 0"
         assert s_A.start == s_rho.stop, "A slice not after rho"
         assert s_S.start == s_A.stop, "S slice not after A"
         assert s_S.stop == fps.state_size, "S slice doesn't end at state_size"
@@ -91,20 +89,20 @@ class TestDOFOrdering:
         dens = DensitySolver(rho, rho_old, A, S, cfg)
         dirn = DirectionSolver(A, A_old, cfg)
         driver = InstantEnergyDriver(mech)
-        fps = FixedPointSolver(comm, cfg, mech, stim, dens, dirn, driver,
-                               u, rho, rho_old, A, A_old, S, S_old)
+        fps = FixedPointSolver(comm, cfg, driver, stim, dens, dirn,
+                       rho, rho_old, A, A_old, S, S_old)
         flat = fps._flatten_state(copy=True)
         # Modify fields and restore
         u.x.array[:] = 999.0; rho.x.array[:] = 888.0; A.x.array[:] = 777.0; S.x.array[:] = 666.0
         fps._restore_state(flat)
-        assert np.allclose(u.x.array, u_orig), "u not restored correctly"
         assert np.allclose(rho.x.array, rho_orig), "rho not restored correctly"
         assert np.allclose(A.x.array, A_orig), "A not restored correctly"
         assert np.allclose(S.x.array, S_orig), "S not restored correctly"
+        assert np.allclose(u.x.array, 999.0), "mechanics state should remain untouched"
     
     @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
-    def test_dirichlet_mask_correct_positions(self, unit_cube, cfg, spaces, fields, bc_mech):
-        """Verify Dirichlet mask applies to u block only."""
+    def test_fix_mask_empty(self, unit_cube, cfg, spaces, fields, bc_mech):
+        """Fixed-point mask should remain empty without displacement state."""
         comm = MPI.COMM_WORLD
         V, Q, T = spaces.V, spaces.Q, spaces.T
         u, rho, rho_old, A, A_old, S, S_old = fields
@@ -113,22 +111,11 @@ class TestDOFOrdering:
         dens = DensitySolver(rho, rho_old, A, S, cfg)
         dirn = DirectionSolver(A, A_old, cfg)
         driver = InstantEnergyDriver(mech)
-        fps = FixedPointSolver(comm, cfg, mech, stim, dens, dirn, driver,
-                               u, rho, rho_old, A, A_old, S, S_old)
-        
-        # Check mask structure
-        s_u, s_rho, s_A, s_S = fps.state_slices
-        
-        # All True values should be in u block
-        mask_indices = np.where(fps.fix_mask)[0]
-        if len(mask_indices) > 0:
-            assert np.all(mask_indices < s_u.stop), "Dirichlet mask extends beyond u block"
-            assert np.all(mask_indices >= s_u.start), "Dirichlet mask starts before u block"
-        
-        # No mask in other blocks
-        assert not np.any(fps.fix_mask[s_rho]), "Mask incorrectly in rho block"
-        assert not np.any(fps.fix_mask[s_A]), "Mask incorrectly in A block"
-        assert not np.any(fps.fix_mask[s_S]), "Mask incorrectly in S block"
+        fps = FixedPointSolver(comm, cfg, driver, stim, dens, dirn,
+                               rho, rho_old, A, A_old, S, S_old)
+
+        assert fps.fix_mask.size == fps.state_size, "Fix mask length mismatch"
+        assert not np.any(fps.fix_mask), "Fix mask should remain all False"
 
 
 # =============================================================================
@@ -380,7 +367,7 @@ class TestMatrixAssembly:
 class TestProjectedResidual:
     """Tests for projected residual norm used in FixedPointSolver."""
 
-    def test_proj_residual_invariant_to_dirichlet_perturbations(self, cfg, spaces, fields, bc_mech):
+    def test_proj_residual_matches_weighted_norm(self, cfg, spaces, fields, bc_mech):
         comm = MPI.COMM_WORLD
         V, Q, T = spaces.V, spaces.Q, spaces.T
         u, rho, rho_old, A, A_old, S, S_old = fields
@@ -392,23 +379,26 @@ class TestProjectedResidual:
         dens = DensitySolver(rho, rho_old, A, S, cfg)
         dirn = DirectionSolver(A, A_old, cfg)
         driver = InstantEnergyDriver(mech)
-        fps = FixedPointSolver(comm, cfg, mech, stim, dens, dirn, driver,
-                               u, rho, rho_old, A, A_old, S, S_old)
+        fps = FixedPointSolver(comm, cfg, driver, stim, dens, dirn,
+                               rho, rho_old, A, A_old, S, S_old)
 
         x_old = fps._flatten_state(copy=True)
         x_raw = x_old.copy()
-        weights = (1.0, 1.0, 1.0, 1.0)
-
-        # Perturb mechanics block only on Dirichlet DOFs
-        s_u, _, _, _ = fps.state_slices
+        rng = np.random.default_rng(42)
         x_test = x_raw.copy()
-        if fps.mask_u_any:
-            mask_idx = np.nonzero(fps.mask_u)[0]
-            x_test[s_u.start + mask_idx] += 1.2345  # any nonzero perturbation
+        for s in fps.state_slices:
+            x_test[s] += rng.standard_normal(size=x_test[s].shape)
 
-        res_ref = fps._proj_residual_norm(x_old, x_raw, x_raw, weights)
-        res_pert = fps._proj_residual_norm(x_old, x_test, x_raw, weights)
-        assert abs(res_pert - res_ref) < 1e-14, "Projected residual should ignore Dirichlet perturbations"
+        weights = (0.5, 1.5, 0.25)
+        res = fps._proj_residual_norm(x_old, x_test, x_raw, weights)
+
+        expected = 0.0
+        for s, w in zip(fps.state_slices, weights):
+            diff = x_test[s] - x_raw[s]
+            expected += w * float(np.dot(diff, diff))
+        expected = expected ** 0.5
+
+        assert np.isclose(res, expected)
 
 
 class TestUtilsEigen:

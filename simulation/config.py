@@ -32,15 +32,15 @@ class Config:
     """
 
     # --- Material properties ---
-    E0: float = 1.5e4             # Young's modulus [MPa] at ρ=1 (≈15 GPa)
+    E0: float = 6.5e3             # Young's modulus [MPa] at ρ=1 (≈6.5 GPa)
     nu: float = 0.3               # Poisson's ratio [-]
     n_power: float = 2.0          # density-stiffness power law exponent [-]
-    xi_aniso: float = 1.0         # anisotropic reinforcement factor [-]
+    xi_aniso: float = 0.3         # anisotropic reinforcement factor [-]
 
     # --- Density bounds ---
-    rho_min: float = 0.30         # minimum relative density [-]
+    rho_min: float = 0.2         # minimum relative density [-]
     rho_max: float = 1.00         # maximum relative density [-]
-    rho0: float = 0.60            # initial relative density [-]
+    rho0: float = 1.0            # initial relative density [-]
     lambda_rho: float = 0.1       # [1/day] váha reakčního členu ~ |S| v rovnici pro ρ
 
 
@@ -49,7 +49,7 @@ class Config:
     beta_perp: float = 0.5         # perpendicular diffusion [mm²/day]
 
     # --- Stimulus S: reaction-diffusion ---
-    psi_ref: float = 3.0e-3       # reference energy density [MPa]
+    psi_ref: float = 300e-6       # reference energy density [MPa]
     cS: float = 1.0               # signaling capacity [-]
     tauS: float = 0.05            # decay rate [1/day] → 20-day time constant
     kappaS: float = 1.0           # diffusion [mm²/day]
