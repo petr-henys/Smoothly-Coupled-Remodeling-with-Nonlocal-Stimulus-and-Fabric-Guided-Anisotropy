@@ -25,6 +25,7 @@ from simulation.subsolvers import MechanicsSolver, StimulusSolver, DensitySolver
 from simulation.femur_gait import setup_femur_gait_loading
 from simulation.fixedsolver import FixedPointSolver
 from simulation.drivers import GaitEnergyDriver
+from simulation.projector import L2Projector
 
 
 
@@ -43,7 +44,7 @@ class Remodeller:
 
         self.storage = UnifiedStorage(cfg)
 
-        self.telemetry = getattr(self.cfg, "telemetry")
+        self.telemetry = self.cfg.telemetry
         if self.telemetry is not None:
             self.telemetry.register_csv(
                 "steps",
@@ -104,8 +105,14 @@ class Remodeller:
         # Do not track or output displacement 'u' anymore
         self.scatter_fields = (self.rho, self.A, self.S)
 
-        # Register fields (omit 'u')
-        self.storage.fields.register("scalars", [self.rho, self.S], filename="scalars.bp")
+        # Projector and field for strain–energy density (DG0 scalar)
+        DG0 = basix.ufl.element("DG", self.domain.basix_cell(), 0)
+        self.Q_energy = functionspace(self.domain, DG0)
+        self.psi = Function(self.Q_energy, name="psi")
+        self.energy_projector = L2Projector(self.Q_energy)
+
+        # Register fields (omit 'u', add energy density)
+        self.storage.fields.register("scalars", [self.rho, self.S, self.psi], filename="scalars.bp")
         self.storage.fields.register("A", [self.A], filename="A.bp")
 
         # Boundary conditions
@@ -115,8 +122,8 @@ class Remodeller:
         # Gait loader: hip + muscles applied on femur surface (tag 2)
         # Note: All ranks build loaders (file I/O duplicated) but produce identical
         # interpolators. Serializing PyVista/KDTree state is complex; this is acceptable.
-        BW = float(getattr(self.cfg, "body_mass_kg", 75.0))
-        n_samples = int(getattr(self.cfg, "gait_samples", 9))
+        BW = float(self.cfg.body_mass_kg)
+        n_samples = int(self.cfg.gait_samples)
         gait_loader = setup_femur_gait_loading(self.V, BW_kg=BW, n_samples=n_samples)
 
         neumann_bcs = [
@@ -242,6 +249,12 @@ class Remodeller:
         """Scatter, stats, log, write (saving_interval steps)."""
         self._scatter_forward()
 
+        # Update projected strain–energy density field before output
+        psi_expr = self.driver.energy_expr()
+        psi_proj = self.energy_projector.project(psi_expr)
+        self.psi.x.array[:] = psi_proj.x.array
+        self.psi.x.scatter_forward()
+
         iters = self._iters_window_stats()
         fields = self._collect_field_stats()
 
@@ -314,15 +327,14 @@ class Remodeller:
             self.solvers_initialized = True
 
 
-        # Update dt in seconds and reassemble LHS for time-dependent solvers if dt changed
-        dt_seconds = float(dt)
-        if self._current_dt is None or abs(dt_seconds - float(self._current_dt)) > 1e-12:
-            self.cfg.set_dt(dt_seconds)
+        # Update dt [days] and reassemble LHS for time-dependent solvers if dt changed
+        if self._current_dt is None or abs(float(dt) - float(self._current_dt)) > 1e-12:
+            self.cfg.set_dt(float(dt))
             if self.solvers_initialized:
                 self.stimsolver.assemble_lhs()
                 self.densolver.assemble_lhs()
                 self.dirsolver.assemble_lhs()
-            self._current_dt = dt_seconds
+            self._current_dt = float(dt)
         self.fixedsolver.run(time_days=time_days, step_index=step_index)
 
         metrics = list(self.fixedsolver.subiter_metrics)
@@ -444,8 +456,8 @@ class Remodeller:
         step = 0
         n_steps = int(np.ceil(total_time / dt))
 
-        # Set timestep in seconds
-        self.cfg.set_dt(dt)
+        # Set timestep in days
+        self.cfg.set_dt(float(dt))
 
         self.mechsolver.setup()
         self.stimsolver.setup()

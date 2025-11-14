@@ -352,6 +352,11 @@ class StimulusSolver(_BaseLinearSolver):
             b_local.set(0.0)
         self.S_old.x.scatter_forward()
         dt = self.cfg.dt
+        one = fem.Constant(self.mesh, default_scalar_type(1.0))
+        psi_int_local = fem.assemble_scalar(fem.form(psi_expr * one * self.dx))
+        psi_int = float(self.comm.allreduce(psi_int_local, op=MPI.SUM))
+        if psi_int == 0.0 and self.rank == 0:
+            self.logger.warning("Stimulus RHS: psi expression integrates to zero; check driver or mechanics setup.")
         rhs = (self.cfg.cS / dt) * self.S_old + self.cfg.rS_gain * (psi_expr - self.cfg.psi_ref)
         self._rhs_form = fem.form(rhs * self.test * self.dx)
         assemble_vector(self.b, self._rhs_form)
