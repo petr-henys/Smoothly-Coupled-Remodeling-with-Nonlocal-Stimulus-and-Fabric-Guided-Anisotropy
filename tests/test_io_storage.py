@@ -81,24 +81,26 @@ def _mock_vtxwriter(monkeypatch):
     # Replace the imported VTXWriter symbol used by FieldStorage
     monkeypatch.setattr(storage_mod, "VTXWriter", _DummyVTXWriter, raising=True)
 
-# Shim gait loader signature used inside Remodeller to be backward-compatible
 @pytest.fixture(autouse=True)
-def _shim_setup_femur_gait_loading(monkeypatch):
-    # Remodeller imported the symbol into simulation.model at import time
-    import simulation.model as model_mod
+def _shim_gait_driver(monkeypatch):
+    """Ensure Remodeller uses a real gait driver without femur helpers.
+
+    Storage tests do not depend on specific load patterns; they only
+    require that the driver is constructible. Reuse the default
+    GaitEnergyDriver but make sure it always has a loader instance.
+    """
+    import simulation.drivers as drivers_mod
     import simulation.femur_gait as gait_mod
 
-    def _shim(V, *args, **kwargs):
-        # Accept optional cfg as first extra positional arg and drop it
-        if args:
-            # If first extra arg is not a numeric BW_kg, treat as cfg and skip
-            first = args[0]
-            # heuristic: cfg has attributes like 'domain'; numbers do not
-            if not isinstance(first, (int, float)):
-                args = args[1:]
-        return gait_mod.setup_femur_gait_loading(V, *args, **kwargs)
+    original_driver_cls = drivers_mod.GaitEnergyDriver
 
-    monkeypatch.setattr(model_mod, "setup_femur_gait_loading", _shim, raising=True)
+    class _PatchedGaitEnergyDriver(original_driver_cls):
+        def __init__(self, mech, gait_loader, cfg):  # type: ignore[override]
+            if gait_loader is None:
+                gait_loader = gait_mod.setup_femur_gait_loading(mech.u.function_space)
+            super().__init__(mech, gait_loader, cfg)
+
+    monkeypatch.setattr(drivers_mod, "GaitEnergyDriver", _PatchedGaitEnergyDriver, raising=True)
 
 class TestFieldStorage:
     """Test VTX field output functionality."""

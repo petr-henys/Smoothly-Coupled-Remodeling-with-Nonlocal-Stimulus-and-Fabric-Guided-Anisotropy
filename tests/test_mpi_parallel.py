@@ -33,23 +33,27 @@ from simulation.subsolvers import MechanicsSolver
 from simulation.model import Remodeller
 comm = MPI.COMM_WORLD
 
-# -----------------------------------------------------------------------------
-# Test-local shim: make setup_femur_gait_loading call in Remodeller robust to
-# legacy signature (V, cfg, BW_kg, ...). Drop cfg if passed positionally.
-# -----------------------------------------------------------------------------
 import pytest
 
+# -----------------------------------------------------------------------------
+# Test-local shim: ensure Remodeller's gait energy driver always has a loader
+# without relying on legacy setup_femur_gait_loading symbol.
+# -----------------------------------------------------------------------------
+
 @pytest.fixture(autouse=True)
-def _shim_setup_femur_gait_loading(monkeypatch):
-    import simulation.model as model_mod
+def _shim_gait_driver(monkeypatch):
+    import simulation.drivers as drivers_mod
     import simulation.femur_gait as gait_mod
 
-    def _shim(V, *args, **kwargs):
-        if args and not isinstance(args[0], (int, float)):
-            args = args[1:]
-        return gait_mod.setup_femur_gait_loading(V, *args, **kwargs)
+    original_driver_cls = drivers_mod.GaitEnergyDriver
 
-    monkeypatch.setattr(model_mod, "setup_femur_gait_loading", _shim, raising=True)
+    class _PatchedGaitEnergyDriver(original_driver_cls):
+        def __init__(self, mech, gait_loader, cfg):  # type: ignore[override]
+            if gait_loader is None:
+                gait_loader = gait_mod.setup_femur_gait_loading(mech.u.function_space)
+            super().__init__(mech, gait_loader, cfg)
+
+    monkeypatch.setattr(drivers_mod, "GaitEnergyDriver", _PatchedGaitEnergyDriver, raising=True)
 
 # =============================================================================
 # Ghost Update Tests

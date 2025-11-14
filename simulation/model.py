@@ -1,7 +1,20 @@
-"""Remodeller: main class orchestrating bone remodeling simulation."""
+"""Core remodeling model: orchestration of coupled subsolvers.
 
-import sys
-from pathlib import Path
+This module exposes a single high-level entry point, :class:`Remodeller`,
+which wires the mechanics, stimulus, density and direction solvers together
+for a given finite-element domain and :class:`simulation.config.Config`.
+
+The module intentionally contains **no** executable CLI entry point and
+performs no path hacks or implicit defaults. Callers are expected to:
+
+- construct the mesh and associated facet tags explicitly,
+- build a :class:`Config` with fully-specified parameters, and
+- drive the time integration via :meth:`Remodeller.step` or
+    :meth:`Remodeller.simulate`.
+"""
+
+from __future__ import annotations
+
 from typing import Dict, Tuple, List, Optional
 
 import numpy as np
@@ -10,19 +23,12 @@ import basix
 from dolfinx import fem
 from dolfinx.fem import Function, functionspace
 
-# Add parent directory to sys.path for script execution
-_repo_root = Path(__file__).resolve().parent.parent
-if str(_repo_root) not in sys.path:
-    sys.path.insert(0, str(_repo_root))
-
 from simulation.storage import UnifiedStorage
 from simulation.logger import get_logger, Level
 from simulation.utils import build_dirichlet_bcs, assign, current_memory_mb
 from simulation.config import Config
 from simulation.febio_parser import FEBio2Dolfinx
-from simulation.paths import FemurPaths
 from simulation.subsolvers import MechanicsSolver, StimulusSolver, DensitySolver, DirectionSolver
-from simulation.femur_gait import setup_femur_gait_loading
 from simulation.fixedsolver import FixedPointSolver
 from simulation.drivers import GaitEnergyDriver
 from simulation.projector import L2Projector
@@ -30,14 +36,28 @@ from simulation.projector import L2Projector
 
 
 class Remodeller:
-    """Main simulation driver: coupled u-ρ-A-S evolution with gait loading."""
+    """High-level remodeling driver.
+
+    The class is intentionally thin: it owns FE fields, subsolvers and
+    storage/telemetry, but does not hide configuration or provide fallback
+    behaviour. All required parameters must be supplied via :class:`Config`.
+    """
+
     def __init__(self, cfg: Config):
-        """Initialize with Config; setup fields, solvers, storage."""
+        """Bind configuration, allocate fields and construct subsolvers.
+
+        Parameters
+        ----------
+        cfg:
+            Fully specified simulation configuration; in particular,
+            ``cfg.domain`` and ``cfg.facet_tags`` must already be set and
+            consistent.
+        """
         self.cfg = cfg
         self.domain = self.cfg.domain
         self.closed = False
 
-        self.verbose = bool(getattr(self.cfg, "verbose", True))
+        self.verbose = bool(self.cfg.verbose)
         self.comm = self.domain.comm
         self.rank = self.comm.rank
         self.logger = get_logger(self.comm, verbose=self.verbose, name="Remodeller")
@@ -119,32 +139,32 @@ class Remodeller:
         # Dirichlet BCs: fix distal end (tag 1)
         bc_mech = build_dirichlet_bcs(self.V, self.cfg.facet_tags, id_tag=1, value=0.0)
 
-        # Gait loader: hip + muscles applied on femur surface (tag 2)
-        # Note: All ranks build loaders (file I/O duplicated) but produce identical
-        # interpolators. Serializing PyVista/KDTree state is complex; this is acceptable.
-        BW = float(self.cfg.body_mass_kg)
-        n_samples = int(self.cfg.gait_samples)
-        gait_loader = setup_femur_gait_loading(self.V, BW_kg=BW, n_samples=n_samples)
-
-        neumann_bcs = [
-            (gait_loader.t_hip, 2),
-            (gait_loader.t_glmed, 2),
-            (gait_loader.t_glmax, 2),
-        ]
-
-        self.mechsolver = MechanicsSolver(u, self.rho, self.A, self.cfg, bc_mech, neumann_bcs)
+        # Mechanics: boundary conditions and external loading are provided
+        # explicitly by the caller via ``neumann_bcs``.
+        self.mechsolver = MechanicsSolver(u, self.rho, self.A, self.cfg, bc_mech, neumann_bcs=[])
 
         self.stimsolver = StimulusSolver(self.S, self.S_old, self.cfg)
         self.densolver = DensitySolver(self.rho, self.rho_old, self.A, self.S, self.cfg)
         self.dirsolver = DirectionSolver(self.A, self.A_old, self.cfg)
 
-        # Energy-driven driver (gait-averaged, pure UFL)
-        self.driver = GaitEnergyDriver(self.mechsolver, gait_loader, self.cfg)
+        # Energy-driven driver (gait-averaged, pure UFL); the driver is generic
+        # and does not hard-code femur gait. Users can provide any driver
+        # implementing the same interface if desired.
+        self.driver = GaitEnergyDriver(self.mechsolver, None, self.cfg)
 
         self.fixedsolver = FixedPointSolver(
-            self.comm, self.cfg,
-            self.driver, self.stimsolver, self.densolver, self.dirsolver,
-            self.rho, self.rho_old, self.A, self.A_old, self.S, self.S_old
+            self.comm,
+            self.cfg,
+            self.driver,
+            self.stimsolver,
+            self.densolver,
+            self.dirsolver,
+            self.rho,
+            self.rho_old,
+            self.A,
+            self.A_old,
+            self.S,
+            self.S_old,
         )
 
 
@@ -165,13 +185,14 @@ class Remodeller:
         self.last_dt: Optional[float] = None
         self.last_step_index: Optional[int] = None
 
+        # Persist initial configuration once.
         self.cfg.update_config_json()
 
-        self._current_dt: float | None = None
+        self._current_dt: Optional[float] = None
         
     def close(self):
         """Release PETSc resources and close I/O."""
-        if getattr(self, "closed", False):
+        if self.closed:
             return
 
         self.comm.Barrier()
@@ -450,13 +471,12 @@ class Remodeller:
             }
             self.telemetry.write_metadata(data, filename="run_summary.json", overwrite=True)
 
-    def simulate(self, dt: float, total_time: float):
-        """Run remodeling loop: total_time [days], time step dt [days]."""
+    def simulate(self, dt: float, total_time: float) -> None:
+        """Run remodeling loop for ``total_time`` [days] with fixed ``dt`` [days]."""
         t = 0.0
-        step = 0
         n_steps = int(np.ceil(total_time / dt))
 
-        # Set timestep in days
+        # Set timestep in days once and assemble static operators
         self.cfg.set_dt(float(dt))
 
         self.mechsolver.setup()
@@ -469,17 +489,20 @@ class Remodeller:
 
         self.comm.Barrier()
         overall_start = MPI.Wtime()
-        mech_times, stim_times, dens_times, dir_times = [], [], [], []
+        mech_times: List[float] = []
+        stim_times: List[float] = []
+        dens_times: List[float] = []
+        dir_times: List[float] = []
 
         for step in range(n_steps):
             step_time = t + dt
             self.step(dt, step_index=step, time_days=step_time)
             self.acc_steps += 1
 
-            mech_times.append(self.fixedsolver.mech_time_total)
-            stim_times.append(self.fixedsolver.stim_time_total)
-            dens_times.append(self.fixedsolver.dens_time_total)
-            dir_times.append(self.fixedsolver.dir_time_total)
+            mech_times.append(float(self.fixedsolver.mech_time_total))
+            stim_times.append(float(self.fixedsolver.stim_time_total))
+            dens_times.append(float(self.fixedsolver.dens_time_total))
+            dir_times.append(float(self.fixedsolver.dir_time_total))
 
             t = step_time
             if self._is_output_step(step):
@@ -487,64 +510,6 @@ class Remodeller:
 
         self.comm.Barrier()
         overall_elapsed = MPI.Wtime() - overall_start
-        overall_elapsed = self.comm.allreduce(overall_elapsed, op=MPI.MAX)
+        overall_elapsed = self.comm.allreduce(float(overall_elapsed), op=MPI.MAX)
 
         self._print_final_summary(n_steps, overall_elapsed, mech_times, stim_times, dens_times, dir_times)
-
-
-def load_femur_mesh_parallel(comm: MPI.Comm, feb_path: Path, mesh_scale: float = 1) -> Tuple:
-    """Load FEBio mesh on rank 0, broadcast topology/geometry to all ranks.
-    
-    Args:
-        comm: MPI communicator
-        feb_path: Path to FEBio .feb file
-        mesh_scale: Scale factor for mesh coordinates (default 1 for no scaling)
-    
-    Returns (domain, facet_tags) on all ranks with minimal I/O overhead.
-    """
-    from basix.ufl import element as basix_element
-    from dolfinx import mesh
-    
-    if comm.rank == 0:
-        # Rank 0: parse FEBio file (XML parsing, PyVista, KDTree matching)
-        mdl = FEBio2Dolfinx(feb_path, scale=mesh_scale)
-        nodes = mdl.nodes
-        elements = mdl.elements
-        facet_indices = mdl.meshtags.indices
-        facet_values = mdl.meshtags.values
-    else:
-        # Other ranks: placeholders (will be broadcast)
-        nodes = None
-        elements = None
-        facet_indices = None
-        facet_values = None
-    
-    # Broadcast mesh topology and geometry
-    nodes = comm.bcast(nodes, root=0)
-    elements = comm.bcast(elements, root=0)
-    facet_indices = comm.bcast(facet_indices, root=0)
-    facet_values = comm.bcast(facet_values, root=0)
-    
-    # All ranks: build DOLFINx mesh (internally partitioned)
-    element = basix_element("Lagrange", "tetrahedron", 1, shape=(3,))
-    domain = mesh.create_mesh(comm, elements, element, nodes)
-    
-    # All ranks: rebuild meshtags
-    fdim = 2
-    domain.topology.create_entities(fdim)
-    domain.topology.create_connectivity(fdim, domain.topology.dim)
-    facet_tags = mesh.meshtags(domain, fdim, facet_indices, facet_values)
-    
-    return domain, facet_tags
-
-
-if __name__ == "__main__":
-    comm = MPI.COMM_WORLD
-
-    # Load femur mesh (optimized: rank 0 only parses, then broadcast)
-    domain, facet_tags = load_femur_mesh_parallel(comm, FemurPaths.FEMUR_MESH_FEB)
-
-    cfg = Config(domain=domain, facet_tags=facet_tags, verbose=True)
-    with Remodeller(cfg) as remodeller:
-        # Example: 50 days step, total 500 days (adjust as needed)
-        remodeller.simulate(dt=10.0, total_time=500.0)

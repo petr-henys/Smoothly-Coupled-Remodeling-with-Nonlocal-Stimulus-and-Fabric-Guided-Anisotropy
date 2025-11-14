@@ -33,8 +33,12 @@ def _stub_vtx(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _shim_gait_loader(monkeypatch):
-    import simulation.model as model_mod
-    import ufl
+    """Patch gait driver to use a local dummy gait loader.
+
+    The model no longer exposes femur-specific setup helpers, so this
+    test injects a deterministic loader through GaitEnergyDriver.
+    """
+    import simulation.drivers as drivers_mod
 
     class _DummyGaitLoader:
         def __init__(self, V: fem.FunctionSpace):
@@ -42,7 +46,7 @@ def _shim_gait_loader(monkeypatch):
             self.t_hip = fem.Function(V, name="t_hip")
             self.t_glmed = fem.Function(V, name="t_glmed")
             self.t_glmax = fem.Function(V, name="t_glmax")
-            self.load_scale = 0.5  # [MPa] - tuned for psi ~ psi_ref
+            self.load_scale = 0.5
 
         def get_quadrature(self):
             return [(0.0, 0.5), (50.0, 0.5)]
@@ -52,17 +56,22 @@ def _shim_gait_loader(monkeypatch):
             v_hip = np.array([-1.0 * f, -0.5 * f, -0.3 * f], dtype=float)
             v_glmed = np.array([0.2 * f, 0.8 * f, -0.1 * f], dtype=float)
             v_glmax = np.array([0.1 * f, -0.2 * f, -0.9 * f], dtype=float)
-            
+
             self.t_hip.interpolate(lambda x: np.tile(v_hip.reshape(3, 1), (1, x.shape[1])))
             self.t_glmed.interpolate(lambda x: np.tile(v_glmed.reshape(3, 1), (1, x.shape[1])))
             self.t_glmax.interpolate(lambda x: np.tile(v_glmax.reshape(3, 1), (1, x.shape[1])))
             for t in (self.t_hip, self.t_glmed, self.t_glmax):
                 t.x.scatter_forward()
 
-    def _factory(V, *args, **kwargs):
-        return _DummyGaitLoader(V)
+    original_driver_cls = drivers_mod.GaitEnergyDriver
 
-    monkeypatch.setattr(model_mod, "setup_femur_gait_loading", _factory, raising=True)
+    class _PatchedGaitEnergyDriver(original_driver_cls):
+        def __init__(self, mech, gait_loader, cfg):  # type: ignore[override]
+            if gait_loader is None:
+                gait_loader = _DummyGaitLoader(mech.u.function_space)
+            super().__init__(mech, gait_loader, cfg)
+
+    monkeypatch.setattr(drivers_mod, "GaitEnergyDriver", _PatchedGaitEnergyDriver, raising=True)
 
 
 def test_debug_stimulus_with_days(tmp_path):

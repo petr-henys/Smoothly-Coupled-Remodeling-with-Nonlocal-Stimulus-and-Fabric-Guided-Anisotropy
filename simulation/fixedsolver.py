@@ -33,9 +33,7 @@ class FixedPointSolver:
         self.den  = densolver
         self.dir  = dirsolver
 
-        self.mech: MechanicsSolver | None = getattr(self.driver, "mech", None)
-        if self.mech is None:
-            raise ValueError("StrainDriver must expose MechanicsSolver via 'mech'")
+        self.mech = self.driver.mech
 
         self.rho = rho
         self.rho_old = rho_old
@@ -67,8 +65,8 @@ class FixedPointSolver:
         self.subiter_metrics: list[dict] = []
         self.avg_memory_mb: Optional[float] = None
 
-        self.logger = get_logger(self.comm, verbose=bool(getattr(self.cfg, "verbose", True)), name="FixedPoint")
-        self.telemetry = getattr(self.cfg, "telemetry", None)
+        self.logger = get_logger(self.comm, verbose=bool(self.cfg.verbose), name="FixedPoint")
+        self.telemetry = self.cfg.telemetry
         if self.telemetry is not None:
             self.telemetry.register_csv(
                 "subiterations",
@@ -267,10 +265,10 @@ class FixedPointSolver:
     def run(self, *, time_days: Optional[float] = None, step_index: Optional[int] = None) -> None:
         """Inner fixed-point loop: GS + Anderson acceleration until coupling_tol met."""
         # Read configuration
-        accel_type = str(self.cfg.accel_type).lower()
-        m = int(self.cfg.m)
-        beta = float(self.cfg.beta)
-        lam = float(self.cfg.lam)
+        accel_type = self.cfg.accel_type.lower()
+        m = self.cfg.m
+        beta = self.cfg.beta
+        lam = self.cfg.lam
 
         # Compute global DOF counts for weight balancing
         n_rho_g = self.comm.allreduce(self.n_rho, op=MPI.SUM)
@@ -282,22 +280,22 @@ class FixedPointSolver:
             1.0 / max(int(n_S_g), 1),
         )
         
-        tol = float(self.cfg.coupling_tol)
-        gamma = float(self.cfg.gamma)
-        safeguard = bool(self.cfg.safeguard)
-        backtrack_max = int(self.cfg.backtrack_max)
+        tol = self.cfg.coupling_tol
+        gamma = self.cfg.gamma
+        safeguard = self.cfg.safeguard
+        backtrack_max = self.cfg.backtrack_max
 
         # Restart heuristics
-        restart_on_reject_k = int(self.cfg.restart_on_reject_k)
-        restart_on_stall = float(self.cfg.restart_on_stall)
-        restart_on_cond = float(self.cfg.restart_on_cond)
-        step_limit_factor = float(self.cfg.step_limit_factor)
+        restart_on_reject_k = self.cfg.restart_on_reject_k
+        restart_on_stall = self.cfg.restart_on_stall
+        restart_on_cond = self.cfg.restart_on_cond
+        step_limit_factor = self.cfg.step_limit_factor
 
         # Subiteration bounds
-        max_subiters = int(self.cfg.max_subiters)
-        min_subiters = int(self.cfg.min_subiters)
+        max_subiters = self.cfg.max_subiters
+        min_subiters = self.cfg.min_subiters
 
-        self.verbose = bool(self.cfg.verbose)
+        self.verbose = self.cfg.verbose
 
         # Choose accelerator
         accelerator = None

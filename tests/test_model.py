@@ -78,13 +78,22 @@ def _stub_vtx(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _shim_gait_loader(monkeypatch):
-    """Replace femur gait loader with dummy loader."""
-    import simulation.model as model_mod
+    """Patch gait driver in Remodeller to use dummy loader.
 
-    def _factory(V, *args, **kwargs):
-        return _DummyGaitLoader(V)
+    The refactored model no longer exposes femur-specific helpers, so
+    tests inject a lightweight gait loader via the existing driver API.
+    """
+    import simulation.drivers as drivers_mod
 
-    monkeypatch.setattr(model_mod, "setup_femur_gait_loading", _factory, raising=True)
+    original_driver_cls = drivers_mod.GaitEnergyDriver
+
+    class _PatchedGaitEnergyDriver(original_driver_cls):
+        def __init__(self, mech, gait_loader, cfg):  # type: ignore[override]
+            if gait_loader is None:
+                gait_loader = _DummyGaitLoader(mech.u.function_space)
+            super().__init__(mech, gait_loader, cfg)
+
+    monkeypatch.setattr(drivers_mod, "GaitEnergyDriver", _PatchedGaitEnergyDriver, raising=True)
 
 
 def _unit_cube(n: int = 4):
