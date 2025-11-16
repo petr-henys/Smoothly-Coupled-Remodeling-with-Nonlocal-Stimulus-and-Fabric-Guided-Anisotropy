@@ -34,7 +34,16 @@ class Config:
     # --- Material properties ---
     E0: float = 6.5e3             # Young's modulus [MPa] at ρ=1 (≈6.5 GPa)
     nu: float = 0.3               # Poisson's ratio [-]
-    n_power: float = 2.0          # density-stiffness power law exponent [-]
+
+    # Density–stiffness law:
+    # E(ρ) = E0 · ρ^{n(ρ)}, where n(ρ) transitions smoothly
+    # from trabecular to cortical values between rho_trab_max and rho_cort_min.
+    n_power: float = 2.0          # exponent for gait energy driver (ψ/ψ_ref)^n in stimulus
+    n_trab: float = 2.0           # trabecular density–stiffness exponent [-]
+    n_cort: float = 1.2           # cortical density–stiffness exponent [-]
+    rho_trab_max: float = 0.6     # upper ρ for trabecular regime [-]
+    rho_cort_min: float = 0.9     # lower ρ for cortical regime [-]
+
     xi_aniso: float = 0.3         # anisotropic reinforcement factor [-]
 
     # --- Density bounds ---
@@ -136,8 +145,12 @@ class Config:
         
         if self.E0 <= 0:
             raise ValueError(f"Young's modulus E0={self.E0} must be positive.")
+        if self.n_trab <= 0 or self.n_cort <= 0:
+            raise ValueError("n_trab and n_cort must be positive.")
         if not (0.0 <= self.rho_min < self.rho_max <= 1.0):
             raise ValueError("rho_min/max must satisfy 0 ≤ rho_min < rho_max ≤ 1 (relative density).")
+        if not (self.rho_min <= self.rho_trab_max <= self.rho_cort_min <= self.rho_max):
+            raise ValueError("rho_trab_max and rho_cort_min must satisfy rho_min ≤ rho_trab_max ≤ rho_cort_min ≤ rho_max.")
         if not (self.rho_min <= self.rho0 <= self.rho_max):
             raise ValueError("rho0 must lie within [rho_min, rho_max].")
         if self.beta_par < 0 or self.beta_perp < 0:

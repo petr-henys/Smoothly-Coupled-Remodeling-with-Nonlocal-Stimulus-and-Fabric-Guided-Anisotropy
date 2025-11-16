@@ -216,9 +216,31 @@ class MechanicsSolver(_BaseLinearSolver):
         return ufl.sym(ufl.grad(u))
 
     def sigma(self, u, rho, A_dir):
-        """Cauchy stress σ(u) in MPa: density-modulated isotropic stiffness + anisotropic reinforcement."""  # noqa: E501
+        """Cauchy stress σ(u) in MPa: density-modulated isotropic stiffness + anisotropic reinforcement.
+
+        The isotropic stiffness follows a density-dependent power law
+        E(ρ) = E0 · ρ^{n(ρ)}, where n(ρ) transitions smoothly from a
+        trabecular exponent (n_trab) to a cortical exponent (n_cort)
+        between cfg.rho_trab_max and cfg.rho_cort_min.
+        """  # noqa: E501
         rho_eff = smooth_max(rho, self.cfg.rho_min, self.smooth_eps)
-        E = self.cfg.E0 * (rho_eff ** self.cfg.n_power)
+
+        # Smooth transition factor w(ρ) ∈ [0, 1] between trabecular (w≈0)
+        # and cortical (w≈1) regimes, using a cubic smoothstep with
+        # smoothed clamping to [0, 1].
+        rho1 = float(self.cfg.rho_trab_max)
+        rho2 = float(self.cfg.rho_cort_min)
+        if rho2 <= rho1:
+            # Degenerate interval: fall back to pure trabecular exponent.
+            n_eff = self.cfg.n_trab
+        else:
+            s_raw = (rho_eff - rho1) / (rho2 - rho1)
+            s0 = smooth_max(s_raw, 0.0, self.smooth_eps)
+            s1 = 1.0 - smooth_max(1.0 - s0, 0.0, self.smooth_eps)
+            w = 3.0 * s1**2 - 2.0 * s1**3
+            n_eff = (1.0 - w) * self.cfg.n_trab + w * self.cfg.n_cort
+
+        E = self.cfg.E0 * (rho_eff ** n_eff)
 
         eps_ten = self.eps(u)
         I = ufl.Identity(self.gdim)
