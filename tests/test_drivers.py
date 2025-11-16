@@ -147,9 +147,10 @@ class TestGaitDriverUnitCube:
         psi_double = mech.comm.allreduce(psi_double_loc, op=MPI.SUM)
 
         ratio = psi_double / max(psi_base, 1e-300)
-        expected = 2.0 ** (2.0 * mech.cfg.n_power)
+        # With linear elasticity, ψ ∝ load², so doubling load → ~4× energy
+        expected = 4.0
         assert 0.5 * expected < ratio < 1.5 * expected, (
-            "Energy scaling should follow load^(2*n_power); "
+            "Energy scaling should follow load² under the L^p gait averaging; "
             f"expected≈{expected:.2f}, ratio={ratio:.2f}"
         )
 

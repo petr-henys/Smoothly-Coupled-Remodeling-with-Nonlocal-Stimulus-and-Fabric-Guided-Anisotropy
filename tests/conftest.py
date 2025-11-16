@@ -215,6 +215,42 @@ def fields(spaces) -> Fields:
 
 
 @pytest.fixture
+def traction_factory(cfg):
+    """Factory to build a constant traction vector on a given facet.
+    
+    Usage: traction = traction_factory(value=-0.3, facet_id=2, axis=0)
+    """
+    def _make(value: float, facet_id: int = 2, axis: int = 0):
+        from dolfinx import fem
+        import numpy as np
+        vec = np.zeros(3, dtype=float)
+        vec[axis] = float(value)
+        return (fem.Constant(cfg.domain, vec), int(facet_id))
+    return _make
+
+
+@pytest.fixture
+def mean_value_factory(cfg):
+    """Factory to compute global mean value of a scalar UFL expression.
+    
+    Usage: mean = mean_value_factory; result = mean(expr)
+    """
+    from dolfinx import fem
+    from mpi4py import MPI
+
+    def _mean(expr, *, dx=None) -> float:
+        dxm = dx if dx is not None else cfg.dx
+        local = fem.assemble_scalar(fem.form(expr * dxm))
+        vol_local = fem.assemble_scalar(fem.form(1.0 * dxm))
+        comm = cfg.domain.comm if hasattr(cfg, "domain") else MPI.COMM_WORLD
+        tot = comm.allreduce(local, op=MPI.SUM)
+        vol = comm.allreduce(vol_local, op=MPI.SUM)
+        return float(tot / max(vol, 1e-300))
+
+    return _mean
+
+
+@pytest.fixture
 def shared_tmpdir():
     """Create a shared temporary directory for MPI tests.
     

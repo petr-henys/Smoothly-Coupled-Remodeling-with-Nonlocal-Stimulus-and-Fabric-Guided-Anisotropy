@@ -21,8 +21,11 @@ def load_xy_datasets(xlsx_path: str | Path, sheet: str | int | None = 0, flip_y:
         if pd.isna(dataset_name) or str(dataset_name).startswith('Unnamed:'):
             continue
 
-        x_full = df[(dataset_name, "X")].to_numpy(dtype=float)
-        y_full = df[(dataset_name, "Y")].to_numpy(dtype=float)
+        try:
+            x_full = df[(dataset_name, "X")].to_numpy(dtype=float)
+            y_full = df[(dataset_name, "Y")].to_numpy(dtype=float)
+        except KeyError as err:
+            raise ValueError(f"Dataset '{dataset_name}' missing X/Y columns.") from err
         
         mask = ~np.isnan(x_full) & ~np.isnan(y_full)
         x, y = x_full[mask], y_full[mask]
@@ -113,9 +116,13 @@ def parse_hip_file(hip_path: str | Path, validate_physics: bool = True, fix_phys
     for line in lines[data_start_idx:]:
         line = line.strip()
         if line:
-            values = [float(val.strip()) for val in line.split('\t')]
-            if len(values) == len(column_names):
-                data_rows.append(values)
+            try:
+                values = [float(val.strip()) for val in line.split('\t')]
+                if len(values) == len(column_names):
+                    data_rows.append(values)
+            except ValueError:
+                # Skip lines that do not contain purely numeric data
+                continue
     
     if not data_rows:
         raise ValueError("No valid data rows found")

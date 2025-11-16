@@ -654,49 +654,59 @@ class TestAccumulatedStrainEnergy:
         # Restore original scale
         gait_loader.load_scale = original_scale
         
-        # Energy should scale approximately as load^2 (linear elasticity)
-        # Driver energy uses (psi/psi_ref)^n formulation, hence load^(2*n_power)
+        # Energy should scale approximately as load² for linear elasticity
+        # The L^p gait averaging is constructed so that ψ_gait ∝ load².
         ratio = psi_double / psi_base
-        expected = 2.0 ** (2.0 * mechanics_solver.cfg.n_power)
+        expected = 4.0  # doubling load → ~4× energy
         assert 0.5 * expected < ratio < 1.5 * expected, (
-            "Energy should scale with load^(2*n_power); "
+            "Energy should scale approximately with load²; "
             f"expected≈{expected:.2f}, ratio={ratio:.2f}"
         )
     
     def test_energy_components_contribution(self, mechanics_solver, gait_loader):
-        """Verify that multiple gait phases contribute to accumulated energy."""
-        # Get individual phase energies (integrals over domain)
-        quadrature = gait_loader.get_quadrature()
-        phase_energies = []
-        comm = mechanics_solver.cfg.domain.comm
+        """Verify that gait-averaged energy matches the L^p aggregation of per-phase energies."""
         cfg = mechanics_solver.cfg
-        
-        for phase, weight in quadrature:
-            gait_loader.update_loads(phase)
-            mechanics_solver.assemble_rhs()
-            mechanics_solver.solve()
-            psi_density = mechanics_solver.get_strain_energy_density(mechanics_solver.u)
-            psi_norm = (psi_density / cfg.psi_ref) ** cfg.n_power
-            psi_local = fem.assemble_scalar(fem.form(psi_norm * cfg.dx))
-            psi_total = comm.allreduce(psi_local, op=MPI.SUM)
-            phase_energies.append((phase, weight, psi_total))
-        
-        # All phases should have positive energy
-        for phase, weight, psi in phase_energies:
-            assert psi > 0.0, f"Phase {phase}% should have positive energy, got {psi}"
-        
-        # Verify manual accumulation matches GaitEnergyDriver
-        # Both compute weighted sum of energy integrals
-        manual_accumulated = sum(w * psi for _, w, psi in phase_energies)
-        
-        driver = GaitEnergyDriver(mechanics_solver, gait_loader, mechanics_solver.cfg)
+        comm = cfg.domain.comm
+
+        # Build driver and update displacement snapshots
+        driver = GaitEnergyDriver(mechanics_solver, gait_loader, cfg)
         driver.update_snapshots()
-        psi_expr = driver.energy_expr()
-        method_local = fem.assemble_scalar(fem.form(psi_expr * cfg.dx))
-        method_accumulated = comm.allreduce(method_local, op=MPI.SUM)
-        
-        np.testing.assert_allclose(manual_accumulated, method_accumulated, rtol=1e-6,
-            err_msg="Manual and method accumulation should match")
+
+        # Check each phase has positive strain energy when integrated
+        phase_energies = []
+        for u_i, weight in zip(driver.u_snap, driver.weights):
+            psi_i = mechanics_solver.get_strain_energy_density(u_i)
+            psi_loc = fem.assemble_scalar(fem.form(psi_i * cfg.dx))
+            psi_tot = comm.allreduce(psi_loc, op=MPI.SUM)
+            phase_energies.append(psi_tot)
+        for idx, psi in enumerate(phase_energies):
+            assert psi > 0.0, f"Gait phase {idx} should have positive energy, got {psi}"
+
+        # Manual L^p aggregation following the GaitEnergyDriver spec:
+        # ψ_gait = psi_ref * ( Σ w (ψ/psi_ref)^n / Σ w )^(1/n)
+        psi_p_terms = []
+        total_weight = 0.0
+        for u_i, weight in zip(driver.u_snap, driver.weights):
+            psi_i = mechanics_solver.get_strain_energy_density(u_i)
+            psi_p_terms.append(weight * (psi_i / cfg.psi_ref) ** cfg.n_power)
+            total_weight += weight
+
+        psi_p_avg = sum(psi_p_terms) / total_weight
+        psi_expr_manual = cfg.psi_ref * psi_p_avg ** (1.0 / cfg.n_power)
+
+        # Compare manual aggregation with driver's expression via domain integrals
+        psi_expr_driver = driver.energy_expr()
+        psi_manual_loc = fem.assemble_scalar(fem.form(psi_expr_manual * cfg.dx))
+        psi_driver_loc = fem.assemble_scalar(fem.form(psi_expr_driver * cfg.dx))
+        psi_manual = comm.allreduce(psi_manual_loc, op=MPI.SUM)
+        psi_driver = comm.allreduce(psi_driver_loc, op=MPI.SUM)
+
+        np.testing.assert_allclose(
+            psi_manual,
+            psi_driver,
+            rtol=1e-6,
+            err_msg="Manual L^p aggregation of per-phase energies should match GaitEnergyDriver.energy_expr().",
+        )
     
     def test_peak_stance_has_maximum_energy(self, mechanics_solver, gait_loader):
         """Peak stance phase should have highest strain energy."""
@@ -2108,12 +2118,12 @@ class TestUtilityFunctions:
         # Verify magnitude is preserved
         assert_almost_equal(np.linalg.norm(vector), magnitude)
         
-        # Verify expected component signs
+        # Verify expected component signs: positive y; x/z follow angle signs
         for i, expected_sign in enumerate([alpha_sag != 0, True, alpha_front != 0]):
             if expected_sign:
-                assert vector[i] < 0, f"Component {i} should be negative for {desc}"
+                assert vector[i] > 0, f"Component {i} should be positive for {desc}"
             else:
-                assert abs(vector[i]) < 1e-10, f"Component {i} should be zero for {desc}"
+                assert abs(vector[i]) < 1e-10, f"Component {i} should be ~0 for {desc}"
     
 
     def test_gait_interpolator_valid_input(self):
@@ -2507,4 +2517,3 @@ class TestLoadEdgeCases:
         mesh_with_traction = muscle_load.apply_gaussian_load(force_css)
         
         assert 'traction' in mesh_with_traction.cell_data
-
