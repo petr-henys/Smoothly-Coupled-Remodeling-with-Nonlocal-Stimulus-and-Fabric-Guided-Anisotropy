@@ -123,15 +123,41 @@ class GaitEnergyDriver:
             traction.x.scatter_forward()
 
     def _build_expressions(self) -> tuple[ufl.core.expr.Expr, ufl.core.expr.Expr]:
-        psi_terms = []
+        """Build gait-aggregated expressions for ψ [MPa] and structure tensor M.
+
+        ψ is an L^p-type average of strain energy density over the gait cycle:
+            ψ_gait = psi_ref * ( Σ w (ψ/psi_ref)^n / Σ w )^(1/n)
+        so that ψ_gait has units [MPa] and is consistent with StimulusSolver.
+        """
+        if self.exponent <= 0.0:
+            raise ValueError(f"n_power must be positive, got {self.exponent}")
+
+        psi_p_terms = []
         structure_terms = []
+        total_weight = 0.0
+
         for u_i, weight in zip(self.u_snap, self.weights):
-            psi_i = self.mech.get_strain_energy_density(u_i)
+            psi_i = self.mech.get_strain_energy_density(u_i)  # [MPa]
             e_i = self.mech.get_strain_tensor(u_i)
             structure_i = ufl.dot(ufl.transpose(e_i), e_i)
-            psi_terms.append(weight * (psi_i / self.psi_ref) ** self.exponent)
+
+            # Dimensionless p-th power of normalised energy
+            psi_p_terms.append(weight * (psi_i / self.psi_ref) ** self.exponent)
             structure_terms.append(weight * structure_i)
-        return sum(psi_terms), sum(structure_terms)
+            total_weight += weight
+
+        if total_weight <= 0.0:
+            raise ValueError("Gait quadrature weights must sum to a positive value.")
+
+        # Average the p-th power and map back to MPa via L^p norm
+        psi_p_avg = sum(psi_p_terms) / total_weight        # dimensionless
+        psi_expr = self.psi_ref * psi_p_avg ** (1.0 / self.exponent)  # [MPa]
+
+        # Use weighted average for structure tensor as well (dimensionless)
+        M_expr = sum(structure_terms) / total_weight
+
+        return psi_expr, M_expr
+
 
     def _build_stats(self, iters: list[float], times: list[float]) -> dict:
         total_time = float(sum(times))
