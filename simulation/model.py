@@ -23,7 +23,6 @@ import basix
 from dolfinx import fem
 from dolfinx.fem import Function, functionspace
 
-from simulation.paths import FemurPaths
 from simulation.storage import UnifiedStorage
 from simulation.logger import get_logger, Level
 from simulation.utils import build_dirichlet_bcs, assign, current_memory_mb

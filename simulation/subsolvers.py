@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Tuple, List, Optional, Dict
 
-import numpy as np
 from mpi4py import MPI
 from petsc4py import PETSc
 from dolfinx import fem
@@ -414,7 +413,7 @@ class StimulusSolver(_BaseLinearSolver):
 
 
 class DensitySolver(_BaseLinearSolver):
-    """Density evolution ρ: anisotropic diffusion with stimulus-gated relaxation to bounds."""
+    """Density evolution ρ: anisotropic diffusion with soft mechanostat ρ_eq(S)."""
 
     def __init__(
         self,
@@ -445,16 +444,24 @@ class DensitySolver(_BaseLinearSolver):
         d = self.mesh.geometry.dim
         I = ufl.Identity(d)
 
+        # Anisotropic diffusion tensor aligned with fabric A_dir
         Asym = 0.5 * (self.A_dir + ufl.transpose(self.A_dir))
         Ahat = unittrace_psd_from_any(Asym, d, eps=self.smooth_eps)
         Bten = self.cfg.beta_perp * I + (self.cfg.beta_par - self.cfg.beta_perp) * Ahat
-        Sabs_smooth = smooth_abs(self.S, self.smooth_eps)
+
+        # Lazy-zone weighting f(|S|) in [0,1]
+        Sabs = smooth_abs(self.S, self.smooth_eps)
+        S_lazy = float(self.cfg.S_lazy)
+        if S_lazy > 0.0:
+            f_S = Sabs / (Sabs + S_lazy)
+        else:
+            # No lazy zone: react everywhere with full rate
+            f_S = 1.0
 
         return (
             (self.trial / dt) * self.test * self.dx
             + ufl.inner(Bten * ufl.grad(self.trial), ufl.grad(self.test)) * self.dx
-            + self.cfg.lambda_rho * Sabs_smooth * self.trial * self.test * self.dx
-        
+            + self.cfg.lambda_rho * f_S * self.trial * self.test * self.dx
         )
 
     def setup(self):
@@ -469,14 +476,22 @@ class DensitySolver(_BaseLinearSolver):
             b_local.set(0.0)
 
         dt = self.cfg.dt
-        Sabs_smooth = smooth_abs(self.S, self.smooth_eps)
-        Splus_smooth = 0.5 * (self.S + Sabs_smooth)
-        Sminus_smooth = 0.5 * (Sabs_smooth - self.S)
 
-        rhs_expr = (
-            (self.rho_old / dt)
-            + self.cfg.lambda_rho * (Splus_smooth * self.cfg.rho_max + Sminus_smooth * self.cfg.rho_min)
-        )
+        # Lazy-zone weighting f(|S|)
+        Sabs = smooth_abs(self.S, self.smooth_eps)
+        S_lazy = float(self.cfg.S_lazy)
+        if S_lazy > 0.0:
+            f_S = Sabs / (Sabs + S_lazy)
+        else:
+            f_S = 1.0
+
+        # Logistic equilibrium density ρ_eq(S)
+        k_mech = float(self.cfg.k_mech)
+        S_shift = float(self.cfg.S_shift)
+        theta = 1.0 / (1.0 + ufl.exp(-k_mech * (self.S - S_shift)))
+        rho_eq = self.cfg.rho_min + (self.cfg.rho_max - self.cfg.rho_min) * theta
+
+        rhs_expr = (self.rho_old / dt) + self.cfg.lambda_rho * f_S * rho_eq
         self.L_form_template = fem.form(rhs_expr * self.test * self.dx)
 
         assemble_vector(self.b, self.L_form_template)
@@ -491,32 +506,53 @@ class DensitySolver(_BaseLinearSolver):
         return its, reason
 
     def mass_balance_residual(self) -> Tuple[float, float]:
-        """Mass conservation check: (abs_residual, rel_residual)."""
+        """Mass balance check under soft mechanostat: (abs_residual, rel_residual).
+
+        Integrated PDE:
+            dM/dt + ∫ λρ f(|S|) ρ dx = ∫ λρ f(|S|) ρ_eq(S) dx
+        ignoring net diffusive flux for closed / no-flux boundaries.
+        """
         self.rho.x.scatter_forward()
         self.rho_old.x.scatter_forward()
         self.S.x.scatter_forward()
         self.A_dir.x.scatter_forward()
+
         one = fem.Constant(self.mesh, default_scalar_type(1.0))
+
+        # Total mass at new/old step
         M_new_loc = fem.assemble_scalar(fem.form(self.rho * one * self.dx))
         M_old_loc = fem.assemble_scalar(fem.form(self.rho_old * one * self.dx))
         M_new = float(self.comm.allreduce(M_new_loc, op=MPI.SUM))
         M_old = float(self.comm.allreduce(M_old_loc, op=MPI.SUM))
+
+        dt = self.cfg.dt
+
+        # Rebuild f(|S|) and ρ_eq(S) consistently with assemble_rhs/build_lhs_form
         Sabs = smooth_abs(self.S, self.smooth_eps)
-        Splus = 0.5 * (self.S + Sabs)
-        Sminus = 0.5 * (Sabs - self.S)
+        S_lazy = float(self.cfg.S_lazy)
+        if S_lazy > 0.0:
+            f_S = Sabs / (Sabs + S_lazy)
+        else:
+            f_S = 1.0
+
+        k_mech = float(self.cfg.k_mech)
+        S_shift = float(self.cfg.S_shift)
+        theta = 1.0 / (1.0 + ufl.exp(-k_mech * (self.S - S_shift)))
+        rho_eq = self.cfg.rho_min + (self.cfg.rho_max - self.cfg.rho_min) * theta
+
         decay_loc = fem.assemble_scalar(
-            fem.form(self.cfg.lambda_rho * Sabs * self.rho * self.dx)
+            fem.form(self.cfg.lambda_rho * f_S * self.rho * self.dx)
         )
         src_loc = fem.assemble_scalar(
-            fem.form(
-                self.cfg.lambda_rho * (Splus * self.cfg.rho_max + Sminus * self.cfg.rho_min) * self.dx
-            )
+            fem.form(self.cfg.lambda_rho * f_S * rho_eq * self.dx)
         )
+
         decay = float(self.comm.allreduce(decay_loc, op=MPI.SUM))
         src = float(self.comm.allreduce(src_loc, op=MPI.SUM))
-        dt = self.cfg.dt
-        R = (M_new - M_old) / max(dt, 1e-30) + decay - src
-        denom = abs((M_new - M_old) / max(dt, 1e-30)) + abs(decay) + abs(src) + 1e-30
+
+        dM_dt = (M_new - M_old) / max(dt, 1e-30)
+        R = dM_dt + decay - src
+        denom = abs(dM_dt) + abs(decay) + abs(src) + 1e-30
         return abs(R), abs(R) / denom
 
 

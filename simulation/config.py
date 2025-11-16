@@ -32,8 +32,8 @@ class Config:
     """
 
     # --- Material properties ---
-    E0: float = 6.5e3             # Young's modulus [MPa] at ρ=1 (≈6.5 GPa)
-    nu: float = 0.3               # Poisson's ratio [-]
+    E0: float = 15e3            # Young's modulus [MPa] at ρ=1 (≈15 GPa)
+    nu: float = 0.3             # Poisson's ratio [-]
 
     # Density–stiffness law:
     # E(ρ) = E0 · ρ^{n(ρ)}, where n(ρ) transitions smoothly
@@ -46,12 +46,16 @@ class Config:
 
     xi_aniso: float = 0.3         # anisotropic reinforcement factor [-]
 
-    # --- Density bounds ---
-    rho_min: float = 0.2         # minimum relative density [-]
+    # --- Density bounds and remodeling kinetics ---
+    rho_min: float = 0.2          # minimum relative density [-]
     rho_max: float = 1.00         # maximum relative density [-]
-    rho0: float = 0.5            # initial relative density [-]
-    lambda_rho: float = 0.1       # [1/day] váha reakčního členu ~ |S| v rovnici pro ρ
+    rho0: float = 0.5             # initial relative density [-]
+    lambda_rho: float = 0.1       # [1/day] baseline remodeling rate in soft mechanostat
 
+    # Soft mechanostat: ρ_eq(S) and lazy zone
+    k_mech: float = 2.0           # steepness of logistic ρ_eq(S) in S-space [-]
+    S_shift: float = 0.0          # shift of mechanostat setpoint in S [-]
+    S_lazy: float = 0.2           # |S|-scale for lazy zone (small |S| → slow remodeling) [-]
 
     # --- Density: anisotropic diffusion ---
     beta_par: float = 1.5          # parallel diffusion [mm²/day]
@@ -68,7 +72,6 @@ class Config:
     cA: float = 1.0               # orientation capacity [-]
     tauA: float = 2.0             # orientation relaxation time [day]
     ell: float = 4.0              # orientation diffusion length [mm]
-
 
     # --- Numerics / I-O ---
     quadrature_degree: int = 6
@@ -153,6 +156,12 @@ class Config:
             raise ValueError("rho_trab_max and rho_cort_min must satisfy rho_min ≤ rho_trab_max ≤ rho_cort_min ≤ rho_max.")
         if not (self.rho_min <= self.rho0 <= self.rho_max):
             raise ValueError("rho0 must lie within [rho_min, rho_max].")
+        if self.lambda_rho < 0:
+            raise ValueError("lambda_rho must be non-negative [1/day].")
+        if self.k_mech <= 0:
+            raise ValueError("k_mech must be positive.")
+        if self.S_lazy < 0:
+            raise ValueError("S_lazy must be non-negative.")
         if self.beta_par < 0 or self.beta_perp < 0:
             raise ValueError("beta_par/beta_perp must be non-negative [mm²/day].")
         if self.cS <= 0 or self.tauS < 0 or self.kappaS < 0 or self.rS_gain < 0:
