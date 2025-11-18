@@ -289,7 +289,7 @@ class Remodeller:
         self.logger.info(
             lambda: (
                 f"Step {step:2d} | t={t:6.1f}d | "
-                f"ρ=[{fields['rho_min']:.0f},{fields['rho_max']:.0f}] | "
+                f"ρ=[{fields['rho_min']:.3f},{fields['rho_max']:.3f}] | "
                 f"S=[{fields['S_min']:.2e},{fields['S_max']:.2e}] | "
                 f"stim={iters['stim_gs']:.1f} | "
                 f"dens={iters['dens_gs']:.1f} | dir={iters['dir_gs']:.1f} | "

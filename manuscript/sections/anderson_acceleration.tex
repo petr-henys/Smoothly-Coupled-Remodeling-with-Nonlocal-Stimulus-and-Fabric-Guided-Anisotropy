@@ -5,7 +5,7 @@
 To reduce the number of block fixed-point (block Picard/Gauss--Seidel) sub-iterations, we employ Type-I Anderson acceleration (AA-I) with finite memory $m$. We compare (i) a plain block Picard baseline and (ii) AA-I with standard safeguards (restart on deterioration and backtracking/damping) across representative couplings and time-step sizes $\Delta t$. We also report diagnostics that help choose~$m$ and monitor robustness.
 % ==== Added clarifications (implementation-faithful) ====
 \subsection*{Interaction-gain diagnostics and spectral radius}\label{subsec:diag_rhoJ}
-We estimate a $4\times 4$ interaction-gain matrix $J$ of the Gauss--Seidel (GS) fixed-point map $G$ at the current state by finite-difference GS sweeps: for each block we form a small deterministic perturbation $\delta_j$ and measure
+We estimate a $3\times 3$ interaction-gain matrix $J$ of the Gauss--Seidel (GS) fixed-point map $G$ at the current state by finite-difference GS sweeps on the accelerated remodeling state $(\rho,\mathbf A,S)$: for each block we form a small deterministic perturbation $\delta_j$ and measure
 \begin{equation*}
   J_{ij}\;\approx\;\frac{\big\|\,G_i(x^\star+\delta_j)-G_i(x^\star)\,\big\|}{\|\delta_j\|}\,.
 \end{equation*}
@@ -24,10 +24,10 @@ We summarize contractivity and coupling structure across timesteps and configura
 \end{figure}
 
 \subsection*{Projected residual merit, stopping, and AA acceptance}\label{subsec:proj_merit}
-We use the \emph{projected, RMS-per-DOF} merit and acceptance/backtracking defined in the solver description (\S\ref{sec:fp-aa}). The projected norm zeros mechanics Dirichlet DOFs and uses block weights $w_i=1/N_i$; acceptance follows the safeguard \eqref{eq:safeguard} with the same thresholds and minimal-subiteration requirement as in \S\ref{sec:fp-aa}. Candidate formation and step limiting follow \eqref{eq:kkt}--\eqref{eq:aa-update}.
+We use the \emph{projected, RMS-per-DOF} merit and acceptance/backtracking defined in the solver description (\S\ref{sec:fp-aa}). The projected norm acts on the flattened state $(\rho,\mathbf A,S)$, zeros any constrained DOFs, and uses block weights $w_i=1/N_i$; acceptance follows the safeguard \eqref{eq:safeguard} with the same thresholds and minimal-subiteration requirement as in \S\ref{sec:fp-aa}. Candidate formation and step limiting follow \eqref{eq:kkt}--\eqref{eq:aa-update}.
 
 \subsection*{Stacking vs.\ sweep order}\label{subsec:order}
-The stacked state follows $(u,\rho,\mathbf A,S)$, while a single GS sweep updates blocks in the physical order $u\!\to\! S\!\to\!\rho\!\to\!\mathbf A$. The interaction-gain matrix $J$ is indexed according to the stacked order.
+The accelerated stacked state follows $(\rho,\mathbf A,S)$, while a single GS sweep updates blocks in the physical order $u\!\to\! S\!\to\!\rho\!\to\!\mathbf A$ (mechanics is recomputed inside the driver and is not part of the Anderson state). The interaction-gain matrix $J$ is indexed according to the $(\rho,\mathbf A,S)$ ordering.
 
 \subsection*{Anderson acceleration details}\label{subsec:aa_details}
 We use Type-I Anderson (Pulay) acceleration with the equality constraint $\sum_j \alpha_j=1$. The least-squares system is formed from the global Gram matrix $H=RR^\top$; Tikhonov regularization uses $\lambda_{\mathrm{eff}}=\lambda\max(\mathrm{tr}\,H/p,\,1)$. We impose a step limit $\|s\|\le c\,\|r\|$ (with $c=2$ in our runs) and perform line search/backtracking along $s$ guided by the projected merit defined in \S\ref{sec:fp-aa}. We restart the AA history upon (i) repeated rejections, (ii) stagnation with respect to the best Picard merit, or (iii) poor conditioning of the regularized Gram system. Accepted AA candidates re-enforce Dirichlet DOFs from the freshest Picard state.

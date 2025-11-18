@@ -61,7 +61,7 @@
     country={Czechia}}
 %% Abstract
 \begin{abstract}
-We propose a four-field bone-remodeling formulation that co-evolves displacement $\mathbf{u}$, apparent density $\rho$, fabric $\mathbf{A}$, and a nonlocal mechanotransductive stimulus $S$. The elastic response couples a density-scaled isotropic baseline with a nonnegative rank-one reinforcement aligned to a trace-safe normalization of $\mathbf{A}$ (without explicit PSD projection). The stimulus follows a diffusion--reaction balance driven by elastic energy; density evolves via anisotropic transport guided by $\widehat{\mathbf{A}}$ and a smooth stimulus-gated relaxation to $[\rho_{\min},\rho_{\max}]$; fabric relaxes toward a trace-safe normalization of $\boldsymbol{\varepsilon}^\top\boldsymbol{\varepsilon}$ with spatial diffusion. Time integration is fully implicit Backward--Euler; space is discretized by conforming $H^1$ finite elements in a unified weak-form notation. Nonlinear coupling is solved by a partitioned block Gauss--Seidel sweep (mechanics $\rightarrow$ stimulus $\rightarrow$ density $\rightarrow$ fabric) wrapped in Type-I Anderson acceleration with Tikhonov regularization and residual safeguards. A single smoothing policy used across clamping, stimulus splits, and normalizations ensures differentiability and preserves coercivity, while the solver architecture yields stable, mesh-robust convergence without monolithic Jacobians.
+We propose a four-field bone-remodeling formulation that co-evolves displacement $\mathbf{u}$, apparent density $\rho$, fabric $\mathbf{A}$, and a nonlocal mechanotransductive stimulus $S$. The elastic response couples a density-scaled isotropic baseline with a nonnegative rank-one reinforcement aligned to a trace-safe normalization of $\mathbf{A}$ (without explicit PSD projection). The stimulus follows a diffusion--reaction balance driven by elastic energy; density evolves via anisotropic transport guided by $\widehat{\mathbf{A}}$ and a smooth stimulus-gated relaxation to $[\rho_{\min},\rho_{\max}]$; fabric relaxes toward a trace-safe normalization of $\boldsymbol{\varepsilon}^\top\boldsymbol{\varepsilon}$ with spatial diffusion. Time integration is fully implicit Backward--Euler; space is discretized by conforming $H^1$ finite elements in a unified weak-form notation. Nonlinear coupling is solved by a partitioned block Gauss--Seidel sweep (mechanics $\rightarrow$ stimulus $\rightarrow$ density $\rightarrow$ fabric) wrapped in Type-I Anderson acceleration with Tikhonov regularization and residual safeguards. A single smoothing policy used across clamping, stimulus gates, and normalizations ensures differentiability and preserves coercivity, while the solver architecture yields stable, mesh-robust convergence without monolithic Jacobians.
 \end{abstract}
 %% Keywords
 \begin{keyword}
@@ -115,13 +115,24 @@ Under quasi-static conditions the balance of linear momentum reads
 \end{equation}
 
 \paragraph{Constitutive structure.}
-The stress response consists of an isotropic baseline whose stiffness scales with apparent density and a directional reinforcement aligned with the local fabric. Let $\nu\in(-1,1/2)$ be Poisson’s ratio and $n>0$ an exponent. The density--modulus relation is
+The stress response consists of an isotropic baseline whose stiffness scales with apparent density and a directional reinforcement aligned with the local fabric. Let $\nu\in(-1,1/2)$ be Poisson’s ratio and $n_{\mathrm{trab}},n_{\mathrm{cort}}>0$ be trabecular/cortical exponents. The density--modulus relation is
 \begin{equation}\label{eq:E-rho-nd}
 \begin{aligned}
-E(\rho) & = E_0\,\widetilde{\rho}^{\,n},\\
+\widetilde{\rho} & = \widetilde{\rho}(\rho;\rho_{\min},\varepsilon),\\
+E(\rho) & = E_0\,\widetilde{\rho}^{\,n(\widetilde{\rho})},\\
 \lambda(\rho) & = \frac{E(\rho)\,\nu}{(1+\nu)(1-2\nu)},\\
 \mu(\rho) & = \frac{E(\rho)}{2(1+\nu)}.
 \end{aligned}\end{equation}
+where $n(\widetilde{\rho})$ transitions smoothly from a trabecular exponent $n_{\mathrm{trab}}$ to a cortical exponent $n_{\mathrm{cort}}$ between two density thresholds $\rho_{\mathrm{trab}}^{\max}$ and $\rho_{\mathrm{cort}}^{\min}$. In the implementation we use a cubic smoothstep
+\[
+w(\widetilde{\rho}) \;=\; 3s^2-2s^3,\qquad
+s:=\mathrm{clip}_{\varepsilon}\!\left(\frac{\widetilde{\rho}-\rho_{\mathrm{trab}}^{\max}}{\rho_{\mathrm{cort}}^{\min}-\rho_{\mathrm{trab}}^{\max}}\right)\!,
+\]
+with $s$ smoothly clamped to $[0,1]$ via the same $\mathcal{C}^\infty$ “max'' regularization as below, and set
+\[
+n(\widetilde{\rho}) \;:=\; (1-w(\widetilde{\rho}))\,n_{\mathrm{trab}} + w(\widetilde{\rho})\,n_{\mathrm{cort}}.
+\]
+For $\widetilde{\rho}\lesssim\rho_{\mathrm{trab}}^{\max}$ we recover the trabecular law $E\approx E_0\widetilde{\rho}^{\,n_{\mathrm{trab}}}$; for $\widetilde{\rho}\gtrsim\rho_{\mathrm{cort}}^{\min}$ we obtain a milder cortical scaling $E\approx E_0\widetilde{\rho}^{\,n_{\mathrm{cort}}}$.
 The stress law is
 \begin{equation}\label{eq:stress-law-nd}
 \boldsymbol{\sigma}(\mathbf{u},\rho,\mathbf{A})
@@ -165,7 +176,7 @@ Define the nondimensional strain-energy density
 +\tfrac12\,\lambda(\rho)\,\big(\mathrm{tr}\,\boldsymbol{\varepsilon}(\mathbf{u})\big)^2
 +\tfrac12\,\xi_{\mathrm{aniso}}\,E(\rho)\,\big\langle \widehat{\mathbf{A}},\boldsymbol{\varepsilon}(\mathbf{u})\big\rangle^2 .
 \end{equation*}
-Using \eqref{eq:E-rho-nd}--\eqref{eq:smooth-max-nd} with $\rho_{\min}>0$ and $\nu\in(-1,1/2)$, and applying Korn’s inequality on $\Omega$, there exists $c_0>0$ depending only on $(\nu,n,\rho_{\min},E_0)$ and the domain such that
+Using \eqref{eq:E-rho-nd}--\eqref{eq:smooth-max-nd} with $\rho_{\min}>0$ and $\nu\in(-1,1/2)$, and applying Korn’s inequality on $\Omega$, there exists $c_0>0$ depending only on $(\nu,n_{\mathrm{trab}},n_{\mathrm{cort}},\rho_{\min},E_0)$ and the domain such that
 \begin{equation*}
 \int_\Omega \psi(\mathbf{u},\rho,\mathbf{A})\,\mathrm{d}x \ \ge\ c_0\,\|\mathbf{u}\|_{H^1(\Omega)}^2.
 \end{equation*}
@@ -218,8 +229,8 @@ The nondimensional apparent density $\rho=\rho(x,t)$ evolves under anisotropic t
 \begin{equation}\label{eq:density-strong-nd}
 \begin{aligned}
 \partial_t \rho \;&-\; \nabla\!\cdot\!\big(\mathbf{D}_\rho(x,t)\,\nabla\rho\big)
-\;+\; \big|S\big|_{\varepsilon}\,\rho
-\;=\; S_{\varepsilon}^{+}\,\rho_{\max} + S_{\varepsilon}^{-}\,\rho_{\min}.
+\;+\; \lambda_\rho\,f\!\big(|S|_{\varepsilon}\big)\,\rho
+\;=\; \lambda_\rho\,f\!\big(|S|_{\varepsilon}\big)\,\rho_{\mathrm{eq}}(S).
 \end{aligned}\end{equation}
 supplemented with homogeneous no-flux boundary conditions and an admissible initial state,
 \begin{equation}\label{eq:density-bc-ic-nd}
@@ -234,16 +245,26 @@ Directional transport is modeled by the symmetric diffusion tensor
 \end{equation}
 where $\beta_{\parallel},\beta_{\perp}>0$ are nondimensional diffusivities along and transverse to the fabric, respectively, and $\widehat{\mathbf{A}}(x,t)$ is the \emph{unit-trace, symmetric, positive-definite} fabric tensor obtained by the Gram normalisation described above. With $\beta_{\parallel},\beta_{\perp}>0$ this yields a uniformly positive-definite $\mathbf{D}_\rho$ without any conditional branching or explicit cone projections.
 
-\paragraph{Stimulus split and kinetic rate.}
-To keep the right-hand side and the damping term in \eqref{eq:density-strong-nd} smooth at $S=0$, we adopt a single $\mathcal{C}^{\infty}$ approximation of the absolute value and use it to define the positive/negative parts:
+\paragraph{Stimulus gating and soft mechanostat.}
+To keep the kinetic terms in \eqref{eq:density-strong-nd} smooth at $S=0$, we adopt the same $\mathcal{C}^{\infty}$ approximation of the absolute value as in the implementation:
 \begin{equation}\label{eq:smooth-splits-nd}
-|S|_{\varepsilon}:=\sqrt{S^2+\varepsilon^2},\qquad
-S_{\varepsilon}^{\pm} := \tfrac12\!\left(|S|_{\varepsilon} \pm S\right).
+|S|_{\varepsilon}:=\sqrt{S^2+\varepsilon^2}.
 \end{equation}
-For $|S|\gg \varepsilon$ this coincides with the exact split; in a small neighborhood of the origin it provides a simple, globally smooth transition used consistently across the scheme.
+A stimulus-dependent weight and soft mechanostat target are then defined by
+\begin{equation*}
+f\!\big(|S|_{\varepsilon}\big)
+:=\begin{cases}
+\dfrac{|S|_{\varepsilon}}{|S|_{\varepsilon}+S_{\mathrm{lazy}}}, & S_{\mathrm{lazy}}>0,\\[1ex]
+1, & S_{\mathrm{lazy}}=0,
+\end{cases}
+\qquad
+\rho_{\mathrm{eq}}(S)
+:=\rho_{\min}+(\rho_{\max}-\rho_{\min})\,\dfrac{1}{1+\exp\!\big(-k_{\mathrm{mech}}(S-S_{\mathrm{shift}})\big)}.
+\end{equation*}
+Here $S_{\mathrm{lazy}}\ge 0$ sets the width of a “lazy zone’’ (small $|S|$ implies slow remodeling), $k_{\mathrm{mech}}>0$ controls the steepness of the logistic transition in $S$-space, and $S_{\mathrm{shift}}$ shifts the homeostatic setpoint.
 
 \paragraph{Quantitative analysis and biological interpretation.}
-Equation \eqref{eq:density-strong-nd} combines anisotropic diffusion with a stimulus-gated logistic relaxation. The diffusion term $\nabla\!\cdot(\mathbf{D}_\rho\nabla\rho)$ spreads mass preferentially along the principal directions of $\widehat{\mathbf{A}}$, while the reaction terms on the right- and left-hand sides drive $\rho$ toward $\rho_{\max}$ where $S>0$ and toward $\rho_{\min}$ where $S<0$. The damping $|S|_{\varepsilon}\,\rho$ guarantees that, in regions of large $|S|$, the relaxation is fast and saturates at the appropriate bound, whereas in regions where $S\approx 0$ the dynamics is transport-dominated. Under the no-flux boundary condition \eqref{eq:density-bc-ic-nd} the admissible interval $[\rho_{\min},\rho_{\max}]$ is invariant in the sense of the parabolic comparison principle: if $\rho_{\min}\le \rho_0\le \rho_{\max}$ a.e.\ in $\Omega$, then $\rho_{\min}\le \rho(\cdot,t)\le \rho_{\max}$ for all $t\in(0,T]$. Physically, \eqref{eq:density-strong-nd} states that sustained supra-homeostatic stimulus accumulates mass up to $\rho_{\max}$, sustained sub-homeostatic stimulus removes mass down to $\rho_{\min}$, and the anisotropic transport couples neighboring regions along the evolving fabric architecture.
+Equation \eqref{eq:density-strong-nd} combines anisotropic diffusion with a stimulus-gated soft mechanostat. The diffusion term $\nabla\!\cdot(\mathbf{D}_\rho\nabla\rho)$ spreads mass preferentially along the principal directions of $\widehat{\mathbf{A}}$, while the reaction terms drive $\rho$ toward the bounded logistic target $\rho_{\mathrm{eq}}(S)\in[\rho_{\min},\rho_{\max}]$ at a rate modulated by $f(|S|_{\varepsilon})$. Large $|S|$ (outside the lazy zone) yields fast relaxation toward $\rho_{\mathrm{eq}}$, whereas in regions where $S\approx 0$ the dynamics is transport-dominated. Under the no-flux boundary condition \eqref{eq:density-bc-ic-nd} and with $\rho_{\min}\le\rho_0\le\rho_{\max}$ a.e., the interval $[\rho_{\min},\rho_{\max}]$ remains dynamically invariant for the spatial average, consistent with the mass-balance diagnostics used in the implementation.
 
 \subsection*{Direction (fabric) submodel}\label{subsec:direction-nd}
 The local fabric is described by a second-order, dimensionless tensor field $\mathbf{A}=\mathbf{A}(x,t)\in\mathbb{R}^{d\times d}$ ($d\in\{2,3\}$), which aligns with mechanically preferred directions and is smoothed in space by diffusion. We regard $\mathbf{A}$ as symmetric and treat its dynamics as a relaxation--diffusion flow toward a unit-trace, positive-definite target extracted from the current mechanical state. The nondimensional strong form on a bounded Lipschitz domain is
@@ -279,7 +300,7 @@ The reaction term $\tau_A(\widehat{\mathbf{M}}-\mathbf{A})$ in \eqref{eq:A-stron
 so the spatial average of $\mathrm{tr}\,\mathbf{A}$ relaxes monotonically to $1$ under no-flux boundaries; pointwise, the relaxation term anchors $\mathrm{tr}\,\mathbf{A}$ toward unity while diffusion communicates this constraint across $\Omega$. The coupling \eqref{eq:M-def-nd}--\eqref{eq:M-hat-nd} aligns principal directions of $\mathbf{A}$ with those of a local strain metric, consistent with strain-adaptation hypotheses in trabecular microstructures, while maintaining global smoothness and avoiding non-differentiable thresholds.
 
 \paragraph{Regularization parameters and defaults.}
-Unless a sensitivity study dictates otherwise, we recommend using a unified smoothness $\varepsilon$ (and gate steepness $k$) across \eqref{eq:smooth-max-nd}, \eqref{eq:smooth-splits-nd}, \eqref{eq:Ahat-blend-nd}, and \eqref{eq:M-hat-nd} by setting $\varepsilon_B\!=\!\varepsilon_M\!=\!\varepsilon$ and $k_B\!=\!k_M\!=\!k$. With the Gram maps \eqref{eq:Ahat-blend-nd} and \eqref{eq:M-hat-nd}, both $\widehat{\mathbf{A}}$ and $\widehat{\mathbf{M}}$ are \emph{unit-trace and SPD} for any $\varepsilon>0$; no cone projections or conditional branches are required.
+Unless a sensitivity study dictates otherwise, we recommend using a unified smoothness $\varepsilon$ (and gate steepness $k$) across \eqref{eq:smooth-max-nd}, \eqref{eq:smooth-splits-nd}, \eqref{eq:Ahat-blend-nd}, and \eqref{eq:M-hat-nd} by setting $\varepsilon_B\!=\!\varepsilon_M\!=\!\varepsilon$ and $k_B\!=\!k_M\!=\!k$. With the Gram maps \eqref{eq:Ahat-blend-nd} and \eqref{eq:M-hat-nd}, both $\widehat{\mathbf{A}}$ and $\widehat{\mathbf{M}}$ are \emph{unit-trace and SPD} for any $\varepsilon>0$; the same $\mathcal{C}^\infty$ regularization supplies smooth clamps and lazy-zone weights in the density kinetics without explicit cone projections or case distinctions.
 
 \section*{Backward--Euler time discretization (nondimensional)}
 \label{sec:be-time}
@@ -303,10 +324,10 @@ Given $\psi(\mathbf{u}^{n},\rho^{n},\mathbf{A}^{n})$ from \eqref{eq:stim-psi-nd}
 with the Neumann condition from \eqref{eq:stim-bc-ic-nd} and $S^{0}=S_0$.
 
 \paragraph{Density.}
-Let $\mathbf{D}_\rho(\widehat{\mathbf{A}}^{\,n})$ be as in \eqref{eq:Drho-nd} and let $|S|_{\varepsilon}$ and $S^\pm_{\varepsilon}$ be as in \eqref{eq:smooth-splits-nd}. Find $\rho^{n}$ such that
+Let $\mathbf{D}_\rho(\widehat{\mathbf{A}}^{\,n})$ be as in \eqref{eq:Drho-nd} and let $|S|_{\varepsilon}$ be as in \eqref{eq:smooth-splits-nd}. Find $\rho^{n}$ such that
 \begin{equation}\label{eq:be-rho}
-\frac{1}{\Delta t^n}\big(\rho^{n}-\rho^{n-1}\big)\;-\;\nabla\!\cdot\!\big(\mathbf{D}_\rho(\widehat{\mathbf{A}}^{\,n})\,\nabla \rho^{n}\big)\;+\; |S^{n}|_{\varepsilon}\,\rho^{n}
-\;=\; S_{\varepsilon}^{n,+}\,\rho_{\max} \;+\; S_{\varepsilon}^{n,-}\,\rho_{\min}\quad\text{in }\Omega,
+\frac{1}{\Delta t^n}\big(\rho^{n}-\rho^{n-1}\big)\;-\;\nabla\!\cdot\!\big(\mathbf{D}_\rho(\widehat{\mathbf{A}}^{\,n})\,\nabla \rho^{n}\big)\;+\; \lambda_\rho\,f\!\big(|S^{n}|_{\varepsilon}\big)\,\rho^{n}
+\;=\; \lambda_\rho\,f\!\big(|S^{n}|_{\varepsilon}\big)\,\rho_{\mathrm{eq}}(S^{n})\quad\text{in }\Omega,
 \end{equation}
 with the no--flux condition from \eqref{eq:density-bc-ic-nd} and $\rho^{0}=\rho_0$.
 
@@ -353,11 +374,11 @@ Given $\psi(\mathbf{u}^{n},\rho^{n},\mathbf{A}^{n})$ from \eqref{eq:stim-psi-nd}
 \end{equation}
 
 \paragraph{Density (Backward--Euler weak form).}
-With $\mathbf{D}_\rho(\widehat{\mathbf{A}}^{\,n})$ from \eqref{eq:Drho-nd} and the split $|S^{n}|_{\varepsilon}$, $S^{n,\pm}_{\varepsilon}$ from \eqref{eq:smooth-splits-nd}, find $\rho_h^{n}\in Q_h$ such that for all $p_h\in Q_h$,
+With $\mathbf{D}_\rho(\widehat{\mathbf{A}}^{\,n})$ from \eqref{eq:Drho-nd} and the weight $|S^{n}|_{\varepsilon}$ from \eqref{eq:smooth-splits-nd}, find $\rho_h^{n}\in Q_h$ such that for all $p_h\in Q_h$,
 \begin{equation}\label{eq:fe-rho-unified}
 \left(\frac{1}{\Delta t^n}\rho_h^{n}, p_h\right) \;+\; \big(\mathbf{D}_\rho(\widehat{\mathbf{A}}^{\,n})\,\nabla \rho_h^{n}, \nabla p_h\big)
-\;+\; \big(|S^{n}|_{\varepsilon}\,\rho_h^{n}, p_h\big)
-\;=\; \left(\frac{1}{\Delta t^n}\rho_h^{n-1}, p_h\right) \;+\; \big(S^{n,+}_{\varepsilon}\rho_{\max} + S^{n,-}_{\varepsilon}\rho_{\min}, p_h\big).
+\;+\; \big(\lambda_\rho\,f\!\big(|S^{n}|_{\varepsilon}\big)\,\rho_h^{n}, p_h\big)
+\;=\; \left(\frac{1}{\Delta t^n}\rho_h^{n-1}, p_h\right) \;+\; \big(\lambda_\rho\,f\!\big(|S^{n}|_{\varepsilon}\big)\,\rho_{\mathrm{eq}}(S^{n}), p_h\big).
 \end{equation}
 
 \paragraph{Direction/fabric (Backward--Euler weak form).}
@@ -384,7 +405,7 @@ with the product inner product
 \alpha_u\,(\boldsymbol{\varepsilon}(\mathbf{u}),\boldsymbol{\varepsilon}(\mathbf{v})) \;+\;
 \alpha_S\,(S,q) \;+\; \alpha_\rho\,(\rho,p) \;+\; \alpha_A\,(\mathbf{A},\mathbf{Q}) ,
 \end{equation}
-for $\mathbf{y}=(\mathbf{v},q,p,\mathbf{Q})$ and positive weights $\alpha_\bullet$. In the implementation, the \emph{merit/stopping} metric is a projected 2--norm on the flattened state with RMS-per-DOF block weights (i.e., $w_i=1/N_i$) that projects out Dirichlet DOFs in mechanics; the flattened state order for norms and mixing is $(\mathbf{u},\rho,\mathbf{A},S)$.
+for $\mathbf{y}=(\mathbf{v},q,p,\mathbf{Q})$ and positive weights $\alpha_\bullet$. Conceptually the fixed-point map acts on all four fields, but in the implementation the \emph{accelerated state} is restricted to the remodeling variables $(\rho,\mathbf{A},S)$: mechanics is re-solved inside each Gauss--Seidel sweep and its DOFs are not mixed by Anderson. The merit/stopping metric is a projected 2--norm on the flattened state $(\rho,\mathbf{A},S)$ with RMS-per-DOF block weights (i.e., $w_i=1/N_i$) that projects out any constrained DOFs.
 
 \paragraph{Block map.}
 Define the block Gauss--Seidel map $\mathcal{G}:\mathcal{X}\to\mathcal{X}$ by
@@ -393,7 +414,7 @@ Define the block Gauss--Seidel map $\mathcal{G}:\mathcal{X}\to\mathcal{X}$ by
 :=
 \Big(\ \underbrace{\mathsf{U}(\rho,\mathbf{A})}_{\text{mech}},\ \underbrace{\mathsf{S}(\mathbf{u},\rho,\mathbf{A})}_{\text{stim}},\ \underbrace{\mathsf{R}(S,\mathbf{A})}_{\text{density}},\ \underbrace{\mathsf{A}(\mathbf{u})}_{\text{fabric}}\ \Big),
 \end{equation}
-where each component is the unique solution of the corresponding linear elliptic BE subproblem at time $t^n$: mechanics uses coefficients from $(\rho,\widehat{\mathbf{A}})$, stimulus is driven by $\psi(\mathbf{u},\rho,\mathbf{A})$, density uses $|S|_\varepsilon$ and $\widehat{\mathbf{A}}$ frozen at the argument, and fabric uses the target $\widehat{\mathbf{M}}(\mathbf{u})$.
+where each component is the unique solution of the corresponding linear elliptic BE subproblem at time $t^n$: mechanics uses coefficients from $(\rho,\widehat{\mathbf{A}})$, stimulus is driven by $\psi(\mathbf{u},\rho,\mathbf{A})$, density uses the soft mechanostat law $\rho_{\mathrm{eq}}(S)$ together with the transport tensor $\mathbf{D}_\rho(\widehat{\mathbf{A}})$ frozen at the argument, and fabric uses the target $\widehat{\mathbf{M}}(\mathbf{u})$. In code, $\mathsf{U}$ is realized by repeated mechanics solves inside a gait-averaged driver, while Anderson acceleration is applied only to the $(\rho,\mathbf{A},S)$ blocks.
 
 The fixed point at $t^n$ solves
 \begin{equation}\label{eq:fp-residual}
@@ -437,7 +458,7 @@ The accelerated candidate is then assembled as
 with a \emph{step limiter} enforcing $\|\mathbf{s}\|_2 \le \mathrm{factor}\,\|r^{(m+1)}\|_2$ (user parameter). The mixed iterate is $\mathbf{x}^{(m)}+\mathbf{s}$, after which mechanics Dirichlet DOFs are overwritten by the fresh GS values.
 
 \paragraph{Projected-residual merit, safeguard, and backtracking.}
-The acceptance test uses a \emph{projected, RMS-per-DOF block-weighted} 2--norm on the flattened state: let $\mathsf{P}_u$ zero mechanics Dirichlet DOFs and choose weights $w_i=1/N_i$ for each block. Denote by $\|\cdot\|_{\mathrm{proj}}$ the resulting norm. With
+The acceptance test uses a \emph{projected, RMS-per-DOF block-weighted} 2--norm on the flattened state $(\rho,\mathbf{A},S)$: let $\mathsf{P}$ project out any constrained DOFs and choose weights $w_i=1/N_i$ for each block. Denote by $\|\cdot\|_{\mathrm{proj}}$ the resulting norm. With
 \(
 r_{\mathrm{Pic}}^{(m+1)} := \|x_{\mathrm{raw}}^{(m+1)}-\mathbf{x}^{(m)}\|_{\mathrm{proj}}
 \)
@@ -455,14 +476,10 @@ Otherwise we backtrack along $\mathbf{s}$ by halving ($\le$ a user cap) until \e
 The accelerator maintains the best Picard merit seen so far and schedules a history reset (on the \emph{next} call) if any of the following triggers fire: (i) a streak of $\ge k$ consecutive AA rejections; (ii) Picard merit stalls, i.e., $r_{\mathrm{Pic}}^{(m+1)}$ exceeds the best so far by a user factor; (iii) the estimated condition number of $H+\lambda_{\mathrm{eff}}I$ exceeds a threshold. In case of linear-algebra failure in \eqref{eq:kkt}, uniform weights are used as a safe fallback. No preconditioner-driven resets are used; preconditioner maintenance (if any) is decoupled from Anderson.
 
 \paragraph{Stopping and logging.}
-Let $x_{\mathrm{next}}$ be the accepted iterate (AA, backtracked-AA, or Picard fallback). Define the projected-residual merit of the chosen step by
-\(
-r_{\mathrm{acc}}^{(m+1)} := \|x_{\mathrm{next}}-x_{\mathrm{raw}}^{(m+1)}\|_{\mathrm{proj}}
-\)
-(when $x_{\mathrm{next}}\equiv x_{\mathrm{raw}}^{(m+1)}$ this equals $r_{\mathrm{Pic}}^{(m+1)}$). The loop stops once $r_{\mathrm{acc}}^{(m+1)}<\mathrm{tol}$ and at least a user-specified minimum number of subiterations has been taken. A separate \emph{blockwise relative iterate change} is recorded for diagnostics but is not used for stopping.
+In the implementation we monitor the projected Picard residual $r_{\mathrm{Pic}}^{(m+1)}$ itself and stop once $r_{\mathrm{Pic}}^{(m+1)}<\mathrm{tol}$ and at least a user-specified minimum number of subiterations has been taken. The safeguard/backtracking \eqref{eq:safeguard} and step limiting ensure that any accepted Anderson step has a residual no worse than the contemporaneous Picard update in this metric. A separate \emph{blockwise relative iterate change} and Anderson diagnostics (history depth, conditioning, restarts) are recorded for analysis but are not used for stopping.
 
 \paragraph{Well-posedness of subsolves.}
-At each evaluation of $\mathcal{G}$ the four subproblems are uniformly elliptic (for fixed arguments) and admit unique solutions in the chosen finite-dimensional spaces: (i) mechanics has a coercive bilinear form by the density floor and $\nu\in(-1,\tfrac12)$, (ii) stimulus is SPD by $(c_S/\Delta t^n+\tau_S)$ with $\kappa_S\ge0$, (iii) density is SPD by $(1/\Delta t^n)+|S|_\varepsilon\ge 1/\Delta t^n$ together with the elliptic floor in $\mathbf{D}_\rho$, and (iv) fabric is SPD by $(c_A/\Delta t^n)+\tau_A>0$ and $c_A\ell^2>0$. Thus each application of $\mathcal{G}$ is well-defined.
+At each evaluation of $\mathcal{G}$ the four subproblems are uniformly elliptic (for fixed arguments) and admit unique solutions in the chosen finite-dimensional spaces: (i) mechanics has a coercive bilinear form by the density floor and $\nu\in(-1,\tfrac12)$, (ii) stimulus is SPD by $(c_S/\Delta t^n+\tau_S)$ with $\kappa_S\ge0$, (iii) density is SPD by $(1/\Delta t^n)+\lambda_\rho f(|S|_\varepsilon)\ge 1/\Delta t^n$ together with the elliptic floor in $\mathbf{D}_\rho$, and (iv) fabric is SPD by $(c_A/\Delta t^n)+\tau_A>0$ and $c_A\ell^2>0$. Thus each application of $\mathcal{G}$ is well-defined.
 
 \paragraph{Convergence discussion.}
 On bounded sets where the smooth gates/clamps are Lipschitz, $\mathcal{G}$ is locally Lipschitz. If the induced modulus $L<1$, the undamped Gauss--Seidel iteration is linearly convergent. The safeguard \eqref{eq:safeguard} enforces a strict improvement over the contemporaneous Picard residual (by factor $1-\gamma$); combined with step limiting and automatic restarts, this yields robust global behavior of the AA-wrapped method even when the least-squares system \eqref{eq:kkt} is poorly conditioned.
@@ -486,35 +503,31 @@ On bounded sets where the smooth gates/clamps are Lipschitz, $\mathcal{G}$ is lo
 We adopt a trabecular control volume of edge length \(L=5\,\mathrm{mm}\), a widely used compromise between statistical representativeness and computational tractability for \(\mu\)FE-based homogenization of human trabecular bone. Cubic samples around \(5\,\mathrm{mm}\) have long been used to extract apparent stiffness by the six canonical load cases (three normal, three shear); periodic (PMUBC) boundary conditions provide unbiased estimates, while kinematic (KUBC) bounds are useful for verification. \cite*{Hollister1994,vanRietbergen1995,Pahr2008}
 
 \paragraph{Elastic law and Poisson ratio.}
-At the tissue scale, measurements place the Young's modulus in the high one- to low two-digit GPa range. At the apparent scale, modulus increases with bone volume fraction and fabric; both classical tests and \(\mu\)FE-based regressions support power-law forms. We therefore use
-\(
-E(\rho)=E_{\mathrm{tiss}}\big(\rho/\rho_{\mathrm{tiss}}\big)^{n}
-\)
-with \(E_{\mathrm{tiss}}=18\,\mathrm{GPa}\) and \(n\in[1.7,2.2]\) as a defensible range; \(\nu=0.30\pm0.05\) is standard in hFE practice. \cite*{Helgason2008,Rho1993,CarterHayes1977}
+At the tissue scale, measurements place the Young's modulus in the high one- to low two-digit GPa range. At the apparent scale, modulus increases with bone volume fraction and fabric; both classical tests and \(\mu\)FE-based regressions support power-law forms. In the present implementation we use the density-dependent law \eqref{eq:E-rho-nd} with \(E_{0}\approx 15\,\mathrm{GPa}\), trabecular exponent \(n_{\mathrm{trab}}\approx 2.0\), and cortical exponent \(n_{\mathrm{cort}}\approx 1.2\); \(\nu=0.30\pm0.05\) is standard in hFE practice. \cite*{Helgason2008,Rho1993,CarterHayes1977}
 
 \paragraph{Trabecular fabric and anisotropy control.}
 Directionality is characterized by a unit-trace orientation/fabric tensor \(\widehat{\mathbf A}\). We introduce a scalar gain \(\xi_{\mathrm{aniso}}\) that multiplies a rank-one stiffness contribution aligned with \(\widehat{\mathbf A}\), thereby tuning the ratio \(E_{\max}/E_{\min}\). Mid-density human trabecular bone typically exhibits moderate elastic anisotropy \(E_{\max}/E_{\min}\approx 1.7\text{--}2.0\); we target this range during calibration. \cite*{Hollister1994,vanRietbergen1995}
 
 \paragraph{Reference SED for mechanoregulation.}
-We anchor remodeling to a physiologic reference centered on strain amplitudes of order \(10^{-3}\) (mechanostat). Using \(\psi=\tfrac12 E\,\varepsilon^2\), these strains correspond to reference strain--energy densities in the \(10\text{--}20\,\mathrm{kJ\,m^{-3}}\) range for trabecular tissue stiffness; we set \(\psi_{\mathrm{ref}}=15\,\mathrm{kJ\,m^{-3}}\). \cite*{Robling2006}
+We anchor remodeling to a physiologic reference centered on strain amplitudes of order \(10^{-3}\) (mechanostat). Using \(\psi=\tfrac12 E\,\varepsilon^2\), these strains correspond to reference strain--energy densities in the \(10^{-4}\text{--}10^{-2}\,\mathrm{MPa}\) range for trabecular tissue stiffness. In code we take \(\psi_{\mathrm{ref}}=3\cdot 10^{-4}\,\mathrm{MPa}\) (parameter \texttt{psi\_ref}), which lies within this range once expressed in the adopted MPa units. \cite*{Robling2006}
 
 \paragraph{Stimulus transport and kinetics: roles of \(\boldsymbol{\kappa_S}\), \(\boldsymbol{\tau_S}\), and \(\boldsymbol{c_S}\).}
 Osteocyte mechanotransduction combines rapid fluid-shear sensing and strain amplification at cell processes with solute transport through the lacunar--canalicular system (LCS). This motivates a diffusive--relaxing field \(S\) driven by local mechanical energy:
 \((c_S/\Delta t+\tau_S)S-\kappa_S\nabla^2 S=(c_S/\Delta t)S^{\mathrm{old}}+r_S(\psi-\psi_{\mathrm{ref}})\).
-Here, \(\kappa_S\) (\(\mathrm{m^2\,s^{-1}}\)) controls spatial spread, \(\tau_S\) (\(\mathrm{s^{-1}}\)) sets the intrinsic relaxation rate (\(t_c=1/\tau_S\)), and \(c_S\) (dimensionless) is a \emph{capacity} that lumps fast receptor/second-messenger kinetics, effectively low-pass filtering the stimulus at time step \(\Delta t\). We recommend \(c_S\in[10,40]\) (nominal \(20\)) to provide robust smoothing without overdamping; choose \(t_c\sim\) hours to separate fast stimulus equilibration from slow morphological updates. In the present implementation \(\kappa_S\) is \emph{isotropic}. \cite*{Wang2005PNAS,Price2011JBMR,Weinbaum1994,Robling2006}
+Here, \(\kappa_S\) (\(\mathrm{mm^2\,day^{-1}}\)) controls spatial spread, \(\tau_S\) (\(\mathrm{day^{-1}}\)) sets the intrinsic relaxation rate, and \(c_S\) (dimensionless) is a \emph{capacity} that lumps fast receptor/second-messenger kinetics, effectively low-pass filtering the stimulus at time step \(\Delta t\). In the reference implementation we use \(c_S=1.0\), \(\tau_S=0.05\,\mathrm{day^{-1}}\) (20-day time constant), \(\kappa_S=1.0\,\mathrm{mm^2\,day^{-1}}\), and a mechano-transduction gain \(r_S=5.0\,\mathrm{(MPa\cdot day)^{-1}}\); these values yield stimulus magnitudes \(S=\mathcal{O}(1)\) under typical loading. In all runs \(\kappa_S\) is taken isotropic. \cite*{Wang2005PNAS,Price2011JBMR,Weinbaum1994,Robling2006}
 
 \paragraph{From apparent modulus to load prescription.}
 For uniaxial tests we prescribe the traction magnitude \(t_p = E_{\mathrm{app}}\,\varepsilon_{\mathrm{app}}\). In convergence studies we therefore: (i) compute \(E_{\mathrm{app}}\) by homogenization on the \(5\,\mathrm{mm}\) cube under PMUBC; (ii) select \(\varepsilon_{\mathrm{app}}=10^{-3}\) (and optionally \(1.5\times 10^{-3}\)); and (iii) set \(t_p\) accordingly, keeping boundary conditions identical across mesh refinements. \cite*{Hollister1994,vanRietbergen1995,Pahr2008}
 
 \paragraph{Calibration protocol (single pass).}
-(i) Fix \(L=5\,\mathrm{mm}\) and the sample's apparent density; (ii) set \(E_{\mathrm{tiss}}=18\,\mathrm{GPa}\), \(\nu=0.30\), and \(n=2.0\), then run the six canonical homogenization cases to obtain \(\mathbb{C}_{\mathrm{app}}\) and principal \(E_i\); (iii) tune \(\xi_{\mathrm{aniso}}\) to match \(E_{\max}/E_{\min}\) in the fabric axes; (iv) set \(\psi_{\mathrm{ref}}=15\,\mathrm{kJ\,m^{-3}}\); (v) choose \(t_c=1\,\mathrm{h}\), \(c_S=20\) (test \(10\text{--}40\)), and \(\kappa_S\) within LCS-consistent orders of magnitude. \cite*{Helgason2008,Pahr2008,Wang2005PNAS,Robling2006}
+(i) Fix \(L=5\,\mathrm{mm}\) and the sample's apparent density; (ii) set \(E_{0}\approx 15\,\mathrm{GPa}\), \(\nu=0.30\), and exponents \((n_{\mathrm{trab}},n_{\mathrm{cort}})\) as in \eqref{eq:E-rho-nd}, then run the six canonical homogenization cases to obtain \(\mathbb{C}_{\mathrm{app}}\) and principal \(E_i\); (iii) tune \(\xi_{\mathrm{aniso}}\) to match \(E_{\max}/E_{\min}\) in the fabric axes; (iv) set \(\psi_{\mathrm{ref}}=3\cdot 10^{-4}\,\mathrm{MPa}\); (v) choose \((c_S,\tau_S,\kappa_S,r_S)\) within physiologically plausible ranges around the reference values above. \cite*{Helgason2008,Pahr2008,Wang2005PNAS,Robling2006}
 
 \paragraph{Baseline parameter set for spatial convergence (fixed across meshes).}
 \emph{Geometry:} \(L=5\,\mathrm{mm}\). \
-\emph{Elasticity:} \(E_{\mathrm{tiss}}=18\,\mathrm{GPa}\), \(n=2.0\), \(\nu=0.30\). \
+\emph{Elasticity:} \(E_{0}=15\,\mathrm{GPa}\), \(n_{\mathrm{trab}}=2.0\), \(n_{\mathrm{cort}}=1.2\), \(\nu=0.30\). \
 \emph{Anisotropy:} \(\xi_{\mathrm{aniso}}=0.20\) (to be refined to match \(E_{\max}/E_{\min}\)). \
-\emph{Mechanoregulation:} \(\psi_{\mathrm{ref}}=15\,\mathrm{kJ\,m^{-3}}\). \
-\emph{Stimulus transport/kinetics:} \(t_c=1/\tau_S=1\,\mathrm{h}\), \(c_S=20\) (sensitivity \(10\text{--}40\)); \(\kappa_S\) isotropic and chosen within FRAP-based orders. \
+\emph{Mechanoregulation:} \(\psi_{\mathrm{ref}}=3\cdot 10^{-4}\,\mathrm{MPa}\). \
+\emph{Stimulus transport/kinetics:} \(c_S=1.0\), \(\tau_S=0.05\,\mathrm{day^{-1}}\), \(\kappa_S=1.0\,\mathrm{mm^2\,day^{-1}}\); sensitivity studies vary these within plausible lacunar--canalicular transport ranges. \
 \emph{Loading:} \(t_p=E_{\mathrm{app}}\times 10^{-3}\) (and \(1.5\times 10^{-3}\) for the higher level), using identical PMUBC across refinements.
 \input{sections/homogenization}
 

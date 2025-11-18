@@ -50,7 +50,7 @@ class Config:
     rho_min: float = 0.2          # minimum relative density [-]
     rho_max: float = 1.00         # maximum relative density [-]
     rho0: float = 0.5             # initial relative density [-]
-    lambda_rho: float = 0.1       # [1/day] baseline remodeling rate in soft mechanostat
+    lambda_rho: float = 0.01      # [1/day] remodeling time scale ~100 days → near homeostasis by ~500 days      # [1/day] slower baseline remodeling for stability       # [1/day] baseline remodeling rate in soft mechanostat
 
     # Soft mechanostat: ρ_eq(S) and lazy zone
     k_mech: float = 2.0           # steepness of logistic ρ_eq(S) in S-space [-]
@@ -66,7 +66,7 @@ class Config:
     cS: float = 1.0               # signaling capacity [-]
     tauS: float = 0.05            # decay rate [1/day] → 20-day time constant
     kappaS: float = 1.0           # diffusion [mm²/day]
-    rS_gain: float = 20.0         # mechano-transduction gain [1/(MPa·day)]
+    rS_gain: float = 5.0          # mechano-transduction gain [1/(MPa·day)] tuned for |S| ~ O(1)         # mechano-transduction gain [1/(MPa·day)]
 
     # --- Orientation A: fabric tensor evolution ---
     cA: float = 1.0               # orientation capacity [-]
@@ -122,8 +122,6 @@ class Config:
     load_scale: float = 1.0                  # dimensionless load multiplier
     gait_samples: int = 9                    # quadrature points across gait cycle
     body_mass_kg: float = 75.0
-    sim_dt_days: float = 10.0
-    sim_total_days: float = 1000.0
 
     # --- FE / I-O ---
     domain: Optional[mesh.Mesh] = field(default=None, repr=False)
