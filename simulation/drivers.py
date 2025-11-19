@@ -122,15 +122,31 @@ class GaitEnergyDriver:
             traction.x.array[:] = data
             traction.x.scatter_forward()
 
+    
     def _build_expressions(self) -> tuple[ufl.core.expr.Expr, ufl.core.expr.Expr]:
-        """Build gait-aggregated expressions for ψ [MPa] and structure tensor M.
+        """Build gait-aggregated expressions for daily equivalent energy ψ_eq [MPa]
+        and structure tensor M.
 
-        ψ is an L^p-type average of strain energy density over the gait cycle:
-            ψ_gait = psi_ref * ( Σ w (ψ/psi_ref)^n / Σ w )^(1/n)
-        so that ψ_gait has units [MPa] and is consistent with StimulusSolver.
+        ψ_eq is a Carter/Beaupré-style daily-dose driver built from the
+        dimensionless power of normalised energy over the gait cycle and the
+        explicit number of loading cycles per day:
+
+            J_cycle(x) = Σ w (ψ(x)/psi_ref)^n / Σ w          (dimensionless)
+            J_day(x)   = N_cyc_per_day · J_cycle(x)          (dimensionless)
+            ψ_eq(x)    = psi_ref · J_day(x)                  [MPa]
+
+        where N_cyc_per_day = cfg.gait_cycles_per_day is taken from the Config.
+
+        This keeps StimulusSolver working with an energy-like quantity in [MPa],
+        while (i) explicitly accounting for the daily number of loading cycles,
+        and (ii) emphasising high-energy phases via the exponent n_power.
         """
         if self.exponent <= 0.0:
             raise ValueError(f"n_power must be positive, got {self.exponent}")
+
+        N_cyc = float(self.cfg.gait_cycles_per_day)
+        if N_cyc <= 0.0:
+            raise ValueError(f"gait_cycles_per_day must be positive, got {N_cyc}")
 
         psi_p_terms = []
         structure_terms = []
@@ -149,9 +165,14 @@ class GaitEnergyDriver:
         if total_weight <= 0.0:
             raise ValueError("Gait quadrature weights must sum to a positive value.")
 
-        # Average the p-th power and map back to MPa via L^p norm
-        psi_p_avg = sum(psi_p_terms) / total_weight        # dimensionless
-        psi_expr = self.psi_ref * psi_p_avg ** (1.0 / self.exponent)  # [MPa]
+        # Cycle-averaged dimensionless dose J_cycle(x) = ⟨(ψ/psi_ref)^n⟩_cycle
+        J_cycle = sum(psi_p_terms) / total_weight
+
+        # Daily dose including explicit number of gait cycles per day
+        J_day = N_cyc * J_cycle
+
+        # Map daily dose back to an energy-like quantity in MPa for the stimulus solver
+        psi_expr = self.psi_ref * J_day                # [MPa]
 
         # Use weighted average for structure tensor as well (dimensionless)
         M_expr = sum(structure_terms) / total_weight

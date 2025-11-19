@@ -578,10 +578,18 @@ class DirectionSolver(_BaseLinearSolver):
         dt = self.cfg.dt
         if dt <= 0:
             raise ValueError(f"dt must be positive, got {dt}")
+        tauA = self.cfg.tauA
+        if tauA <= 0:
+            raise ValueError(f"tauA must be positive, got {tauA}")
         ell2 = self.cfg.ell ** 2
+        # Variant 1: tauA is a relaxation time [day].
+        # PDE: cA * dA/dt = (cA * ell^2 / tauA) * Laplacian(A) + (cA / tauA) * (B_hat - A)
+        # Implicit Euler in time gives:
+        # (cA/dt + cA/tauA) * A^{n+1} - cA * (ell^2/tauA) * Laplacian(A^{n+1})
+        #   = (cA/dt) * A^n + (cA/tauA) * B_hat
         return (
-            (self.cfg.cA / dt + self.cfg.tauA) * ufl.inner(self.trial, self.test) * self.dx
-            + self.cfg.cA * ell2 * ufl.inner(ufl.grad(self.trial), ufl.grad(self.test)) * self.dx
+            (self.cfg.cA / dt + self.cfg.cA / tauA) * ufl.inner(self.trial, self.test) * self.dx
+            + self.cfg.cA * (ell2 / tauA) * ufl.inner(ufl.grad(self.trial), ufl.grad(self.test)) * self.dx
         )
 
     def setup(self):
@@ -594,7 +602,12 @@ class DirectionSolver(_BaseLinearSolver):
     def assemble_rhs(self, B_sum_expr):
         B_hat = unittrace_psd(B_sum_expr, self.gdim, eps=self.smooth_eps)
         dt = self.cfg.dt
-        rhs_ten = (self.cfg.cA / dt) * self.A_old + self.cfg.tauA * B_hat
+        if dt <= 0:
+            raise ValueError(f"dt must be positive, got {dt}")
+        tauA = self.cfg.tauA
+        if tauA <= 0:
+            raise ValueError(f"tauA must be positive, got {tauA}")
+        rhs_ten = (self.cfg.cA / dt) * self.A_old + (self.cfg.cA / tauA) * B_hat
         self._rhs_form = fem.form(ufl.inner(rhs_ten, self.test) * self.dx)
 
         with self.b.localForm() as b_local:

@@ -29,6 +29,8 @@ class Config:
     - Time is in days for remodeling simulations.
     - Variant A (chosen): Stimulus S is dimensionless; parameters have units
       cS [-], τS [1/day], κS [mm²/day], rS_gain [1/(MPa·day)], ψ, ψ_ref [MPa].
+    - Orientation A uses cA [-], tauA [day], ell [mm]; effective diffusivity
+      D_A = ell² / tauA [mm²/day].
     """
 
     # --- Material properties ---
@@ -47,31 +49,37 @@ class Config:
     xi_aniso: float = 0.3         # anisotropic reinforcement factor [-]
 
     # --- Density bounds and remodeling kinetics ---
-    rho_min: float = 0.2          # minimum relative density [-]
+    rho_min: float = 0.1          # minimum relative density [-]
     rho_max: float = 1.00         # maximum relative density [-]
     rho0: float = 0.5             # initial relative density [-]
-    lambda_rho: float = 0.01      # [1/day] remodeling time scale ~100 days → near homeostasis by ~500 days      # [1/day] slower baseline remodeling for stability       # [1/day] baseline remodeling rate in soft mechanostat
+    lambda_rho: float = 0.02      # baseline remodeling rate [1/day] in soft mechanostat (time constant ~100 days when |S| ≈ 1)
 
     # Soft mechanostat: ρ_eq(S) and lazy zone
-    k_mech: float = 2.0           # steepness of logistic ρ_eq(S) in S-space [-]
+    k_mech: float = 5.0           # steepness of logistic ρ_eq(S) in S-space [-]
     S_shift: float = 0.0          # shift of mechanostat setpoint in S [-]
     S_lazy: float = 0.2           # |S|-scale for lazy zone (small |S| → slow remodeling) [-]
 
     # --- Density: anisotropic diffusion ---
-    beta_par: float = 1.5          # parallel diffusion [mm²/day]
-    beta_perp: float = 0.5         # perpendicular diffusion [mm²/day]
+    beta_par: float = 1.5          # parallel density diffusion [mm²/day] (O(0.1–10) mm²/day typical)
+    beta_perp: float = 0.5         # perpendicular density diffusion [mm²/day] (usually ≤ beta_par)
 
     # --- Stimulus S: reaction-diffusion ---
-    psi_ref: float = 300e-6       # reference energy density [MPa]
+    psi_ref: float = 0.5      # reference energy density [MPa]
     cS: float = 1.0               # signaling capacity [-]
-    tauS: float = 0.05            # decay rate [1/day] → 20-day time constant
-    kappaS: float = 1.0           # diffusion [mm²/day]
-    rS_gain: float = 5.0          # mechano-transduction gain [1/(MPa·day)] tuned for |S| ~ O(1)         # mechano-transduction gain [1/(MPa·day)]
+    tauS: float = 0.1            # decay rate [1/day] → 20-day time constant
+    kappaS: float = 2.5           # diffusion [mm²/day]
+    rS_gain: float = 5.0          # mechano-transduction gain [1/(MPa·day)] for |S| ~ O(1)
 
     # --- Orientation A: fabric tensor evolution ---
     cA: float = 1.0               # orientation capacity [-]
-    tauA: float = 2.0             # orientation relaxation time [day]
-    ell: float = 4.0              # orientation diffusion length [mm]
+    tauA: float = 100.0             # orientation relaxation time [day] (order 1–30 days; smaller = faster reorientation)
+    ell: float = 2.0              # orientation diffusion length [mm] (on order of trabecular spacing / microstructural length)
+
+    # Gait / remodeling runtime defaults
+    gait_cycles_per_day: float = 7000.0      # average steps/day (2 contacts/cycle)
+    load_scale: float = 1.0                  # dimensionless load multiplier
+    gait_samples: int = 9                    # quadrature points across gait cycle
+    body_mass_kg: float = 75.0
 
     # --- Numerics / I-O ---
     quadrature_degree: int = 6
@@ -116,12 +124,6 @@ class Config:
 
     # Smoothness controls
     smooth_eps: float = 5e-7                 # C∞ regularization for abs, max, PSD
-
-    # Gait / remodeling runtime defaults
-    gait_cycles_per_day: float = 7000.0      # average steps/day (2 contacts/cycle)
-    load_scale: float = 1.0                  # dimensionless load multiplier
-    gait_samples: int = 9                    # quadrature points across gait cycle
-    body_mass_kg: float = 75.0
 
     # --- FE / I-O ---
     domain: Optional[mesh.Mesh] = field(default=None, repr=False)
