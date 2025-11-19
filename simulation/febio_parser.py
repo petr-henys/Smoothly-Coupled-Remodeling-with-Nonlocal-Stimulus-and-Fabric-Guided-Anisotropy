@@ -25,18 +25,75 @@ class FEBio2Dolfinx:
         self.logger = get_logger(MPI.COMM_WORLD, verbose=True, name="FEBio2Dolfinx")
         self.feb_file = Path(feb_file)
         self.scale = scale
-        self.logger.info(f"Parsing FEBio file: {self.feb_file} (scale={scale})")
         
-        tree = ET.parse(self.feb_file)
-        self.mesh_xml = tree.getroot().find("Mesh")
-        
-        self._extract_nodes_and_elements()
-        self._extract_surfaces()
+        comm = MPI.COMM_WORLD
+        rank = comm.Get_rank()
+
+        if rank == 0:
+            self.logger.info(f"Parsing FEBio file: {self.feb_file} (scale={scale})")
+            tree = ET.parse(self.feb_file)
+            self.mesh_xml = tree.getroot().find("Mesh")
+            self._extract_nodes_and_elements()
+            self._extract_surfaces()
+            # Clean up XML tree
+            del self.mesh_xml
+            del tree
+        else:
+            self.nodes = None
+            self.elements = None
+            self.surfaces = None
+
+        self._broadcast_mesh_data()
         
         self.mesh_dolfinx = self._create_dolfinx_mesh()
         self.meshtags = self._match_surface_tags()
         
-        self.logger.info(f"FEBio import complete: {len(self.surface_tags)} surfaces")
+        if rank == 0:
+            self.logger.info(f"FEBio import complete: {len(self.surface_tags)} surfaces")
+
+    def _broadcast_mesh_data(self):
+        """Broadcast nodes and surfaces from rank 0 to all ranks. Elements remain on rank 0."""
+        comm = MPI.COMM_WORLD
+        rank = comm.Get_rank()
+
+        # Broadcast nodes (needed for surface matching on all ranks)
+        if rank == 0:
+            n_nodes = self.nodes.shape[0]
+        else:
+            n_nodes = None
+        
+        n_nodes = comm.bcast(n_nodes, root=0)
+
+        if rank != 0:
+            self.nodes = np.empty((n_nodes, 3), dtype=np.float64)
+            # Elements are only needed on rank 0 for create_mesh distribution
+            self.elements = np.empty((0, 4), dtype=np.int64)
+
+        # Broadcast nodes array
+        comm.Bcast(self.nodes, root=0)
+
+        # Broadcast surfaces dict
+        self.surfaces = comm.bcast(self.surfaces, root=0)
+
+    def _create_dolfinx_mesh(self) -> mesh.Mesh:
+        """Build DOLFINx mesh from tet4 connectivity and node coordinates."""
+        element = basix_element("Lagrange", "tetrahedron", 1, shape=(3,))
+        
+        comm = MPI.COMM_WORLD
+        rank = comm.Get_rank()
+        
+        # Only pass cells and nodes on rank 0 to let dolfinx distribute the mesh
+        if rank == 0:
+            cells = self.elements
+            x = self.nodes
+        else:
+            cells = self.elements  # Empty on rank > 0
+            x = np.empty((0, 3), dtype=np.float64)
+            
+        partitioner = mesh.create_cell_partitioner(mesh.GhostMode.shared_facet)
+        domain = mesh.create_mesh(comm, cells, element, x, partitioner=partitioner)
+        self.logger.debug(f"Created DOLFINx mesh: {domain.topology.index_map(3).size_global} cells")
+        return domain
 
     def _extract_nodes_and_elements(self) -> None:
         """Extract nodes and tet4 elements from XML (1-indexed → 0-indexed)."""
@@ -91,12 +148,7 @@ class FEBio2Dolfinx:
         
         self.logger.debug(f"Extracted {len(self.surfaces)} surfaces: {list(self.surfaces.keys())}")
 
-    def _create_dolfinx_mesh(self) -> mesh.Mesh:
-        """Build DOLFINx mesh from tet4 connectivity and node coordinates."""
-        element = basix_element("Lagrange", "tetrahedron", 1, shape=(3,))
-        domain = mesh.create_mesh(MPI.COMM_WORLD, self.elements, element, self.nodes)
-        self.logger.debug(f"Created DOLFINx mesh: {domain.topology.index_map(3).size_global} cells")
-        return domain
+
 
     def _match_surface_tags(self) -> mesh.MeshTags:
         """Match FEBio surface triangles to DOLFINx boundary facets via midpoint KDTree."""
@@ -155,6 +207,12 @@ class FEBio2Dolfinx:
     def save_mesh_vtk(self, output_path: str | Path) -> None:
         """Save tagged boundary facets as VTK PolyData."""
         output_path = Path(output_path)
+        
+        # Handle parallel output to avoid file corruption
+        comm = self.mesh_dolfinx.comm
+        if comm.Get_size() > 1:
+            output_path = output_path.with_name(f"{output_path.stem}_{comm.Get_rank()}{output_path.suffix}")
+            
         output_path.parent.mkdir(parents=True, exist_ok=True)
         
         fdim = 2

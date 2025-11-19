@@ -68,7 +68,7 @@ class Config:
     cS: float = 1.0             # signaling capacity [-]
     tauS: float = 1.0           # decay rate [1/day]
     kappaS: float = 2.5         # diffusion [mm²/day]
-    rS_gain: float = 0.01       # mechano-transduction gain [1/(MPa·day)]
+    rS_gain: float = 0.1       # mechano-transduction gain [1/(MPa·day)]
 
     # --- Orientation A: fabric tensor evolution ---
     cA: float = 1.0               # orientation capacity [-]

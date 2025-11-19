@@ -92,5 +92,7 @@ class L2Projector:
         return self._x
 
     def __del__(self):
-        self._A.destroy()
-        self._ksp.destroy()
+        if hasattr(self, "_A"):
+            self._A.destroy()
+        if hasattr(self, "_ksp"):
+            self._ksp.destroy()
