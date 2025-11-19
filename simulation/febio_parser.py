@@ -4,7 +4,6 @@ from pathlib import Path
 
 import numpy as np
 import pyvista as pv
-from basix.ufl import element as basix_element
 from dolfinx import mesh
 from mpi4py import MPI
 from scipy.spatial import KDTree
@@ -28,6 +27,15 @@ class FEBio2Dolfinx:
         
         comm = MPI.COMM_WORLD
         rank = comm.Get_rank()
+
+        # Check file existence on rank 0 and broadcast status to avoid deadlock
+        file_exists = None
+        if rank == 0:
+            file_exists = self.feb_file.exists()
+        file_exists = comm.bcast(file_exists, root=0)
+        
+        if not file_exists:
+            raise FileNotFoundError(f"FEBio file not found: {self.feb_file}")
 
         if rank == 0:
             self.logger.info(f"Parsing FEBio file: {self.feb_file} (scale={scale})")
@@ -56,29 +64,22 @@ class FEBio2Dolfinx:
         comm = MPI.COMM_WORLD
         rank = comm.Get_rank()
 
-        # Broadcast nodes (needed for surface matching on all ranks)
-        if rank == 0:
-            n_nodes = self.nodes.shape[0]
-        else:
-            n_nodes = None
-        
+        # Broadcast nodes (needed for surface matching)
+        n_nodes = self.nodes.shape[0] if rank == 0 else None
         n_nodes = comm.bcast(n_nodes, root=0)
 
         if rank != 0:
             self.nodes = np.empty((n_nodes, 3), dtype=np.float64)
-            # Elements are only needed on rank 0 for create_mesh distribution
             self.elements = np.empty((0, 4), dtype=np.int64)
 
-        # Broadcast nodes array
         comm.Bcast(self.nodes, root=0)
-
-        # Broadcast surfaces dict
         self.surfaces = comm.bcast(self.surfaces, root=0)
 
     def _create_dolfinx_mesh(self) -> mesh.Mesh:
         """Build DOLFINx mesh from tet4 connectivity and node coordinates."""
-        element = basix_element("Lagrange", "tetrahedron", 1, shape=(3,))
+        from basix.ufl import element as basix_element
         
+        element = basix_element("Lagrange", "tetrahedron", 1, shape=(3,))
         comm = MPI.COMM_WORLD
         rank = comm.Get_rank()
         
@@ -92,7 +93,6 @@ class FEBio2Dolfinx:
             
         partitioner = mesh.create_cell_partitioner(mesh.GhostMode.shared_facet)
         domain = mesh.create_mesh(comm, cells, element, x, partitioner=partitioner)
-        self.logger.debug(f"Created DOLFINx mesh: {domain.topology.index_map(3).size_global} cells")
         return domain
 
     def _extract_nodes_and_elements(self) -> None:
@@ -101,7 +101,7 @@ class FEBio2Dolfinx:
         if not node_elems:
             raise ValueError("No nodes found in FEBio mesh")
         
-        # Build node array (1-indexed in FEBio)
+        # Build node array
         max_id = max(int(n.get("id")) for n in node_elems)
         self.nodes = np.empty((max_id, 3), dtype=np.float64)
         for n in node_elems:
@@ -109,10 +109,8 @@ class FEBio2Dolfinx:
             coords = [float(x) for x in n.text.split(",")]
             self.nodes[idx] = coords
         
-        # Apply scale factor to coordinates (preserves origin)
-        if self.scale != 1.0:
-            self.nodes *= self.scale
-            self.logger.debug(f"Applied scale factor {self.scale} to node coordinates")
+        # Apply scale factor
+        self.nodes *= self.scale
         
         # Extract tet4 elements
         tet_elements = []
@@ -121,11 +119,10 @@ class FEBio2Dolfinx:
             if etype != "tet4":
                 raise ValueError(f"Only tet4 elements supported, found: {etype}")
             for elem in grp.findall("elem"):
-                node_ids = [int(x) - 1 for x in elem.text.split(",")]  # Convert to 0-based
+                node_ids = [int(x) - 1 for x in elem.text.split(",")]
                 tet_elements.append(node_ids)
         
         self.elements = np.array(tet_elements, dtype=np.int64)
-        self.logger.debug(f"Extracted {len(self.nodes)} nodes, {len(self.elements)} tet4 elements")
     
     def _extract_surfaces(self) -> None:
         """Extract surface triangle facets from XML."""
@@ -141,12 +138,10 @@ class FEBio2Dolfinx:
             
             triangles = []
             for tri in tri_elems:
-                node_ids = [int(x) - 1 for x in tri.text.split(",")]  # 0-based
-                triangles.append(node_ids[:3])  # Only first 3 nodes for tri3
+                node_ids = [int(x) - 1 for x in tri.text.split(",")]
+                triangles.append(node_ids[:3])
             
             self.surfaces[name] = np.array(triangles, dtype=np.int64)
-        
-        self.logger.debug(f"Extracted {len(self.surfaces)} surfaces: {list(self.surfaces.keys())}")
 
     def _match_surface_tags(self) -> mesh.MeshTags:
         """Match FEBio surface triangles to DOLFINx boundary facets in an MPI-safe way.
@@ -182,16 +177,10 @@ class FEBio2Dolfinx:
 
         # Gather local facet indices to rank 0
         if rank == 0:
-            if counts_facets is None:
-                counts_facets = []
-            displs_facets = (
-                np.concatenate(([0], np.cumsum(counts_facets[:-1])))
-                if counts_facets else np.array([0], dtype=np.int32)
-            )
-            all_facets = (
-                np.empty(sum(counts_facets), dtype=np.int32)
-                if counts_facets else np.empty(0, dtype=np.int32)
-            )
+            counts_facets = counts_facets or []
+            total_facets = sum(counts_facets)
+            displs_facets = np.concatenate(([0], np.cumsum(counts_facets[:-1], dtype=np.int32))) if counts_facets else np.array([0], dtype=np.int32)
+            all_facets = np.empty(total_facets, dtype=np.int32) if total_facets > 0 else np.empty(0, dtype=np.int32)
         else:
             displs_facets = None
             all_facets = None
@@ -205,18 +194,10 @@ class FEBio2Dolfinx:
         # Gather facet midpoints (flattened) to rank 0
         local_midpoints_flat = facet_midpoints_local.ravel()
         if rank == 0:
-            counts_coords = (
-                [c * facet_midpoints_local.shape[1] for c in counts_facets]
-                if counts_facets else []
-            )
-            displs_coords = (
-                np.concatenate(([0], np.cumsum(counts_coords[:-1])))
-                if counts_coords else np.array([0], dtype=np.int32)
-            )
-            all_midpoints_flat = (
-                np.empty(sum(counts_coords), dtype=np.float64)
-                if counts_coords else np.empty(0, dtype=np.float64)
-            )
+            counts_coords = [int(c * facet_midpoints_local.shape[1]) for c in counts_facets] if counts_facets else []
+            total_coords = sum(counts_coords)
+            displs_coords = np.concatenate(([0], np.cumsum(counts_coords[:-1], dtype=np.int32))) if counts_coords else np.array([0], dtype=np.int32)
+            all_midpoints_flat = np.empty(total_coords, dtype=np.float64) if total_coords > 0 else np.empty(0, dtype=np.float64)
         else:
             counts_coords = None
             displs_coords = None
@@ -230,24 +211,8 @@ class FEBio2Dolfinx:
 
         # --- 2) Global KDTree on rank 0 to match FEBio triangles to mesh facets ---
         if rank == 0:
-            if all_midpoints_flat.size > 0:
-                all_midpoints = all_midpoints_flat.reshape(
-                    -1, facet_midpoints_local.shape[1]
-                )
-            else:
-                all_midpoints = np.empty(
-                    (0, self.mesh_dolfinx.geometry.x.shape[1]),
-                    dtype=np.float64,
-                )
-
-            # Owner rank for each facet (needed to scatter tags back)
-            owners = (
-                np.concatenate(
-                    [np.full(c, r, dtype=np.int32) for r, c in enumerate(counts_facets)]
-                )
-                if counts_facets else np.empty(0, dtype=np.int32)
-            )
-
+            all_midpoints = all_midpoints_flat.reshape(-1, facet_midpoints_local.shape[1]) if all_midpoints_flat.size > 0 else np.empty((0, 3), dtype=np.float64)
+            owners = np.concatenate([np.full(c, r, dtype=np.int32) for r, c in enumerate(counts_facets)]) if counts_facets else np.empty(0, dtype=np.int32)
             tree = KDTree(all_midpoints) if all_midpoints.shape[0] > 0 else None
 
             # Prepare per-rank containers for matched facets/markers
@@ -257,26 +222,15 @@ class FEBio2Dolfinx:
             # Surface name -> integer marker mapping (same on all ranks)
             self.surface_tags = {}
 
-            # Tolerance based on global bounding box of nodes
-            bbox_diag = float(
-                np.linalg.norm(self.nodes.max(axis=0) - self.nodes.min(axis=0))
-            )
+            # Tolerance based on global bounding box
+            bbox_diag = float(np.linalg.norm(self.nodes.max(axis=0) - self.nodes.min(axis=0)))
             tolerance = 0.01 * bbox_diag
 
-            for marker, (surf_name, surf_triangles) in enumerate(
-                self.surfaces.items(), start=1
-            ):
+            for marker, (surf_name, surf_triangles) in enumerate(self.surfaces.items(), start=1):
                 self.surface_tags[surf_name] = marker
 
-                if (
-                    surf_triangles.size == 0
-                    or tree is None
-                    or all_midpoints.shape[0] == 0
-                ):
-                    self.logger.warning(
-                        f"Surface '{surf_name}' has no triangles or no "
-                        f"boundary facets available."
-                    )
+                if surf_triangles.size == 0 or tree is None or all_midpoints.shape[0] == 0:
+                    self.logger.warning(f"Surface '{surf_name}' has no triangles or no boundary facets available.")
                     continue
 
                 # Midpoints of FEBio surface triangles in physical coordinates
@@ -293,16 +247,13 @@ class FEBio2Dolfinx:
                 n_rejected = int((~valid_mask).sum())
 
                 if n_matched == 0:
-                    self.logger.warning(
-                        f"Surface '{surf_name}' (tag={marker}) – no triangles "
-                        f"matched within tolerance {tolerance:.3e}."
-                    )
+                    self.logger.warning(f"Surface '{surf_name}' (tag={marker}) – no triangles matched within tolerance {tolerance:.3e}.")
                     continue
 
                 matched_facets = all_facets[matched_global_idx]
                 matched_owners = owners[matched_global_idx]
 
-                # Distribute matched facets to the owning ranks
+                # Distribute matched facets to owning ranks
                 for r in range(size):
                     rank_mask = matched_owners == r
                     if not np.any(rank_mask):
@@ -312,10 +263,7 @@ class FEBio2Dolfinx:
                     per_rank_indices[r].append(local_facets_r)
                     per_rank_values[r].append(markers_r)
 
-                self.logger.info(
-                    f"Surface '{surf_name}' (tag={marker}) matched "
-                    f"{n_matched}/{n_total} triangles ({n_rejected} rejected)"
-                )
+                self.logger.info(f"Surface '{surf_name}' (tag={marker}) matched {n_matched}/{n_total} triangles ({n_rejected} rejected)")
 
             # Concatenate per-rank lists into arrays so we can scatter them
             indices_per_rank = []
@@ -335,62 +283,68 @@ class FEBio2Dolfinx:
         # Broadcast surface_tags dictionary to all ranks
         self.surface_tags = comm.bcast(self.surface_tags, root=0)
 
-        # --- 3) Scatter local facet indices and markers to each rank ---
-        local_indices = comm.scatter(indices_per_rank, root=0)
-        local_values = comm.scatter(values_per_rank, root=0)
+        # --- 3) Scatter facet indices and markers to each rank ---
+        local_indices = np.asarray(comm.scatter(indices_per_rank, root=0), dtype=np.int32)
+        local_values = np.asarray(comm.scatter(values_per_rank, root=0), dtype=np.int32)
 
-        # Ensure arrays are numpy/int32 even if empty
-        local_indices = np.asarray(local_indices, dtype=np.int32)
-        local_values = np.asarray(local_values, dtype=np.int32)
-
-        # Sort indices for nicer downstream behaviour
+        # Sort indices
         if local_indices.size > 0:
             order = np.argsort(local_indices)
             local_indices = local_indices[order]
             local_values = local_values[order]
 
-        # --- 4) Build local MeshTags object on each rank ---
         return mesh.meshtags(self.mesh_dolfinx, fdim, local_indices, local_values)
 
     def save_mesh_vtk(self, output_path: str | Path) -> None:
-        """Save tagged boundary facets as VTK PolyData."""
+        """Save surfaces from original FEBio data as VTK file (rank 0 only)."""
         output_path = Path(output_path)
-        
-        # Handle parallel output to avoid file corruption
         comm = self.mesh_dolfinx.comm
-        if comm.Get_size() > 1:
-            output_path = output_path.with_name(
-                f"{output_path.stem}_{comm.Get_rank()}{output_path.suffix}"
-            )
+        rank = comm.Get_rank()
+        
+        # Gather all tag IDs from all ranks
+        local_tag_ids = set(self.meshtags.values)
+        all_local_tags = comm.gather(local_tag_ids, root=0)
+        
+        if rank == 0:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
             
-        output_path.parent.mkdir(parents=True, exist_ok=True)
+            # Union of all tag IDs across ranks
+            matched_tag_ids = set().union(*all_local_tags)
+            inv_tags = {v: k for k, v in self.surface_tags.items()}
+            
+            # Collect triangles from matched surfaces
+            all_triangles = []
+            all_tags = []
+            
+            for surf_name, surf_triangles in self.surfaces.items():
+                tag_id = self.surface_tags[surf_name]
+                if tag_id not in matched_tag_ids:
+                    continue
+                for tri in surf_triangles:
+                    all_triangles.append(tri)
+                    all_tags.append(tag_id)
+            
+            if len(all_triangles) > 0:
+                all_triangles = np.array(all_triangles, dtype=np.int64)
+                all_tags = np.array(all_tags, dtype=np.int32)
+                
+                # Build PyVista mesh from FEBio nodes and connectivity
+                n_triangles = all_triangles.shape[0]
+                faces = np.hstack([np.full((n_triangles, 1), 3), all_triangles]).ravel()
+                
+                surface_mesh = pv.PolyData(self.nodes, faces)
+                surface_mesh.cell_data["SurfaceID"] = all_tags
+                surface_mesh.cell_data["SurfaceName"] = [inv_tags[int(tid)] for tid in all_tags]
+                surface_mesh.save(str(output_path))
+                
+                unique_verts = np.unique(all_triangles.ravel())
+                self.logger.info(f"Saved {n_triangles} surface facets ({len(unique_verts)} unique vertices) to {output_path}")
+            else:
+                surface_mesh = pv.PolyData(self.nodes)
+                surface_mesh.save(str(output_path))
+                self.logger.warning(f"Saved empty surface mesh (no tagged facets) to {output_path}")
         
-        fdim = 2
-        facet_to_vertex = self.mesh_dolfinx.topology.connectivity(fdim, 0)
-        vertices = self.mesh_dolfinx.geometry.x
-        
-        # Extract tagged facets
-        triangles = []
-        tag_ids = []
-        tag_names = []
-        inv_tags = {v: k for k, v in self.surface_tags.items()}
-        
-        for facet_idx, tag_value in zip(self.meshtags.indices, self.meshtags.values):
-            tri_vertices = facet_to_vertex.links(facet_idx)
-            triangles.append(tri_vertices)
-            tag_ids.append(tag_value)
-            tag_names.append(inv_tags[tag_value])
-        
-        # Build PyVista mesh
-        triangles = np.array(triangles, dtype=np.int64)
-        faces = np.hstack([np.full((len(triangles), 1), 3), triangles]).ravel()
-        
-        surface_mesh = pv.PolyData(vertices, faces)
-        surface_mesh.cell_data["SurfaceID"] = np.array(tag_ids, dtype=np.int32)
-        surface_mesh.cell_data["SurfaceName"] = np.array(tag_names, dtype=str)
-        surface_mesh.save(str(output_path))
-        
-        self.logger.info(f"Saved {len(triangles)} surface facets to {output_path}")
+        comm.Barrier()
 
     def __repr__(self) -> str:
         return f"FEBio2Dolfinx({self.feb_file.name}, surfaces={list(self.surface_tags.keys())})"
