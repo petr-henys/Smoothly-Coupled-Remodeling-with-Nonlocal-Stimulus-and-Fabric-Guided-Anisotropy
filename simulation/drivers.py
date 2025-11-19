@@ -82,7 +82,18 @@ class GaitEnergyDriver:
         self._last_stats: dict | None = None
 
     def invalidate(self) -> None:
-        return None
+        """Check for config changes and rebuild expressions if necessary."""
+        dirty = False
+        if abs(self.psi_ref - float(self.cfg.psi_ref)) > 1e-9:
+            self.psi_ref = float(self.cfg.psi_ref)
+            dirty = True
+        
+        if abs(self.exponent - float(self.cfg.n_power)) > 1e-9:
+            self.exponent = float(self.cfg.n_power)
+            dirty = True
+            
+        if dirty:
+            self.psi_expr, self.M_expr = self._build_expressions()
 
     def update_snapshots(self) -> dict:
         """Solve mechanics for each gait phase and refresh displacement snapshots."""
@@ -100,8 +111,17 @@ class GaitEnergyDriver:
             self.u_snap[idx].x.scatter_forward()
         self.mech.u.x.scatter_forward()
 
-        stats = self._build_stats(iters, times)
+        psi_int_local = fem.assemble_scalar(fem.form(self.psi_expr * self.cfg.dx))
+        psi_int = self.comm.allreduce(psi_int_local, op=MPI.SUM)
+
+        vol_local = fem.assemble_scalar(fem.form(1.0 * self.cfg.dx))
+        vol = self.comm.allreduce(vol_local, op=MPI.SUM)
+
+        psi_avg = psi_int / vol
+
+        stats = self._build_stats(iters, times, psi_avg)
         self._last_stats = stats
+
         return stats
 
     def energy_expr(self) -> ufl.core.expr.Expr:
@@ -154,6 +174,7 @@ class GaitEnergyDriver:
 
         for u_i, weight in zip(self.u_snap, self.weights):
             psi_i = self.mech.get_strain_energy_density(u_i)  # [MPa]
+
             e_i = self.mech.get_strain_tensor(u_i)
             structure_i = ufl.dot(ufl.transpose(e_i), e_i)
 
@@ -180,7 +201,7 @@ class GaitEnergyDriver:
         return psi_expr, M_expr
 
 
-    def _build_stats(self, iters: list[float], times: list[float]) -> dict:
+    def _build_stats(self, iters: list[float], times: list[float], psi_avg: float) -> dict:
         total_time = float(sum(times))
         median_time = float(np.median(times)) if times else 0.0
         median_iters = float(np.median(iters)) if iters else 0.0
@@ -190,6 +211,7 @@ class GaitEnergyDriver:
             "total_time": total_time,
             "median_time": median_time,
             "median_iters": median_iters,
+            "psi_avg": psi_avg,
         }
 
     def _elapsed_max(self, t0: float) -> float:

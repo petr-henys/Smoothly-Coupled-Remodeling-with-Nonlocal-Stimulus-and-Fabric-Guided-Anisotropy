@@ -8,7 +8,7 @@ from mpi4py import MPI
 from dolfinx import fem
 
 from simulation.config import Config
-from simulation.subsolvers import MechanicsSolver, StimulusSolver, DensitySolver, DirectionSolver, unittrace_psd
+from simulation.subsolvers import StimulusSolver, DensitySolver, DirectionSolver, unittrace_psd
 from simulation.utils import assign, get_owned_size, _global_dot, current_memory_mb
 from simulation.logger import get_logger
 from simulation.anderson import _Anderson
@@ -176,7 +176,7 @@ class FixedPointSolver:
 
         # Direction (structure tensor via driver)
         t0 = MPI.Wtime()
-        stats = self.driver.update_snapshots() or {}
+        #stats = self.driver.update_snapshots() or {}
         mech_time_total += float(stats.get("total_time", 0.0))
         phase_times.extend(stats.get("phase_times", []))
         phase_iters.extend(stats.get("phase_iters", []))

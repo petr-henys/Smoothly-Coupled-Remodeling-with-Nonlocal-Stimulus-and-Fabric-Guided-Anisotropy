@@ -142,11 +142,11 @@ class Remodeller:
         from simulation.femur_gait import setup_femur_gait_loading
         gait_loader = setup_femur_gait_loading(self.V, BW_kg=75.0, n_samples=9)
         
-        # Neumann BCs: traction from gait loader on tags 2, 3, 4
+        # Neumann BCs: traction from gait loader on tags 2.!!!!dont change it
         neumann_bcs = [
             (gait_loader.t_hip, 2),
-            (gait_loader.t_glmed, 3),
-            (gait_loader.t_glmax, 4),
+            (gait_loader.t_glmed, 2),
+            (gait_loader.t_glmax, 2),
         ]
 
         # Mechanics: boundary conditions and external loading
