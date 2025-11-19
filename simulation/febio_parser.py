@@ -148,61 +148,209 @@ class FEBio2Dolfinx:
         
         self.logger.debug(f"Extracted {len(self.surfaces)} surfaces: {list(self.surfaces.keys())}")
 
-
-
     def _match_surface_tags(self) -> mesh.MeshTags:
-        """Match FEBio surface triangles to DOLFINx boundary facets via midpoint KDTree."""
+        """Match FEBio surface triangles to DOLFINx boundary facets in an MPI-safe way.
+
+        This implementation:
+        - computes local exterior boundary facets and their midpoints on each rank,
+        - gathers all facet midpoints and their owning ranks on rank 0,
+        - performs a global KDTree search on rank 0 to match FEBio surface midpoints
+          to the nearest mesh facet midpoints,
+        - scatters the matched facet indices and markers back to individual ranks,
+        - and finally builds a local `mesh.meshtags` object on each rank.
+
+        The resulting `self.meshtags` is consistent across different MPI layouts.
+        """
+        comm = self.mesh_dolfinx.comm
+        rank = comm.Get_rank()
+        size = comm.Get_size()
+
         fdim = 2  # Facet dimension for 3D mesh
-        tdim = 3  # Cell dimension
+        tdim = 3  # Cell (volume) dimension
+
+        # Ensure facet entities/connectivities exist
         self.mesh_dolfinx.topology.create_entities(fdim)
         self.mesh_dolfinx.topology.create_connectivity(fdim, tdim)
-        
-        # Get boundary facets and their midpoints
-        boundary_facets = mesh.exterior_facet_indices(self.mesh_dolfinx.topology)
-        facet_midpoints = mesh.compute_midpoints(self.mesh_dolfinx, fdim, boundary_facets)
-        tree = KDTree(facet_midpoints)
-        
-        # Match each surface
-        all_facet_indices = []
-        all_facet_markers = []
-        self.surface_tags = {}
-        
-        for marker, (surf_name, surf_triangles) in enumerate(self.surfaces.items(), start=1):
-            self.surface_tags[surf_name] = marker
-            
-            # Compute midpoints of FEBio triangles
-            tri_midpoints = self.nodes[surf_triangles].mean(axis=1)
-            
-            # Find nearest DOLFINx facets
-            distances, indices = tree.query(tri_midpoints)
-            matched_facets = boundary_facets[indices]
-            
-            # Tolerance check (1% of mesh bounding box diagonal)
-            bbox_diag = np.linalg.norm(self.nodes.max(axis=0) - self.nodes.min(axis=0))
+
+        # --- 1) Local exterior facets and their midpoints ---
+        boundary_facets_local = mesh.exterior_facet_indices(self.mesh_dolfinx.topology)
+        facet_midpoints_local = mesh.compute_midpoints(self.mesh_dolfinx, fdim, boundary_facets_local)
+        n_local_facets = boundary_facets_local.size
+
+        # Gather number of facets per rank so we can reconstruct owners on rank 0
+        counts_facets = comm.gather(int(n_local_facets), root=0)
+
+        # Gather local facet indices to rank 0
+        if rank == 0:
+            if counts_facets is None:
+                counts_facets = []
+            displs_facets = (
+                np.concatenate(([0], np.cumsum(counts_facets[:-1])))
+                if counts_facets else np.array([0], dtype=np.int32)
+            )
+            all_facets = (
+                np.empty(sum(counts_facets), dtype=np.int32)
+                if counts_facets else np.empty(0, dtype=np.int32)
+            )
+        else:
+            displs_facets = None
+            all_facets = None
+
+        comm.Gatherv(
+            boundary_facets_local.astype(np.int32),
+            [all_facets, counts_facets, displs_facets, MPI.INT],
+            root=0,
+        )
+
+        # Gather facet midpoints (flattened) to rank 0
+        local_midpoints_flat = facet_midpoints_local.ravel()
+        if rank == 0:
+            counts_coords = (
+                [c * facet_midpoints_local.shape[1] for c in counts_facets]
+                if counts_facets else []
+            )
+            displs_coords = (
+                np.concatenate(([0], np.cumsum(counts_coords[:-1])))
+                if counts_coords else np.array([0], dtype=np.int32)
+            )
+            all_midpoints_flat = (
+                np.empty(sum(counts_coords), dtype=np.float64)
+                if counts_coords else np.empty(0, dtype=np.float64)
+            )
+        else:
+            counts_coords = None
+            displs_coords = None
+            all_midpoints_flat = None
+
+        comm.Gatherv(
+            local_midpoints_flat,
+            [all_midpoints_flat, counts_coords, displs_coords, MPI.DOUBLE],
+            root=0,
+        )
+
+        # --- 2) Global KDTree on rank 0 to match FEBio triangles to mesh facets ---
+        if rank == 0:
+            if all_midpoints_flat.size > 0:
+                all_midpoints = all_midpoints_flat.reshape(
+                    -1, facet_midpoints_local.shape[1]
+                )
+            else:
+                all_midpoints = np.empty(
+                    (0, self.mesh_dolfinx.geometry.x.shape[1]),
+                    dtype=np.float64,
+                )
+
+            # Owner rank for each facet (needed to scatter tags back)
+            owners = (
+                np.concatenate(
+                    [np.full(c, r, dtype=np.int32) for r, c in enumerate(counts_facets)]
+                )
+                if counts_facets else np.empty(0, dtype=np.int32)
+            )
+
+            tree = KDTree(all_midpoints) if all_midpoints.shape[0] > 0 else None
+
+            # Prepare per-rank containers for matched facets/markers
+            per_rank_indices = [[] for _ in range(size)]
+            per_rank_values = [[] for _ in range(size)]
+
+            # Surface name -> integer marker mapping (same on all ranks)
+            self.surface_tags = {}
+
+            # Tolerance based on global bounding box of nodes
+            bbox_diag = float(
+                np.linalg.norm(self.nodes.max(axis=0) - self.nodes.min(axis=0))
+            )
             tolerance = 0.01 * bbox_diag
-            valid_mask = distances < tolerance
-            
-            matched_facets = matched_facets[valid_mask]
-            n_rejected = (~valid_mask).sum()
-            
-            all_facet_indices.append(matched_facets)
-            all_facet_markers.append(np.full(len(matched_facets), marker, dtype=np.int32))
-            
-            self.logger.info(f"Surface '{surf_name}' (tag={marker}): matched {len(matched_facets)}/{len(surf_triangles)} triangles ({n_rejected} rejected)")
-        
-        # Combine all tags
-        if not all_facet_indices:
-            return mesh.meshtags(self.mesh_dolfinx, fdim, 
-                                 np.array([], dtype=np.int32), 
-                                 np.array([], dtype=np.int32))
-        
-        facet_indices = np.hstack(all_facet_indices).astype(np.int32)
-        facet_values = np.hstack(all_facet_markers).astype(np.int32)
-        sort_order = np.argsort(facet_indices)
-        
-        return mesh.meshtags(self.mesh_dolfinx, fdim, 
-                             facet_indices[sort_order], 
-                             facet_values[sort_order])
+
+            for marker, (surf_name, surf_triangles) in enumerate(
+                self.surfaces.items(), start=1
+            ):
+                self.surface_tags[surf_name] = marker
+
+                if (
+                    surf_triangles.size == 0
+                    or tree is None
+                    or all_midpoints.shape[0] == 0
+                ):
+                    self.logger.warning(
+                        f"Surface '{surf_name}' has no triangles or no "
+                        f"boundary facets available."
+                    )
+                    continue
+
+                # Midpoints of FEBio surface triangles in physical coordinates
+                tri_midpoints = self.nodes[surf_triangles].mean(axis=1)
+
+                # For each triangle midpoint, find closest mesh facet midpoint
+                distances, indices = tree.query(tri_midpoints)
+
+                # Filter by tolerance
+                valid_mask = distances < tolerance
+                matched_global_idx = indices[valid_mask]
+                n_matched = int(matched_global_idx.size)
+                n_total = int(tri_midpoints.shape[0])
+                n_rejected = int((~valid_mask).sum())
+
+                if n_matched == 0:
+                    self.logger.warning(
+                        f"Surface '{surf_name}' (tag={marker}) – no triangles "
+                        f"matched within tolerance {tolerance:.3e}."
+                    )
+                    continue
+
+                matched_facets = all_facets[matched_global_idx]
+                matched_owners = owners[matched_global_idx]
+
+                # Distribute matched facets to the owning ranks
+                for r in range(size):
+                    rank_mask = matched_owners == r
+                    if not np.any(rank_mask):
+                        continue
+                    local_facets_r = matched_facets[rank_mask].astype(np.int32)
+                    markers_r = np.full(local_facets_r.size, marker, dtype=np.int32)
+                    per_rank_indices[r].append(local_facets_r)
+                    per_rank_values[r].append(markers_r)
+
+                self.logger.info(
+                    f"Surface '{surf_name}' (tag={marker}) matched "
+                    f"{n_matched}/{n_total} triangles ({n_rejected} rejected)"
+                )
+
+            # Concatenate per-rank lists into arrays so we can scatter them
+            indices_per_rank = []
+            values_per_rank = []
+            for r in range(size):
+                if per_rank_indices[r]:
+                    indices_per_rank.append(np.concatenate(per_rank_indices[r]))
+                    values_per_rank.append(np.concatenate(per_rank_values[r]))
+                else:
+                    indices_per_rank.append(np.empty(0, dtype=np.int32))
+                    values_per_rank.append(np.empty(0, dtype=np.int32))
+        else:
+            indices_per_rank = None
+            values_per_rank = None
+            self.surface_tags = {}
+
+        # Broadcast surface_tags dictionary to all ranks
+        self.surface_tags = comm.bcast(self.surface_tags, root=0)
+
+        # --- 3) Scatter local facet indices and markers to each rank ---
+        local_indices = comm.scatter(indices_per_rank, root=0)
+        local_values = comm.scatter(values_per_rank, root=0)
+
+        # Ensure arrays are numpy/int32 even if empty
+        local_indices = np.asarray(local_indices, dtype=np.int32)
+        local_values = np.asarray(local_values, dtype=np.int32)
+
+        # Sort indices for nicer downstream behaviour
+        if local_indices.size > 0:
+            order = np.argsort(local_indices)
+            local_indices = local_indices[order]
+            local_values = local_values[order]
+
+        # --- 4) Build local MeshTags object on each rank ---
+        return mesh.meshtags(self.mesh_dolfinx, fdim, local_indices, local_values)
 
     def save_mesh_vtk(self, output_path: str | Path) -> None:
         """Save tagged boundary facets as VTK PolyData."""
@@ -211,7 +359,9 @@ class FEBio2Dolfinx:
         # Handle parallel output to avoid file corruption
         comm = self.mesh_dolfinx.comm
         if comm.Get_size() > 1:
-            output_path = output_path.with_name(f"{output_path.stem}_{comm.Get_rank()}{output_path.suffix}")
+            output_path = output_path.with_name(
+                f"{output_path.stem}_{comm.Get_rank()}{output_path.suffix}"
+            )
             
         output_path.parent.mkdir(parents=True, exist_ok=True)
         
