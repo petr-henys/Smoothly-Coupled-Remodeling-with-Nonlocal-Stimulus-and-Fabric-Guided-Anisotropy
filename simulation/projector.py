@@ -89,6 +89,7 @@ class L2Projector:
         """Project UFL expression to function space via mass matrix solve."""
         self.assemble_rhs(expr)
         self._ksp.solve(self._b.x.petsc_vec, self._x.x.petsc_vec)
+        self._x.x.petsc_vec.ghostUpdate(addv=PETSc.InsertMode.INSERT_VALUES, mode=PETSc.ScatterMode.FORWARD)
         return self._x
 
     def __del__(self):
