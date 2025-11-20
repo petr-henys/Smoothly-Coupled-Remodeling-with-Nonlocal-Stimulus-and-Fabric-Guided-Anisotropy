@@ -82,7 +82,7 @@ class Config:
     body_mass_kg: float = 75.0
 
     # --- Numerics / I-O ---
-    quadrature_degree: int = 4
+    quadrature_degree: int = 6
     saving_interval: int = 1
     results_dir: str = ".results"
     verbose: bool = True
@@ -90,8 +90,8 @@ class Config:
     # Global linear solver defaults (tighter for verification-grade solves)
     ksp_type: str = "minres"
     pc_type: str = "gamg"
-    ksp_rtol: float = 1e-6
-    ksp_atol: float = 1e-7
+    ksp_rtol: float = 1e-9
+    ksp_atol: float = 1e-11
     ksp_max_it: int = 100
 
     # Convergence acceleration (Anderson/Picard)

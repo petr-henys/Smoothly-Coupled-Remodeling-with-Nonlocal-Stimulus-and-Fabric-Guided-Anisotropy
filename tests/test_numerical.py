@@ -401,11 +401,14 @@ class TestProjectedResidual:
         weights = (0.5, 1.5, 0.25)
         res = fps._proj_residual_norm(x_old, x_test, x_raw, weights)
 
-        expected = 0.0
+        expected_sq = 0.0
         for s, w in zip(fps.state_slices, weights):
             diff = x_test[s] - x_raw[s]
-            expected += w * float(np.dot(diff, diff))
-        expected = expected ** 0.5
+            expected_sq += w * float(np.dot(diff, diff))
+        
+        # Reduce expected_sq across all ranks to match _proj_residual_norm's global reduction
+        expected_sq = comm.allreduce(expected_sq, op=MPI.SUM)
+        expected = expected_sq ** 0.5
 
         assert np.isclose(res, expected)
 
