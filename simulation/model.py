@@ -30,7 +30,7 @@ from simulation.config import Config
 from simulation.subsolvers import MechanicsSolver, StimulusSolver, DensitySolver, DirectionSolver
 from simulation.fixedsolver import FixedPointSolver
 from simulation.drivers import GaitEnergyDriver
-from simulation.projector import L2Projector
+
 
 
 
@@ -124,14 +124,8 @@ class Remodeller:
         # Do not track or output displacement 'u' anymore
         self.scatter_fields = (self.rho, self.A, self.S)
 
-        # Projector and field for strain–energy density (DG0 scalar)
-        DG0 = basix.ufl.element("DG", self.domain.basix_cell(), 0)
-        self.Q_energy = functionspace(self.domain, DG0)
-        self.psi = Function(self.Q_energy, name="psi")
-        self.energy_projector = L2Projector(self.Q_energy)
-
         # Register fields (omit 'u', add energy density)
-        self.storage.fields.register("scalars", [self.rho, self.S, self.psi], filename="scalars.bp")
+        self.storage.fields.register("scalars", [self.rho, self.S], filename="scalars.bp")
         self.storage.fields.register("A", [self.A], filename="A.bp")
 
         # Boundary conditions
@@ -276,12 +270,6 @@ class Remodeller:
     def _output(self, t: float, step: int):
         """Scatter, stats, log, write (saving_interval steps)."""
         self._scatter_forward()
-
-        # Update projected strain–energy density field before output
-        psi_expr = self.driver.energy_expr()
-        psi_proj = self.energy_projector.project(psi_expr)
-        self.psi.x.array[:] = psi_proj.x.array
-        self.psi.x.scatter_forward()
 
         iters = self._iters_window_stats()
         fields = self._collect_field_stats()
