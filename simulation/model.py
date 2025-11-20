@@ -32,8 +32,6 @@ from simulation.fixedsolver import FixedPointSolver
 from simulation.drivers import GaitEnergyDriver
 
 
-
-
 class Remodeller:
     """High-level remodeling driver.
 

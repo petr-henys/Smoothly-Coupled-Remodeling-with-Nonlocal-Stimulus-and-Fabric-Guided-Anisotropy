@@ -112,8 +112,8 @@ class _BaseLinearSolver:
             self.b = None
 
     def _reset_stats(self):
-        self.total_iters = 0
-        self.ksp_steps = 0
+        # Do not reset cumulative counters (total_iters, ksp_steps) here
+        # so that they persist across re-assemblies (e.g. when dt changes).
         self.last_reason = None
         self.last_iters = None
 

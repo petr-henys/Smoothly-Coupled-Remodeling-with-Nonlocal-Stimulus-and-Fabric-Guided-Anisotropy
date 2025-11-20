@@ -193,6 +193,8 @@ class GaitEnergyDriver:
         J_day = N_cyc * J_cycle
 
         # Map daily dose back to an energy-like quantity in MPa for the stimulus solver
+        # Note: This formulation implies that psi_ref is the Target Daily Dose (MPa),
+        # and the equilibrium per-cycle energy will be psi_ref * N^(-1/m).
         psi_expr = self.psi_ref * J_day                # [MPa]
 
         # Use weighted average for structure tensor as well (dimensionless)
