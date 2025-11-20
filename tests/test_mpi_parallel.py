@@ -198,7 +198,6 @@ class TestMPIIO:
                 # Check internal flag
                 assert cfg.telemetry.is_root == (comm.rank == 0), "Telemetry root flag incorrect"
     
-    @pytest.mark.skip(reason="Unstable under CI garbage collection; covered by storage tests")
     @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
     def test_vtx_output_consistency(self, unit_cube):
         """Test skipped: VTX behavior verified in storage tests with stubs."""
@@ -235,7 +234,6 @@ class TestMPIIO:
                 # Should complete without hanging
                 comm.Barrier()
     
-    @pytest.mark.skip(reason="Covered by storage telemetry tests; skip heavy Remodeller usage here")
     @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
     def test_csv_metrics_rank0(self, unit_cube):
         """Skipped: CSV rank-0 behavior covered elsewhere."""
@@ -470,7 +468,6 @@ class TestSolverIterations:
 # Anderson Acceleration Efficiency Tests
 # =============================================================================
 
-@pytest.mark.skip(reason="Anderson vs Picard iteration-count tests are flaky and heavy; skip in CI")
 class TestAndersonEfficiency:
     """Test Anderson acceleration reduces iteration counts (skipped)."""
     
@@ -547,7 +544,6 @@ class TestAndersonEfficiency:
 # Preconditioner Effectiveness Tests
 # =============================================================================
 
-@pytest.mark.skip(reason="Preconditioner effectiveness tests are heavy; solver correctness covered elsewhere")
 class TestPreconditioners:
     """Test preconditioner update logic and effectiveness (skipped)."""
     

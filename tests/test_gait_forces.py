@@ -128,18 +128,26 @@ class TestPhysicalForces:
         """Verify traction fields contain non-zero values after interpolation."""
         _, _, _, _, cfg, _ = femur_geometry_setup
         gait_loader.update_loads(50.0)
+        comm = gait_loader.t_hip.function_space.mesh.comm
 
         for name, func in [
             ("hip", gait_loader.t_hip),
             ("glmed", gait_loader.t_glmed),
             ("glmax", gait_loader.t_glmax),
         ]:
-            vals = func.x.array.reshape((-1, 3))
-            nonzero_count = np.count_nonzero(vals)
+            # Check owned dofs only to avoid double counting
+            V = func.function_space
+            n_local = V.dofmap.index_map.size_local
+            bs = V.dofmap.index_map_bs
+            vals = func.x.array[:n_local*bs].reshape((-1, 3))
+            
+            local_nonzero = np.count_nonzero(vals)
+            nonzero_count = comm.allreduce(local_nonzero, op=MPI.SUM)
 
             assert nonzero_count > 100, f"{name} traction should have >100 nonzero values, got {nonzero_count}"
 
-            max_magnitude_MPa = np.max(np.linalg.norm(vals, axis=1))
+            local_max = np.max(np.linalg.norm(vals, axis=1)) if vals.size > 0 else 0.0
+            max_magnitude_MPa = comm.allreduce(local_max, op=MPI.MAX)
             assert max_magnitude_MPa > 1e-6, f"{name} traction magnitude should be >1e-6 MPa, got {max_magnitude_MPa:.3e} MPa"
 
 
@@ -177,11 +185,25 @@ class TestIndividualLoadIntegrals:
         """Verify load integral matches interpolator and is in physiological range."""
         domain, _, _, _, cfg, unit_scale = femur_geometry_setup
         BW_N = 75.0 * 9.81
+        comm = domain.comm
+        rank = comm.Get_rank()
 
         phases = np.linspace(0, 100, 41)
-        gait_fn = getattr(gait_loader, gait_method)
-        mags = [np.linalg.norm(gait_fn(p)) for p in phases]
-        phase = float(phases[int(np.argmax(mags))])
+        
+        # Determine peak phase and expected force on rank 0
+        phase = 0.0
+        F_css = np.zeros(3)
+        
+        if rank == 0:
+            gait_fn = getattr(gait_loader, gait_method)
+            mags = [np.linalg.norm(gait_fn(p)) for p in phases]
+            phase = float(phases[int(np.argmax(mags))])
+            F_css = gait_fn(phase)
+        
+        # Broadcast phase and F_css to all ranks
+        phase = comm.bcast(phase, root=0)
+        F_css = comm.bcast(F_css, root=0)
+
         gait_loader.update_loads(phase)
 
         import ufl
@@ -191,9 +213,8 @@ class TestIndividualLoadIntegrals:
         for i in range(3):
             Fi = fem.form(traction[i] * cfg.ds(2))
             val = fem.assemble_scalar(Fi)
-            F_N[i] = domain.comm.allreduce(val, op=MPI.SUM)
+            F_N[i] = comm.allreduce(val, op=MPI.SUM)
 
-        F_css = gait_fn(phase)
         rel_err = abs(np.linalg.norm(F_N) - np.linalg.norm(F_css)) / max(np.linalg.norm(F_css), 1e-30)
         assert rel_err < tol, f"{load_name} integral error {rel_err:.2e} exceeds tolerance {tol}"
 
@@ -210,6 +231,8 @@ class TestForceMaxima:
         _, _, _, _, cfg, _ = femur_geometry_setup
         BW_N = 75.0 * 9.81
         phases = np.linspace(0, 100, 21)
+        comm = gait_loader.t_hip.function_space.mesh.comm
+        rank = comm.Get_rank()
 
         hip_max = 0.0
         glmed_max = 0.0
@@ -223,29 +246,48 @@ class TestForceMaxima:
         glmed_traction_max_MPa = 0.0
         glmax_traction_max_MPa = 0.0
 
-        for phase in phases:
-            F_hip = np.linalg.norm(gait_loader.hip_gait(phase))
-            F_glmed = np.linalg.norm(gait_loader.glmed_gait(phase))
-            F_glmax = np.linalg.norm(gait_loader.glmax_gait(phase))
+        # Helper to get global max
+        def get_global_max(func):
+            V = func.function_space
+            n_local = V.dofmap.index_map.size_local
+            bs = V.dofmap.index_map_bs
+            vals = func.x.array[:n_local*bs].reshape((-1, 3))
+            local_max = np.max(np.linalg.norm(vals, axis=1)) if vals.size > 0 else 0.0
+            return comm.allreduce(local_max, op=MPI.MAX)
 
-            if F_hip > hip_max:
-                hip_max = F_hip
-                hip_max_phase = phase
-            if F_glmed > glmed_max:
-                glmed_max = F_glmed
-                glmed_max_phase = phase
-            if F_glmax > glmax_max:
-                glmax_max = F_glmax
-                glmax_max_phase = phase
+        for phase in phases:
+            if rank == 0:
+                F_hip = np.linalg.norm(gait_loader.hip_gait(phase))
+                F_glmed = np.linalg.norm(gait_loader.glmed_gait(phase))
+                F_glmax = np.linalg.norm(gait_loader.glmax_gait(phase))
+
+                if F_hip > hip_max:
+                    hip_max = F_hip
+                    hip_max_phase = phase
+                if F_glmed > glmed_max:
+                    glmed_max = F_glmed
+                    glmed_max_phase = phase
+                if F_glmax > glmax_max:
+                    glmax_max = F_glmax
+                    glmax_max_phase = phase
 
             gait_loader.update_loads(phase)
-            t_hip = np.max(np.linalg.norm(gait_loader.t_hip.x.array.reshape((-1, 3)), axis=1))
-            t_glmed = np.max(np.linalg.norm(gait_loader.t_glmed.x.array.reshape((-1, 3)), axis=1))
-            t_glmax = np.max(np.linalg.norm(gait_loader.t_glmax.x.array.reshape((-1, 3)), axis=1))
+            t_hip = get_global_max(gait_loader.t_hip)
+            t_glmed = get_global_max(gait_loader.t_glmed)
+            t_glmax = get_global_max(gait_loader.t_glmax)
 
             hip_traction_max_MPa = max(hip_traction_max_MPa, t_hip)
             glmed_traction_max_MPa = max(glmed_traction_max_MPa, t_glmed)
             glmax_traction_max_MPa = max(glmax_traction_max_MPa, t_glmax)
+
+        # Broadcast max forces and phases from rank 0
+        hip_max = comm.bcast(hip_max, root=0)
+        glmed_max = comm.bcast(glmed_max, root=0)
+        glmax_max = comm.bcast(glmax_max, root=0)
+        
+        hip_max_phase = comm.bcast(hip_max_phase, root=0)
+        glmed_max_phase = comm.bcast(glmed_max_phase, root=0)
+        glmax_max_phase = comm.bcast(glmax_max_phase, root=0)
 
         assert 2.3 < hip_max / BW_N < 4.5, f"Hip peak should be 2.3–4.5× BW, got {hip_max/BW_N:.2f}× BW at {hip_max_phase:.0f}%"
         assert 0.3 < glmed_max / BW_N < 2.5, f"Gluteus medius peak should be 0.3–2.5× BW, got {glmed_max/BW_N:.2f}× BW"

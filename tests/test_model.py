@@ -80,6 +80,17 @@ def _unit_cube(n: int = 4):
     return mesh.create_unit_cube(MPI.COMM_WORLD, n, n, n, ghost_mode=mesh.GhostMode.shared_facet)
 
 
+@pytest.fixture(autouse=True)
+def _patch_gait_loader(monkeypatch):
+    """Patch setup_femur_gait_loading to return _DummyGaitLoader."""
+    import simulation.femur_gait as gait_mod
+    
+    def _mock_setup(V, **kwargs):
+        return _DummyGaitLoader(V)
+        
+    monkeypatch.setattr(gait_mod, "setup_femur_gait_loading", _mock_setup)
+
+
 def test_model_initializes_with_dummy_gait(tmp_path):
     """Verify Remodeller initializes fields and storage correctly."""
     comm = MPI.COMM_WORLD
@@ -105,7 +116,7 @@ def test_mechanics_produces_displacement_under_load(tmp_path):
     comm = MPI.COMM_WORLD
     domain = _unit_cube(5)
     facet_tags = build_facetag(domain)
-    cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False, results_dir=str(tmp_path), max_subiters=8)
+    cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False, results_dir=str(tmp_path), max_subiters=8, ksp_atol=1e-15)
 
     with Remodeller(cfg) as rem:
         rem.step(dt=1.0)  # 1 day
@@ -124,7 +135,7 @@ def test_mechanics_produces_displacement_under_load(tmp_path):
         
         # Energy balance should be tight
         W_int, W_ext, rel_err = rem.mechsolver.energy_balance()
-        assert rel_err < 1e-4, f"Energy balance poor: {rel_err:.2e} (W_int={W_int:.3e}, W_ext={W_ext:.3e})"
+        assert rel_err < 1e-7, f"Energy balance poor: {rel_err:.2e} (W_int={W_int:.3e}, W_ext={W_ext:.3e})"
 
 
 def test_stimulus_responds_to_strain_energy(tmp_path):
@@ -229,7 +240,7 @@ def test_model_convergence_stability(tmp_path):
     domain = _unit_cube(5)
     facet_tags = build_facetag(domain)
     cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False, results_dir=str(tmp_path), 
-                 max_subiters=12, coupling_tol=1e-6)
+                 max_subiters=12, coupling_tol=1e-6, ksp_atol=1e-15)
 
     with Remodeller(cfg) as rem:
         rem.step(dt=1.0)  # 1 day
@@ -250,7 +261,7 @@ def test_model_two_steps_energy_stability(tmp_path):
     comm = MPI.COMM_WORLD
     domain = _unit_cube(4)
     facet_tags = build_facetag(domain)
-    cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False, results_dir=str(tmp_path), max_subiters=6)
+    cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False, results_dir=str(tmp_path), max_subiters=6, ksp_atol=1e-15)
 
     with Remodeller(cfg) as rem:
         rem.step(dt=1.0)  # 1 day

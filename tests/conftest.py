@@ -317,7 +317,33 @@ def cfg_factory(unit_cube, facet_tags):
     return _make_config
 
 
-# FEMUR/GAIT-specific fixtures removed - not used in active test suite
-# FILE fixtures (JSON, VTK, FEBio, HIP) removed - not used in active test suite
-# DG0/P1 space fixtures removed - can use spaces() fixture instead
-# Parameter sets (VALID_SIDES, etc.) removed - not used in active test suite
+# =============================================================================
+# Femur-specific fixtures
+# =============================================================================
+
+@pytest.fixture(scope="module")
+def femur_setup():
+    """Create femur mesh and function spaces (mm geometry, MPa stresses)."""
+    from simulation.paths import FemurPaths
+    from simulation.febio_parser import FEBio2Dolfinx
+    from simulation.config import Config
+    import basix
+    from dolfinx import fem
+
+    mdl = FEBio2Dolfinx(FemurPaths.FEMUR_MESH_FEB)
+    domain = mdl.mesh_dolfinx
+    facet_tags = mdl.meshtags
+    P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(domain.geometry.dim,))
+    P1_scalar = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
+    V = fem.functionspace(domain, P1_vec)
+    Q = fem.functionspace(domain, P1_scalar)
+    cfg = Config(domain=domain, facet_tags=facet_tags)
+    return domain, facet_tags, V, Q, cfg
+
+
+@pytest.fixture(scope="module")
+def femur_gait_loader(femur_setup):
+    """Gait loader used for femur reaction-force tests."""
+    from simulation.femur_gait import setup_femur_gait_loading
+    _, _, V, _, _ = femur_setup
+    return setup_femur_gait_loading(V, BW_kg=75.0, n_samples=9)

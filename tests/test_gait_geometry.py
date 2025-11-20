@@ -91,14 +91,17 @@ class TestCoordinateScaling:
         dolfinx_geom = domain.geometry.x
         comm = domain.comm
         if dolfinx_geom.size == 0:
-            local_min = np.array([np.inf, np.inf, np.inf])
-            local_max = np.array([-np.inf, -np.inf, -np.inf])
+            local_min = np.array([np.inf, np.inf, np.inf], dtype=np.float64)
+            local_max = np.array([-np.inf, -np.inf, -np.inf], dtype=np.float64)
         else:
-            local_min = np.min(dolfinx_geom, axis=0)
-            local_max = np.max(dolfinx_geom, axis=0)
+            local_min = np.min(dolfinx_geom, axis=0).astype(np.float64)
+            local_max = np.max(dolfinx_geom, axis=0).astype(np.float64)
 
-        global_min = comm.allreduce(local_min, op=MPI.MIN)
-        global_max = comm.allreduce(local_max, op=MPI.MAX)
+        global_min = np.zeros_like(local_min)
+        comm.Allreduce(local_min, global_min, op=MPI.MIN)
+        
+        global_max = np.zeros_like(local_max)
+        comm.Allreduce(local_max, global_max, op=MPI.MAX)
 
         pv_mesh = pv.read(str(FemurPaths.FEMUR_MESH_VTK))
         pv_geom = pv_mesh.points

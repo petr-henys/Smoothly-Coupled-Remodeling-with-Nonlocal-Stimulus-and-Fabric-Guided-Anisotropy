@@ -422,7 +422,8 @@ class TestUnifiedStorage:
         storage = UnifiedStorage(cfg)
 
         # Storage always creates its own steps CSV
-        assert "steps" in storage.metrics._writers
+        if comm.rank == 0:
+            assert "steps" in storage.metrics._writers
 
         storage.close()
 
