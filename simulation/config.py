@@ -14,12 +14,12 @@ if TYPE_CHECKING:
 class Config:
     """Global configuration for bone remodeling simulation.
 
-    Units:
-    - Length: [mm]
-    - Mass: [t] (1000 kg)
-    - Time: [day]
-    - Stress/Energy: [MPa]
-    - Density: [-] (relative density in [0, 1])
+    Units (model-wide):
+    - Length: millimetres [mm]
+    - Mass: tonnes [t] (1 t = 1000 kg)
+    - Time: days [day]
+    - Stress/Energy: megapascals [MPa] (1 MPa = 1 N/mm²)
+    - Density: relative [-] in [0, 1]
     """
 
     # --- Material properties ---
@@ -66,7 +66,7 @@ class Config:
     gait_cycles_per_day: float = 1.0
     load_scale: float = 1.0
     gait_samples: int = 20
-    body_mass_kg: float = 75.0
+    body_mass_tonnes: float = 0.075   # 0.075 t ≈ 75 kg
 
     # --- Numerics & I/O ---
     quadrature_degree: int = 4
@@ -153,8 +153,8 @@ class Config:
             raise ValueError("cS>0, tauS>=0, kappaS>=0, rS_gain>=0 required.")
         if self.cA <= 0 or self.tauA < 0 or self.ell <= 0:
             raise ValueError("cA>0, tauA>=0, ell>0 required.")
-        if self.body_mass_kg <= 0:
-            raise ValueError("body_mass_kg must be positive (kg).")
+        if self.body_mass_tonnes <= 0:
+            raise ValueError("body_mass_tonnes must be positive (tonnes).")
         if self.gait_cycles_per_day <= 0:
             raise ValueError("gait_cycles_per_day must be positive.")
         if self.gait_samples < 2:

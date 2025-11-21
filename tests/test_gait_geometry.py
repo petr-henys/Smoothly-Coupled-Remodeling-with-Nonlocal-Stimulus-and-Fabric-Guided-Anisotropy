@@ -37,7 +37,7 @@ def femur_mechanics_setup():
     Q = fem.functionspace(domain, P1_scalar)
 
     cfg = Config(domain=domain, facet_tags=facet_tags, verbose=True)
-    gait_loader = setup_femur_gait_loading(V, BW_kg=75.0, n_samples=9)
+    gait_loader = setup_femur_gait_loading(V, mass_tonnes=0.075, n_samples=9)
 
     return domain, facet_tags, V, Q, cfg, gait_loader
 
@@ -57,7 +57,7 @@ def gait_loader(femur_mechanics_setup):
     domain, facet_tags, V, Q, cfg, _ = femur_mechanics_setup
     from simulation.femur_gait import setup_femur_gait_loading
 
-    return setup_femur_gait_loading(V, BW_kg=75.0, n_samples=9)
+    return setup_femur_gait_loading(V, mass_tonnes=0.075, n_samples=9)
 
 
 @pytest.mark.slow

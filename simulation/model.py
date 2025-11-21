@@ -134,7 +134,7 @@ class Remodeller:
         from simulation.femur_gait import setup_femur_gait_loading
         gait_loader = setup_femur_gait_loading(
             self.V,
-            BW_kg=float(self.cfg.body_mass_kg),
+            mass_tonnes=float(self.cfg.body_mass_tonnes),
             n_samples=int(self.cfg.gait_samples),
             load_scale=float(self.cfg.load_scale),
         )

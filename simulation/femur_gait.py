@@ -28,7 +28,13 @@ import pyvista as pv
 
 
 class FemurRemodellerGait:
-    """Gait-cycle integrator: accumulates multi-load strain energy for remodelling."""
+    """Gait-cycle integrator: accumulates multi-load strain energy for remodelling.
+
+    Units:
+    - Coordinates: mm (domain + PyVista mesh)
+    - Forces: N (body-mass * g)
+    - Tractions: MPa (since 1 N/mm² = 1 MPa)
+    """
     """Concrete implementation of GaitQuadrature using femurloader for gait-phase-dependent loads.
     
     Parameters
@@ -43,6 +49,8 @@ class FemurRemodellerGait:
         Number of quadrature points over gait cycle
     load_scale : float
         Load magnitude multiplier
+    mass_tonnes : float (handled upstream)
+        Body mass in tonnes (0.075 t ≈ 75 kg) used to scale database forces.
     """
 
     def __init__(
@@ -171,13 +179,24 @@ class FemurRemodellerGait:
         target_func.x.scatter_forward()
 
 
-def setup_femur_gait_loading(V: fem.FunctionSpace, BW_kg: float = 75.0, n_samples: int = 9,
+def setup_femur_gait_loading(V: fem.FunctionSpace, mass_tonnes: float = 0.075, n_samples: int = 9,
                              load_scale: float = 1.0) -> "FemurRemodellerGait":
     """
     
     This function shows HOW to set up loading. Users must adapt this
     to their own geometry, loading conditions, and data sources.
+
+    Parameters
+    ----------
+    mass_tonnes : float
+        Body mass in tonnes (0.075 t ≈ 75 kg) used to scale gait/muscle forces.
+    n_samples : int
+        Number of trapezoidal samples over the gait cycle.
+    load_scale : float
+        Additional global multiplier applied to tractions.
     """
+    if mass_tonnes <= 0:
+        raise ValueError("mass_tonnes must be positive (tonnes).")
     comm = V.mesh.comm
     rank = comm.Get_rank()
 
@@ -206,7 +225,9 @@ def setup_femur_gait_loading(V: fem.FunctionSpace, BW_kg: float = 75.0, n_sample
         hip_gait = gait_interpolator(orthoload2ISB(hip_data))
 
         # Muscle forces (from Amiri 2020 dataset)
-        F_mag = BW_kg * 9.81
+        g = 9.81  # m/s^2; produces forces in Newtons, traction becomes MPa via N/mm²
+        mass_kg = mass_tonnes * 1000.0  # tonne → kg for F = m·a
+        F_mag = mass_kg * g
         muscle_data = load_xy_datasets(GaitPaths.AMIRI_EXCEL, flip_y=True)["Dataset_WN"]
         curves = segment_curves_grid(muscle_data, 4, 9)
 
@@ -237,7 +258,7 @@ if __name__ == "__main__":
     P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(domain.geometry.dim,))
     V = fem.functionspace(domain, P1_vec)
     cfg = Config(domain=domain)
-    gait_loader = setup_femur_gait_loading(V, BW_kg=75.0, n_samples=9)
+    gait_loader = setup_femur_gait_loading(V, mass_tonnes=0.075, n_samples=9)
     topology, cells, geometry = plot.vtk_mesh(V)
     grid = pv.UnstructuredGrid(topology, cells, geometry)
     folder = Path("gait_load_outputs")

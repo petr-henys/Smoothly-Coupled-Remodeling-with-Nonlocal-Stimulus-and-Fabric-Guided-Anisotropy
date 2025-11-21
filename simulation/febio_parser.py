@@ -46,6 +46,7 @@ class FEBio2Dolfinx:
             self.mesh_xml = tree.getroot().find("Mesh")
             self._extract_nodes_and_elements()
             self._extract_surfaces()
+            self._log_unit_hint()
             # Clean up XML tree
             del self.mesh_xml
             del tree
@@ -77,6 +78,18 @@ class FEBio2Dolfinx:
 
         comm.Bcast(self.nodes, root=0)
         self.surfaces = comm.bcast(self.surfaces, root=0)
+
+    def _log_unit_hint(self) -> None:
+        """Lightweight heuristic to flag likely unit mistakes (e.g., m vs mm)."""
+        bbox = self.nodes.max(axis=0) - self.nodes.min(axis=0)
+        diag = float(np.linalg.norm(bbox))
+        if diag < 1e-2 or diag > 5e3:
+            self.logger.warning(
+                "Mesh bounding box diagonal is {:.3g} mm; check source units (expected millimetres).",
+                diag,
+            )
+        else:
+            self.logger.info("Mesh extent: [{:.3f}, {:.3f}, {:.3f}] mm", *bbox)
 
     def _create_dolfinx_mesh(self) -> mesh.Mesh:
         """Build DOLFINx mesh from tet4 connectivity and node coordinates."""

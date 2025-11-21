@@ -346,4 +346,4 @@ def femur_gait_loader(femur_setup):
     """Gait loader used for femur reaction-force tests."""
     from simulation.femur_gait import setup_femur_gait_loading
     _, _, V, _, _ = femur_setup
-    return setup_femur_gait_loading(V, BW_kg=75.0, n_samples=9)
+    return setup_femur_gait_loading(V, mass_tonnes=0.075, n_samples=9)
