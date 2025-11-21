@@ -12,18 +12,21 @@ from simulation.logger import get_logger
 
 
 class FEBio2Dolfinx:
-    """Parse FEBio XML and build DOLFINx mesh with surface boundary tags via KDTree matching."""
+    """Parse FEBio XML and build DOLFINx mesh with surface boundary tags via KDTree matching.
 
-    def __init__(self, feb_file: str, scale: float = 1.0):
+    The mesh coordinates are assumed to already be provided in millimetres. No
+    additional scaling is applied so that downstream loads and material
+    parameters remain physically consistent.
+    """
+
+    def __init__(self, feb_file: str):
         """Parse FEBio file and build DOLFINx mesh with matched surface tags.
         
         Args:
             feb_file: Path to FEBio .feb file
-            scale: Multiplicative scale factor for mesh coordinates (e.g., 1000.0 for m→mm)
         """
         self.logger = get_logger(MPI.COMM_WORLD, verbose=True, name="FEBio2Dolfinx")
         self.feb_file = Path(feb_file)
-        self.scale = scale
         
         comm = MPI.COMM_WORLD
         rank = comm.Get_rank()
@@ -38,7 +41,7 @@ class FEBio2Dolfinx:
             raise FileNotFoundError(f"FEBio file not found: {self.feb_file}")
 
         if rank == 0:
-            self.logger.info(f"Parsing FEBio file: {self.feb_file} (scale={scale})")
+            self.logger.info(f"Parsing FEBio file: {self.feb_file} (units: mm)")
             tree = ET.parse(self.feb_file)
             self.mesh_xml = tree.getroot().find("Mesh")
             self._extract_nodes_and_elements()
@@ -108,9 +111,6 @@ class FEBio2Dolfinx:
             idx = int(n.get("id")) - 1
             coords = [float(x) for x in n.text.split(",")]
             self.nodes[idx] = coords
-        
-        # Apply scale factor
-        self.nodes *= self.scale
         
         # Extract tet4 elements
         tet_elements = []

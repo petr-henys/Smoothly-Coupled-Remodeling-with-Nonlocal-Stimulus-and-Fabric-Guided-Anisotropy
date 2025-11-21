@@ -153,6 +153,14 @@ class Config:
             raise ValueError("cS>0, tauS>=0, kappaS>=0, rS_gain>=0 required.")
         if self.cA <= 0 or self.tauA < 0 or self.ell <= 0:
             raise ValueError("cA>0, tauA>=0, ell>0 required.")
+        if self.body_mass_kg <= 0:
+            raise ValueError("body_mass_kg must be positive (kg).")
+        if self.gait_cycles_per_day <= 0:
+            raise ValueError("gait_cycles_per_day must be positive.")
+        if self.gait_samples < 2:
+            raise ValueError("gait_samples must be at least 2.")
+        if self.load_scale < 0:
+            raise ValueError("load_scale must be non-negative.")
         
         if self.accel_type not in ("anderson", "picard"):
             raise ValueError(f"accel_type must be 'anderson' or 'picard', got {self.accel_type!r}")

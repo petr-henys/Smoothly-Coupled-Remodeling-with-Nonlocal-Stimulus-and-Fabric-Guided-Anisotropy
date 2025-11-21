@@ -59,6 +59,11 @@ class FemurRemodellerGait:
         n_samples: int = 9,
         load_scale: float = 1.0
     ):
+        if n_samples < 2:
+            raise ValueError("n_samples must be at least 2 for trapezoidal quadrature.")
+        if load_scale < 0:
+            raise ValueError("load_scale must be non-negative.")
+
         self.t_hip = t_hip
         self.t_glmed = t_glmed
         self.t_glmax = t_glmax
@@ -71,8 +76,8 @@ class FemurRemodellerGait:
         self.glmed_gait = glmed_gait
         self.glmax_gait = glmax_gait
         
-        self.n_samples = n_samples
-        self.load_scale = load_scale
+        self.n_samples = int(n_samples)
+        self.load_scale = float(load_scale)
         self.coord_scale = 1.0  # Both DOLFINx mesh and PyVista mesh in mm
     
     
@@ -166,8 +171,8 @@ class FemurRemodellerGait:
         target_func.x.scatter_forward()
 
 
-def setup_femur_gait_loading(V: fem.FunctionSpace, BW_kg: float = 75.0, n_samples: int = 9
-                             ) -> "FemurRemodellerGait":
+def setup_femur_gait_loading(V: fem.FunctionSpace, BW_kg: float = 75.0, n_samples: int = 9,
+                             load_scale: float = 1.0) -> "FemurRemodellerGait":
     """
     
     This function shows HOW to set up loading. Users must adapt this
@@ -223,10 +228,10 @@ def setup_femur_gait_loading(V: fem.FunctionSpace, BW_kg: float = 75.0, n_sample
         t_hip=t_hip, t_glmed=t_glmed, t_glmax=t_glmax,
         hip=hip, gl_med=gl_med, gl_max=gl_max, hip_gait=hip_gait,
         glmed_gait=gl_med_gait, glmax_gait=gl_max_gait,
-        n_samples=n_samples,
+        n_samples=n_samples, load_scale=load_scale,
     )
 if __name__ == "__main__":
-    mdl = FEBio2Dolfinx(FemurPaths.FEMUR_MESH_FEB, scale=1.0)
+    mdl = FEBio2Dolfinx(FemurPaths.FEMUR_MESH_FEB)
     mdl.save_mesh_vtk("tt.vtk")
     domain = mdl.mesh_dolfinx
     P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(domain.geometry.dim,))

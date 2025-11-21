@@ -132,7 +132,12 @@ class Remodeller:
 
         # Create gait loader - must be provided explicitly
         from simulation.femur_gait import setup_femur_gait_loading
-        gait_loader = setup_femur_gait_loading(self.V, BW_kg=75.0, n_samples=9)
+        gait_loader = setup_femur_gait_loading(
+            self.V,
+            BW_kg=float(self.cfg.body_mass_kg),
+            n_samples=int(self.cfg.gait_samples),
+            load_scale=float(self.cfg.load_scale),
+        )
         
         # Neumann BCs: traction from gait loader on tags 2.!!!!dont change it
         neumann_bcs = [
