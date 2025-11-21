@@ -378,7 +378,7 @@ class StimulusSolver(_BaseLinearSolver):
 
         # Apply distal damping to psi to avoid artifacts at u=0 boundary
         z_min = self._compute_z_min()
-        mask = get_distal_damping_mask(self.mesh, z_min, height=5., transition=5.0)
+        mask = get_distal_damping_mask(self.mesh, z_min, height=80., transition=5.0)
         psi_effective = psi_expr * mask
 
         rhs = (self.cfg.cS / dt) * self.S_old + self.cfg.rS_gain * (psi_effective - 1.0)
@@ -410,7 +410,7 @@ class StimulusSolver(_BaseLinearSolver):
         mask = get_distal_damping_mask(self.mesh, z_min, height=5., transition=5.0)
         psi_effective = psi_expr * mask
 
-        source_loc = fem.assemble_scalar(fem.form(self.cfg.rS_gain * (psi_effective - 1.0) * one * self.dx))
+        source_loc = fem.assemble_scalar(fem.form(self.cfg.rS_gain * (psi_effective - self.cfg.psi_ref) * one * self.dx))
         source = float(self.comm.allreduce(source_loc, op=MPI.SUM))
         
         n = ufl.FacetNormal(self.mesh)
@@ -423,7 +423,7 @@ class StimulusSolver(_BaseLinearSolver):
 
 
 class DensitySolver(_BaseLinearSolver):
-    """Density evolution ρ: anisotropic diffusion with soft mechanostat ρ_eq(S)."""
+    """Density evolution ρ: anisotropic diffusion with dual-threshold (Frost-like) mechanostat."""
 
     def __init__(
         self,
@@ -441,38 +441,32 @@ class DensitySolver(_BaseLinearSolver):
         self.L_form_template = None
         self.a_form = fem.form(self.build_lhs_form())
 
-    
     def _get_reaction_terms(self):
-        """Frost-style two-threshold mechanostat with smooth Heaviside.
-        Returns:
-            lam_eff: effective remodeling rate [1/day], spatially varying
-            rho_eq: equilibrium density field in [rho_min, rho_max]
+        """Compute zone-dependent reaction rate λ_eff(S) and equilibrium density ρ_eq(S)
+        using a dual-threshold (Frost-like) mechanostat.
+        - Formation when S > S_form_th (λ_form to ρ_max)
+        - Resorption when S < S_resorb_th (λ_resorb to ρ_min)
+        - Neutral zone otherwise (λ_eff≈0)
+        A smooth Heaviside with slope k_step is used.
+        We also apply a 'lazy-zone' damping f_S = |S| / (|S| + S_lazy) to slow changes near zero.
+        Returns (lam_eff, rho_eq).
         """
-        # Smooth thresholds for formation and resorption in S-units (steady S ≈ ψ - 1)
-        k = float(self.cfg.k_step)
-        S_f = float(self.cfg.S_form_th)
-        S_r = float(self.cfg.S_resorb_th)
-        # Smooth heavisides
-        Hf = 1.0 / (1.0 + ufl.exp(-k * (self.S - S_f)))      # formation active if S > S_f
-        Hr = 1.0 / (1.0 + ufl.exp(-k * (S_r - self.S)))      # resorption active if S < S_r
-        
-        # Disjoint weights (avoid overlap dominance)
-        w_form = Hf * (1.0 - Hr)
-        w_resorb = Hr * (1.0 - Hf)
-        w_neutral = 1.0 - w_form - w_resorb
-        
-        # Effective rate and equilibrium state
-        lam_eff = self.cfg.lambda_form * w_form + self.cfg.lambda_resorb * w_resorb
-        rho_eq = (self.cfg.rho_max * w_form
-                  + self.cfg.rho_min * w_resorb
-                  + self.rho_old * w_neutral)
-        
-        # Optional lazy-zone modulation around |S|≈0
         Sabs = smooth_abs(self.S, self.smooth_eps)
         S_lazy = float(self.cfg.S_lazy)
         f_S = Sabs / (Sabs + S_lazy) if S_lazy > 0.0 else 1.0
-        lam_eff = lam_eff * f_S
+
+        # Smooth steps
+        k_step = float(self.cfg.k_step)
+        S_form = float(self.cfg.S_form_th)
+        S_resorb = float(self.cfg.S_resorb_th)
+
+        H_form = 1.0 / (1.0 + ufl.exp(-k_step * (self.S - S_form)))
+        H_resorb = 1.0 / (1.0 + ufl.exp(-k_step * (S_resorb - self.S)))
+
+        lam_eff = f_S * (self.cfg.lambda_form * H_form + self.cfg.lambda_resorb * H_resorb)
+        rho_eq = self.cfg.rho_min * H_resorb + self.cfg.rho_max * H_form  # neutral zone unused as λ≈0 there
         return lam_eff, rho_eq
+
 
     def build_lhs_form(self):
         dt = self.cfg.dt
