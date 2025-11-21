@@ -27,7 +27,7 @@ class Config:
     nu: float = 0.3             # Poisson's ratio [-]
 
     # Density-stiffness relationship: E = E0 * rho^n(rho)
-    n_power: float = 1.5        # Exponent for stimulus calculation
+    n_power: float = 2.0        # Exponent for stimulus calculation
     n_trab: float = 2.0         # Exponent for trabecular bone
     n_cort: float = 1.2         # Exponent for cortical bone
     rho_trab_max: float = 0.6   # Max density for trabecular regime
@@ -43,19 +43,19 @@ class Config:
     S_form_th: float = 0.2     # Formation threshold in S (dimensionless)
     S_resorb_th: float = -0.2  # Resorption threshold in S (dimensionless)
     k_step: float = 6.0        # Smooth step steepness
-    lambda_form: float = 0.01  # Formation rate [1/day]
-    lambda_resorb: float = 0.3  # Resorption rate [1/day]
-    S_lazy: float = 0.1         # Lazy zone width
+    lambda_form: float = 0.1  # Formation rate [1/day]
+    lambda_resorb: float = 0.1  # Resorption rate [1/day]
+    S_lazy: float = 0.25         # Lazy zone width
 
     # Density diffusion [mm^2/day]
-    beta_par: float = 1.0       # Parallel to fabric
+    beta_par: float = 0.1       # Parallel to fabric
     beta_perp: float = 0.1      # Perpendicular to fabric
 
     # --- Stimulus (Reaction-Diffusion) ---
-    psi_ref: float = 5.        # Reference (σ_ref) for Carter–Beaupré normalization [MPa]
+    psi_ref: float = 20.        # Reference (σ_ref) for Carter–Beaupré normalization [MPa]
     cS: float = 1.0             # Signaling capacity
     tauS: float = 1.0           # Decay rate [1/day]
-    kappaS: float = 5.0         # Diffusion coefficient [mm^2/day]
+    kappaS: float = 1.0         # Diffusion coefficient [mm^2/day]
     rS_gain: float = 1.0        # Transduction gain [1/day]
     distal_damping_height: float = 60.0 # Height of distal damping zone [mm]
     distal_damping_transition: float = 5.0 # Transition width of distal damping zone [mm]

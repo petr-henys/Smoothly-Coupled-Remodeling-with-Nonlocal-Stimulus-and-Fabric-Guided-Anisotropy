@@ -176,9 +176,9 @@ class _Anderson:
             gamma_eff = gamma * (r_norm / (r_norm + self.safeguard_abs_floor)) ** self.gamma_decay_p
             
             if use_safeguard and r_norm > self.safeguard_abs_floor and rp_norm > (1.0 - gamma_eff) * r_norm:
-                # Backtrack along s
+                # Backtrack from x_cand towards x_raw (Picard step)
                 x_cand, accepted, bt = self._backtrack(
-                    x_old, s, x_raw, r_norm, gamma_eff, proj_residual_norm, backtrack_max
+                    x_cand, x_raw, r_norm, gamma_eff, proj_residual_norm, backtrack_max, x_old
                 )
                 info["backtracks"] = bt
                 if not accepted:
@@ -234,22 +234,29 @@ class _Anderson:
 
     def _backtrack(
         self,
-        x_old: np.ndarray,
-        s: np.ndarray,
+        x_cand: np.ndarray,
         x_raw: np.ndarray,
         r_norm: float,
         gamma_eff: float,
         proj_residual_norm: Callable,
         backtrack_max: int,
+        x_old: np.ndarray,
     ) -> Tuple[np.ndarray, bool, int]:
-        """Backtrack along step direction with linesearch."""
+        """Backtrack from x_cand towards x_raw (Picard step)."""
+        # We interpolate x_try = x_raw + theta * (x_cand - x_raw)
+        # theta=1 => x_cand (failed), theta=0 => x_raw (safe)
+        diff = x_cand - x_raw
         theta = 0.5
+        
         for bt in range(backtrack_max):
-            x_try = x_old + theta * s
+            x_try = x_raw + theta * diff
+            # Note: proj_residual_norm(x_old, x_test, x_raw) uses x_raw as base if x_test != x_raw
             rp_try = proj_residual_norm(x_old, x_try, x_raw)
+            
             if rp_try <= (1.0 - gamma_eff) * r_norm:
                 return x_try, True, bt
             theta *= 0.5
+            
         # Backtracking failed → fallback to Picard
         return x_raw.copy(), False, backtrack_max
 
