@@ -22,11 +22,6 @@ from simulation.subsolvers import MechanicsSolver
 from simulation.drivers import GaitDriver
 from simulation.utils import build_dirichlet_bcs
 
-# Skip if mesh file not found
-import os
-MESH_EXISTS = os.path.exists(FemurPaths.FEMUR_MESH_FEB)
-
-@pytest.mark.skipif(not MESH_EXISTS, reason="Femur mesh file not found")
 @pytest.fixture(scope="module")
 def gait_context():
     """Setup solver and driver context once."""
@@ -73,7 +68,6 @@ def gait_context():
         "Q": Q
     }
 
-@pytest.mark.skipif(not MESH_EXISTS, reason="Femur mesh file not found")
 class TestGaitDriver:
     
     def test_driver_initialization(self, gait_context):
