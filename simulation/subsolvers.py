@@ -404,7 +404,13 @@ class StimulusSolver(_BaseLinearSolver):
         storage = float(self.comm.allreduce(storage_loc, op=MPI.SUM))
         decay_loc = fem.assemble_scalar(fem.form(self.cfg.tauS * self.S * one * self.dx))
         decay = float(self.comm.allreduce(decay_loc, op=MPI.SUM))
-        source_loc = fem.assemble_scalar(fem.form(self.cfg.rS_gain * (psi_expr - self.cfg.psi_ref) * one * self.dx))
+        
+        # Apply distal damping to psi to match assemble_rhs
+        z_min = self._compute_z_min()
+        mask = get_distal_damping_mask(self.mesh, z_min, height=5., transition=5.0)
+        psi_effective = psi_expr * mask
+
+        source_loc = fem.assemble_scalar(fem.form(self.cfg.rS_gain * (psi_effective - self.cfg.psi_ref) * one * self.dx))
         source = float(self.comm.allreduce(source_loc, op=MPI.SUM))
         
         n = ufl.FacetNormal(self.mesh)

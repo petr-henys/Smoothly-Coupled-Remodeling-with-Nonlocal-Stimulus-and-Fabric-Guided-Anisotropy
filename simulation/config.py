@@ -27,7 +27,7 @@ class Config:
     nu: float = 0.3             # Poisson's ratio [-]
 
     # Density-stiffness relationship: E = E0 * rho^n(rho)
-    n_power: float = 1.0        # Exponent for stimulus calculation
+    n_power: float = 2.0        # Exponent for stimulus calculation
     n_trab: float = 2.0         # Exponent for trabecular bone
     n_cort: float = 1.2         # Exponent for cortical bone
     rho_trab_max: float = 0.6   # Max density for trabecular regime
