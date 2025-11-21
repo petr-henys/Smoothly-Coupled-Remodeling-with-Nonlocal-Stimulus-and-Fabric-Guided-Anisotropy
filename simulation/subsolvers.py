@@ -381,7 +381,7 @@ class StimulusSolver(_BaseLinearSolver):
         mask = get_distal_damping_mask(self.mesh, z_min, height=5., transition=5.0)
         psi_effective = psi_expr * mask
 
-        rhs = (self.cfg.cS / dt) * self.S_old + self.cfg.rS_gain * (psi_effective - self.cfg.psi_ref)
+        rhs = (self.cfg.cS / dt) * self.S_old + self.cfg.rS_gain * (psi_effective - 1.0)
         self._rhs_form = fem.form(rhs * self.test * self.dx)
         assemble_vector(self.b, self._rhs_form)
         self.b.ghostUpdate(PETSc.InsertMode.ADD, PETSc.ScatterMode.REVERSE)
@@ -410,7 +410,7 @@ class StimulusSolver(_BaseLinearSolver):
         mask = get_distal_damping_mask(self.mesh, z_min, height=5., transition=5.0)
         psi_effective = psi_expr * mask
 
-        source_loc = fem.assemble_scalar(fem.form(self.cfg.rS_gain * (psi_effective - self.cfg.psi_ref) * one * self.dx))
+        source_loc = fem.assemble_scalar(fem.form(self.cfg.rS_gain * (psi_effective - 1.0) * one * self.dx))
         source = float(self.comm.allreduce(source_loc, op=MPI.SUM))
         
         n = ufl.FacetNormal(self.mesh)

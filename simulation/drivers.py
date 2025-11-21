@@ -1,7 +1,7 @@
 """Remodeling drivers for stimulus and direction solvers.
 
 This module provides driver objects that translate mechanics results (displacements u) into:
-- a scalar stimulus driver ψ(u) [MPa] (e.g. effective stress)
+- a scalar stimulus driver ψ(u) [-] (dimensionless daily load dose)
 - a structure tensor M(u) capturing preferred loading directions
 
 Used as inputs for:
@@ -63,7 +63,7 @@ class InstantDriver:
 class GaitDriver:
     """Gait-averaged Carter–Beaupré daily stress stimulus + structure tensor.
 
-    J_day(x) = psi_ref * N_cyc * ⟨(σ_eff(x)/psi_ref)^m⟩_cycle   [MPa]
+    ψ_day(x) = N_cyc * ⟨(σ_eff(x)/ψ_ref)^m⟩_cycle   [-]
     M(x) = ⟨ε_devᵀ ε_dev⟩_cycle
     """
 
@@ -194,6 +194,6 @@ class GaitDriver:
             raise ValueError("Gait quadrature weights must sum to a positive value.")
 
         J_cycle = sum(psi_p_terms) / total_weight
-        self.psi_expr = self.psi_ref * N_cyc * J_cycle
+        self.psi_expr = N_cyc * J_cycle
         self.M_expr = sum(structure_terms) / total_weight
 
