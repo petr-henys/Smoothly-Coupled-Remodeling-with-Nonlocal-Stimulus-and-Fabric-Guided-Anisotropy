@@ -25,7 +25,7 @@ from simulation.paths import FemurPaths
 from simulation.femur_gait import setup_femur_gait_loading
 from simulation.config import Config
 from simulation.subsolvers import MechanicsSolver
-from simulation.drivers import GaitEnergyDriver
+from simulation.drivers import GaitDriver
 from simulation.utils import build_dirichlet_bcs
 
 
@@ -87,11 +87,11 @@ def mechanics_solver(femur_mechanics_setup, gait_loader):
 
 @pytest.mark.slow
 class TestAccumulatedStrainEnergy:
-    """Test accumulated strain energy computation over gait cycle using GaitEnergyDriver."""
+    """Test accumulated strain energy computation over gait cycle using GaitDriver."""
 
     def test_energy_driver_initialization(self, mechanics_solver, gait_loader):
-        """GaitEnergyDriver should initialize without errors."""
-        driver = GaitEnergyDriver(mechanics_solver, gait_loader, mechanics_solver.cfg)
+        """GaitDriver should initialize without errors."""
+        driver = GaitDriver(mechanics_solver, gait_loader, mechanics_solver.cfg)
         assert driver.mech is mechanics_solver
         assert driver.gait is gait_loader
         assert len(driver.phases) == gait_loader.n_samples
@@ -99,16 +99,16 @@ class TestAccumulatedStrainEnergy:
 
     def test_energy_expr_builds(self, mechanics_solver, gait_loader):
         """Energy expression should build successfully."""
-        driver = GaitEnergyDriver(mechanics_solver, gait_loader, mechanics_solver.cfg)
+        driver = GaitDriver(mechanics_solver, gait_loader, mechanics_solver.cfg)
         driver.update_snapshots()
-        psi_expr = driver.energy_expr()
+        psi_expr = driver.stimulus_expr()
         assert psi_expr is not None, "Energy expression should be created"
 
     def test_energy_positivity(self, mechanics_solver, gait_loader):
         """Accumulated energy should be positive when integrated."""
-        driver = GaitEnergyDriver(mechanics_solver, gait_loader, mechanics_solver.cfg)
+        driver = GaitDriver(mechanics_solver, gait_loader, mechanics_solver.cfg)
         driver.update_snapshots()
-        psi_expr = driver.energy_expr()
+        psi_expr = driver.stimulus_expr()
 
         cfg = mechanics_solver.cfg
         psi_total_local = fem.assemble_scalar(fem.form(psi_expr * cfg.dx))
@@ -122,16 +122,16 @@ class TestAccumulatedStrainEnergy:
         comm = mechanics_solver.cfg.domain.comm
 
         gait_loader.load_scale = 1.0
-        driver_base = GaitEnergyDriver(mechanics_solver, gait_loader, mechanics_solver.cfg)
+        driver_base = GaitDriver(mechanics_solver, gait_loader, mechanics_solver.cfg)
         driver_base.update_snapshots()
-        psi_expr_base = driver_base.energy_expr()
+        psi_expr_base = driver_base.stimulus_expr()
         psi_base_local = fem.assemble_scalar(fem.form(psi_expr_base * mechanics_solver.cfg.dx))
         psi_base = comm.allreduce(psi_base_local, op=MPI.SUM)
 
         gait_loader.load_scale = 2.0
-        driver_double = GaitEnergyDriver(mechanics_solver, gait_loader, mechanics_solver.cfg)
+        driver_double = GaitDriver(mechanics_solver, gait_loader, mechanics_solver.cfg)
         driver_double.update_snapshots()
-        psi_expr_double = driver_double.energy_expr()
+        psi_expr_double = driver_double.stimulus_expr()
         psi_double_local = fem.assemble_scalar(fem.form(psi_expr_double * mechanics_solver.cfg.dx))
         psi_double = comm.allreduce(psi_double_local, op=MPI.SUM)
 
@@ -146,7 +146,7 @@ class TestAccumulatedStrainEnergy:
         cfg = mechanics_solver.cfg
         comm = cfg.domain.comm
 
-        driver = GaitEnergyDriver(mechanics_solver, gait_loader, cfg)
+        driver = GaitDriver(mechanics_solver, gait_loader, cfg)
         driver.update_snapshots()
 
         phase_energies = []
@@ -158,7 +158,7 @@ class TestAccumulatedStrainEnergy:
         for idx, psi in enumerate(phase_energies):
             assert psi > 0.0, f"Gait phase {idx} should have positive energy, got {psi}"
 
-        psi_expr_driver = driver.energy_expr()
+        psi_expr_driver = driver.stimulus_expr()
         psi_driver_loc = fem.assemble_scalar(fem.form(psi_expr_driver * cfg.dx))
         psi_driver = comm.allreduce(psi_driver_loc, op=MPI.SUM)
 

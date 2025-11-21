@@ -7,20 +7,25 @@ from dolfinx import fem, mesh
 from mpi4py import MPI
 
 from simulation.config import Config
-from simulation.drivers import GaitEnergyDriver
+from simulation.drivers import GaitDriver
 from simulation.femur_gait import FemurRemodellerGait
 
 class MockMechanicsSolver:
-    """Mock mechanics solver that returns energy density dependent on u."""
+    """Mock mechanics solver that returns stress dependent on u."""
     def __init__(self, u):
         self.u = u
+        self.rho = u # dummy
+        self.A_dir = u # dummy
+        self.gdim = 3
         self.comm = u.function_space.mesh.comm
 
-    def get_strain_energy_density(self, u=None):
-        # Return expression dependent on u so it updates when u_snap updates
-        # Let psi = u[0]^2
-        uu = self.u if u is None else u
-        return uu[0]**2
+    def sigma(self, u, rho, A_dir):
+        # Return uniaxial stress tensor with magnitude u[0]
+        # sigma = [[u[0], 0, 0], [0, 0, 0], [0, 0, 0]]
+        # Von Mises of this is |u[0]|
+        S = u[0]
+        zero = ufl.as_ufl(0.0)
+        return ufl.as_tensor([[S, zero, zero], [zero, zero, zero], [zero, zero, zero]])
 
     def get_strain_tensor(self, u=None):
         # Return identity for structure tensor testing
@@ -39,7 +44,7 @@ class MockGaitLoader:
         self.t_glmed = fem.Function(V)
         self.t_glmax = fem.Function(V)
         self.V = V
-        self.target_psi = 0.0
+        self.target_stress = 0.0
 
     def get_quadrature(self):
         # Single phase for simplicity
@@ -48,11 +53,11 @@ class MockGaitLoader:
     def update_loads(self, phase):
         pass
     
-    def set_target_psi(self, psi):
-        self.target_psi = psi
+    def set_target_stress(self, s):
+        self.target_stress = s
 
 def test_gait_driver_daily_dose_scaling():
-    """Verify GaitEnergyDriver correctly scales energy by cycles/day."""
+    """Verify GaitDriver correctly scales energy by cycles/day."""
     comm = MPI.COMM_WORLD
     domain = mesh.create_unit_cube(comm, 2, 2, 2)
     V = fem.functionspace(domain, ("Lagrange", 1, (3,)))
@@ -68,48 +73,38 @@ def test_gait_driver_daily_dose_scaling():
     cfg.n_power = n_power
     
     # 1. Test Equilibrium Case
-    # If psi_mech = psi_ref / N_cyc (for n=1), then psi_expr should equal psi_ref
-    psi_mech_eq = psi_ref / N_cyc
+    # J_day = psi_ref * N_cyc * (sigma_vm / psi_ref)^n
+    # For J_day = psi_ref (equilibrium), we need:
+    # 1 = N_cyc * (sigma_vm / psi_ref)^n
+    # (sigma_vm / psi_ref)^n = 1 / N_cyc
+    # sigma_vm / psi_ref = (1 / N_cyc)^(1/n)
+    # sigma_vm = psi_ref * (1 / N_cyc)^(1/n)
+    
+    sigma_vm_eq = psi_ref * (1.0 / N_cyc)**(1.0 / n_power)
     
     u = fem.Function(V)
     mech = MockMechanicsSolver(u)
     loader = MockGaitLoader(V)
     
-    # We need to inject logic to set u based on target psi during update_snapshots
-    # We can subclass GaitEnergyDriver or just monkeypatch the solve method?
-    # Actually, MockMechanicsSolver.solve is called. We can update u there.
-    
     def solve_side_effect():
-        # Set u such that u[0]^2 = target_psi
-        # u[0] = sqrt(target_psi)
-        val = np.sqrt(loader.target_psi)
-        u.x.array[:] = 0.0
-        # We need to set x-component. 
-        # V is vector space. dofs are blocked? 
-        # For P1 vector, dofs are usually ordered by node, then component? Or component then node?
-        # dolfinx default is usually blocked if block size is set.
-        # Let's just set all values to val/sqrt(3) so magnitude squared is val^2?
-        # No, psi = u[0]^2. So just set u[0] component.
-        # Easier: set all u to val. Then u[0]^2 is val^2.
-        # Wait, u[0] in UFL means x-component.
-        # Let's set x-component of all nodes to sqrt(target_psi).
-        
+        # Set u[0] = target_stress so that von Mises = target_stress
+        val = loader.target_stress
         bs = V.dofmap.index_map_bs
-        # Assuming bs=3
+        u.x.array[:] = 0.0
         u.x.array[0::bs] = val
         u.x.scatter_forward()
         return 1, 1
         
     mech.solve = solve_side_effect
     
-    driver = GaitEnergyDriver(mech, loader, cfg)
+    driver = GaitDriver(mech, loader, cfg)
     
     # Set target for equilibrium
-    loader.set_target_psi(psi_mech_eq)
+    loader.set_target_stress(sigma_vm_eq)
     driver.update_snapshots()
     
-    # Evaluate psi_expr
-    psi_expr = driver.energy_expr()
+    # Evaluate stimulus_expr
+    psi_expr = driver.stimulus_expr()
     psi_val = fem.assemble_scalar(fem.form(psi_expr * cfg.dx))
     vol = fem.assemble_scalar(fem.form(1.0 * cfg.dx))
     psi_avg = comm.allreduce(psi_val, op=MPI.SUM) / comm.allreduce(vol, op=MPI.SUM)
@@ -117,18 +112,18 @@ def test_gait_driver_daily_dose_scaling():
     assert abs(psi_avg - psi_ref) < 1e-9, f"Equilibrium scaling failed: got {psi_avg}, expected {psi_ref}"
 
     # 2. Test General Scaling
-    # If psi_mech = 2 * psi_mech_eq
-    # psi_expr should be 2 * psi_ref (for n=1)
-    loader.set_target_psi(2.0 * psi_mech_eq)
+    # If sigma_vm = 2 * sigma_vm_eq
+    # Then J_day should be 2^n * psi_ref (since n=1, it is 2*psi_ref)
+    loader.set_target_stress(2.0 * sigma_vm_eq)
     driver.update_snapshots()
     
-    psi_val = fem.assemble_scalar(fem.form(driver.energy_expr() * cfg.dx))
+    psi_val = fem.assemble_scalar(fem.form(driver.stimulus_expr() * cfg.dx))
     psi_avg = comm.allreduce(psi_val, op=MPI.SUM) / comm.allreduce(vol, op=MPI.SUM)
     
     assert abs(psi_avg - 2.0 * psi_ref) < 1e-9, f"Linear scaling failed: got {psi_avg}, expected {2*psi_ref}"
 
 def test_gait_driver_exponent_scaling():
-    """Verify GaitEnergyDriver handles power law exponent n correctly."""
+    """Verify GaitDriver handles power law exponent n correctly."""
     comm = MPI.COMM_WORLD
     domain = mesh.create_unit_cube(comm, 2, 2, 2)
     V = fem.functionspace(domain, ("Lagrange", 1, (3,)))
@@ -143,27 +138,27 @@ def test_gait_driver_exponent_scaling():
     cfg.n_power = n_power
     
     # Equilibrium condition for n=2:
-    # psi_mech = psi_ref * (1/N_cyc)^(1/n)
-    psi_mech_eq = psi_ref * (1.0 / N_cyc)**(1.0 / n_power)
+    sigma_vm_eq = psi_ref * (1.0 / N_cyc)**(1.0 / n_power)
     
     u = fem.Function(V)
     mech = MockMechanicsSolver(u)
     loader = MockGaitLoader(V)
     
     def solve_side_effect():
-        val = np.sqrt(loader.target_psi)
+        val = loader.target_stress
         bs = V.dofmap.index_map_bs
+        u.x.array[:] = 0.0
         u.x.array[0::bs] = val
         u.x.scatter_forward()
         return 1, 1
     mech.solve = solve_side_effect
     
-    driver = GaitEnergyDriver(mech, loader, cfg)
+    driver = GaitDriver(mech, loader, cfg)
     
-    loader.set_target_psi(psi_mech_eq)
+    loader.set_target_stress(sigma_vm_eq)
     driver.update_snapshots()
     
-    psi_expr = driver.energy_expr()
+    psi_expr = driver.stimulus_expr()
     psi_val = fem.assemble_scalar(fem.form(psi_expr * cfg.dx))
     vol = fem.assemble_scalar(fem.form(1.0 * cfg.dx))
     psi_avg = comm.allreduce(psi_val, op=MPI.SUM) / comm.allreduce(vol, op=MPI.SUM)

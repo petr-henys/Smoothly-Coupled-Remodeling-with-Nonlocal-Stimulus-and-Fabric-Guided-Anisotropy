@@ -36,7 +36,7 @@ comm = MPI.COMM_WORLD
 import pytest
 
 # -----------------------------------------------------------------------------
-# Test-local shim: use InstantEnergyDriver instead of gait-averaged driver.
+# Test-local shim: use InstantDriver instead of gait-averaged driver.
 # -----------------------------------------------------------------------------
 
 # =============================================================================
@@ -636,8 +636,8 @@ class TestMemoryUsage:
         dirn = DirectionSolver(A, A_old, cfg)
         
         # Create driver for fixed-point solver (required in new architecture)
-        from simulation.drivers import InstantEnergyDriver
-        driver = InstantEnergyDriver(mech)
+        from simulation.drivers import InstantDriver
+        driver = InstantDriver(mech)
         
         fps = FixedPointSolver(
             comm, cfg, driver, stim, dens, dirn,

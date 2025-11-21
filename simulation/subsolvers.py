@@ -331,7 +331,8 @@ class MechanicsSolver(_BaseLinearSolver):
 
 
 class StimulusSolver(_BaseLinearSolver):
-    """Reaction-diffusion stimulus S driven by mechanical energy density.
+    """Reaction-diffusion stimulus S driven by a mechanical driver ψ(x)
+    (here typically a daily equivalent stress from the gait driver).
 
     Units:
     - S: dimensionless signal [-]

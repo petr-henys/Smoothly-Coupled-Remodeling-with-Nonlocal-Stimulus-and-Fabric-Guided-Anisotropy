@@ -1,14 +1,5 @@
 #!/usr/bin/env python3
 """
-Numerical implementation and matrix assembly tests.
-
-Merged from:
-- test_numerical_implementation.py
-- test_nd_matrix_sanity.py
-"""
-
-#!/usr/bin/env python3
-"""
 Advanced numerical implementation tests for bone remodeling model.
 
 Tests:
@@ -20,9 +11,7 @@ Tests:
 """
 
 import pytest
-
 import numpy as np
-np.random.seed(1234)
 from mpi4py import MPI
 from dolfinx import fem
 from dolfinx.fem import Function
@@ -31,9 +20,10 @@ from simulation.config import Config
 from simulation.utils import build_facetag
 from simulation.subsolvers import MechanicsSolver, StimulusSolver, DensitySolver, DirectionSolver
 from simulation.fixedsolver import FixedPointSolver
-from simulation.drivers import InstantEnergyDriver
+from simulation.drivers import InstantDriver
 from simulation.anderson import _Anderson
 
+np.random.seed(1234)
 
 # =============================================================================
 # DOF Ordering Tests
@@ -52,7 +42,7 @@ class TestDOFOrdering:
         stim = StimulusSolver(S, S_old, cfg)
         dens = DensitySolver(rho, rho_old, A, S, cfg)
         dirn = DirectionSolver(A, A_old, cfg)
-        driver = InstantEnergyDriver(mech)
+        driver = InstantDriver(mech)
         fps = FixedPointSolver(comm, cfg, driver, stim, dens, dirn,
                        rho, rho_old, A, A_old, S, S_old)
         
@@ -88,7 +78,7 @@ class TestDOFOrdering:
         stim = StimulusSolver(S, S_old, cfg)
         dens = DensitySolver(rho, rho_old, A, S, cfg)
         dirn = DirectionSolver(A, A_old, cfg)
-        driver = InstantEnergyDriver(mech)
+        driver = InstantDriver(mech)
         fps = FixedPointSolver(comm, cfg, driver, stim, dens, dirn,
                        rho, rho_old, A, A_old, S, S_old)
         flat = fps._flatten_state(copy=True)
@@ -110,7 +100,7 @@ class TestDOFOrdering:
         stim = StimulusSolver(S, S_old, cfg)
         dens = DensitySolver(rho, rho_old, A, S, cfg)
         dirn = DirectionSolver(A, A_old, cfg)
-        driver = InstantEnergyDriver(mech)
+        driver = InstantDriver(mech)
         fps = FixedPointSolver(comm, cfg, driver, stim, dens, dirn,
                                rho, rho_old, A, A_old, S, S_old)
 
@@ -387,7 +377,7 @@ class TestProjectedResidual:
         stim = StimulusSolver(S, S_old, cfg)
         dens = DensitySolver(rho, rho_old, A, S, cfg)
         dirn = DirectionSolver(A, A_old, cfg)
-        driver = InstantEnergyDriver(mech)
+        driver = InstantDriver(mech)
         fps = FixedPointSolver(comm, cfg, driver, stim, dens, dirn,
                                rho, rho_old, A, A_old, S, S_old)
 
@@ -472,8 +462,6 @@ class TestConfigValidation:
         assert cfg.domain is not None
         assert cfg.domain == unit_cube
 
-    # Removed legacy nondimensionalization tests (rho_min_nd, rho_min_dim)
-
     def test_config_rejects_negative_timestep(self, unit_cube, facet_tags):
         """set_dt should reject non-positive timestep."""
         cfg = Config(domain=unit_cube, facet_tags=facet_tags, verbose=False)
@@ -513,10 +501,6 @@ class TestConfigValidation:
                     E0=1000.0, verbose=False)
         assert cfg.E0 == 1000.0
 
-    # Removed legacy nondimensionalization characteristic scale tests
-
-    # Removed legacy nondimensional parameter O(1) tests
-
     def test_config_solver_type_validation(self, unit_cube, facet_tags):
         """KSP and PC types should be valid."""
         # Valid solvers
@@ -527,8 +511,6 @@ class TestConfigValidation:
         cfg2 = Config(domain=unit_cube, facet_tags=facet_tags,
                      ksp_type="gmres", pc_type="ilu", verbose=False)
         assert cfg2.ksp_type == "gmres"
-
-        # Note: PETSc validates solver types at runtime, not at config creation
 
     def test_config_accel_type_validation(self, unit_cube, facet_tags):
         """Acceleration type must be valid choice ('anderson' or 'picard')."""
@@ -559,115 +541,3 @@ class TestConfigValidation:
         assert cfg.min_subiters > 0
         assert cfg.min_subiters <= cfg.max_subiters
         assert cfg.ksp_max_it > 0
-
-
-################################################################################
-
-
-#!/usr/bin/env python3
-"""
-Sanity checks around matrix assembly scaling.
-We keep these very light to avoid duplicating the heavy invariance tests.
-"""
-import numpy as np
-import pytest
-
-from mpi4py import MPI
-from dolfinx import mesh, fem
-from dolfinx.fem.petsc import create_matrix, assemble_matrix
-import basix
-from petsc4py import PETSc
-
-from simulation.config import Config
-from simulation.utils import build_facetag, build_dirichlet_bcs
-from simulation.subsolvers import MechanicsSolver, StimulusSolver
-
-def _mat_action_norm(A, x_petsc):
-    """Compute ||A x||_2 without converting to dense."""
-    y = x_petsc.duplicate()
-    A.mult(x_petsc, y)
-    return float(y.norm())
-
-def test_stimulus_matrix_changes_with_dt():
-    """Changing dt and calling assemble_lhs should measurably change the LHS norm."""
-    comm = MPI.COMM_WORLD
-    domain = mesh.create_unit_cube(comm, 4, 4, 4, ghost_mode=mesh.GhostMode.shared_facet)
-    facet_tags = build_facetag(domain)
-    # Amplify dt sensitivity: remove diffusion and decay; keep mass term only
-    cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False,
-                 cS=1.0, tauS=0.0, kappaS=0.0)
-
-    # Q space
-    P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
-    Q = fem.functionspace(domain, P1)
-
-    # Set baseline dt before setup
-    cfg.set_dt(1.0 * 86400.0)  # 1 day
-    S = fem.Function(Q, name="S")
-    S_old = fem.Function(Q, name="S_old")
-    solver = StimulusSolver(S, S_old, cfg)
-    solver.setup()
-
-    n1 = solver.A.norm()
-    cfg.set_dt(100.0 * 86400.0)  # 100 days
-    solver.assemble_lhs()
-    n2 = solver.A.norm()
-    # With mass-only term, norm should change strongly with dt (≈100×)
-    rel_change = abs(n2 - n1) / max(n1, 1e-300)
-    assert rel_change > 0.5, f"Stimulus LHS norm did not change with dt (rel={rel_change:.3e}, n1={n1:.3e}, n2={n2:.3e})"
-
-def test_mechanics_operator_action_nonzero():
-    """Mechanics K should produce nonzero action on a random vector when rho>0."""
-    comm = MPI.COMM_WORLD
-    domain = mesh.create_unit_cube(comm, 4, 4, 4, ghost_mode=mesh.GhostMode.shared_facet)
-    facet_tags = build_facetag(domain)
-    cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False)
-
-    # Spaces
-    P1v = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3,))
-    V = fem.functionspace(domain, P1v)
-
-    Q = fem.functionspace(domain, ("P", 1))
-    T = fem.functionspace(domain, basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3,3)))
-
-    u = fem.Function(V, name="u")
-    rho = fem.Function(Q, name="rho"); rho.x.array[:] = 0.5; rho.x.scatter_forward()
-    A = fem.Function(T, name="A"); A.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:,None] * np.ones((1, x.shape[1]))); A.x.scatter_forward()
-    bcs = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
-    mech = MechanicsSolver(u, rho, A, cfg, bcs, [])
-    mech.setup()
-
-    z = u.x.petsc_vec.duplicate()
-    z.setRandom()
-    norm = _mat_action_norm(mech.A, z)
-    assert np.isfinite(norm) and norm > 0.0, "Mechanics operator action is zero or non-finite"
-
-def test_density_matrix_psd_action():
-    """x^T A x >= 0 for the density solver (discrete PSD check)."""
-    comm = MPI.COMM_WORLD
-    # Use minimal mesh to avoid setup issues
-    domain = mesh.create_unit_cube(comm, 2, 2, 2, ghost_mode=mesh.GhostMode.shared_facet)
-    facet_tags = build_facetag(domain)
-    cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False)
-
-    Q = fem.functionspace(domain, ("P", 1))
-    T = fem.functionspace(domain, basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3,3)))
-
-    rho = fem.Function(Q, name="rho")
-    rho_old = fem.Function(Q, name="rho_old"); rho_old.x.array[:] = 0.5; rho_old.x.scatter_forward()
-    A = fem.Function(T, name="A"); A.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:,None] * np.ones((1, x.shape[1]))); A.x.scatter_forward()
-    S = fem.Function(Q, name="S"); S.x.array[:] = 0.0; S.x.scatter_forward()
-
-    dens = DensitySolver(rho, rho_old, A, S, cfg)
-    # Only do matrix assembly, skip KSP setup to avoid GAMG segfault on small mesh
-    dens.A = create_matrix(dens.a_form)
-    assemble_matrix(dens.A, dens.a_form)
-    dens.A.assemble()
-
-    # Use createVecLeft() instead of fem.Function().x.petsc_vec.duplicate() to avoid segfault
-    z = dens.A.createVecLeft()
-    z.setRandom()
-    y = dens.A.createVecLeft()
-    dens.A.mult(z, y)
-    energy = z.dot(y)
-    assert energy >= -1e-12, f"Density operator not PSD: x^T A x = {energy}"

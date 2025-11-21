@@ -29,7 +29,7 @@ from simulation.utils import build_dirichlet_bcs, assign, current_memory_mb
 from simulation.config import Config
 from simulation.subsolvers import MechanicsSolver, StimulusSolver, DensitySolver, DirectionSolver
 from simulation.fixedsolver import FixedPointSolver
-from simulation.drivers import GaitEnergyDriver
+from simulation.drivers import GaitDriver
 
 
 class Remodeller:
@@ -149,7 +149,7 @@ class Remodeller:
         self.dirsolver = DirectionSolver(self.A, self.A_old, self.cfg)
 
         # Energy-driven driver with gait loader
-        self.driver = GaitEnergyDriver(self.mechsolver, gait_loader, self.cfg)
+        self.driver = GaitDriver(self.mechsolver, gait_loader, self.cfg)
 
         self.fixedsolver = FixedPointSolver(
             self.comm,

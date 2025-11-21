@@ -1,92 +1,70 @@
-"""Energy and structure tensor drivers for remodeling stimulus and direction solvers.
+"""Remodeling drivers for stimulus and direction solvers.
 
 This module provides driver objects that translate mechanics results (displacements u) into:
-
-- strain–energy density ψ(u)  [MPa]
-- structure tensor M(u) = ε(u)ᵀ ε(u)
+- a scalar stimulus driver ψ(u) [MPa] (e.g. effective stress)
+- a structure tensor M(u) capturing preferred loading directions
 
 Used as inputs for:
-- StimulusSolver  (source term from ψ)
+- StimulusSolver (source term from ψ)
 - DirectionSolver (evolution of fabric tensor from M)
 """
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Protocol, Dict, Tuple, List, Optional
 
 import numpy as np
 from mpi4py import MPI
-from simulation.config import Config
 from dolfinx import fem
 import ufl
 
+from simulation.config import Config
 
-class StrainDriver(Protocol):
+
+def von_mises_stress(sig: ufl.core.expr.Expr, gdim: int) -> ufl.core.expr.Expr:
+    """Von Mises equivalent stress σ_vm from Cauchy stress tensor."""
+    s = ufl.dev(sig)
+    return ufl.sqrt(1.5 * ufl.inner(s, s) + 1e-16)
+
+
+class RemodelingDriver(Protocol):
     """Protocol for drivers that provide mechanical fields to remodeling PDEs."""
 
-    def energy_expr(self) -> ufl.core.expr.Expr: ...
+    def stimulus_expr(self) -> ufl.core.expr.Expr: ...
     def structure_expr(self) -> ufl.core.expr.Expr: ...
     def invalidate(self) -> None: ...
-    def update_snapshots(self) -> dict | None: ...  # no-op for instantaneous drivers
+    def update_snapshots(self) -> Optional[Dict]: ...
 
 
-class InstantEnergyDriver:
-    """Instantaneous energy ψ(u) and structure tensor M = εᵀε from *current* mechanics state.
-
-    Single-regime, explicit formulation: energy density is evaluated directly
-    from the current displacement field `mech.u` without any gait averaging.
-    """
+class InstantDriver:
+    """Instantaneous effective stress and structure tensor from current mechanics state."""
 
     def __init__(self, mech):
         self.mech = mech
 
     def invalidate(self) -> None:
-        return None
+        pass
 
     def update_snapshots(self) -> None:
-        return None
+        pass
 
-    def energy_expr(self) -> ufl.core.expr.Expr:
-        """Strain-energy density ψ(u) [MPa]."""
-        return self.mech.get_strain_energy_density()
+    def stimulus_expr(self) -> ufl.core.expr.Expr:
+        """Effective stress driver σ_vm(u) [MPa]."""
+        sig = self.mech.sigma(self.mech.u, self.mech.rho, self.mech.A_dir)
+        return von_mises_stress(sig, self.mech.gdim)
 
     def structure_expr(self) -> ufl.core.expr.Expr:
-        """Structure tensor M = εᵀ ε from current mechanics state."""
+        """Deviatoric structure tensor M = ε_devᵀ ε_dev."""
         e = self.mech.get_strain_tensor()
-        return ufl.dot(ufl.transpose(e), e)
+        e_dev = ufl.dev(e)
+        return ufl.dot(ufl.transpose(e_dev), e_dev)
 
 
-class GaitEnergyDriver:
-    """Gait-averaged Carter–Beaupré daily stress stimulus (SED-based) + structure tensor.
+class GaitDriver:
+    """Gait-averaged Carter–Beaupré daily stress stimulus + structure tensor.
 
-    This driver implements the *classical* Carter–Beaupré daily stress stimulus
-    using strain–energy density ψ(u) instead of an effective stress:
-
-        J_day(x) = Σ_i n_i ψ_i(x)^m / psi_ref^(m-1)     [MPa]        (Carter–Beaupré)
-
-    where
-        – i indexes loading types / phases during the gait cycle,
-        – ψ_i(x) is the strain–energy density at phase i  [MPa],
-        – n_i is the number of cycles of loading type i per day,
-        – m = cfg.n_power is the stress/energy exponent,
-        – psi_ref = cfg.psi_ref is the reference energy density [MPa].
-
-    In this implementation we approximate:
-        n_i ≈ N_cyc_per_day · w_i
-
-    where w_i are quadrature weights over the gait cycle (Σ w_i = 1) and
-    N_cyc_per_day = cfg.gait_cycles_per_day.
-
-    Then
-
-        J_day(x) = psi_ref * N_cyc_per_day * ⟨(ψ(x)/psi_ref)^m⟩_cycle   [MPa]
-
-    which is exactly what Carter & Beaupré do (up to using ψ instead of σ).
-
-    Interface:
-        - energy_expr()     → J_day(x)    (Carter–Beaupré daily stress stimulus) [MPa]
-        - daily_stress_expr → alias for J_day(x) (for clarity / post-processing)
-        - structure_expr()  → gait-averaged structure tensor M(x) = ⟨εᵀε⟩_cycle
+    J_day(x) = psi_ref * N_cyc * ⟨(σ_eff(x)/psi_ref)^m⟩_cycle   [MPa]
+    M(x) = ⟨ε_devᵀ ε_dev⟩_cycle
     """
 
     def __init__(self, mech, gait_loader, config: Config):
@@ -101,8 +79,8 @@ class GaitEnergyDriver:
         if not quad:
             raise ValueError("Gait quadrature must provide at least one sample.")
 
-        self.phases = [float(phase) for phase, _ in quad]
-        self.weights = [float(weight) for _, weight in quad]
+        self.phases = [float(p) for p, _ in quad]
+        self.weights = [float(w) for _, w in quad]
 
         V = self.mech.u.function_space
         self.u_snap = [fem.Function(V, name=f"u_snap_{i}") for i in range(len(self.phases))]
@@ -110,13 +88,10 @@ class GaitEnergyDriver:
         self._tractions = (self.gait.t_hip, self.gait.t_glmed, self.gait.t_glmax)
         self.loads = self._precompute_loads()
 
-        # UFL expressions (built from snapshots)
         self.psi_expr: ufl.core.expr.Expr
         self.M_expr: ufl.core.expr.Expr
-        self._J_day_expr: ufl.core.expr.Expr  # explicit Carter–Beaupré daily stress stimulus
-
-        self.psi_expr, self.M_expr, self._J_day_expr = self._build_expressions()
-        self._last_stats: dict | None = None
+        self._build_expressions()
+        self._last_stats: Optional[Dict] = None
 
     def invalidate(self) -> None:
         """Rebuild expressions if psi_ref or exponent change in Config."""
@@ -130,19 +105,19 @@ class GaitEnergyDriver:
             dirty = True
 
         if dirty:
-            self.psi_expr, self.M_expr, self._J_day_expr = self._build_expressions()
+            self._build_expressions()
 
-    def update_snapshots(self) -> dict:
+    def update_snapshots(self) -> Dict:
         """Solve mechanics at each gait phase and refresh displacement snapshots."""
-        times: list[float] = []
-        iters: list[float] = []
+        times: List[float] = []
+        iters: List[float] = []
 
         for idx in range(len(self.phases)):
             start = MPI.Wtime()
             self._apply_load(idx)
             self.mech.assemble_rhs()
             its, _ = self.mech.solve()
-            elapsed = self._elapsed_max(start)
+            elapsed = self.comm.allreduce(MPI.Wtime() - start, op=MPI.MAX)
 
             times.append(float(elapsed))
             iters.append(float(its))
@@ -152,40 +127,37 @@ class GaitEnergyDriver:
 
         self.mech.u.x.scatter_forward()
 
-        # Domain-average of the Carter–Beaupré daily stress (psi_expr == J_day)
-        psi_int_local = fem.assemble_scalar(fem.form(self.psi_expr * self.cfg.dx))
-        psi_int = self.comm.allreduce(psi_int_local, op=MPI.SUM)
+        # Domain-average of the daily stress
+        psi_int = self.comm.allreduce(
+            fem.assemble_scalar(fem.form(self.psi_expr * self.cfg.dx)), op=MPI.SUM
+        )
+        vol = self.comm.allreduce(
+            fem.assemble_scalar(fem.form(1.0 * self.cfg.dx)), op=MPI.SUM
+        )
+        psi_avg = psi_int / vol if vol > 0 else 0.0
 
-        vol_local = fem.assemble_scalar(fem.form(1.0 * self.cfg.dx))
-        vol = self.comm.allreduce(vol_local, op=MPI.SUM)
-
-        psi_avg = psi_int / vol
-
-        stats = self._build_stats(iters, times, psi_avg)
+        stats = {
+            "phase_iters": iters,
+            "phase_times": times,
+            "total_time": float(sum(times)),
+            "median_time": float(np.median(times)) if times else 0.0,
+            "median_iters": float(np.median(iters)) if iters else 0.0,
+            "psi_avg": psi_avg,
+        }
         self._last_stats = stats
         return stats
 
-    # ----- Interface expected by StimulusSolver / DirectionSolver -----
-
-    def energy_expr(self) -> ufl.core.expr.Expr:
-        """Return Carter–Beaupré daily stress stimulus J_day(x) [MPa]."""
+    def stimulus_expr(self) -> ufl.core.expr.Expr:
         return self.psi_expr
 
-    def daily_stress_expr(self) -> ufl.core.expr.Expr:
-        """Explicit accessor for J_day(x) (alias for energy_expr)."""
-        return self._J_day_expr
-
     def structure_expr(self) -> ufl.core.expr.Expr:
-        """Return gait-averaged structure tensor M(x) = ⟨εᵀε⟩_cycle."""
         return self.M_expr
 
-    # ----- Internal helpers -----
-
-    def _precompute_loads(self) -> list[tuple]:
-        loads: list[tuple] = []
+    def _precompute_loads(self) -> List[Tuple]:
+        loads = []
         for phase in self.phases:
             self.gait.update_loads(phase)
-            loads.append(tuple(traction.x.array.copy() for traction in self._tractions))
+            loads.append(tuple(t.x.array.copy() for t in self._tractions))
         return loads
 
     def _apply_load(self, idx: int) -> None:
@@ -193,18 +165,7 @@ class GaitEnergyDriver:
             traction.x.array[:] = data
             traction.x.scatter_forward()
 
-    def _build_expressions(self) -> tuple[ufl.core.expr.Expr, ufl.core.expr.Expr, ufl.core.expr.Expr]:
-        """Build Carter–Beaupré daily stress stimulus J_day(x) and M(x).
-
-        Using the original Carter–Beaupré idea:
-
-            J_day(x) = Σ_i n_i ψ_i(x)^m / psi_ref^(m-1)      [MPa]
-                     ≈ psi_ref * N_cyc * ⟨(ψ(x)/psi_ref)^m⟩_cycle
-
-        where we approximate:
-            n_i ≈ N_cyc * w_i,    Σ w_i = 1  (gait quadrature),
-            N_cyc = cfg.gait_cycles_per_day.
-        """
+    def _build_expressions(self) -> None:
         if self.exponent <= 0.0:
             raise ValueError(f"n_power must be positive, got {self.exponent}")
 
@@ -215,73 +176,24 @@ class GaitEnergyDriver:
         psi_p_terms = []
         structure_terms = []
         total_weight = 0.0
+        gdim = self.mech.gdim
 
         for u_i, weight in zip(self.u_snap, self.weights):
-            # Instantaneous SED at phase i [MPa]
-            psi_i = self.mech.get_strain_energy_density(u_i)
+            sig_i = self.mech.sigma(u_i, self.mech.rho, self.mech.A_dir)
+            sigma_vm_i = von_mises_stress(sig_i, gdim)
 
-            # Structure tensor at phase i
             e_i = self.mech.get_strain_tensor(u_i)
-            structure_i = ufl.dot(ufl.transpose(e_i), e_i)
+            e_dev_i = ufl.dev(e_i)
+            structure_i = ufl.dot(ufl.transpose(e_dev_i), e_dev_i)
 
-            # Dimensionless term (ψ_i/psi_ref)^m weighted over gait cycle
-            psi_p_terms.append(weight * (psi_i / self.psi_ref) ** self.exponent)
+            psi_p_terms.append(weight * (sigma_vm_i / self.psi_ref) ** self.exponent)
             structure_terms.append(weight * structure_i)
             total_weight += weight
 
         if total_weight <= 0.0:
             raise ValueError("Gait quadrature weights must sum to a positive value.")
 
-        # Cycle-averaged dimensionless term ⟨(ψ/psi_ref)^m⟩_cycle
         J_cycle = sum(psi_p_terms) / total_weight
+        self.psi_expr = self.psi_ref * N_cyc * J_cycle
+        self.M_expr = sum(structure_terms) / total_weight
 
-        # Carter–Beaupré daily stress stimulus J_day(x) [MPa]
-        #   J_day = psi_ref * Σ_i n_i (ψ_i/psi_ref)^m
-        #         ≈ psi_ref * N_cyc * ⟨(ψ/psi_ref)^m⟩_cycle
-        J_day = self.psi_ref * N_cyc * J_cycle
-
-        # Use weighted average for structure tensor as well (dimensionless)
-        M_expr = sum(structure_terms) / total_weight
-
-        # NOTE:
-        #   - psi_expr is *defined* here as the Carter–Beaupré daily stress stimulus.
-        #   - You can plug psi_expr directly into StimulusSolver (treat psi_ref in Config
-        #     as the daily-stress setpoint), or, if you want a separate S-driver, use
-        #     daily_stress_expr() explicitly and adjust rS_gain/psi_ref units accordingly.
-        psi_expr = J_day
-
-        return psi_expr, M_expr, J_day
-
-    def _build_stats(self, iters: list[float], times: list[float], psi_avg: float) -> dict:
-        total_time = float(sum(times))
-        median_time = float(np.median(times)) if times else 0.0
-        median_iters = float(np.median(iters)) if iters else 0.0
-        return {
-            "phase_iters": iters,
-            "phase_times": times,
-            "total_time": total_time,
-            "median_time": median_time,
-            "median_iters": median_iters,
-            "psi_avg": psi_avg,   # now interpreted as domain-average J_day
-        }
-
-    def _elapsed_max(self, t0: float) -> float:
-        return self.comm.allreduce(MPI.Wtime() - t0, op=MPI.MAX)
-
-
-
-    def _build_stats(self, iters: list[float], times: list[float], psi_avg: float) -> dict:
-        total_time = float(sum(times))
-        median_time = float(np.median(times)) if times else 0.0
-        median_iters = float(np.median(iters)) if iters else 0.0
-        return {
-            "phase_iters": iters,
-            "phase_times": times,
-            "total_time": total_time,
-            "median_time": median_time,
-            "median_iters": median_iters,
-            "psi_avg": psi_avg,
-        }
-
-    def _elapsed_max(self, t0: float) -> float:
-        return self.comm.allreduce(MPI.Wtime() - t0, op=MPI.MAX)

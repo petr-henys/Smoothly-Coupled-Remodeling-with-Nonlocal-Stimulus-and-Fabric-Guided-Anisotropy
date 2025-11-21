@@ -12,13 +12,13 @@ from simulation.subsolvers import StimulusSolver, DensitySolver, DirectionSolver
 from simulation.utils import assign, get_owned_size, _global_dot, current_memory_mb
 from simulation.logger import get_logger
 from simulation.anderson import _Anderson
-from simulation.drivers import StrainDriver
+from simulation.drivers import RemodelingDriver
 
 
 class FixedPointSolver:
     """Orchestrate Gauss-Seidel iteration over four coupled PDEs with Anderson or Picard."""
     def __init__(self, comm: MPI.Comm, cfg: Config,
-                 driver: StrainDriver,
+                 driver: RemodelingDriver,
                  stimsolver: StimulusSolver,
                  densolver: DensitySolver,
                  dirsolver: DirectionSolver,
@@ -161,7 +161,7 @@ class FixedPointSolver:
         mech_time_total += float(stats.get("total_time", 0.0))
         phase_times.extend(stats.get("phase_times", []))
         phase_iters.extend(stats.get("phase_iters", []))
-        psi_expr = self.driver.energy_expr()
+        psi_expr = self.driver.stimulus_expr()
         
         self.stim.assemble_rhs(psi_expr)
         stim_iters, stim_reason = self.stim.solve()
@@ -349,7 +349,7 @@ class FixedPointSolver:
             x_raw = self._flatten_state(copy=True)
             # --- Diagnostics: all subsolvers have conservation/balance checks ---
             W_int, W_ext, energy_rel = self.mech.energy_balance()
-            psi_density_expr = self.driver.energy_expr()
+            psi_density_expr = self.driver.stimulus_expr()
             power_abs, power_rel = self.stim.power_balance_residual(psi_density_expr)
             mass_abs, mass_rel = self.den.mass_balance_residual()
             B = self.driver.structure_expr()
