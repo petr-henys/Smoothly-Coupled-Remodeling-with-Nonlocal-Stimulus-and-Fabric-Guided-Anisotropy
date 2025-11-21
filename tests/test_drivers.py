@@ -12,7 +12,7 @@ from dolfinx.fem import Function, functionspace
 from simulation.config import Config
 from simulation.utils import build_facetag, build_dirichlet_bcs
 from simulation.subsolvers import MechanicsSolver
-from simulation.drivers import InstantDriver, GaitDriver
+from simulation.drivers import GaitDriver
 from tests.test_model import _DummyGaitLoader, _unit_cube
 
 
@@ -77,56 +77,6 @@ def mech_with_dummy_gait():
     mech = MechanicsSolver(u, rho, A, cfg, bc_mech, neumann_bcs)
     mech.setup()
     return mech, gait
-
-
-class TestInstantDriver:
-    def test_energy_expr_matches_mechanics(self, mech_with_dummy_gait):
-        mech, gait = mech_with_dummy_gait
-        gait.update_loads(100.0)
-        mech.assemble_rhs(); mech.solve()
-
-        drv = InstantDriver(mech)
-        psi_expr = drv.stimulus_expr()
-
-        cfg = mech.cfg
-        # InstantDriver uses von Mises stress, not strain energy density
-        # So we need to compare against von Mises stress calculation
-        sig = mech.sigma(mech.u, mech.rho, mech.A_dir)
-        from simulation.drivers import von_mises_stress
-        psi_manual = von_mises_stress(sig, mech.gdim)
-
-        psi_drv_loc = fem.assemble_scalar(fem.form(psi_expr * cfg.dx))
-        psi_man_loc = fem.assemble_scalar(fem.form(psi_manual * cfg.dx))
-        comm = cfg.domain.comm
-        psi_drv = comm.allreduce(psi_drv_loc, op=MPI.SUM)
-        psi_man = comm.allreduce(psi_man_loc, op=MPI.SUM)
-        assert psi_drv == pytest.approx(psi_man, rel=1e-9, abs=1e-12)
-
-    def test_structure_psd_and_trace(self, mech_with_dummy_gait):
-        mech, gait = mech_with_dummy_gait
-        gait.update_loads(100.0)
-        mech.assemble_rhs(); mech.solve()
-        drv = InstantDriver(mech)
-
-        M = drv.structure_expr()
-        cfg = mech.cfg
-        v = ufl.as_vector([1.0, 2.0, 3.0])
-        vtMv = ufl.inner(v, ufl.dot(M, v))
-        val_loc = fem.assemble_scalar(fem.form(vtMv * cfg.dx))
-        val = cfg.domain.comm.allreduce(val_loc, op=MPI.SUM)
-        assert val >= -1e-10
-
-        # InstantDriver uses deviatoric strain for structure tensor
-        e = mech.get_strain_tensor()
-        e_dev = ufl.dev(e)
-        M_manual = ufl.dot(ufl.transpose(e_dev), e_dev)
-        
-        trM_loc = fem.assemble_scalar(fem.form(ufl.tr(M) * cfg.dx))
-        trM_man_loc = fem.assemble_scalar(fem.form(ufl.tr(M_manual) * cfg.dx))
-        comm = cfg.domain.comm
-        trM = comm.allreduce(trM_loc, op=MPI.SUM)
-        trM_man = comm.allreduce(trM_man_loc, op=MPI.SUM)
-        assert trM == pytest.approx(trM_man, rel=1e-9, abs=1e-12)
 
 
 class TestGaitDriverUnitCube:

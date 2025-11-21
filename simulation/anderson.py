@@ -78,12 +78,10 @@ class _Anderson:
             return np.zeros(0, dtype=float)
         Hp = H + lam_eff * np.eye(p)
         one = np.ones(p, dtype=float)
-        try:
-            y = np.linalg.solve(Hp, one)
-        except np.linalg.LinAlgError:
-            w, V = np.linalg.eigh(Hp + 1e-15 * np.eye(p))
-            w = np.clip(w, 1e-15, None)
-            y = V @ (V.T @ one / w)
+        
+        # Use lstsq for robustness against singular matrices
+        y, _, _, _ = np.linalg.lstsq(Hp, one, rcond=None)
+        
         denom = float(one @ y)
         if abs(denom) < 1e-30:
             return np.full(p, 1.0 / p, dtype=float)

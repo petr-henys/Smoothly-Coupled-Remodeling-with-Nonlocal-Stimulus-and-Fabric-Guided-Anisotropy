@@ -90,22 +90,7 @@ class TestDOFOrdering:
         assert np.allclose(S.x.array, S_orig), "S not restored correctly"
         assert np.allclose(u.x.array, 999.0), "mechanics state should remain untouched"
     
-    @pytest.mark.parametrize("unit_cube", [6], indirect=True)
-    def test_fix_mask_empty(self, unit_cube, cfg, spaces, fields, bc_mech):
-        """Fixed-point mask should remain empty without displacement state."""
-        comm = MPI.COMM_WORLD
-        V, Q, T = spaces.V, spaces.Q, spaces.T
-        u, rho, rho_old, A, A_old, S, S_old = fields
-        mech = MechanicsSolver(u, rho, A, cfg, bc_mech, [])
-        stim = StimulusSolver(S, S_old, cfg)
-        dens = DensitySolver(rho, rho_old, A, S, cfg)
-        dirn = DirectionSolver(A, A_old, cfg)
-        driver = InstantDriver(mech)
-        fps = FixedPointSolver(comm, cfg, driver, stim, dens, dirn,
-                               rho, rho_old, A, A_old, S, S_old)
 
-        assert fps.fix_mask.size == fps.state_size, "Fix mask length mismatch"
-        assert not np.any(fps.fix_mask), "Fix mask should remain all False"
 
 
 # =============================================================================

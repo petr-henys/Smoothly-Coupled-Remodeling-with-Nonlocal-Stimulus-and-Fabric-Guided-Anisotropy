@@ -33,7 +33,7 @@ import tempfile
 import csv as csv_module
 import gzip
 
-from simulation.storage import FieldStorage, MetricsStorage, UnifiedStorage
+from simulation.storage import FieldStorage, UnifiedStorage
 from simulation.config import Config
 from simulation.utils import build_facetag
 
@@ -240,123 +240,32 @@ class TestFieldStorage:
 
 
 # =============================================================================
-# MetricsStorage Tests
-# =============================================================================
-
-class TestMetricsStorage:
-    """Test CSV metrics storage functionality."""
-
-    def test_initialization_creates_directory(self, shared_tmpdir, unit_cube, facet_tags):
-        """MetricsStorage should create results directory."""
-        cfg = Config(domain=unit_cube, facet_tags=facet_tags,
-                    results_dir=shared_tmpdir / "test_metrics_init", verbose=False)
-
-        storage = MetricsStorage(cfg, comm)
-
-        comm.Barrier()
-        assert Path(shared_tmpdir / "test_metrics_init").exists()
-
-        storage.close()
-
-    def test_register_csv_creates_file(self, shared_tmpdir, unit_cube, facet_tags):
-        """register_csv should create CSV file with header."""
-        cfg = Config(domain=unit_cube, facet_tags=facet_tags,
-                    results_dir=shared_tmpdir / "test_csv", verbose=False)
-        storage = MetricsStorage(cfg, comm)
-
-        storage.register_csv("test_metrics", ["col1", "col2", "col3"])
-        storage.close()
-
-        comm.Barrier()
-
-        if comm.rank == 0:
-            csv_path = Path(shared_tmpdir) / "test_csv" / "test_metrics.csv"
-            assert csv_path.exists(), "CSV file not created"
-
-            # Check header
-            with open(csv_path, 'r') as f:
-                header = f.readline().strip()
-                assert "col1" in header and "col2" in header and "col3" in header
-
-    def test_record_writes_data(self, shared_tmpdir, unit_cube, facet_tags):
-        """record() should write data rows to CSV."""
-        cfg = Config(domain=unit_cube, facet_tags=facet_tags,
-                    results_dir=shared_tmpdir / "test_record", verbose=False)
-        storage = MetricsStorage(cfg, comm)
-
-        storage.register_csv("data", ["x", "y"])
-        storage.record("data", {"x": 1, "y": 2})
-        storage.record("data", {"x": 3, "y": 4})
-        storage.close()
-
-        comm.Barrier()
-
-        if comm.rank == 0:
-            csv_path = Path(shared_tmpdir) / "test_record" / "data.csv"
-            with open(csv_path, 'r') as f:
-                reader = csv_module.DictReader(f)
-                rows = list(reader)
-                assert len(rows) == 2, f"Expected 2 rows, got {len(rows)}"
-                assert rows[0]["x"] == "1" and rows[0]["y"] == "2"
-                assert rows[1]["x"] == "3" and rows[1]["y"] == "4"
-
-    def test_buffering_delays_writes(self, shared_tmpdir, unit_cube, facet_tags):
-        """Data should be buffered until FLUSH_INTERVAL reached."""
-        cfg = Config(domain=unit_cube, facet_tags=facet_tags,
-                    results_dir=shared_tmpdir / "test_buffer", verbose=False)
-        storage = MetricsStorage(cfg, comm)
-
-        storage.register_csv("buffered", ["val"])
-
-        # Write 3 records (below FLUSH_INTERVAL=10)
-        for i in range(3):
-            storage.record("buffered", {"val": i})
-
-        # Buffer should have 3 items
-        if comm.rank == 0:
-            assert len(storage._buffers["buffered"]) == 3
-
-        # Explicit flush
-        storage.flush_all()
-
-        # Buffer should be empty after flush
-        if comm.rank == 0:
-            assert len(storage._buffers["buffered"]) == 0
-
-        storage.close()
-
-    # Custom filename and non-root-only CSV tests removed as non-essential.
-
-
-# =============================================================================
 # UnifiedStorage Tests
 # =============================================================================
 
 class TestUnifiedStorage:
     """Test unified storage manager."""
 
-    def test_initialization_creates_both_storages(self, shared_tmpdir, unit_cube, facet_tags):
-        """UnifiedStorage should initialize both field and metrics storage."""
+    def test_initialization_creates_field_storage(self, shared_tmpdir, unit_cube, facet_tags):
+        """UnifiedStorage should initialize field storage."""
         cfg = Config(domain=unit_cube, facet_tags=facet_tags,
                     results_dir=shared_tmpdir / "test_unified", verbose=False)
 
         storage = UnifiedStorage(cfg)
 
         assert storage.fields is not None
-        assert storage.metrics is not None
         assert isinstance(storage.fields, FieldStorage)
-        assert isinstance(storage.metrics, MetricsStorage)
 
         storage.close()
 
-    def test_write_step_writes_all_data(self, shared_tmpdir, unit_cube, facet_tags, spaces, fields):
-        """write_step should write fields and record metrics."""
+    def test_write_fields_delegates_to_field_storage(self, shared_tmpdir, unit_cube, facet_tags, spaces, fields):
+        """write_fields should delegate to FieldStorage.write."""
         cfg = Config(domain=unit_cube, facet_tags=facet_tags,
                     results_dir=shared_tmpdir / "test_step", verbose=False)
 
         storage = UnifiedStorage(cfg)
 
-        # Register field groups BEFORE write_step
+        # Register field groups
         storage.fields.register("scalars", [fields.rho, fields.S])
         storage.fields.register("A", [fields.A])
 
@@ -366,16 +275,9 @@ class TestUnifiedStorage:
         fields.S.x.array[:] = 0.15
         fields.S.x.scatter_forward()
 
-        # Write step
-        storage.write_step(
-            step=1,
-            time_days=10.0,
-            dt_days=1.0,
-            num_dofs_total=1000,
-            rss_mem_mb=100.5,
-            solver_stats={"mech": 50, "stim": 20, "dens": 10, "dir": 5},
-            coupling_stats={"iters": 3, "time": 2.5}
-        )
+        # Write fields
+        storage.write_fields("scalars", t=10.0)
+        storage.write_fields("A", t=10.0)
 
         storage.close()
 
@@ -386,17 +288,6 @@ class TestUnifiedStorage:
             base = Path(shared_tmpdir) / "test_step"
             assert (base / "scalars.bp").exists()
             assert (base / "A.bp").exists()
-
-            # Check metrics CSV
-            csv_path = base / "steps.csv"
-            assert csv_path.exists()
-
-            with open(csv_path, 'r') as f:
-                reader = csv_module.DictReader(f)
-                rows = list(reader)
-                assert len(rows) >= 1
-                assert rows[0]["step"] == "1"
-                assert rows[0]["time_days"] == "10.0"
 
     def test_context_manager(self, shared_tmpdir, unit_cube, facet_tags, spaces, fields):
         """Context manager should properly initialize and cleanup."""
@@ -410,22 +301,6 @@ class TestUnifiedStorage:
 
         # After context exit, storage should be closed
         assert len(storage.fields._writers) == 0
-
-    def test_telemetry_integration(self, shared_tmpdir, unit_cube, facet_tags, spaces, fields):
-        """Telemetry is always enabled - storage uses its own metrics CSV."""
-        from simulation.telemetry import Telemetry
-
-        cfg = Config(domain=unit_cube, facet_tags=facet_tags,
-                    results_dir=shared_tmpdir / "test_tel",
-                    verbose=False)
-
-        storage = UnifiedStorage(cfg)
-
-        # Storage always creates its own steps CSV
-        if comm.rank == 0:
-            assert "steps" in storage.metrics._writers
-
-        storage.close()
 
 
 # =============================================================================
@@ -848,7 +723,6 @@ class TestStorage:
                 # Storage should be initialized
                 assert rem.storage is not None
                 assert rem.storage.fields is not None
-                assert rem.storage.metrics is not None
                 
                 # Field writers should be registered
                 assert "scalars" in rem.storage.fields._writers
@@ -858,7 +732,7 @@ class TestStorage:
     
     @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
     def test_write_step_executes_successfully(self, unit_cube):
-        """write_step should execute without errors in Remodeller context."""
+        """write_fields should execute without errors in Remodeller context."""
         comm = MPI.COMM_WORLD
         domain = unit_cube
         facet_tags = build_facetag(domain)
@@ -867,25 +741,9 @@ class TestStorage:
             cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False, results_dir=tmpdir)
             
             with Remodeller(cfg) as rem:
-                # Compute DOFs
-                dofs_V = rem.V.dofmap.index_map.size_global * rem.V.dofmap.index_map_bs
-                dofs_Q = rem.Q.dofmap.index_map.size_global * rem.Q.dofmap.index_map_bs
-                dofs_T = rem.T.dofmap.index_map.size_global * rem.T.dofmap.index_map_bs
-                num_dofs_total = int(dofs_V + dofs_Q + dofs_T)
-                
-                rss_mb_local = current_memory_mb()
-                rss_mb_total = comm.allreduce(rss_mb_local, op=MPI.SUM)
-                
-                # write_step should execute without error
-                rem.storage.write_step(
-                    step=0,
-                    time_days=0.0,
-                    dt_days=1.0,
-                    num_dofs_total=num_dofs_total,
-                    rss_mem_mb=rss_mb_total,
-                    solver_stats={"mech": 10, "stim": 5, "dens": 5, "dir": 5},
-                    coupling_stats={"iters": 3, "time": 0.1},
-                )
+                # write_fields should execute without error
+                rem.storage.write_fields("scalars", t=0.0)
+                rem.storage.write_fields("A", t=0.0)
                 
                 # Verify write counters incremented for registered fields
                 assert rem.storage.fields._write_counts["scalars"] == 1
@@ -894,8 +752,8 @@ class TestStorage:
             comm.Barrier()
     
     @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
-    def test_metrics_recorded_via_storage(self, unit_cube):
-        """Metrics should be recorded correctly through storage."""
+    def test_metrics_recorded_via_telemetry(self, unit_cube):
+        """Metrics should be recorded correctly through telemetry."""
         comm = MPI.COMM_WORLD
         domain = unit_cube
         facet_tags = build_facetag(domain)
@@ -904,27 +762,11 @@ class TestStorage:
             cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False, results_dir=tmpdir)
             
             with Remodeller(cfg) as rem:
-                dofs_V = rem.V.dofmap.index_map.size_global * rem.V.dofmap.index_map_bs
-                dofs_Q = rem.Q.dofmap.index_map.size_global * rem.Q.dofmap.index_map_bs
-                dofs_T = rem.T.dofmap.index_map.size_global * rem.T.dofmap.index_map_bs
-                num_dofs_total = int(dofs_V + dofs_Q + dofs_T)
-                
-                rss_mb_local = current_memory_mb()
-                rss_mb_total = comm.allreduce(rss_mb_local, op=MPI.SUM)
-                
-                rem.storage.write_step(
-                    step=0,
-                    time_days=0.0,
-                    dt_days=1.0,
-                    num_dofs_total=num_dofs_total,
-                    rss_mem_mb=rss_mb_total,
-                    solver_stats={"mech": 10, "stim": 5, "dens": 5, "dir": 5},
-                    coupling_stats={"iters": 3, "time": 0.1},
-                )
+                rem.telemetry.record("output_steps", {"step": 0, "time_days": 0.0}, csv_event=True)
                 
                 # Verify buffer has data (rank 0 only)
                 if comm.rank == 0:
-                    assert len(rem.storage.metrics._buffers["steps"]) > 0, "Metrics buffer is empty"
+                    assert len(rem.telemetry._buffers["output_steps"]) > 0, "Metrics buffer is empty"
             
             comm.Barrier()
 
@@ -1037,27 +879,6 @@ class TestFieldStatistics:
         assert abs(u_norm - 1.0) < 0.05, f"Vector norm incorrect: {u_norm}"
 
 
-class TestSubiterationDiagnostics:
-    """Additional checks on fixed-point solver diagnostics."""
-
-    @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
-    def test_avg_memory_matches_metrics(self, unit_cube, facet_tags):
-        """avg_memory_mb should equal the mean of recorded memory columns."""
-        cfg = Config(domain=unit_cube, facet_tags=facet_tags, verbose=False, max_subiters=8)
-
-        with Remodeller(cfg) as rem:
-            rem.step(dt=1.0)
-            metrics = rem.fixedsolver.subiter_metrics
-            avg_memory = rem.fixedsolver.avg_memory_mb
-
-        assert metrics, "No subiteration metrics recorded"
-        mem_vals = [rec["memory_mb"] for rec in metrics if "memory_mb" in rec]
-        assert mem_vals, "Memory metrics missing"
-
-        mean_mem = float(np.mean(mem_vals))
-        assert avg_memory == pytest.approx(mean_mem, rel=1e-12, abs=1e-9)
-
-
 # =============================================================================
 # Monitoring Integration Tests
 # =============================================================================
@@ -1115,16 +936,12 @@ class TestMonitoringIntegration:
                 rem.step(dt=1.0)
                 
                 # Check solver stats were accumulated
-                mech_iters = rem.mechsolver.total_iters
-                stim_iters = rem.stimsolver.total_iters
-                dens_iters = rem.densolver.total_iters
-                dir_iters = rem.dirsolver.total_iters
+                mech_iters = rem.fixedsolver.mech_iters_total
+                # Other solvers are linear and don't expose total_iters directly on fixedsolver
+                # but we can check mech_iters which we added
                 
-                # Iteration counters should be non-negative; zero is valid for zero-RHS cases
+                # Iteration counters should be non-negative
                 assert mech_iters >= 0, f"Mechanics solver iteration count invalid: {mech_iters}"
-                assert stim_iters >= 0, f"Stimulus solver iteration count invalid: {stim_iters}"
-                assert dens_iters >= 0, f"Density solver iteration count invalid: {dens_iters}"
-                assert dir_iters >= 0, f"Direction solver iteration count invalid: {dir_iters}"
 
     def test_run_summary_json_after_simulate(self):
         """simulate() should produce run_summary.json when telemetry enabled."""

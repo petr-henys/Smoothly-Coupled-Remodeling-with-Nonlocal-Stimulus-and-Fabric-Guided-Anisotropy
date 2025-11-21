@@ -263,12 +263,6 @@ class MechanicsSolver(_BaseLinearSolver):
     def get_strain_tensor(self, u=None):
         return self.eps(self.u if u is None else u)
 
-    def get_strain_energy_density(self, u=None):
-        """Strain energy density ψ = 0.5 σ:ε [MPa]."""
-        uu = self.u if u is None else u
-        sig = self.sigma(uu, self.rho, self.A_dir)
-        return 0.5 * ufl.inner(sig, self.eps(uu))
-
     def setup(self):
         self.rho.x.scatter_forward()
         self.A_dir.x.scatter_forward()
@@ -296,40 +290,6 @@ class MechanicsSolver(_BaseLinearSolver):
         its, reason = self._solve()
         self._maybe_warn(reason, "Mechanics")
         return its, reason
-
-    def average_strain_energy(self) -> float:
-        """Average strain energy density [MPa]."""
-        self.u.x.scatter_forward()
-        self.rho.x.scatter_forward()
-        self.A_dir.x.scatter_forward()
-
-        psi_expr = self.get_strain_energy_density()
-        vol_local = fem.assemble_scalar(fem.form(1.0 * self.dx))
-        vol = self.comm.allreduce(vol_local, op=MPI.SUM)
-        psi_local = fem.assemble_scalar(fem.form(psi_expr * self.dx))
-        psi = self.comm.allreduce(psi_local, op=MPI.SUM)
-        return float(psi / max(vol, 1e-300))
-
-    def energy_balance(self) -> tuple[float, float, float]:
-        """Internal vs. external work: (W_int, W_ext, rel_error) [N·mm]."""
-        self.u.x.scatter_forward()
-        self.rho.x.scatter_forward()
-
-        sigma_u = self.sigma(self.u, self.rho, self.A_dir)
-        eps_u = self.eps(self.u)
-        Wint_local = fem.assemble_scalar(fem.form(ufl.inner(sigma_u, eps_u) * self.dx))
-        W_int = float(self.comm.allreduce(Wint_local, op=MPI.SUM))
-
-        zero_vec = fem.Constant(self.mesh, (0.0,) * self.gdim)
-        Wext_form = ufl.inner(zero_vec, self.u) * self.ds
-        if self.neumann_bcs:
-            for t, tag in self.neumann_bcs:
-                Wext_form = Wext_form + ufl.inner(t, self.u) * self.ds(tag)
-        Wext_local = fem.assemble_scalar(fem.form(Wext_form))
-        W_ext = float(self.comm.allreduce(Wext_local, op=MPI.SUM))
-
-        rel_err = abs(W_ext - W_int) / max(W_ext, W_int, 1e-30)
-        return W_int, W_ext, rel_err
 
 
 class StimulusSolver(_BaseLinearSolver):
@@ -393,35 +353,6 @@ class StimulusSolver(_BaseLinearSolver):
         its, reason = self._solve()
         self._maybe_warn(reason, "Stimulus")
         return its, reason
-
-    def power_balance_residual(self, psi_expr) -> tuple[float, float]:
-        """Power balance check: (abs_residual, rel_residual)."""
-        self.S.x.scatter_forward()
-        self.S_old.x.scatter_forward()
-        one = fem.Constant(self.mesh, default_scalar_type(1.0))
-        dt = self.cfg.dt
-
-        storage_loc = fem.assemble_scalar(fem.form((self.cfg.cS / dt) * (self.S - self.S_old) * one * self.dx))
-        storage = float(self.comm.allreduce(storage_loc, op=MPI.SUM))
-        decay_loc = fem.assemble_scalar(fem.form(self.cfg.tauS * self.S * one * self.dx))
-        decay = float(self.comm.allreduce(decay_loc, op=MPI.SUM))
-        
-        # Apply distal damping to psi to match assemble_rhs
-        z_min = self._compute_z_min()
-        mask = get_distal_damping_mask(self.mesh, z_min, height=self.cfg.distal_damping_height, 
-                                       transition=self.cfg.distal_damping_transition)
-        psi_effective = psi_expr * mask
-
-        source_loc = fem.assemble_scalar(fem.form(self.cfg.rS_gain * (psi_effective - 1.0) * one * self.dx))
-        source = float(self.comm.allreduce(source_loc, op=MPI.SUM))
-        
-        n = ufl.FacetNormal(self.mesh)
-        flux_loc = fem.assemble_scalar(fem.form(self.cfg.kappaS * ufl.dot(ufl.grad(self.S), n) * self.ds))
-        flux = float(self.comm.allreduce(flux_loc, op=MPI.SUM))
-        
-        R = (storage + decay) - (source + flux)
-        denom = abs(storage) + abs(decay) + abs(source) + 1e-30
-        return abs(R), abs(R) / denom
 
 
 class DensitySolver(_BaseLinearSolver):
@@ -524,28 +455,6 @@ class DensitySolver(_BaseLinearSolver):
         self.rho.x.scatter_forward()
         return its, reason
 
-    def mass_balance_residual(self) -> tuple[float, float]:
-        """Mass balance check: (abs_residual, rel_residual)."""
-        self.rho.x.scatter_forward()
-        self.rho_old.x.scatter_forward()
-        self.S.x.scatter_forward()
-        self.A_dir.x.scatter_forward()
-
-        one = fem.Constant(self.mesh, default_scalar_type(1.0))
-        M_new = float(self.comm.allreduce(fem.assemble_scalar(fem.form(self.rho * one * self.dx)), op=MPI.SUM))
-        M_old = float(self.comm.allreduce(fem.assemble_scalar(fem.form(self.rho_old * one * self.dx)), op=MPI.SUM))
-
-        dt = self.cfg.dt
-        lam_eff, rho_eq = self._get_reaction_terms()
-
-        decay = float(self.comm.allreduce(fem.assemble_scalar(fem.form(lam_eff * self.rho * self.dx)), op=MPI.SUM))
-        src = float(self.comm.allreduce(fem.assemble_scalar(fem.form(lam_eff * rho_eq * self.dx)), op=MPI.SUM))
-
-        dM_dt = (M_new - M_old) / max(dt, 1e-30)
-        R = dM_dt + decay - src
-        denom = abs(dM_dt) + abs(decay) + abs(src) + 1e-30
-        return abs(R), abs(R) / denom
-
 
 class DirectionSolver(_BaseLinearSolver):
     """Fabric tensor A: reaction-diffusion relaxing to strain-aligned target."""
@@ -601,20 +510,3 @@ class DirectionSolver(_BaseLinearSolver):
         its, reason = self._solve()
         self._maybe_warn(reason, "Direction")
         return its, reason
-
-    def trace_balance_residual(self, Mhat_expr) -> tuple[float, float, float]:
-        """Trace balance: (⟨tr(A)⟩, ⟨tr(M̂)⟩, |difference|)."""
-        self.A_dir.x.scatter_forward()
-        one = fem.Constant(self.mesh, default_scalar_type(1.0))
-        
-        vol_local = fem.assemble_scalar(fem.form(1.0 * self.dx))
-        total_vol = self.comm.allreduce(vol_local, op=MPI.SUM)
-
-        trA_loc = fem.assemble_scalar(fem.form(ufl.tr(self.A_dir) * one * self.dx))
-        trA_vol = float(self.comm.allreduce(trA_loc, op=MPI.SUM)) / total_vol
-        
-        trMhat_loc = fem.assemble_scalar(fem.form(ufl.tr(Mhat_expr) * one * self.dx))
-        trMhat_vol = float(self.comm.allreduce(trMhat_loc, op=MPI.SUM)) / total_vol
-        
-        R = trA_vol - trMhat_vol
-        return trA_vol, trMhat_vol, abs(R)

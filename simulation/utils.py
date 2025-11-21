@@ -41,57 +41,6 @@ def build_nullspace(V: FunctionSpace):
     ]
     return PETSc.NullSpace().create(vectors=basis_petsc)
 
-def compute_principal_dirs_and_vals_vec(
-    A_func: fem.Function,
-    V_vec: fem.FunctionSpace,
-    Q_sca: fem.FunctionSpace,
-) -> Tuple[List[fem.Function], List[fem.Function]]:
-    """Nodewise eigendecomposition of tensor field A; returns (eigenvectors, eigenvalues)."""
-    A_func.x.scatter_forward()
-
-    T = A_func.function_space
-    msh = T.mesh
-    gdim = msh.geometry.dim
-
-    nT = T.dofmap.index_map.size_local
-    bsT = T.dofmap.index_map_bs
-    nV = V_vec.dofmap.index_map.size_local
-    bsV = V_vec.dofmap.index_map_bs
-    nQ = Q_sca.dofmap.index_map.size_local
-    bsQ = Q_sca.dofmap.index_map_bs
-
-    A_all = A_func.x.array
-    A_owned_flat = A_all[: nT * bsT]
-    A_owned = A_owned_flat.reshape(nT, gdim, gdim, order="C")
-    A_owned = 0.5 * (A_owned + np.swapaxes(A_owned, 1, 2))
-
-    w, V = np.linalg.eigh(A_owned)
-    order = np.argsort(w, axis=1)[:, ::-1]
-    w_sorted = np.take_along_axis(w, order, axis=1)
-    V_sorted = np.take_along_axis(V, order[:, np.newaxis, :], axis=2)
-
-    eigvec_funcs = [fem.Function(V_vec, name=f"A_eigvec_{k+1}") for k in range(gdim)]
-    eigval_funcs = [fem.Function(Q_sca, name=f"A_eigval_{k+1}") for k in range(gdim)]
-
-    for k in range(gdim):
-        vecs_k = V_sorted[:, :, k]
-        arr = eigvec_funcs[k].x.array
-        arr[:] = 0.0
-        arr[: nV * bsV] = vecs_k.reshape(-1)
-        eigvec_funcs[k].x.scatter_forward()
-
-        vals_k = w_sorted[:, k]
-        arr = eigval_funcs[k].x.array
-        arr[:] = 0.0
-        arr[: nQ * bsQ] = vals_k
-        eigval_funcs[k].x.scatter_forward()
-
-    for vf in eigvec_funcs:
-        vf.x.scatter_forward()
-    for lf in eigval_funcs:
-        lf.x.scatter_forward()
-
-    return eigvec_funcs, eigval_funcs
 
 def build_facetag(m: mesh.Mesh) -> mesh.MeshTags:
     """Create boundary facet tags for unit-cube domains (MPI-safe)."""

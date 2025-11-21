@@ -11,22 +11,25 @@ Used as inputs for:
 
 from __future__ import annotations
 
-from typing import Protocol, Dict, Tuple, List, Optional
+from typing import Protocol, Dict, Tuple, List, Optional, TYPE_CHECKING
 
 import numpy as np
 from mpi4py import MPI
 from dolfinx import fem
 import ufl
-import basix
 
-from simulation.config import Config
-from simulation.projector import L2Projector
-from simulation.logger import get_logger, Level
+from simulation.logger import get_logger
+
+if TYPE_CHECKING:
+    from simulation.config import Config
+    from simulation.subsolvers import MechanicsSolver
+    from simulation.femur_gait import FemurRemodellerGait
 
 
-def von_mises_stress(sig: ufl.core.expr.Expr, gdim: int) -> ufl.core.expr.Expr:
+def von_mises_stress(sig: ufl.core.expr.Expr) -> ufl.core.expr.Expr:
     """Von Mises equivalent stress σ_vm from Cauchy stress tensor."""
     s = ufl.dev(sig)
+    # Add small epsilon for numerical stability of sqrt(0)
     return ufl.sqrt(1.5 * ufl.inner(s, s) + 1e-16)
 
 
@@ -37,30 +40,9 @@ class RemodelingDriver(Protocol):
     def structure_expr(self) -> ufl.core.expr.Expr: ...
     def invalidate(self) -> None: ...
     def update_snapshots(self) -> Optional[Dict]: ...
-
-
-class InstantDriver:
-    """Instantaneous effective stress and structure tensor from current mechanics state."""
-
-    def __init__(self, mech):
-        self.mech = mech
-
-    def invalidate(self) -> None:
-        pass
-
-    def update_snapshots(self) -> None:
-        pass
-
-    def stimulus_expr(self) -> ufl.core.expr.Expr:
-        """Effective stress driver σ_vm(u) [MPa]."""
-        sig = self.mech.sigma(self.mech.u, self.mech.rho, self.mech.A_dir)
-        return von_mises_stress(sig, self.mech.gdim)
-
-    def structure_expr(self) -> ufl.core.expr.Expr:
-        """Deviatoric structure tensor M = ε_devᵀ ε_dev."""
-        e = self.mech.get_strain_tensor()
-        e_dev = ufl.dev(e)
-        return ufl.dot(ufl.transpose(e_dev), e_dev)
+    def setup(self) -> None: ...
+    def destroy(self) -> None: ...
+    def update_stiffness(self) -> None: ...
 
 
 class GaitDriver:
@@ -70,14 +52,18 @@ class GaitDriver:
     M(x) = ⟨ε_devᵀ ε_dev⟩_cycle
     """
 
-    def __init__(self, mech, gait_loader, config: Config):
+    def __init__(self, mech: MechanicsSolver, gait_loader: FemurRemodellerGait, config: Config):
         self.mech = mech
         self.gait = gait_loader
         self.cfg = config
+        self.comm = self.mech.u.function_space.mesh.comm
+        self.logger = get_logger(self.comm, verbose=self.cfg.verbose, name="Driver")
+
+        # Cache config parameters
         self.psi_ref = float(config.psi_ref)
         self.exponent = float(config.n_power)
-        self.comm = self.mech.u.function_space.mesh.comm
 
+        # Quadrature setup
         quad = list(self.gait.get_quadrature())
         if not quad:
             raise ValueError("Gait quadrature must provide at least one sample.")
@@ -85,26 +71,34 @@ class GaitDriver:
         self.phases = [float(p) for p, _ in quad]
         self.weights = [float(w) for _, w in quad]
 
+        # Snapshots for displacement field at each phase
         V = self.mech.u.function_space
         self.u_snap = [fem.Function(V, name=f"u_snap_{i}") for i in range(len(self.phases))]
 
-        # Setup L2 projector for VM stress monitoring
-        mesh = V.mesh
-        E_dg0 = basix.ufl.element("DG", mesh.basix_cell(), 0)
-        V_stress = fem.functionspace(mesh, E_dg0)
+        # Tractions to update
+        self._tractions = [self.gait.t_hip, self.gait.t_glmed, self.gait.t_glmax]
         
-        self.projector = L2Projector(V_stress)
-        self.vm_stress = fem.Function(V_stress, name="vm_stress")
-        self.vm_stress_avg = fem.Function(V_stress, name="vm_stress_avg")
-
-        self._tractions = (self.gait.t_hip, self.gait.t_glmed, self.gait.t_glmax)
+        # Precompute load vectors for all phases to avoid re-interpolation
         self.loads = self._precompute_loads()
 
-        self.psi_expr: ufl.core.expr.Expr
-        self.M_expr: ufl.core.expr.Expr
+        # UFL Expressions
+        self.psi_expr: Optional[ufl.core.expr.Expr] = None
+        self.M_expr: Optional[ufl.core.expr.Expr] = None
         self._build_expressions()
+        
         self._last_stats: Optional[Dict] = None
-        self.logger = get_logger(self.comm, verbose=self.cfg.verbose, name="Driver")
+
+    def setup(self) -> None:
+        """Initialize underlying mechanics solver."""
+        self.mech.setup()
+
+    def destroy(self) -> None:
+        """Clean up underlying mechanics solver."""
+        self.mech.destroy()
+
+    def update_stiffness(self) -> None:
+        """Reassemble mechanics stiffness matrix (LHS)."""
+        self.mech.assemble_lhs()
 
     def invalidate(self) -> None:
         """Rebuild expressions if psi_ref or exponent change in Config."""
@@ -125,38 +119,33 @@ class GaitDriver:
         times: List[float] = []
         iters: List[float] = []
 
-        self.vm_stress_avg.x.array[:] = 0.0
+        # Reset stats
         total_weight = 0.0
 
-        for idx in range(len(self.phases)):
+        for idx, (phase, weight) in enumerate(zip(self.phases, self.weights)):
             start = MPI.Wtime()
+            
+            # 1. Apply loads for this phase
             self._apply_load(idx)
+            
+            # 2. Solve mechanics
             self.mech.assemble_rhs()
             its, _ = self.mech.solve()
+            
             elapsed = self.comm.allreduce(MPI.Wtime() - start, op=MPI.MAX)
-
             times.append(float(elapsed))
             iters.append(float(its))
 
-            # Project VM stress
-            #sig = self.mech.sigma(self.mech.u, self.mech.rho, self.mech.A_dir)
-            #vm = von_mises_stress(sig, self.mech.gdim)
-            #self.projector.project(vm, result=self.vm_stress)
-            
-            # Accumulate average
-            w = self.weights[idx]
-            #self.vm_stress_avg.x.array[:] += w * self.vm_stress.x.array[:]
-            total_weight += w
-
+            # 3. Store displacement snapshot
+            # We copy the vector from the solver's u to our snapshot u_snap[idx]
+            # This automatically updates the UFL expressions that depend on u_snap[idx]
             self.u_snap[idx].x.array[:] = self.mech.u.x.array
             self.u_snap[idx].x.scatter_forward()
+            
+            total_weight += weight
 
-        #if total_weight > 0:
-        #    self.vm_stress_avg.x.array[:] /= total_weight
-        #self.vm_stress_avg.x.scatter_forward()
-        self.mech.u.x.scatter_forward()
-
-        # Domain-average of the daily stress
+        # Compute domain-average of the daily stress for reporting
+        # This uses the updated u_snap fields via psi_expr
         psi_int = self.comm.allreduce(
             fem.assemble_scalar(fem.form(self.psi_expr * self.cfg.dx)), op=MPI.SUM
         )
@@ -182,19 +171,24 @@ class GaitDriver:
     def structure_expr(self) -> ufl.core.expr.Expr:
         return self.M_expr
 
-    def _precompute_loads(self) -> List[Tuple]:
+    def _precompute_loads(self) -> List[Tuple[np.ndarray, ...]]:
+        """Pre-calculate traction vector arrays for all phases."""
         loads = []
         for phase in self.phases:
             self.gait.update_loads(phase)
-            loads.append(tuple(t.x.array.copy() for t in self._tractions))
+            # Copy the arrays so they are stored independently
+            phase_loads = tuple(t.x.array.copy() for t in self._tractions)
+            loads.append(phase_loads)
         return loads
 
     def _apply_load(self, idx: int) -> None:
+        """Apply precomputed loads for phase index `idx` to the traction functions."""
         for traction, data in zip(self._tractions, self.loads[idx]):
             traction.x.array[:] = data
             traction.x.scatter_forward()
 
     def _build_expressions(self) -> None:
+        """Construct UFL expressions for daily stimulus and structure tensor."""
         if self.exponent <= 0.0:
             raise ValueError(f"n_power must be positive, got {self.exponent}")
 
@@ -205,24 +199,36 @@ class GaitDriver:
         psi_p_terms = []
         structure_terms = []
         total_weight = 0.0
-        gdim = self.mech.gdim
-
+        
+        # We use the snapshots u_snap to build the expression.
+        # When u_snap values change, these expressions evaluate to new values.
         for u_i, weight in zip(self.u_snap, self.weights):
+            # Stress and Strain from snapshot u_i
+            # Note: rho and A_dir are shared (current state of remodeling)
             sig_i = self.mech.sigma(u_i, self.mech.rho, self.mech.A_dir)
-            sigma_vm_i = von_mises_stress(sig_i, gdim)
+            sigma_vm_i = von_mises_stress(sig_i)
 
             e_i = self.mech.get_strain_tensor(u_i)
             e_dev_i = ufl.dev(e_i)
             structure_i = ufl.dot(ufl.transpose(e_dev_i), e_dev_i)
 
+            # Accumulate weighted terms
+            # ψ_term = w * (σ_vm / σ_ref)^m
             psi_p_terms.append(weight * (sigma_vm_i / self.psi_ref) ** self.exponent)
+            
+            # M_term = w * (ε_devᵀ ε_dev)
             structure_terms.append(weight * structure_i)
+            
             total_weight += weight
 
         if total_weight <= 0.0:
             raise ValueError("Gait quadrature weights must sum to a positive value.")
 
+        # Average over cycle
         J_cycle = sum(psi_p_terms) / total_weight
+        M_cycle = sum(structure_terms) / total_weight
+
+        # Final expressions
         self.psi_expr = N_cyc * J_cycle
-        self.M_expr = sum(structure_terms) / total_weight
+        self.M_expr = M_cycle
 

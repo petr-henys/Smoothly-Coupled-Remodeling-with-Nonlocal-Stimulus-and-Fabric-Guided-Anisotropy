@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, fields
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING, Any, Dict
 
 from dolfinx import mesh, default_scalar_type
 import ufl
@@ -22,9 +22,12 @@ class Config:
     - Density: relative [-] in [0, 1]
     """
 
-    # --- Material properties ---
+    # =========================================================================
+    # Material Properties
+    # =========================================================================
     E0: float = 15e3            # Young's modulus [MPa] at rho=1
     nu: float = 0.3             # Poisson's ratio [-]
+    xi_aniso: float = 0.3       # Anisotropic reinforcement factor
 
     # Density-stiffness relationship: E = E0 * rho^n(rho)
     n_power: float = 2.0        # Exponent for stimulus calculation
@@ -33,45 +36,54 @@ class Config:
     rho_trab_max: float = 0.6   # Max density for trabecular regime
     rho_cort_min: float = 0.9   # Min density for cortical regime
 
-    xi_aniso: float = 0.3       # Anisotropic reinforcement factor
-
-    # --- Density evolution ---
+    # =========================================================================
+    # Density Evolution (Remodeling)
+    # =========================================================================
     rho_min: float = 0.1        # Min relative density
     rho_max: float = 1.00       # Max relative density
     rho0: float = 0.5           # Initial relative density
+
     # Mechanostat (dual-threshold Frost-like)
-    S_form_th: float = 0.2     # Formation threshold in S (dimensionless)
-    S_resorb_th: float = -0.2  # Resorption threshold in S (dimensionless)
-    k_step: float = 6.0        # Smooth step steepness
-    lambda_form: float = 0.1  # Formation rate [1/day]
+    S_form_th: float = 0.2      # Formation threshold in S (dimensionless)
+    S_resorb_th: float = -0.2   # Resorption threshold in S (dimensionless)
+    k_step: float = 6.0         # Smooth step steepness
+    lambda_form: float = 0.1    # Formation rate [1/day]
     lambda_resorb: float = 0.1  # Resorption rate [1/day]
-    S_lazy: float = 0.25         # Lazy zone width
+    S_lazy: float = 0.25        # Lazy zone width
 
     # Density diffusion [mm^2/day]
     beta_par: float = 0.1       # Parallel to fabric
     beta_perp: float = 0.1      # Perpendicular to fabric
 
-    # --- Stimulus (Reaction-Diffusion) ---
-    psi_ref: float = 20.        # Reference (σ_ref) for Carter–Beaupré normalization [MPa]
+    # =========================================================================
+    # Stimulus (Reaction-Diffusion)
+    # =========================================================================
+    psi_ref: float = 20.0       # Reference (σ_ref) for Carter–Beaupré normalization [MPa]
     cS: float = 1.0             # Signaling capacity
     tauS: float = 1.0           # Decay rate [1/day]
     kappaS: float = 1.0         # Diffusion coefficient [mm^2/day]
     rS_gain: float = 1.0        # Transduction gain [1/day]
-    distal_damping_height: float = 60.0 # Height of distal damping zone [mm]
-    distal_damping_transition: float = 5.0 # Transition width of distal damping zone [mm]
+    distal_damping_height: float = 60.0       # Height of distal damping zone [mm]
+    distal_damping_transition: float = 5.0    # Transition width of distal damping zone [mm]
 
-    # --- Fabric Tensor Evolution ---
+    # =========================================================================
+    # Fabric Tensor Evolution
+    # =========================================================================
     cA: float = 1.0             # Orientation capacity
     tauA: float = 100.0         # Relaxation time [day]
     ell: float = 2.0            # Diffusion length [mm]
 
-    # --- Gait & Loading ---
+    # =========================================================================
+    # Gait & Loading
+    # =========================================================================
     gait_cycles_per_day: float = 1.0
     load_scale: float = 1.0
     gait_samples: int = 9
     body_mass_tonnes: float = 0.075   # 0.075 t ≈ 75 kg
 
-    # --- Numerics & I/O ---
+    # =========================================================================
+    # Numerics & I/O
+    # =========================================================================
     quadrature_degree: int = 4
     saving_interval: int = 1
     results_dir: str = ".results"
@@ -109,11 +121,11 @@ class Config:
     min_subiters: int = 1
 
     # Diagnostics
-    coupling_eps: float = 1e-3
-    coupling_each_iter: bool = False
     smooth_eps: float = 5e-7    # Regularization for abs/max/PSD
 
-    # --- Internal Fields ---
+    # =========================================================================
+    # Internal State (Runtime)
+    # =========================================================================
     domain: Optional[mesh.Mesh] = field(default=None, repr=False)
     facet_tags: Optional[mesh.MeshTags] = field(default=None, repr=False)
     
@@ -130,14 +142,21 @@ class Config:
         if self.domain is None:
             raise ValueError("Config requires a valid 'domain' (dolfinx.mesh.Mesh).")
         
-        # Validate parameter ranges
+        self.validate()
+        self._build_measures()
+        self._init_telemetry()
+
+    def validate(self):
+        """Validate configuration parameters."""
+        # Material
         if not (-1.0 < self.nu < 0.5):
             raise ValueError(f"Poisson ratio nu={self.nu} must be in range (-1, 0.5).")
-        
         if self.E0 <= 0:
             raise ValueError(f"Young's modulus E0={self.E0} must be positive.")
         if self.n_trab <= 0 or self.n_cort <= 0:
             raise ValueError("n_trab and n_cort must be positive.")
+        
+        # Density
         if not (0.0 <= self.rho_min < self.rho_max <= 1.0):
             raise ValueError("rho_min/max must satisfy 0 <= rho_min < rho_max <= 1.")
         if not (self.rho_min <= self.rho_trab_max <= self.rho_cort_min <= self.rho_max):
@@ -148,10 +167,16 @@ class Config:
             raise ValueError("S_lazy must be non-negative.")
         if self.beta_par < 0 or self.beta_perp < 0:
             raise ValueError("beta_par/beta_perp must be non-negative.")
+        
+        # Stimulus
         if self.cS <= 0 or self.tauS < 0 or self.kappaS < 0 or self.rS_gain < 0:
             raise ValueError("cS>0, tauS>=0, kappaS>=0, rS_gain>=0 required.")
+        
+        # Fabric
         if self.cA <= 0 or self.tauA < 0 or self.ell <= 0:
             raise ValueError("cA>0, tauA>=0, ell>0 required.")
+        
+        # Gait
         if self.body_mass_tonnes <= 0:
             raise ValueError("body_mass_tonnes must be positive (tonnes).")
         if self.gait_cycles_per_day <= 0:
@@ -161,16 +186,9 @@ class Config:
         if self.load_scale < 0:
             raise ValueError("load_scale must be non-negative.")
         
+        # Solver
         if self.accel_type not in ("anderson", "picard"):
             raise ValueError(f"accel_type must be 'anderson' or 'picard', got {self.accel_type!r}")
-        
-        self._build_measures()
-        self._init_telemetry()
-
-    @staticmethod
-    def _cast(val: float):
-        """Cast to DOLFINx default scalar type."""
-        return default_scalar_type(val)
 
     def _build_measures(self):
         """Create UFL integration measures with quadrature degree."""
@@ -187,19 +205,12 @@ class Config:
         """Initialize telemetry and persist config.json (rank-0 only)."""
         from simulation.telemetry import Telemetry
 
-        outdir = self.results_dir
         self.telemetry = Telemetry(
             comm=self.domain.comm,
-            outdir=outdir,
-            verbose=bool(getattr(self, "verbose", True)),
+            outdir=self.results_dir,
+            verbose=self.verbose,
         )
-
-        cfg_dict = self.to_json_dict()
-        self.telemetry.write_metadata(
-            cfg_dict,
-            filename="config.json",
-            overwrite=True,
-        )
+        self.update_config_json()
 
     def set_dt(self, dt_days: float):
         """Update timestep in days."""
@@ -211,9 +222,8 @@ class Config:
         """Re-write config.json with current parameters (rank-0 only)."""
         if self.telemetry is None:
             return
-        cfg_dict = self.to_json_dict()
         self.telemetry.write_metadata(
-            cfg_dict,
+            self.to_json_dict(),
             filename="config.json",
             overwrite=True,
         )
@@ -224,14 +234,10 @@ class Config:
         self.facet_tags = facet_tags
         self._build_measures()
 
-    def to_json_dict(self) -> dict:
+    def to_json_dict(self) -> Dict[str, Any]:
         """Serialize init-time parameters to JSON-compatible dict."""
-        cfg = {}
-        for f in fields(self):
-            if not f.init or not f.repr:
-                continue
-            name = f.name
-            val = getattr(self, name)
-            if isinstance(val, (int, float, bool, str)) or val is None:
-                cfg[name] = val
-        return cfg
+        return {
+            f.name: getattr(self, f.name)
+            for f in fields(self)
+            if f.init and f.repr and isinstance(getattr(self, f.name), (int, float, bool, str, type(None)))
+        }
