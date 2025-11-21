@@ -9,7 +9,17 @@ import ufl
 from simulation.config import Config
 from simulation.utils import build_dirichlet_bcs, build_facetag, collect_dirichlet_dofs
 from simulation.subsolvers import MechanicsSolver
-from tests.physics_utils import iso_tensor, make_unit_cube
+from dolfinx import mesh
+
+def make_unit_cube(comm=MPI.COMM_WORLD, n=6):
+    return mesh.create_unit_cube(comm, n, n, n)
+
+def iso_tensor(x):
+    values = np.zeros((9, x.shape[1]), dtype=default_scalar_type)
+    values[0] = 1.0
+    values[4] = 1.0
+    values[8] = 1.0
+    return values
 
 # =============================================================================
 # Boundary Condition Tests

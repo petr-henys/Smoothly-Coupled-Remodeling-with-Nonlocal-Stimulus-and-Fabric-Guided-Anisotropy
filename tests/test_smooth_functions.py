@@ -9,7 +9,10 @@ import ufl
 from simulation.config import Config
 from simulation.utils import build_facetag
 from simulation.subsolvers import smooth_abs, smooth_plus, smooth_max, smooth_heaviside
-from tests.physics_utils import make_unit_cube
+from dolfinx import mesh
+
+def make_unit_cube(comm=MPI.COMM_WORLD, n=6):
+    return mesh.create_unit_cube(comm, n, n, n)
 
 # =============================================================================
 # Smooth Function Tests
