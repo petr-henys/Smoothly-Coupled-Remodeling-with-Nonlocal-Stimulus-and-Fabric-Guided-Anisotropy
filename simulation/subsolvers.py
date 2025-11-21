@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Tuple, List, Optional, Dict
+from typing import TYPE_CHECKING
 
 from mpi4py import MPI
 from petsc4py import PETSc
-from dolfinx import fem
+from dolfinx import fem, default_scalar_type
 from dolfinx.fem.petsc import (
     assemble_matrix,
     assemble_vector,
@@ -15,14 +15,17 @@ from dolfinx.fem.petsc import (
     create_matrix,
     create_vector,
 )
-from dolfinx import default_scalar_type
 import ufl
 
 from simulation.utils import build_nullspace
-from simulation.config import Config
 from simulation.logger import get_logger
 
+if TYPE_CHECKING:
+    from simulation.config import Config
+
+
 # --- Smooth regularization helpers (C^∞ approximations) ---
+
 def smooth_abs(x, eps: float):
     """C^∞ approximation of |x|."""
     return ufl.sqrt(x * x + eps * eps)
@@ -46,6 +49,7 @@ def smooth_heaviside(x, eps: float):
 
 
 # --- PSD + unit-trace projection helpers ---
+
 def unittrace_psd_from_any(T, dim: int, eps: float):
     """Project arbitrary tensor T to unit-trace PSD via TᵀT + εI."""
     I = ufl.Identity(dim)
@@ -60,7 +64,24 @@ def unittrace_psd(B, dim: int, eps: float):
     return M / ufl.tr(M)
 
 
+def get_distal_damping_mask(mesh, z_min: float, height: float = 15.0, transition: float = 5.0):
+    """
+    Returns a UFL expression for a spatial mask that dampens values near the distal boundary.
+
+    The mask is:
+      - 0.0 for z < z_min + height
+      - Transitions from 0.0 to 1.0 for z in [z_min + height, z_min + height + transition]
+      - 1.0 for z > z_min + height + transition
+    """
+    x = ufl.SpatialCoordinate(mesh)
+    z = x[2]
+    z_start = z_min + height
+    t = (z - z_start) / transition
+    return ufl.max_value(0.0, ufl.min_value(1.0, t))
+
+
 # --- Base linear solver class ---
+
 class _BaseLinearSolver:
     """Base KSP solver with setup, assembly, solve, and stats tracking."""
 
@@ -68,8 +89,8 @@ class _BaseLinearSolver:
         self,
         cfg: Config,
         state_function: fem.Function,
-        dirichlet_bcs: List[fem.DirichletBC],
-        neumann_bcs: List[Tuple[fem.Function, int]],
+        dirichlet_bcs: list[fem.DirichletBC],
+        neumann_bcs: list[tuple[fem.Function, int]],
     ):
         self.state = state_function
         self.function_space = state_function.function_space
@@ -89,16 +110,16 @@ class _BaseLinearSolver:
 
         self.total_iters = 0
         self.ksp_steps = 0
-        self.last_reason: Optional[int] = None
-        self.last_iters: Optional[int] = None
+        self.last_reason: int | None = None
+        self.last_iters: int | None = None
 
         self.dirichlet_bcs = dirichlet_bcs
         self.neumann_bcs = neumann_bcs
 
-        self.ksp: Optional[PETSc.KSP] = None
-        self.A: Optional[PETSc.Mat] = None
-        self.b: Optional[PETSc.Vec] = create_vector(self.function_space)
-        self.a_form: Optional[ufl.Form] = None
+        self.ksp: PETSc.KSP | None = None
+        self.A: PETSc.Mat | None = None
+        self.b: PETSc.Vec | None = create_vector(self.function_space)
+        self.a_form: ufl.Form | None = None
 
     def destroy(self):
         if self.ksp is not None:
@@ -112,16 +133,12 @@ class _BaseLinearSolver:
             self.b = None
 
     def _reset_stats(self):
-        # Do not reset cumulative counters (total_iters, ksp_steps) here
-        # so that they persist across re-assemblies (e.g. when dt changes).
         self.last_reason = None
         self.last_iters = None
 
     def build_lhs_form(self):
-        """Return UFL bilinear form for the current LHS.
-        Subclasses must override this to inject dt or coefficients.
-        """
-        raise NotImplementedError(f"{self.__class__.__name__}.build_lhs_form() not implemented")  # noqa: E501
+        """Return UFL bilinear form for the current LHS."""
+        raise NotImplementedError(f"{self.__class__.__name__}.build_lhs_form() not implemented")
 
     def assemble_lhs(self):
         """(Re)build and assemble LHS matrix from subclass-provided form."""
@@ -138,7 +155,7 @@ class _BaseLinearSolver:
             self.ksp.setUp()
         self._reset_stats()
 
-    def _solve(self) -> Tuple[int, int]:
+    def _solve(self) -> tuple[int, int]:
         self.ksp.solve(self.b, self.state.x.petsc_vec)
         self.state.x.scatter_forward()
         its = self.ksp.getIterationNumber()
@@ -155,9 +172,9 @@ class _BaseLinearSolver:
 
     def _maybe_warn(self, reason: int, label: str):
         if reason < 0:
-            self.logger.warning(f"{label} solver failed to converge (reason: {reason})")  # noqa: E501
+            self.logger.warning(f"{label} solver failed to converge (reason: {reason})")
 
-    def create_ksp(self, prefix: str, ksp_options: Dict[str, object]) -> PETSc.KSP:
+    def create_ksp(self, prefix: str, ksp_options: dict[str, object]) -> PETSc.KSP:
         self.ksp = PETSc.KSP().create(self.comm)
         self.ksp.setOptionsPrefix(prefix + "_")
 
@@ -179,6 +196,7 @@ class _BaseLinearSolver:
 
 
 # --- Subsolver implementations ---
+
 class MechanicsSolver(_BaseLinearSolver):
     """Elastic equilibrium with anisotropic fabric reinforcement."""
 
@@ -188,16 +206,13 @@ class MechanicsSolver(_BaseLinearSolver):
         rho: fem.Function,
         A_dir: fem.Function,
         config: Config,
-        dirichlet_bcs: List[fem.DirichletBC],
-        neumann_bcs: List[Tuple[fem.Function, int]],
+        dirichlet_bcs: list[fem.DirichletBC],
+        neumann_bcs: list[tuple[fem.Function, int]],
     ):
         super().__init__(config, u, dirichlet_bcs, neumann_bcs)
         self.u = self.state
         self.rho = rho
         self.A_dir = A_dir
-
-        vol_local = fem.assemble_scalar(fem.form(1.0 * self.dx))
-        self.total_vol = self.comm.allreduce(vol_local, op=MPI.SUM)
 
         # Neumann RHS template
         zero_vec = fem.Constant(self.mesh, (0.0,) * self.gdim)
@@ -207,30 +222,22 @@ class MechanicsSolver(_BaseLinearSolver):
         self.L_form = fem.form(L_form)
 
     def build_lhs_form(self):
-        return ufl.inner(self.sigma(self.trial, self.rho, self.A_dir), 
-                         self.eps(self.test)) * self.dx  # noqa: E501
+        return ufl.inner(self.sigma(self.trial, self.rho, self.A_dir), self.eps(self.test)) * self.dx
 
     def eps(self, u):
         """Symmetric gradient ε(u)."""
         return ufl.sym(ufl.grad(u))
 
     def sigma(self, u, rho, A_dir):
-        """Cauchy stress σ(u) in MPa: density-modulated isotropic stiffness + anisotropic reinforcement.
+        """Cauchy stress σ(u) [MPa].
 
-        The isotropic stiffness follows a density-dependent power law
-        E(ρ) = E0 · ρ^{n(ρ)}, where n(ρ) transitions smoothly from a
-        trabecular exponent (n_trab) to a cortical exponent (n_cort)
-        between cfg.rho_trab_max and cfg.rho_cort_min.
-        """  # noqa: E501
+        E(ρ) = E0 * ρ^n(ρ), where n(ρ) transitions from n_trab to n_cort.
+        """
         rho_eff = smooth_max(rho, self.cfg.rho_min, self.smooth_eps)
 
-        # Smooth transition factor w(ρ) ∈ [0, 1] between trabecular (w≈0)
-        # and cortical (w≈1) regimes, using a cubic smoothstep with
-        # smoothed clamping to [0, 1].
-        rho1 = float(self.cfg.rho_trab_max)
-        rho2 = float(self.cfg.rho_cort_min)
+        # Smooth transition factor w(ρ) in [0, 1]
+        rho1, rho2 = float(self.cfg.rho_trab_max), float(self.cfg.rho_cort_min)
         if rho2 <= rho1:
-            # Degenerate interval: fall back to pure trabecular exponent.
             n_eff = self.cfg.n_trab
         else:
             s_raw = (rho_eff - rho1) / (rho2 - rho1)
@@ -254,22 +261,17 @@ class MechanicsSolver(_BaseLinearSolver):
         return 2 * mu * eps_ten + lmbda * ufl.tr(eps_ten) * I + sigma_aniso
 
     def get_strain_tensor(self, u=None):
-        """Strain tensor ε(u)."""
-        uu = self.u if u is None else u
-        return self.eps(uu)
+        return self.eps(self.u if u is None else u)
 
     def get_strain_energy_density(self, u=None):
         """Strain energy density ψ = 0.5 σ:ε [MPa]."""
         uu = self.u if u is None else u
         sig = self.sigma(uu, self.rho, self.A_dir)
-        e = self.eps(uu)
-        return 0.5 * ufl.inner(sig, e)
+        return 0.5 * ufl.inner(sig, self.eps(uu))
 
     def setup(self):
         self.rho.x.scatter_forward()
         self.A_dir.x.scatter_forward()
-
-        # Build and assemble LHS
         self.assemble_lhs()
 
         ns = build_nullspace(self.function_space)
@@ -301,14 +303,14 @@ class MechanicsSolver(_BaseLinearSolver):
         self.rho.x.scatter_forward()
         self.A_dir.x.scatter_forward()
 
-        strain_energy = 0.5 * ufl.inner(self.sigma(self.u, self.rho, self.A_dir), self.eps(self.u))
+        psi_expr = self.get_strain_energy_density()
         vol_local = fem.assemble_scalar(fem.form(1.0 * self.dx))
         vol = self.comm.allreduce(vol_local, op=MPI.SUM)
-        psi_local = fem.assemble_scalar(fem.form(strain_energy * self.dx))
+        psi_local = fem.assemble_scalar(fem.form(psi_expr * self.dx))
         psi = self.comm.allreduce(psi_local, op=MPI.SUM)
         return float(psi / max(vol, 1e-300))
 
-    def energy_balance(self) -> Tuple[float, float, float]:
+    def energy_balance(self) -> tuple[float, float, float]:
         """Internal vs. external work: (W_int, W_ext, rel_error) [N·mm]."""
         self.u.x.scatter_forward()
         self.rho.x.scatter_forward()
@@ -331,14 +333,7 @@ class MechanicsSolver(_BaseLinearSolver):
 
 
 class StimulusSolver(_BaseLinearSolver):
-    """Reaction-diffusion stimulus S driven by a mechanical driver ψ(x)
-    (here typically a daily equivalent stress from the gait driver).
-
-    Units:
-    - S: dimensionless signal [-]
-    - cS [-], tauS [1/day], kappaS [mm^2/day], rS_gain [1/(MPa·day)]
-    - psi, psi_ref in [MPa]; time step cfg.dt in [day]
-    """
+    """Reaction-diffusion stimulus S driven by mechanical driver ψ(x)."""
 
     def __init__(
         self,
@@ -349,10 +344,6 @@ class StimulusSolver(_BaseLinearSolver):
         super().__init__(config, S, [], [])
         self.S = self.state
         self.S_old = S_old
-
-        vol_local = fem.assemble_scalar(fem.form(1.0 * self.dx))
-        self.total_vol = self.comm.allreduce(vol_local, op=MPI.SUM)
-
         self._rhs_form = None
         self.z_min = None
 
@@ -390,11 +381,6 @@ class StimulusSolver(_BaseLinearSolver):
         mask = get_distal_damping_mask(self.mesh, z_min, height=5., transition=5.0)
         psi_effective = psi_expr * mask
 
-        one = fem.Constant(self.mesh, default_scalar_type(1.0))
-        psi_int_local = fem.assemble_scalar(fem.form(psi_effective * one * self.dx))
-        psi_int = float(self.comm.allreduce(psi_int_local, op=MPI.SUM))
-        if psi_int == 0.0 and self.rank == 0:
-            self.logger.warning("Stimulus RHS: psi expression (masked) integrates to zero; check driver or mechanics setup.")
         rhs = (self.cfg.cS / dt) * self.S_old + self.cfg.rS_gain * (psi_effective - self.cfg.psi_ref)
         self._rhs_form = fem.form(rhs * self.test * self.dx)
         assemble_vector(self.b, self._rhs_form)
@@ -407,21 +393,24 @@ class StimulusSolver(_BaseLinearSolver):
         self._maybe_warn(reason, "Stimulus")
         return its, reason
 
-    def power_balance_residual(self, psi_expr) -> Tuple[float, float]:
+    def power_balance_residual(self, psi_expr) -> tuple[float, float]:
         """Power balance check: (abs_residual, rel_residual)."""
         self.S.x.scatter_forward()
         self.S_old.x.scatter_forward()
         one = fem.Constant(self.mesh, default_scalar_type(1.0))
         dt = self.cfg.dt
+
         storage_loc = fem.assemble_scalar(fem.form((self.cfg.cS / dt) * (self.S - self.S_old) * one * self.dx))
         storage = float(self.comm.allreduce(storage_loc, op=MPI.SUM))
         decay_loc = fem.assemble_scalar(fem.form(self.cfg.tauS * self.S * one * self.dx))
         decay = float(self.comm.allreduce(decay_loc, op=MPI.SUM))
         source_loc = fem.assemble_scalar(fem.form(self.cfg.rS_gain * (psi_expr - self.cfg.psi_ref) * one * self.dx))
         source = float(self.comm.allreduce(source_loc, op=MPI.SUM))
+        
         n = ufl.FacetNormal(self.mesh)
         flux_loc = fem.assemble_scalar(fem.form(self.cfg.kappaS * ufl.dot(ufl.grad(self.S), n) * self.ds))
         flux = float(self.comm.allreduce(flux_loc, op=MPI.SUM))
+        
         R = (storage + decay) - (source + flux)
         denom = abs(storage) + abs(decay) + abs(source) + 1e-30
         return abs(R), abs(R) / denom
@@ -443,14 +432,20 @@ class DensitySolver(_BaseLinearSolver):
         self.rho_old = rho_old
         self.A_dir = A_dir
         self.S = S
-
-        vol_local = fem.assemble_scalar(fem.form(1.0 * self.dx))
-        self.total_vol = self.comm.allreduce(vol_local, op=MPI.SUM)
-
-        # RHS form will be (re)built in assemble_rhs()
         self.L_form_template = None
-        # Build bilinear form template immediately so low-level tests can access it
         self.a_form = fem.form(self.build_lhs_form())
+
+    def _get_reaction_terms(self):
+        """Compute lazy-zone factor f(|S|) and equilibrium density ρ_eq(S)."""
+        Sabs = smooth_abs(self.S, self.smooth_eps)
+        S_lazy = float(self.cfg.S_lazy)
+        f_S = Sabs / (Sabs + S_lazy) if S_lazy > 0.0 else 1.0
+
+        k_mech = float(self.cfg.k_mech)
+        S_shift = float(self.cfg.S_shift)
+        theta = 1.0 / (1.0 + ufl.exp(-k_mech * (self.S - S_shift)))
+        rho_eq = self.cfg.rho_min + (self.cfg.rho_max - self.cfg.rho_min) * theta
+        return f_S, rho_eq
 
     def build_lhs_form(self):
         dt = self.cfg.dt
@@ -459,19 +454,11 @@ class DensitySolver(_BaseLinearSolver):
         d = self.mesh.geometry.dim
         I = ufl.Identity(d)
 
-        # Anisotropic diffusion tensor aligned with fabric A_dir
         Asym = 0.5 * (self.A_dir + ufl.transpose(self.A_dir))
         Ahat = unittrace_psd_from_any(Asym, d, eps=self.smooth_eps)
         Bten = self.cfg.beta_perp * I + (self.cfg.beta_par - self.cfg.beta_perp) * Ahat
 
-        # Lazy-zone weighting f(|S|) in [0,1]
-        Sabs = smooth_abs(self.S, self.smooth_eps)
-        S_lazy = float(self.cfg.S_lazy)
-        if S_lazy > 0.0:
-            f_S = Sabs / (Sabs + S_lazy)
-        else:
-            # No lazy zone: react everywhere with full rate
-            f_S = 1.0
+        f_S, _ = self._get_reaction_terms()
 
         return (
             (self.trial / dt) * self.test * self.dx
@@ -491,20 +478,7 @@ class DensitySolver(_BaseLinearSolver):
             b_local.set(0.0)
 
         dt = self.cfg.dt
-
-        # Lazy-zone weighting f(|S|)
-        Sabs = smooth_abs(self.S, self.smooth_eps)
-        S_lazy = float(self.cfg.S_lazy)
-        if S_lazy > 0.0:
-            f_S = Sabs / (Sabs + S_lazy)
-        else:
-            f_S = 1.0
-
-        # Logistic equilibrium density ρ_eq(S)
-        k_mech = float(self.cfg.k_mech)
-        S_shift = float(self.cfg.S_shift)
-        theta = 1.0 / (1.0 + ufl.exp(-k_mech * (self.S - S_shift)))
-        rho_eq = self.cfg.rho_min + (self.cfg.rho_max - self.cfg.rho_min) * theta
+        f_S, rho_eq = self._get_reaction_terms()
 
         rhs_expr = (self.rho_old / dt) + self.cfg.lambda_rho * f_S * rho_eq
         self.L_form_template = fem.form(rhs_expr * self.test * self.dx)
@@ -520,50 +494,22 @@ class DensitySolver(_BaseLinearSolver):
         self.rho.x.scatter_forward()
         return its, reason
 
-    def mass_balance_residual(self) -> Tuple[float, float]:
-        """Mass balance check under soft mechanostat: (abs_residual, rel_residual).
-
-        Integrated PDE:
-            dM/dt + ∫ λρ f(|S|) ρ dx = ∫ λρ f(|S|) ρ_eq(S) dx
-        ignoring net diffusive flux for closed / no-flux boundaries.
-        """
+    def mass_balance_residual(self) -> tuple[float, float]:
+        """Mass balance check: (abs_residual, rel_residual)."""
         self.rho.x.scatter_forward()
         self.rho_old.x.scatter_forward()
         self.S.x.scatter_forward()
         self.A_dir.x.scatter_forward()
 
         one = fem.Constant(self.mesh, default_scalar_type(1.0))
-
-        # Total mass at new/old step
-        M_new_loc = fem.assemble_scalar(fem.form(self.rho * one * self.dx))
-        M_old_loc = fem.assemble_scalar(fem.form(self.rho_old * one * self.dx))
-        M_new = float(self.comm.allreduce(M_new_loc, op=MPI.SUM))
-        M_old = float(self.comm.allreduce(M_old_loc, op=MPI.SUM))
+        M_new = float(self.comm.allreduce(fem.assemble_scalar(fem.form(self.rho * one * self.dx)), op=MPI.SUM))
+        M_old = float(self.comm.allreduce(fem.assemble_scalar(fem.form(self.rho_old * one * self.dx)), op=MPI.SUM))
 
         dt = self.cfg.dt
+        f_S, rho_eq = self._get_reaction_terms()
 
-        # Rebuild f(|S|) and ρ_eq(S) consistently with assemble_rhs/build_lhs_form
-        Sabs = smooth_abs(self.S, self.smooth_eps)
-        S_lazy = float(self.cfg.S_lazy)
-        if S_lazy > 0.0:
-            f_S = Sabs / (Sabs + S_lazy)
-        else:
-            f_S = 1.0
-
-        k_mech = float(self.cfg.k_mech)
-        S_shift = float(self.cfg.S_shift)
-        theta = 1.0 / (1.0 + ufl.exp(-k_mech * (self.S - S_shift)))
-        rho_eq = self.cfg.rho_min + (self.cfg.rho_max - self.cfg.rho_min) * theta
-
-        decay_loc = fem.assemble_scalar(
-            fem.form(self.cfg.lambda_rho * f_S * self.rho * self.dx)
-        )
-        src_loc = fem.assemble_scalar(
-            fem.form(self.cfg.lambda_rho * f_S * rho_eq * self.dx)
-        )
-
-        decay = float(self.comm.allreduce(decay_loc, op=MPI.SUM))
-        src = float(self.comm.allreduce(src_loc, op=MPI.SUM))
+        decay = float(self.comm.allreduce(fem.assemble_scalar(fem.form(self.cfg.lambda_rho * f_S * self.rho * self.dx)), op=MPI.SUM))
+        src = float(self.comm.allreduce(fem.assemble_scalar(fem.form(self.cfg.lambda_rho * f_S * rho_eq * self.dx)), op=MPI.SUM))
 
         dM_dt = (M_new - M_old) / max(dt, 1e-30)
         R = dM_dt + decay - src
@@ -583,10 +529,6 @@ class DirectionSolver(_BaseLinearSolver):
         super().__init__(config, A_dir, [], [])
         self.A_dir = self.state
         self.A_old = A_old
-
-        vol_local = fem.assemble_scalar(fem.form(1.0 * self.dx))
-        self.total_vol = self.comm.allreduce(vol_local, op=MPI.SUM)
-
         self._rhs_form = None
 
     def build_lhs_form(self):
@@ -597,11 +539,7 @@ class DirectionSolver(_BaseLinearSolver):
         if tauA <= 0:
             raise ValueError(f"tauA must be positive, got {tauA}")
         ell2 = self.cfg.ell ** 2
-        # Variant 1: tauA is a relaxation time [day].
-        # PDE: cA * dA/dt = (cA * ell^2 / tauA) * Laplacian(A) + (cA / tauA) * (B_hat - A)
-        # Implicit Euler in time gives:
-        # (cA/dt + cA/tauA) * A^{n+1} - cA * (ell^2/tauA) * Laplacian(A^{n+1})
-        #   = (cA/dt) * A^n + (cA/tauA) * B_hat
+        
         return (
             (self.cfg.cA / dt + self.cfg.cA / tauA) * ufl.inner(self.trial, self.test) * self.dx
             + self.cfg.cA * (ell2 / tauA) * ufl.inner(ufl.grad(self.trial), ufl.grad(self.test)) * self.dx
@@ -617,11 +555,8 @@ class DirectionSolver(_BaseLinearSolver):
     def assemble_rhs(self, B_sum_expr):
         B_hat = unittrace_psd(B_sum_expr, self.gdim, eps=self.smooth_eps)
         dt = self.cfg.dt
-        if dt <= 0:
-            raise ValueError(f"dt must be positive, got {dt}")
         tauA = self.cfg.tauA
-        if tauA <= 0:
-            raise ValueError(f"tauA must be positive, got {tauA}")
+        
         rhs_ten = (self.cfg.cA / dt) * self.A_old + (self.cfg.cA / tauA) * B_hat
         self._rhs_form = fem.form(ufl.inner(rhs_ten, self.test) * self.dx)
 
@@ -637,39 +572,19 @@ class DirectionSolver(_BaseLinearSolver):
         self._maybe_warn(reason, "Direction")
         return its, reason
 
-    def trace_balance_residual(self, Mhat_expr) -> Tuple[float, float, float]:
+    def trace_balance_residual(self, Mhat_expr) -> tuple[float, float, float]:
         """Trace balance: (⟨tr(A)⟩, ⟨tr(M̂)⟩, |difference|)."""
         self.A_dir.x.scatter_forward()
         one = fem.Constant(self.mesh, default_scalar_type(1.0))
+        
+        vol_local = fem.assemble_scalar(fem.form(1.0 * self.dx))
+        total_vol = self.comm.allreduce(vol_local, op=MPI.SUM)
+
         trA_loc = fem.assemble_scalar(fem.form(ufl.tr(self.A_dir) * one * self.dx))
-        trA_vol = float(self.comm.allreduce(trA_loc, op=MPI.SUM)) / self.total_vol
+        trA_vol = float(self.comm.allreduce(trA_loc, op=MPI.SUM)) / total_vol
+        
         trMhat_loc = fem.assemble_scalar(fem.form(ufl.tr(Mhat_expr) * one * self.dx))
-        trMhat_vol = float(self.comm.allreduce(trMhat_loc, op=MPI.SUM)) / self.total_vol
+        trMhat_vol = float(self.comm.allreduce(trMhat_loc, op=MPI.SUM)) / total_vol
+        
         R = trA_vol - trMhat_vol
         return trA_vol, trMhat_vol, abs(R)
-
-def get_distal_damping_mask(mesh, z_min: float, height: float = 15.0, transition: float = 5.0):
-    """
-    Returns a UFL expression for a spatial mask that dampens values near the distal boundary.
-
-    The mask is:
-      - 0.0 for z < z_min + height
-      - Transitions from 0.0 to 1.0 for z in [z_min + height, z_min + height + transition]
-      - 1.0 for z > z_min + height + transition
-
-    Args:
-        mesh: The computational mesh.
-        z_min: The minimum z-coordinate of the mesh (distal end).
-        height: The height of the fully dampened region [mm].
-        transition: The width of the transition region [mm].
-    """
-    x = ufl.SpatialCoordinate(mesh)
-    z = x[2]
-
-    z_start = z_min + height
-
-    # Linear transition from 0 to 1
-    t = (z - z_start) / transition
-    mask = ufl.max_value(0.0, ufl.min_value(1.0, t))
-
-    return mask
