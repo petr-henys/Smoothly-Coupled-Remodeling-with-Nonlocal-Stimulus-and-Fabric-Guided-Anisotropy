@@ -2,81 +2,31 @@
 
 import numpy as np
 import pytest
-
-import basix
 import ufl
 from mpi4py import MPI
-from dolfinx import fem, mesh
-from dolfinx.fem import Function, functionspace
+from dolfinx import fem
 
 from simulation.config import Config
-from simulation.utils import build_facetag, build_dirichlet_bcs
 from simulation.subsolvers import MechanicsSolver
 from simulation.drivers import GaitDriver
-from tests.test_model import _DummyGaitLoader, _unit_cube
-
-
-def _unit_cube_local(n: int = 4):
-    """Local unit cube mesh helper for this module."""
-    return mesh.create_unit_cube(MPI.COMM_WORLD, n, n, n, ghost_mode=mesh.GhostMode.shared_facet)
-
-
-class _DummyGait:
-    """Minimal gait loader that produces three traction fields for hip + muscles."""
-
-    def __init__(self, V: fem.FunctionSpace, facet_id: int = 2, base: float = -0.3):
-        self.V = V
-        self.tag = int(facet_id)
-        self.base = float(base)
-        self.load_scale = 1.0
-        self.t_hip = Function(V, name="t_hip_dummy")
-        self.t_glmed = Function(V, name="t_glmed_dummy")
-        self.t_glmax = Function(V, name="t_glmax_dummy")
-
-    def get_quadrature(self):
-        return [(0.0, 0.5), (100.0, 0.5)]
-
-    def update_loads(self, phase_percent: float) -> None:
-        factor = (phase_percent / 100.0) * self.load_scale
-        hip_vec = np.array([self.base * factor, -0.5 * self.base * factor, -0.3 * self.base * factor])
-        glmed_vec = np.array([0.2 * self.base * factor, 0.8 * self.base * factor, -0.1 * self.base * factor])
-        glmax_vec = np.array([0.1 * self.base * factor, -0.2 * self.base * factor, -0.9 * self.base * factor])
-        for field, vec in zip((self.t_hip, self.t_glmed, self.t_glmax), (hip_vec, glmed_vec, glmax_vec)):
-            field.interpolate(lambda x, vec=vec: np.tile(vec.reshape(3, 1), (1, x.shape[1])))
-            field.x.scatter_forward()
-
 
 @pytest.fixture
-def mech_with_dummy_gait():
+def mech_with_dummy_gait(spaces, cfg, bc_mech, dummy_gait_loader):
     """Mechanics solver on unit cube with simple dummy gait loading."""
-    comm = MPI.COMM_WORLD
-    domain = _unit_cube_local(4)
-    facet_tags = build_facetag(domain)
-    cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False)
-
-    P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3,))
-    P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
-    P1_ten = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3, 3))
-    V = functionspace(domain, P1_vec)
-    Q = functionspace(domain, P1)
-    T = functionspace(domain, P1_ten)
-
-    u = Function(V, name="u")
-    rho = Function(Q, name="rho"); rho.x.array[:] = 0.6; rho.x.scatter_forward()
-    A = Function(T, name="A")
+    u = fem.Function(spaces.V, name="u")
+    rho = fem.Function(spaces.Q, name="rho"); rho.x.array[:] = 0.6; rho.x.scatter_forward()
+    A = fem.Function(spaces.T, name="A")
     A.interpolate(lambda x: (np.eye(3) / 3.0).flatten()[:, None] * np.ones((1, x.shape[1])))
     A.x.scatter_forward()
 
-    bc_mech = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
-    gait = _DummyGait(V, facet_id=2, base=-0.4)
     neumann_bcs = [
-        (gait.t_hip, gait.tag),
-        (gait.t_glmed, gait.tag),
-        (gait.t_glmax, gait.tag),
+        (dummy_gait_loader.t_hip, dummy_gait_loader.tag),
+        (dummy_gait_loader.t_glmed, dummy_gait_loader.tag),
+        (dummy_gait_loader.t_glmax, dummy_gait_loader.tag),
     ]
     mech = MechanicsSolver(u, rho, A, cfg, bc_mech, neumann_bcs)
     mech.setup()
-    return mech, gait
+    return mech, dummy_gait_loader
 
 
 class TestGaitDriverUnitCube:
@@ -103,10 +53,6 @@ class TestGaitDriverUnitCube:
         psi_double = mech.comm.allreduce(psi_double_loc, op=MPI.SUM)
 
         ratio = psi_double / max(psi_base, 1e-300)
-        # With linear elasticity, stress ∝ load, so ψ ∝ load^m (m=n_power)
-        # Default n_power is 2.0 in Config? No, default is 2.0.
-        # Wait, Config default n_power is 2.0? Let's check Config.
-        # Assuming n_power=2.0, then ratio should be 2^2 = 4.
         expected = 4.0
         assert 0.5 * expected < ratio < 1.5 * expected, (
             "Energy scaling should follow load^m; "
@@ -141,51 +87,29 @@ class TestGaitDriverUnitCube:
 
 
 class TestGaitDriverFemur:
-    def test_driver_produces_nonzero_energy(self, tmp_path):
-        """Check if GaitDriver produces non-zero energy expression.
-
-        This is a light-weight version of the original debug test.
-        """
+    def test_driver_produces_nonzero_energy(self, tmp_path, spaces, cfg, bc_mech, dummy_gait_loader):
+        """Check if GaitDriver produces non-zero energy expression."""
         comm = MPI.COMM_WORLD
-        domain = _unit_cube(4)
-        facet_tags = build_facetag(domain)
-        cfg = Config(domain=domain, facet_tags=facet_tags, verbose=True, results_dir=str(tmp_path))
-
-        gdim = domain.geometry.dim
-        P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(gdim,))
-        P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
-        P1_ten = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(gdim, gdim))
-
-        V = fem.functionspace(domain, P1_vec)
-        Q = fem.functionspace(domain, P1)
-        T = fem.functionspace(domain, P1_ten)
-
-        u = fem.Function(V, name="u")
-        rho = fem.Function(Q, name="rho")
-        A = fem.Function(T, name="dir_tensor")
+        
+        # Setup fields
+        u = fem.Function(spaces.V, name="u")
+        rho = fem.Function(spaces.Q, name="rho")
+        A = fem.Function(spaces.T, name="dir_tensor")
 
         rho.x.array[:] = cfg.rho0
-
-        def _A_const(x):
-            n = x.shape[1]
-            vals = (np.eye(gdim, dtype=np.float64) / gdim).reshape(gdim * gdim, 1)
-            return np.tile(vals, (1, n))
-
-        A.interpolate(_A_const)
+        A.interpolate(lambda x: (np.eye(3) / 3.0).flatten()[:, None] * np.ones((1, x.shape[1])))
         A.x.scatter_forward()
 
-        bc_mech = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
-        gait_loader = _DummyGaitLoader(V)
         neumann_bcs = [
-            (gait_loader.t_hip, 2),
-            (gait_loader.t_glmed, 2),
-            (gait_loader.t_glmax, 2),
+            (dummy_gait_loader.t_hip, dummy_gait_loader.tag),
+            (dummy_gait_loader.t_glmed, dummy_gait_loader.tag),
+            (dummy_gait_loader.t_glmax, dummy_gait_loader.tag),
         ]
 
         mech = MechanicsSolver(u, rho, A, cfg, bc_mech, neumann_bcs)
         mech.setup()
 
-        driver = GaitDriver(mech, gait_loader, cfg)
+        driver = GaitDriver(mech, dummy_gait_loader, cfg)
         driver.update_snapshots()
         psi_expr = driver.stimulus_expr()
 

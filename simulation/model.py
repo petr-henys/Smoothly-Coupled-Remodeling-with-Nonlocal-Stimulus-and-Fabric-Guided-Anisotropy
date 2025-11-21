@@ -359,6 +359,15 @@ class Remodeller:
         overall_elapsed = MPI.Wtime() - overall_start
         overall_elapsed = self.comm.allreduce(float(overall_elapsed), op=MPI.MAX)
 
+        if self.telemetry is not None:
+            summary = {
+                "status": "completed",
+                "total_time_days": float(t),
+                "wall_time_seconds": overall_elapsed,
+                "steps_completed": n_steps,
+            }
+            self.telemetry.write_metadata(summary, filename="run_summary.json")
+
         if self.logger.is_enabled_for(Level.INFO):
             self.logger.info(f"Simulation completed in {overall_elapsed:.2f} s")
 

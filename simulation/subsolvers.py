@@ -76,6 +76,11 @@ def get_distal_damping_mask(mesh, z_min: float, height: float = 15.0, transition
     x = ufl.SpatialCoordinate(mesh)
     z = x[2]
     z_start = z_min + height
+    
+    if transition <= 1e-14:
+        # Step function if transition is effectively zero
+        return ufl.conditional(ufl.ge(z, z_start), 1.0, 0.0)
+    
     t = (z - z_start) / transition
     return ufl.max_value(0.0, ufl.min_value(1.0, t))
 
@@ -219,6 +224,7 @@ class MechanicsSolver(_BaseLinearSolver):
         L_form = ufl.inner(zero_vec, self.test) * self.ds
         for t, tag in self.neumann_bcs:
             L_form = L_form + ufl.inner(t, self.test) * self.ds(tag)
+        self.L_ufl = L_form
         self.L_form = fem.form(L_form)
 
     def build_lhs_form(self):
@@ -289,6 +295,23 @@ class MechanicsSolver(_BaseLinearSolver):
         self._maybe_warn(reason, "Mechanics")
         return its, reason
 
+    def energy_balance(self):
+        """Compute internal and external work and their relative error."""
+        # Internal work: a(u,u)
+        a_uu_local = fem.assemble_scalar(fem.form(ufl.inner(self.sigma(self.u, self.rho, self.A_dir), self.eps(self.u)) * self.dx))
+        W_int = self.comm.allreduce(a_uu_local, op=MPI.SUM)
+        
+        # External work: l(u)
+        # We need l(u). L_form is defined as inner(t, v) * ds.
+        # We can replace v with u.
+        L_u_form = fem.form(ufl.replace(self.L_ufl, {self.test: self.u}))
+        l_u_local = fem.assemble_scalar(L_u_form)
+        W_ext = self.comm.allreduce(l_u_local, op=MPI.SUM)
+        
+        denom = max(abs(W_int), abs(W_ext), 1e-300)
+        rel_error = abs(W_int - W_ext) / denom
+        return W_int, W_ext, rel_error
+
 
 class StimulusSolver(_BaseLinearSolver):
     """Reaction-diffusion stimulus S driven by mechanical driver ψ(x)."""
@@ -350,6 +373,32 @@ class StimulusSolver(_BaseLinearSolver):
         its, reason = self._solve()
         self._maybe_warn(reason, "Stimulus")
         return its, reason
+
+    def power_balance_residual(self, psi_expr):
+        """Compute power balance residual: Storage + Decay - Source."""
+        dt = self.cfg.dt
+        S, S_old = self.S, self.S_old
+        
+        # Terms
+        storage = (self.cfg.cS / dt) * (S - S_old)
+        decay = self.cfg.tauS * S
+        
+        # Source
+        z_min = self._compute_z_min()
+        mask = get_distal_damping_mask(self.mesh, z_min, height=self.cfg.distal_damping_height, 
+                                       transition=self.cfg.distal_damping_transition)
+        psi_eff = psi_expr * mask
+        source = self.cfg.rS_gain * (psi_eff - 1.0)
+        
+        integrand = storage + decay - source
+        res_local = fem.assemble_scalar(fem.form(integrand * self.dx))
+        res_abs = self.comm.allreduce(res_local, op=MPI.SUM)
+        
+        # Relative to source magnitude
+        src_mag_local = fem.assemble_scalar(fem.form(abs(source) * self.dx))
+        src_mag = self.comm.allreduce(src_mag_local, op=MPI.SUM)
+        
+        return res_abs, abs(res_abs) / max(src_mag, 1e-300)
 
 
 class DensitySolver(_BaseLinearSolver):
@@ -450,6 +499,23 @@ class DensitySolver(_BaseLinearSolver):
         self._maybe_warn(reason, "Density")
         return its, reason
 
+    def mass_balance_residual(self):
+        """Compute mass balance residual."""
+        dt = self.cfg.dt
+        rho, rho_old = self.rho, self.rho_old
+        lam_eff, rho_eq = self._get_reaction_terms()
+        
+        lhs = (rho - rho_old) / dt
+        rhs = lam_eff * (rho_eq - rho)
+        
+        res_local = fem.assemble_scalar(fem.form((lhs - rhs) * self.dx))
+        res_abs = self.comm.allreduce(res_local, op=MPI.SUM)
+        
+        rhs_mag_local = fem.assemble_scalar(fem.form(abs(rhs) * self.dx))
+        rhs_mag = self.comm.allreduce(rhs_mag_local, op=MPI.SUM)
+        
+        return res_abs, abs(res_abs) / max(rhs_mag, 1e-300)
+
 
 class DirectionSolver(_BaseLinearSolver):
     """Fabric tensor A: reaction-diffusion relaxing to strain-aligned target."""
@@ -504,3 +570,16 @@ class DirectionSolver(_BaseLinearSolver):
         its, reason = self._solve()
         self._maybe_warn(reason, "Direction")
         return its, reason
+
+    def trace_balance_residual(self, Mhat_expr):
+        """Compute domain-averaged trace of A and Mhat, and L2 residual of trace(A)-1."""
+        trA = ufl.tr(self.A_dir)
+        trM = ufl.tr(Mhat_expr)
+        
+        vol = self.comm.allreduce(fem.assemble_scalar(fem.form(1.0 * self.dx)), op=MPI.SUM)
+        trA_avg = self.comm.allreduce(fem.assemble_scalar(fem.form(trA * self.dx)), op=MPI.SUM) / vol
+        trM_avg = self.comm.allreduce(fem.assemble_scalar(fem.form(trM * self.dx)), op=MPI.SUM) / vol
+        
+        res_sq = self.comm.allreduce(fem.assemble_scalar(fem.form((trA - 1.0)**2 * self.dx)), op=MPI.SUM)
+        import numpy as np
+        return trA_avg, trM_avg, np.sqrt(res_sq)

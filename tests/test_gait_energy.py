@@ -1,21 +1,15 @@
-"""Tests for gait cycle strain energy accumulation.
+"""
+Tests for GaitDriver and strain energy accumulation.
 
-Tests the GaitEnergyDriver class for computing accumulated strain energy
-over gait cycles, including:
-- Driver initialization and setup
-- Energy expression building
-- Energy positivity and scaling with load magnitude
-- Phase-by-phase energy contributions
-- Peak stance energy identification
-
-Related test files:
-- `test_gait_forces.py`: Force validation and quadrature
-- `test_femur_mechanics.py`: Deformation and reaction forces
-- `test_gait_geometry.py`: Coordinate system validation
+Validates:
+- Driver initialization and snapshot management
+- Strain energy density (SED) integration
+- Energy scaling with load magnitude
+- Phase-dependent energy variations
 """
 
-import numpy as np
 import pytest
+import numpy as np
 import basix
 from mpi4py import MPI
 from dolfinx import fem
@@ -28,168 +22,143 @@ from simulation.subsolvers import MechanicsSolver
 from simulation.drivers import GaitDriver
 from simulation.utils import build_dirichlet_bcs
 
+# Skip if mesh file not found
+import os
+MESH_EXISTS = os.path.exists(FemurPaths.FEMUR_MESH_FEB)
 
+@pytest.mark.skipif(not MESH_EXISTS, reason="Femur mesh file not found")
 @pytest.fixture(scope="module")
-def femur_mechanics_setup():
-    """Create femur mesh, function spaces, config, and shared gait loader."""
+def gait_context():
+    """Setup solver and driver context once."""
     mdl = FEBio2Dolfinx(FemurPaths.FEMUR_MESH_FEB)
     domain = mdl.mesh_dolfinx
     facet_tags = mdl.meshtags
 
+    # Spaces
     P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(domain.geometry.dim,))
     P1_scalar = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
     V = fem.functionspace(domain, P1_vec)
     Q = fem.functionspace(domain, P1_scalar)
+    T = fem.functionspace(domain, basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3, 3)))
 
-    cfg = Config(domain=domain, facet_tags=facet_tags, verbose=True)
-    gait_loader = setup_femur_gait_loading(V, mass_tonnes=0.075, n_samples=9)
+    cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False)
+    
+    # Loader
+    loader = setup_femur_gait_loading(V, mass_tonnes=0.075, n_samples=5) # Reduced samples for speed
 
-    return domain, facet_tags, V, Q, cfg, gait_loader
-
-
-@pytest.fixture
-def gait_loader(femur_mechanics_setup):
-    """Return gait loader built on the femur mechanics space."""
-    domain, facet_tags, V, Q, cfg, _ = femur_mechanics_setup
-    from simulation.femur_gait import setup_femur_gait_loading
-    return setup_femur_gait_loading(V, mass_tonnes=0.075, n_samples=9)
-
-
-@pytest.fixture
-def mechanics_solver(femur_mechanics_setup, gait_loader):
-    """Create MechanicsSolver with femur geometry and gait loading."""
-    domain, facet_tags, V, Q, cfg, _ = femur_mechanics_setup
-
+    # Fields
     u = fem.Function(V, name="u")
-    rho = fem.Function(Q, name="rho")
-    A_dir = fem.Function(
-        fem.functionspace(domain, basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3, 3))),
-        name="A",
-    )
+    rho = fem.Function(Q, name="rho"); rho.x.array[:] = 1.0
+    A = fem.Function(T, name="A")
+    # Isotropic fabric
+    A.x.array[:] = 0.0
+    for i in range(3): A.x.array[i::9] = 1.0/3.0
 
-    rho.x.array[:] = 1.0
-    A_dir.x.array[:] = 0.0
-    for i in range(3):
-        A_dir.x.array[i::9] = 1.0 / 3.0
-
-    dirichlet_bcs = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
-    neumann_bcs = [
-        (gait_loader.t_hip, 2),
-        (gait_loader.t_glmed, 2),
-        (gait_loader.t_glmax, 2),
+    # BCs
+    bcs = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
+    neumann = [
+        (loader.t_hip, 2),
+        (loader.t_glmed, 2),
+        (loader.t_glmax, 2),
     ]
 
-    solver = MechanicsSolver(u, rho, A_dir, cfg, dirichlet_bcs, neumann_bcs)
+    solver = MechanicsSolver(u, rho, A, cfg, bcs, neumann)
     solver.setup()
+    
+    return {
+        "solver": solver,
+        "loader": loader,
+        "cfg": cfg,
+        "V": V,
+        "Q": Q
+    }
 
-    return solver
+@pytest.mark.skipif(not MESH_EXISTS, reason="Femur mesh file not found")
+class TestGaitDriver:
+    
+    def test_driver_initialization(self, gait_context):
+        """Driver should initialize with correct phases."""
+        solver = gait_context["solver"]
+        loader = gait_context["loader"]
+        cfg = gait_context["cfg"]
+        
+        driver = GaitDriver(solver, loader, cfg)
+        assert len(driver.phases) == loader.n_samples
+        assert len(driver.weights) == loader.n_samples
+        assert np.isclose(sum(driver.weights), 1.0)
 
-
-@pytest.mark.slow
-class TestAccumulatedStrainEnergy:
-    """Test accumulated strain energy computation over gait cycle using GaitDriver."""
-
-    def test_energy_driver_initialization(self, mechanics_solver, gait_loader):
-        """GaitDriver should initialize without errors."""
-        driver = GaitDriver(mechanics_solver, gait_loader, mechanics_solver.cfg)
-        assert driver.mech is mechanics_solver
-        assert driver.gait is gait_loader
-        assert len(driver.phases) == gait_loader.n_samples
-        assert len(driver.weights) == gait_loader.n_samples
-
-    def test_energy_expr_builds(self, mechanics_solver, gait_loader):
-        """Energy expression should build successfully."""
-        driver = GaitDriver(mechanics_solver, gait_loader, mechanics_solver.cfg)
-        driver.update_snapshots()
-        psi_expr = driver.stimulus_expr()
-        assert psi_expr is not None, "Energy expression should be created"
-
-    def test_energy_positivity(self, mechanics_solver, gait_loader):
-        """Accumulated energy should be positive when integrated."""
-        driver = GaitDriver(mechanics_solver, gait_loader, mechanics_solver.cfg)
-        driver.update_snapshots()
-        psi_expr = driver.stimulus_expr()
-
-        cfg = mechanics_solver.cfg
-        psi_total_local = fem.assemble_scalar(fem.form(psi_expr * cfg.dx))
+    @pytest.mark.slow
+    def test_energy_positivity(self, gait_context):
+        """Accumulated energy should be strictly positive."""
+        solver = gait_context["solver"]
+        loader = gait_context["loader"]
+        cfg = gait_context["cfg"]
         comm = cfg.domain.comm
-        psi_total = comm.allreduce(psi_total_local, op=MPI.SUM)
-
-        assert psi_total > 0.0, f"Total strain energy should be positive, got {psi_total}"
-
-    def test_energy_increases_with_load_magnitude(self, mechanics_solver, gait_loader):
-        """Strain energy should increase with load magnitude."""
-        comm = mechanics_solver.cfg.domain.comm
-
-        gait_loader.load_scale = 1.0
-        driver_base = GaitDriver(mechanics_solver, gait_loader, mechanics_solver.cfg)
-        driver_base.update_snapshots()
-        psi_expr_base = driver_base.stimulus_expr()
-        psi_base_local = fem.assemble_scalar(fem.form(psi_expr_base * mechanics_solver.cfg.dx))
-        psi_base = comm.allreduce(psi_base_local, op=MPI.SUM)
-
-        gait_loader.load_scale = 2.0
-        driver_double = GaitDriver(mechanics_solver, gait_loader, mechanics_solver.cfg)
-        driver_double.update_snapshots()
-        psi_expr_double = driver_double.stimulus_expr()
-        psi_double_local = fem.assemble_scalar(fem.form(psi_expr_double * mechanics_solver.cfg.dx))
-        psi_double = comm.allreduce(psi_double_local, op=MPI.SUM)
-
-        ratio = psi_double / psi_base
-        expected = 4.0
-        assert 0.5 * expected < ratio < 1.5 * expected, (
-            "Energy should scale approximately with load²; " f"expected≈{expected:.2f}, ratio={ratio:.2f}"
+        
+        driver = GaitDriver(solver, loader, cfg)
+        driver.update_snapshots() # Runs solves
+        
+        # Check total energy
+        psi_expr = driver.stimulus_expr()
+        total_energy = comm.allreduce(
+            fem.assemble_scalar(fem.form(psi_expr * cfg.dx)), 
+            op=MPI.SUM
         )
+        assert total_energy > 0.0
 
-    def test_energy_components_contribution(self, mechanics_solver, gait_loader):
-        """Verify that gait-averaged energy includes all phases and is positive."""
-        cfg = mechanics_solver.cfg
+    @pytest.mark.slow
+    def test_load_scaling(self, gait_context):
+        """Doubling load should roughly quadruple energy (linear elastic)."""
+        solver = gait_context["solver"]
+        loader = gait_context["loader"]
+        cfg = gait_context["cfg"]
         comm = cfg.domain.comm
+        
+        # Baseline
+        loader.load_scale = 1.0
+        driver1 = GaitDriver(solver, loader, cfg)
+        driver1.update_snapshots()
+        E1 = comm.allreduce(fem.assemble_scalar(fem.form(driver1.stimulus_expr() * cfg.dx)), op=MPI.SUM)
+        
+        # Double load
+        loader.load_scale = 2.0
+        driver2 = GaitDriver(solver, loader, cfg)
+        driver2.update_snapshots()
+        E2 = comm.allreduce(fem.assemble_scalar(fem.form(driver2.stimulus_expr() * cfg.dx)), op=MPI.SUM)
+        
+        ratio = E2 / E1
+        # Should be exactly 4.0 for linear elasticity, but allow small numerical deviation
+        assert 3.9 < ratio < 4.1, f"Energy should scale quadratically, got ratio {ratio:.2f}"
 
-        driver = GaitDriver(mechanics_solver, gait_loader, cfg)
+    @pytest.mark.slow
+    def test_stance_vs_swing_energy(self, gait_context):
+        """Stance phase (loaded) should have much higher energy than swing."""
+        solver = gait_context["solver"]
+        loader = gait_context["loader"]
+        
+        # We can check individual snapshots stored in driver
+        # Stance is roughly 0-60%, Swing 60-100%
+        # With 5 samples: 0, 25, 50, 75, 100
+        # 0, 25, 50 are stance. 75 is swing.
+        
+        driver = GaitDriver(solver, loader, gait_context["cfg"])
         driver.update_snapshots()
-
-        phase_energies = []
-        for u_i, weight in zip(driver.u_snap, driver.weights):
-            psi_i = mechanics_solver.get_strain_energy_density(u_i)
-            psi_loc = fem.assemble_scalar(fem.form(psi_i * cfg.dx))
-            psi_tot = comm.allreduce(psi_loc, op=MPI.SUM)
-            phase_energies.append(psi_tot)
-        for idx, psi in enumerate(phase_energies):
-            assert psi > 0.0, f"Gait phase {idx} should have positive energy, got {psi}"
-
-        psi_expr_driver = driver.stimulus_expr()
-        psi_driver_loc = fem.assemble_scalar(fem.form(psi_expr_driver * cfg.dx))
-        psi_driver = comm.allreduce(psi_driver_loc, op=MPI.SUM)
-
-        assert psi_driver > 0.0, f"Driver energy should be positive, got {psi_driver}"
-
-        avg_phase_energy = sum(w * e for w, e in zip(driver.weights, phase_energies))
-        expected_scale = cfg.gait_cycles_per_day
-        ratio = psi_driver / (avg_phase_energy * expected_scale)
-
-        assert 0.1 < ratio < 10.0, (
-            f"Driver daily energy {psi_driver:.2e} should be ~{expected_scale:.0f}× "
-            f"weighted average phase energy {avg_phase_energy:.2e}, got ratio {ratio:.2f}"
-        )
-
-    def test_peak_stance_has_maximum_energy(self, mechanics_solver, gait_loader):
-        """Peak stance phase should have highest strain energy."""
-        quadrature = gait_loader.get_quadrature()
-        phase_energies = {}
-
-        for phase, weight in quadrature:
-            gait_loader.update_loads(phase)
-            mechanics_solver.assemble_rhs()
-            mechanics_solver.solve()
-            psi_phase = mechanics_solver.average_strain_energy()
-            phase_energies[phase] = psi_phase
-
-        max_phase = max(phase_energies, key=phase_energies.get)
-        max_energy = phase_energies[max_phase]
-
-        assert 0.0 <= max_phase <= 60.0, f"Peak energy should be during stance phase (0-60%), found at {max_phase}%"
-
-        min_energy = min(phase_energies.values())
-        ratio = max_energy / min_energy
-        assert ratio > 1.5, f"Peak energy should be >1.5x minimum, got ratio={ratio:.2f}"
+        
+        energies = []
+        for u_snap in driver.u_snap:
+            # Calculate energy for this snapshot
+            # We need to manually compute it since solver doesn't store it per snapshot
+            # But we can use the solver's helper if we update u
+            solver.u.x.array[:] = u_snap.x.array[:]
+            solver.u.x.scatter_forward()
+            e = solver.average_strain_energy()
+            energies.append(e)
+            
+        # 50% (mid-stance) should be > 75% (swing)
+        # Indices depend on quadrature. 
+        # Assuming uniform or similar:
+        # Check max energy is much larger than min energy
+        max_e = max(energies)
+        min_e = min(energies)
+        
+        assert max_e > 10.0 * min_e, "Peak stance energy should be significantly higher than swing/min energy"

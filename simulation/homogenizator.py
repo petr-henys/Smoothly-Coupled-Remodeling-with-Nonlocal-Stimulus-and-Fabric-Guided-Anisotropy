@@ -446,7 +446,7 @@ class SUBCHomogenizer(_HomogCommon):
             self._log(f"[SUBC]   solving case {name}")
 
             # Update traction boundary condition
-            self._Sig_const.value[:] = Sig.flatten()
+            self._Sig_const.value[:] = Sig
 
             # Assemble RHS (reusing compiled form)
             b = self._assemble_vector(self._L_form, self._a_form)

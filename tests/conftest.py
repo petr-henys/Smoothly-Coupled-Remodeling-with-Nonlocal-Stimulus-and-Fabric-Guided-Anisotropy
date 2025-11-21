@@ -347,3 +347,60 @@ def femur_gait_loader(femur_setup):
     from simulation.femur_gait import setup_femur_gait_loading
     _, _, V, _, _ = femur_setup
     return setup_femur_gait_loading(V, mass_tonnes=0.075, n_samples=9)
+
+
+# =============================================================================
+# Tensor helpers
+# =============================================================================
+
+@pytest.fixture
+def iso_tensor_factory():
+    """Factory for isotropic unit-trace tensor I/3."""
+    def _make(x):
+        import numpy as np
+        base = (np.eye(3) / 3.0).flatten()[:, None]
+        return np.tile(base, (1, x.shape[1]))
+    return _make
+
+
+@pytest.fixture
+def fiber_tensor_factory():
+    """Factory for anisotropic unit-trace tensor with fiber in x-direction."""
+    def _make(x):
+        import numpy as np
+        mat = np.array([[0.92, 0.0, 0.0], [0.0, 0.04, 0.0], [0.0, 0.0, 0.04]], dtype=float)
+        return np.tile(mat.flatten()[:, None], (1, x.shape[1]))
+    return _make
+
+
+@pytest.fixture
+def dummy_gait_loader(spaces):
+    """Create a dummy gait loader for unit tests (no external files needed)."""
+    from dolfinx import fem
+    import numpy as np
+    
+    class _DummyGaitLoader:
+        def __init__(self, V):
+            self.V = V
+            self.t_hip = fem.Function(V, name="t_hip")
+            self.t_glmed = fem.Function(V, name="t_glmed")
+            self.t_glmax = fem.Function(V, name="t_glmax")
+            self.load_scale = 0.5  # [MPa]
+            self.tag = 2 # Default Neumann tag
+
+        def get_quadrature(self):
+            return [(0.0, 0.5), (50.0, 0.5)]
+
+        def update_loads(self, phase_percent: float) -> None:
+            f = (1.0 - float(phase_percent) / 100.0) * self.load_scale
+            v_hip = np.array([-1.0 * f, -0.5 * f, -0.3 * f], dtype=float)
+            v_glmed = np.array([0.2 * f, 0.8 * f, -0.1 * f], dtype=float)
+            v_glmax = np.array([0.1 * f, -0.2 * f, -0.9 * f], dtype=float)
+            
+            self.t_hip.interpolate(lambda x: np.tile(v_hip.reshape(3, 1), (1, x.shape[1])))
+            self.t_glmed.interpolate(lambda x: np.tile(v_glmed.reshape(3, 1), (1, x.shape[1])))
+            self.t_glmax.interpolate(lambda x: np.tile(v_glmax.reshape(3, 1), (1, x.shape[1])))
+            for t in (self.t_hip, self.t_glmed, self.t_glmax):
+                t.x.scatter_forward()
+                
+    return _DummyGaitLoader(spaces.V)

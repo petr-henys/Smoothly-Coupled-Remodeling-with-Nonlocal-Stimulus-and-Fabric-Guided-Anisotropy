@@ -9,7 +9,20 @@ import ufl
 from simulation.config import Config
 from simulation.utils import build_dirichlet_bcs, build_facetag
 from simulation.subsolvers import MechanicsSolver, DensitySolver, DirectionSolver, unittrace_psd
-from tests.physics_utils import iso_tensor, make_unit_cube
+from dolfinx import mesh
+
+def make_unit_cube(comm=MPI.COMM_WORLD, n=6):
+    """Create a unit cube mesh."""
+    return mesh.create_unit_cube(comm, n, n, n)
+
+def iso_tensor(x):
+    """Return a 3x3 identity matrix (trace 3), flattened to (9, N)."""
+    val = 1.0
+    values = np.zeros((9, x.shape[1]), dtype=default_scalar_type)
+    values[0] = val
+    values[4] = val
+    values[8] = val
+    return values
 
 # =============================================================================
 # Thermodynamic Consistency Tests
@@ -247,7 +260,9 @@ class TestConservation:
         cfg = Config(domain=unit_cube, facet_tags=facet_tags, verbose=(comm.rank == 0))
         
         # Increase remodeling rate for this test to ensure measurable change in one step
-        cfg.lambda_rho = 0.2
+        cfg.lambda_form = 0.2
+        cfg.lambda_resorb = 0.2
+        cfg.set_dt(10.0)
 
         P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
         P1_ten = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3, 3))
@@ -365,7 +380,7 @@ class TestConservationChecks:
         domain = unit_cube
         facet_tags = build_facetag(domain)
         cfg = Config(domain=domain, facet_tags=facet_tags, verbose=(comm.rank == 0))
-        cfg.set_dt(10.0 * 86400.0)  # 10 days in seconds
+        cfg.set_dt(10.0)  # 10 days
         # Disable distal damping for unit cube tests
         cfg.distal_damping_height = 0.0
         cfg.distal_damping_transition = 0.0
@@ -403,7 +418,7 @@ class TestConservationChecks:
         domain = unit_cube
         facet_tags = build_facetag(domain)
         cfg = Config(domain=domain, facet_tags=facet_tags, verbose=(comm.rank == 0))
-        cfg.set_dt(10.0 * 86400.0)  # 10 days in seconds
+        cfg.set_dt(10.0)  # 10 days
         
         P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
         P1_ten = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3, 3))
@@ -420,7 +435,7 @@ class TestConservationChecks:
         A.x.scatter_forward()
         
         S = Function(Q, name="S")
-        S.x.array[:] = 0.2  # Positive stimulus -> formation
+        S.x.array[:] = 1.0  # Strong positive stimulus -> formation saturation (linear regime)
         S.x.scatter_forward()
         
         dens = DensitySolver(rho, rho_old, A, S, cfg)
@@ -443,7 +458,7 @@ class TestConservationChecks:
         domain = unit_cube
         facet_tags = build_facetag(domain)
         cfg = Config(domain=domain, facet_tags=facet_tags, verbose=(comm.rank == 0))
-        cfg.set_dt(10.0 * 86400.0)  # 10 days in seconds
+        cfg.set_dt(10.0)  # 10 days
         
         P1_vec = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3,))
         P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
@@ -517,13 +532,14 @@ class TestConservationChecks:
         from simulation.subsolvers import StimulusSolver
         stim = StimulusSolver(S, S_old, cfg)
 
-        # Constant psi > psi_ref for positive source [MPa]
-        psi_val = 1.5 * cfg.psi_ref
+        # Constant psi > 1.0 for positive source (dimensionless)
+        psi_val = 1.5
         psi = fem.Constant(m, default_scalar_type(psi_val))
 
         def compute_residual(dt_scale: float) -> float:
             cfg.dt = dt_scale
-            stor = cfg.rS_gain * (psi_val - cfg.psi_ref) - cfg.tauS * 0.2
+            # Source term in solver is rS_gain * (psi - 1.0)
+            stor = cfg.rS_gain * (psi_val - 1.0) - cfg.tauS * 0.2
             S.x.array[:] = 0.2 + dt_scale * stor / cfg.cS
             S.x.scatter_forward()
             R_abs, R_rel = stim.power_balance_residual(psi)
