@@ -366,6 +366,9 @@ class TestConservationChecks:
         facet_tags = build_facetag(domain)
         cfg = Config(domain=domain, facet_tags=facet_tags, verbose=(comm.rank == 0))
         cfg.set_dt(10.0 * 86400.0)  # 10 days in seconds
+        # Disable distal damping for unit cube tests
+        cfg.distal_damping_height = 0.0
+        cfg.distal_damping_transition = 0.0
         
         P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
         Q = functionspace(unit_cube, P1)
@@ -502,6 +505,9 @@ class TestConservationChecks:
         # Config: disable diffusion for algebraic balance
         cfg = Config(domain=m, facet_tags=facets, verbose=False)
         cfg.kappaS = 0.0
+        # Disable distal damping for unit cube tests
+        cfg.distal_damping_height = 0.0
+        cfg.distal_damping_transition = 0.0
 
         S_old = fem.Function(Q, name="S_old")
         S_old.x.array[:] = 0.2

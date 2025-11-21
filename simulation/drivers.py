@@ -146,7 +146,6 @@ class GaitDriver:
             # Accumulate average
             w = self.weights[idx]
             #self.vm_stress_avg.x.array[:] += w * self.vm_stress.x.array[:]
-            #self.logger.info(f"Phase {idx}: minmax VM: {self.vm_stress.x.array.min():.5e} .. {self.vm_stress.x.array.max():.5e}")
             total_weight += w
 
             self.u_snap[idx].x.array[:] = self.mech.u.x.array
@@ -155,8 +154,6 @@ class GaitDriver:
         #if total_weight > 0:
         #    self.vm_stress_avg.x.array[:] /= total_weight
         #self.vm_stress_avg.x.scatter_forward()
-        
-        #self.logger.info(f"Phase {idx}: minmax avg VM: {self.vm_stress_avg.x.array.min():.3f} .. {self.vm_stress_avg.x.array.max():.3f}")
         self.mech.u.x.scatter_forward()
 
         # Domain-average of the daily stress

@@ -43,8 +43,8 @@ class Config:
     S_form_th: float = 0.2     # Formation threshold in S (dimensionless)
     S_resorb_th: float = -0.2  # Resorption threshold in S (dimensionless)
     k_step: float = 6.0        # Smooth step steepness
-    lambda_form: float = 0.05  # Formation rate [1/day]
-    lambda_resorb: float = 0.08  # Resorption rate [1/day]
+    lambda_form: float = 0.01  # Formation rate [1/day]
+    lambda_resorb: float = 0.3  # Resorption rate [1/day]
     S_lazy: float = 0.1         # Lazy zone width
 
     # Density diffusion [mm^2/day]
@@ -52,11 +52,13 @@ class Config:
     beta_perp: float = 0.1      # Perpendicular to fabric
 
     # --- Stimulus (Reaction-Diffusion) ---
-    psi_ref: float = 3.       # Reference (σ_ref) for Carter–Beaupré normalization [MPa]
+    psi_ref: float = 5.        # Reference (σ_ref) for Carter–Beaupré normalization [MPa]
     cS: float = 1.0             # Signaling capacity
     tauS: float = 1.0           # Decay rate [1/day]
     kappaS: float = 5.0         # Diffusion coefficient [mm^2/day]
     rS_gain: float = 1.0        # Transduction gain [1/day]
+    distal_damping_height: float = 60.0 # Height of distal damping zone [mm]
+    distal_damping_transition: float = 5.0 # Transition width of distal damping zone [mm]
 
     # --- Fabric Tensor Evolution ---
     cA: float = 1.0             # Orientation capacity

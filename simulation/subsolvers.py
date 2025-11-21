@@ -378,7 +378,8 @@ class StimulusSolver(_BaseLinearSolver):
 
         # Apply distal damping to psi to avoid artifacts at u=0 boundary
         z_min = self._compute_z_min()
-        mask = get_distal_damping_mask(self.mesh, z_min, height=80., transition=5.0)
+        mask = get_distal_damping_mask(self.mesh, z_min, height=self.cfg.distal_damping_height, 
+                                       transition=self.cfg.distal_damping_transition)
         psi_effective = psi_expr * mask
 
         rhs = (self.cfg.cS / dt) * self.S_old + self.cfg.rS_gain * (psi_effective - 1.0)
@@ -407,10 +408,11 @@ class StimulusSolver(_BaseLinearSolver):
         
         # Apply distal damping to psi to match assemble_rhs
         z_min = self._compute_z_min()
-        mask = get_distal_damping_mask(self.mesh, z_min, height=5., transition=5.0)
+        mask = get_distal_damping_mask(self.mesh, z_min, height=self.cfg.distal_damping_height, 
+                                       transition=self.cfg.distal_damping_transition)
         psi_effective = psi_expr * mask
 
-        source_loc = fem.assemble_scalar(fem.form(self.cfg.rS_gain * (psi_effective - self.cfg.psi_ref) * one * self.dx))
+        source_loc = fem.assemble_scalar(fem.form(self.cfg.rS_gain * (psi_effective - 1.0) * one * self.dx))
         source = float(self.comm.allreduce(source_loc, op=MPI.SUM))
         
         n = ufl.FacetNormal(self.mesh)
@@ -423,7 +425,7 @@ class StimulusSolver(_BaseLinearSolver):
 
 
 class DensitySolver(_BaseLinearSolver):
-    """Density evolution ρ: anisotropic diffusion with dual-threshold (Frost-like) mechanostat."""
+    """Density evolution ρ: anisotropic diffusion with soft mechanostat ρ_eq(S)."""
 
     def __init__(
         self,
@@ -441,30 +443,37 @@ class DensitySolver(_BaseLinearSolver):
         self.L_form_template = None
         self.a_form = fem.form(self.build_lhs_form())
 
+    
     def _get_reaction_terms(self):
-        """Compute zone-dependent reaction rate λ_eff(S) and equilibrium density ρ_eq(S)
-        using a dual-threshold (Frost-like) mechanostat.
-        - Formation when S > S_form_th (λ_form to ρ_max)
-        - Resorption when S < S_resorb_th (λ_resorb to ρ_min)
-        - Neutral zone otherwise (λ_eff≈0)
-        A smooth Heaviside with slope k_step is used.
-        We also apply a 'lazy-zone' damping f_S = |S| / (|S| + S_lazy) to slow changes near zero.
-        Returns (lam_eff, rho_eq).
+        """Compute lazy-zone factor f(|S|), effective reaction rate λ_eff(S), and equilibrium density ρ_eq(S)
+        for a Frost-like two-threshold mechanostat with smooth transitions.
+
+        Returns
+        -------
+        lam_eff : UFL expression
+            Effective reaction rate [1/day].
+        rho_eq : UFL expression
+            Target density given the current zone (form/resorb/neutral).
         """
         Sabs = smooth_abs(self.S, self.smooth_eps)
         S_lazy = float(self.cfg.S_lazy)
-        f_S = Sabs / (Sabs + S_lazy) if S_lazy > 0.0 else 1.0
+        fS = Sabs / (Sabs + S_lazy) if S_lazy > 0.0 else 1.0
 
-        # Smooth steps
+        # Smooth Heavisides
         k_step = float(self.cfg.k_step)
         S_form = float(self.cfg.S_form_th)
         S_resorb = float(self.cfg.S_resorb_th)
 
-        H_form = 1.0 / (1.0 + ufl.exp(-k_step * (self.S - S_form)))
-        H_resorb = 1.0 / (1.0 + ufl.exp(-k_step * (S_resorb - self.S)))
+        H_form = 1.0/(1.0 + ufl.exp(-k_step*(self.S - S_form)))
+        H_resorb = 1.0/(1.0 + ufl.exp(-k_step*(S_resorb - self.S)))
 
-        lam_eff = f_S * (self.cfg.lambda_form * H_form + self.cfg.lambda_resorb * H_resorb)
-        rho_eq = self.cfg.rho_min * H_resorb + self.cfg.rho_max * H_form  # neutral zone unused as λ≈0 there
+        lam_form = float(self.cfg.lambda_form)
+        lam_resorb = float(self.cfg.lambda_resorb)
+        lam_eff = fS * (lam_form*H_form + lam_resorb*H_resorb)
+
+        # Target density: rho_max in formation, rho_min in resorption, otherwise hold current rho
+        rho_eq = self.cfg.rho_max*H_form + self.cfg.rho_min*H_resorb + (1.0 - H_form - H_resorb)*self.rho
+
         return lam_eff, rho_eq
 
 
