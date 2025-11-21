@@ -140,7 +140,6 @@ class GaitDriver:
             # We copy the vector from the solver's u to our snapshot u_snap[idx]
             # This automatically updates the UFL expressions that depend on u_snap[idx]
             self.u_snap[idx].x.array[:] = self.mech.u.x.array
-            self.u_snap[idx].x.scatter_forward()
             
             total_weight += weight
 
@@ -185,7 +184,6 @@ class GaitDriver:
         """Apply precomputed loads for phase index `idx` to the traction functions."""
         for traction, data in zip(self._tractions, self.loads[idx]):
             traction.x.array[:] = data
-            traction.x.scatter_forward()
 
     def _build_expressions(self) -> None:
         """Construct UFL expressions for daily stimulus and structure tensor."""

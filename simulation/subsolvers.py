@@ -264,8 +264,6 @@ class MechanicsSolver(_BaseLinearSolver):
         return self.eps(self.u if u is None else u)
 
     def setup(self):
-        self.rho.x.scatter_forward()
-        self.A_dir.x.scatter_forward()
         self.assemble_lhs()
 
         ns = build_nullspace(self.function_space)
@@ -349,7 +347,6 @@ class StimulusSolver(_BaseLinearSolver):
         self.b.ghostUpdate(PETSc.InsertMode.INSERT, PETSc.ScatterMode.FORWARD)
 
     def solve(self):
-        self.S.x.scatter_forward()
         its, reason = self._solve()
         self._maybe_warn(reason, "Stimulus")
         return its, reason
@@ -449,10 +446,8 @@ class DensitySolver(_BaseLinearSolver):
         self.b.ghostUpdate(PETSc.InsertMode.INSERT, PETSc.ScatterMode.FORWARD)
 
     def solve(self):
-        self.rho.x.scatter_forward()
         its, reason = self._solve()
         self._maybe_warn(reason, "Density")
-        self.rho.x.scatter_forward()
         return its, reason
 
 
@@ -506,7 +501,6 @@ class DirectionSolver(_BaseLinearSolver):
         self.b.ghostUpdate(PETSc.InsertMode.INSERT, PETSc.ScatterMode.FORWARD)
 
     def solve(self):
-        self.A_dir.x.scatter_forward()
         its, reason = self._solve()
         self._maybe_warn(reason, "Direction")
         return its, reason

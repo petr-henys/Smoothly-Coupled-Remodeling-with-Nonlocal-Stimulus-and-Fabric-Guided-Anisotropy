@@ -104,8 +104,6 @@ class Remodeller:
         self.S = Function(self.Q, name="stimulus")
         self.S_old = Function(self.Q, name="stimulus_old")
 
-        self.scatter_fields: Tuple[fem.Function, ...] = ()
-
         assign(self.rho, self.cfg.rho0)
 
         d = self.gdim
@@ -119,7 +117,6 @@ class Remodeller:
         self.A.x.scatter_forward()
 
         assign(self.S, 0.0)
-        self.scatter_fields = (self.rho, self.A, self.S)
 
         # Register fields
         self.storage.fields.register("scalars", [self.rho, self.S], filename="scalars.bp")
@@ -197,11 +194,6 @@ class Remodeller:
         self.comm.Barrier()
         self.closed = True
 
-    def _scatter_forward(self):
-        """Ghost update: scatter all fields."""
-        for f in self.scatter_fields:
-            f.x.scatter_forward()
-
     def _field_stats(self, field: fem.Function) -> Tuple[float, float, float]:
         """MPI global min/max/mean."""
         if len(field.x.array) > 0:
@@ -241,7 +233,6 @@ class Remodeller:
 
     def _output(self, t: float, step: int, coupling_stats: Dict[str, float]):
         """Scatter, stats, log, write."""
-        self._scatter_forward()
         fields = self._collect_field_stats()
 
         self.logger.info(

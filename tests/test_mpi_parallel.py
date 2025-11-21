@@ -220,20 +220,26 @@ class TestMPIIO:
                 # Compute actual RSS memory
                 rss_mb_local = current_memory_mb()
                 rss_mb_total = rem.comm.allreduce(rss_mb_local, op=MPI.SUM)
-                
-                rem.storage.write_step(
-                    step=0,
-                    time_days=0.0,
-                    dt_days=1.0,
-                    num_dofs_total=num_dofs_total,
-                    rss_mem_mb=rss_mb_total,
-                    solver_stats={"mech": 10, "stim": 5, "dens": 5, "dir": 5},
-                    coupling_stats={"iters": 3, "time": 0.1},
-                )
+    
+                rem.storage.write_fields("scalars", 0.0)
+                if rem.telemetry:
+                    rem.telemetry.record("output_steps", {
+                        "step": 0,
+                        "time_days": 0.0,
+                        "dt_days": 1.0,
+                        "num_dofs_total": num_dofs_total,
+                        "rss_mem_mb": rss_mb_total,
+                        "mech_iters": 10,
+                        "stim_iters": 5,
+                        "dens_iters": 5,
+                        "dir_iters": 5,
+                        "coupling_iters": 3,
+                        "coupling_time": 0.1
+                    })
                 
                 # Should complete without hanging
                 comm.Barrier()
-    
+
     @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
     def test_csv_metrics_rank0(self, unit_cube):
         """Skipped: CSV rank-0 behavior covered elsewhere."""
@@ -257,16 +263,22 @@ class TestMPIIO:
                 # Compute actual RSS memory
                 rss_mb_local = current_memory_mb()
                 rss_mb_total = comm.allreduce(rss_mb_local, op=MPI.SUM)
-                
-                rem.storage.write_step(
-                    step=0,
-                    time_days=0.0,
-                    dt_days=1.0,
-                    num_dofs_total=num_dofs_total,
-                    rss_mem_mb=rss_mb_total,
-                    solver_stats={"mech": 10, "stim": 5, "dens": 5, "dir": 5},
-                    coupling_stats={"iters": 3, "time": 0.1},
-                )
+    
+                rem.storage.write_fields("scalars", 0.0)
+                if rem.telemetry:
+                    rem.telemetry.record("output_steps", {
+                        "step": 0,
+                        "time_days": 0.0,
+                        "dt_days": 1.0,
+                        "num_dofs_total": num_dofs_total,
+                        "rss_mem_mb": rss_mb_total,
+                        "mech_iters": 10,
+                        "stim_iters": 5,
+                        "dens_iters": 5,
+                        "dir_iters": 5,
+                        "coupling_iters": 3,
+                        "coupling_time": 0.1
+                    })
                 
                 rem.storage.close()
             
@@ -636,8 +648,25 @@ class TestMemoryUsage:
         dirn = DirectionSolver(A, A_old, cfg)
         
         # Create driver for fixed-point solver (required in new architecture)
-        from simulation.drivers import InstantDriver
-        driver = InstantDriver(mech)
+        class DummyDriver:
+            def __init__(self, mech):
+                self.mech = mech
+            def update_stiffness(self):
+                self.mech.setup()
+            def update_snapshots(self):
+                return {}
+            def stimulus_expr(self):
+                return fem.Constant(self.mech.mesh, 0.0)
+            def structure_expr(self):
+                return fem.Constant(self.mech.mesh, ((0.0,0.0,0.0),(0.0,0.0,0.0),(0.0,0.0,0.0)))
+            def invalidate(self):
+                pass
+            def setup(self):
+                pass
+            def destroy(self):
+                pass
+
+        driver = DummyDriver(mech)
         
         fps = FixedPointSolver(
             comm, cfg, driver, stim, dens, dirn,
