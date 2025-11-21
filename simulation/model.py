@@ -144,13 +144,13 @@ class Remodeller:
         ]
 
         # Subsolvers
-        self.mechsolver = MechanicsSolver(u, self.rho, self.A, self.cfg, bc_mech, neumann_bcs)
+        mechsolver = MechanicsSolver(u, self.rho, self.A, self.cfg, bc_mech, neumann_bcs)
         self.stimsolver = StimulusSolver(self.S, self.S_old, self.cfg)
         self.densolver = DensitySolver(self.rho, self.rho_old, self.A, self.S, self.cfg)
         self.dirsolver = DirectionSolver(self.A, self.A_old, self.cfg)
 
         # Driver
-        self.driver = GaitDriver(self.mechsolver, gait_loader, self.cfg)
+        self.driver = GaitDriver(mechsolver, gait_loader, self.cfg)
 
         self.fixedsolver = FixedPointSolver(
             self.comm,
@@ -180,7 +180,10 @@ class Remodeller:
 
         self.comm.Barrier()
 
-        for attr in ("mechsolver", "stimsolver", "densolver", "dirsolver"):
+        if hasattr(self, "driver") and self.driver is not None:
+            self.driver.destroy()
+
+        for attr in ("stimsolver", "densolver", "dirsolver"):
             solver = getattr(self, attr, None)
             if solver is not None:
                 solver.destroy()
@@ -285,7 +288,7 @@ class Remodeller:
         assign(self.S_old, self.S)
 
         if not self.solvers_initialized:
-            self.mechsolver.setup()
+            self.driver.setup()
             self.stimsolver.setup()
             self.densolver.setup()
             self.dirsolver.setup()
@@ -340,7 +343,7 @@ class Remodeller:
 
         self.cfg.set_dt(float(dt))
 
-        self.mechsolver.setup()
+        self.driver.setup()
         self.stimsolver.setup()
         self.densolver.setup()
         self.dirsolver.setup()

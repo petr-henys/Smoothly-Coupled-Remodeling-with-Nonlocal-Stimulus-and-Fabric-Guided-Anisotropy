@@ -122,7 +122,7 @@ def test_mechanics_produces_displacement_under_load(tmp_path):
         rem.step(dt=1.0)  # 1 day
         
         # Check displacement is non-zero
-        u_fn = rem.mechsolver.u
+        u_fn = rem.driver.mech.u
         u_norm_sq_loc = fem.assemble_scalar(fem.form(ufl.inner(u_fn, u_fn) * rem.cfg.dx))
         u_norm_sq = comm.allreduce(u_norm_sq_loc, op=MPI.SUM)
         u_norm = np.sqrt(u_norm_sq)

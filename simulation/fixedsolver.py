@@ -32,7 +32,7 @@ class FixedPointSolver:
         self.stim = stimsolver
         self.den = densolver
         self.dir = dirsolver
-        self.mech = self.driver.mech
+        # self.mech removed - use self.driver.update_stiffness()
 
         self.rho = rho
         self.rho_old = rho_old
@@ -107,7 +107,7 @@ class FixedPointSolver:
         """One GS sweep: mechanics + S → ρ → A."""
         # Mechanics
         t0 = MPI.Wtime()
-        self.mech.assemble_lhs()
+        self.driver.update_stiffness()
         stats = self.driver.update_snapshots() or {}
         mech_time = self._elapsed_max(t0) + float(stats.get("total_time", 0.0))
         mech_iters = int(sum(stats.get("phase_iters", [])))
