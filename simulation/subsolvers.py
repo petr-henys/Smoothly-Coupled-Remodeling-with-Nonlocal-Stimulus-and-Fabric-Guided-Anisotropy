@@ -353,6 +353,14 @@ class StimulusSolver(_BaseLinearSolver):
         self.total_vol = self.comm.allreduce(vol_local, op=MPI.SUM)
 
         self._rhs_form = None
+        self.z_min = None
+
+    def _compute_z_min(self):
+        if self.z_min is None:
+            z_coords = self.mesh.geometry.x[:, 2]
+            local_min = z_coords.min() if z_coords.size > 0 else 1e30
+            self.z_min = self.comm.allreduce(local_min, op=MPI.MIN)
+        return self.z_min
 
     def build_lhs_form(self):
         dt = self.cfg.dt
@@ -375,12 +383,18 @@ class StimulusSolver(_BaseLinearSolver):
             b_local.set(0.0)
         self.S_old.x.scatter_forward()
         dt = self.cfg.dt
+
+        # Apply distal damping to psi to avoid artifacts at u=0 boundary
+        z_min = self._compute_z_min()
+        mask = get_distal_damping_mask(self.mesh, z_min, height=5., transition=5.0)
+        psi_effective = psi_expr * mask
+
         one = fem.Constant(self.mesh, default_scalar_type(1.0))
-        psi_int_local = fem.assemble_scalar(fem.form(psi_expr * one * self.dx))
+        psi_int_local = fem.assemble_scalar(fem.form(psi_effective * one * self.dx))
         psi_int = float(self.comm.allreduce(psi_int_local, op=MPI.SUM))
         if psi_int == 0.0 and self.rank == 0:
-            self.logger.warning("Stimulus RHS: psi expression integrates to zero; check driver or mechanics setup.")
-        rhs = (self.cfg.cS / dt) * self.S_old + self.cfg.rS_gain * (psi_expr - self.cfg.psi_ref)
+            self.logger.warning("Stimulus RHS: psi expression (masked) integrates to zero; check driver or mechanics setup.")
+        rhs = (self.cfg.cS / dt) * self.S_old + self.cfg.rS_gain * (psi_effective - self.cfg.psi_ref)
         self._rhs_form = fem.form(rhs * self.test * self.dx)
         assemble_vector(self.b, self._rhs_form)
         self.b.ghostUpdate(PETSc.InsertMode.ADD, PETSc.ScatterMode.REVERSE)
@@ -632,3 +646,29 @@ class DirectionSolver(_BaseLinearSolver):
         trMhat_vol = float(self.comm.allreduce(trMhat_loc, op=MPI.SUM)) / self.total_vol
         R = trA_vol - trMhat_vol
         return trA_vol, trMhat_vol, abs(R)
+
+def get_distal_damping_mask(mesh, z_min: float, height: float = 15.0, transition: float = 5.0):
+    """
+    Returns a UFL expression for a spatial mask that dampens values near the distal boundary.
+
+    The mask is:
+      - 0.0 for z < z_min + height
+      - Transitions from 0.0 to 1.0 for z in [z_min + height, z_min + height + transition]
+      - 1.0 for z > z_min + height + transition
+
+    Args:
+        mesh: The computational mesh.
+        z_min: The minimum z-coordinate of the mesh (distal end).
+        height: The height of the fully dampened region [mm].
+        transition: The width of the transition region [mm].
+    """
+    x = ufl.SpatialCoordinate(mesh)
+    z = x[2]
+
+    z_start = z_min + height
+
+    # Linear transition from 0 to 1
+    t = (z - z_start) / transition
+    mask = ufl.max_value(0.0, ufl.min_value(1.0, t))
+
+    return mask

@@ -40,7 +40,7 @@ class Config:
     # Density–stiffness law:
     # E(ρ) = E0 · ρ^{n(ρ)}, where n(ρ) transitions smoothly
     # from trabecular to cortical values between rho_trab_max and rho_cort_min.
-    n_power: float = 1.0          # exponent for gait energy driver (ψ/ψ_ref)^n in stimulus
+    n_power: float = 1.0          # exponent for gait energy driver (ψ/ψ_ref)^n in stimulus (OPTIMIZED: was 1.5)
     n_trab: float = 2.0           # trabecular density–stiffness exponent [-]
     n_cort: float = 1.2           # cortical density–stiffness exponent [-]
     rho_trab_max: float = 0.6     # upper ρ for trabecular regime [-]
@@ -52,23 +52,23 @@ class Config:
     rho_min: float = 0.1          # minimum relative density [-]
     rho_max: float = 1.00         # maximum relative density [-]
     rho0: float = 0.5             # initial relative density [-]
-    lambda_rho: float = 0.02      # baseline remodeling rate [1/day] in soft mechanostat (time constant ~100 days when |S| ≈ 1)
+    lambda_rho: float = 0.05      # baseline remodeling rate [1/day] in soft mechanostat (~20 day time constant) (OPTIMIZED: was 0.02)
 
     # Soft mechanostat: ρ_eq(S) and lazy zone
-    k_mech: float = 2.0           # steepness of logistic ρ_eq(S) in S-space [-]
+    k_mech: float = 4.0           # steepness of logistic ρ_eq(S) in S-space [-] (OPTIMIZED: was 2.0 for sharper trabecular/cortical transition)
     S_shift: float = 0.0          # shift of mechanostat setpoint in S [-]
-    S_lazy: float = 0.2           # |S|-scale for lazy zone (small |S| → slow remodeling) [-]
+    S_lazy: float = 0.1           # |S|-scale for lazy zone (small |S| → slow remodeling) [-] (OPTIMIZED: was 0.2)
 
     # --- Density: anisotropic diffusion ---
     beta_par: float = 1.          # parallel density diffusion [mm²/day] (O(0.1–10) mm²/day typical)
     beta_perp: float = 0.1         # perpendicular density diffusion [mm²/day] (usually ≤ beta_par)
 
     # --- Stimulus S: reaction-diffusion ---
-    psi_ref: float = 20.0       # reference daily equivalent energy density [MPa]
+    psi_ref: float = 3e-2       # reference daily equivalent energy density [MPa] (OPTIMIZED: was 60)
     cS: float = 1.0             # signaling capacity [-]
     tauS: float = 1.0           # decay rate [1/day]
-    kappaS: float = 2.5         # diffusion [mm²/day]
-    rS_gain: float = 0.1       # mechano-transduction gain [1/(MPa·day)]
+    kappaS: float = 5.0         # diffusion [mm²/day] (OPTIMIZED: was 2.5)
+    rS_gain: float = 1      # mechano-transduction gain [1/(MPa·day)] (OPTIMIZED: was 0.001)
 
     # --- Orientation A: fabric tensor evolution ---
     cA: float = 1.0               # orientation capacity [-]
@@ -76,13 +76,13 @@ class Config:
     ell: float = 2.0              # orientation diffusion length [mm] (on order of trabecular spacing / microstructural length)
 
     # Gait / remodeling runtime defaults
-    gait_cycles_per_day: float = 7000.0      # average steps/day (2 contacts/cycle)
+    gait_cycles_per_day: float = 1      # average steps/day (2 contacts/cycle) (OPTIMIZED: was 7000 - more realistic)
     load_scale: float = 1.0                  # dimensionless load multiplier
-    gait_samples: int = 9                    # quadrature points across gait cycle
+    gait_samples: int = 20                    # quadrature points across gait cycle
     body_mass_kg: float = 75.0
 
     # --- Numerics / I-O ---
-    quadrature_degree: int = 6
+    quadrature_degree: int = 4
     saving_interval: int = 1
     results_dir: str = ".results"
     verbose: bool = True
@@ -90,8 +90,8 @@ class Config:
     # Global linear solver defaults (tighter for verification-grade solves)
     ksp_type: str = "minres"
     pc_type: str = "gamg"
-    ksp_rtol: float = 1e-9
-    ksp_atol: float = 1e-11
+    ksp_rtol: float = 1e-6
+    ksp_atol: float = 1e-7
     ksp_max_it: int = 100
 
     # Convergence acceleration (Anderson/Picard)

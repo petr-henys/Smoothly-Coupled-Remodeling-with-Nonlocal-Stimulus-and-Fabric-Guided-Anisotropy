@@ -221,8 +221,8 @@ class Remodeller:
         for f in self.scatter_fields:
             f.x.scatter_forward()
 
-    def _field_minmax(self, field: fem.Function) -> Tuple[float, float]:
-        """MPI global min/max."""
+    def _field_stats(self, field: fem.Function) -> Tuple[float, float, float]:
+        """MPI global min/max/mean."""
         if len(field.x.array) > 0:
             field_min_local = field.x.array.min()
             field_max_local = field.x.array.max()
@@ -231,7 +231,18 @@ class Remodeller:
             field_max_local = float("-inf")
         field_min = self.comm.allreduce(field_min_local, op=MPI.MIN)
         field_max = self.comm.allreduce(field_max_local, op=MPI.MAX)
-        return field_min, field_max
+
+        # Mean (owned DOFs only)
+        bs = field.function_space.dofmap.index_map_bs
+        local_size = field.x.index_map.size_local * bs
+        local_sum = np.sum(field.x.array[:local_size])
+        local_count = local_size
+
+        global_sum = self.comm.allreduce(local_sum, op=MPI.SUM)
+        global_count = self.comm.allreduce(local_count, op=MPI.SUM)
+        field_mean = global_sum / global_count if global_count > 0 else 0.0
+
+        return field_min, field_max, field_mean
 
     def _reset_iters_window(self) -> None:
         """Snapshot cumulative iteration counters for statistics window."""
@@ -257,10 +268,19 @@ class Remodeller:
         return dict(stim_gs=stim, dens_gs=dens, dir_gs=ddir, gs_per_step=gs_per_step)
 
     def _collect_field_stats(self) -> Dict[str, float]:
-        """Gather field min/max and energy for reporting."""
-        rho_min, rho_max = self._field_minmax(self.rho)
-        S_min, S_max = self._field_minmax(self.S)
-        return dict(rho_min=rho_min, rho_max=rho_max, S_min=S_min, S_max=S_max)
+        """Gather field min/max/mean and energy for reporting."""
+        rho_min, rho_max, rho_mean = self._field_stats(self.rho)
+        S_min, S_max, S_mean = self._field_stats(self.S)
+
+        psi_avg = 0.0
+        if hasattr(self.driver, "_last_stats") and self.driver._last_stats:
+            psi_avg = self.driver._last_stats.get("psi_avg", 0.0)
+
+        return dict(
+            rho_min=rho_min, rho_max=rho_max, rho_mean=rho_mean,
+            S_min=S_min, S_max=S_max, S_mean=S_mean,
+            psi_avg=psi_avg
+        )
 
     def _is_output_step(self, step: int) -> bool:
         return (step + 1) % self.cfg.saving_interval == 0
@@ -275,8 +295,9 @@ class Remodeller:
         self.logger.info(
             lambda: (
                 f"Step {step:2d} | t={t:6.1f}d | "
-                f"ρ=[{fields['rho_min']:.3f},{fields['rho_max']:.3f}] | "
-                f"S=[{fields['S_min']:.2e},{fields['S_max']:.2e}] | "
+                f"ρ=[{fields['rho_min']:.3f},{fields['rho_max']:.3f}] (μ={fields['rho_mean']:.3f}) | "
+                f"S=[{fields['S_min']:.2e},{fields['S_max']:.2e}] (μ={fields['S_mean']:.2e}) | "
+                f"ψ_avg={fields['psi_avg']:.3e} | "
                 f"stim={iters['stim_gs']:.1f} | "
                 f"dens={iters['dens_gs']:.1f} | dir={iters['dir_gs']:.1f} | "
                 f"GS={iters['gs_per_step']:.1f}"
@@ -458,8 +479,11 @@ class Remodeller:
                 "final_field_stats": {
                     "rho_min": float(fields.get("rho_min", 0.0)),
                     "rho_max": float(fields.get("rho_max", 0.0)),
+                    "rho_mean": float(fields.get("rho_mean", 0.0)),
                     "S_min": float(fields.get("S_min", 0.0)),
                     "S_max": float(fields.get("S_max", 0.0)),
+                    "S_mean": float(fields.get("S_mean", 0.0)),
+                    "psi_avg": float(fields.get("psi_avg", 0.0)),
                 },
             }
             self.telemetry.write_metadata(data, filename="run_summary.json", overwrite=True)
