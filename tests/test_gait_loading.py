@@ -20,11 +20,6 @@ from simulation.paths import FemurPaths
 from simulation.femur_gait import setup_femur_gait_loading
 from simulation.config import Config
 
-# Skip if mesh file not found (e.g. in CI without data)
-import os
-MESH_EXISTS = os.path.exists(FemurPaths.FEMUR_MESH_FEB)
-
-@pytest.mark.skipif(not MESH_EXISTS, reason="Femur mesh file not found")
 @pytest.fixture(scope="module")
 def femur_context():
     """Load femur mesh and setup gait loader once for all tests."""
@@ -50,7 +45,6 @@ def femur_context():
         "mdl": mdl # Keep model for geometry checks
     }
 
-@pytest.mark.skipif(not MESH_EXISTS, reason="Femur mesh file not found")
 class TestGaitGeometry:
     """Validate coordinate systems and mesh scaling."""
 
@@ -97,7 +91,6 @@ class TestGaitGeometry:
             np.testing.assert_allclose(dolfin_range, pv_range, rtol=0.05, 
                                      err_msg="Geometry extent mismatch between DOLFINx and VTK")
 
-@pytest.mark.skipif(not MESH_EXISTS, reason="Femur mesh file not found")
 class TestGaitForces:
     """Validate physiological force magnitudes and integration."""
 
@@ -124,23 +117,26 @@ class TestGaitForces:
         
         # Find peak phase from interpolator first (fast)
         phases = np.linspace(0, 100, 21)
-        max_mag = 0.0
         peak_phase = 0.0
         
-        # Get the interpolator function
-        if load_type == "hip":
-            func = loader.hip_gait
-        elif load_type == "glmed":
-            func = loader.glmed_gait
-        elif load_type == "glmax":
-            func = loader.glmax_gait
-            
-        for p in phases:
-            f_vec = func(p)
-            mag = np.linalg.norm(f_vec)
-            if mag > max_mag:
-                max_mag = mag
-                peak_phase = p
+        if comm.rank == 0:
+            max_mag = 0.0
+            # Get the interpolator function
+            if load_type == "hip":
+                func = loader.hip_gait
+            elif load_type == "glmed":
+                func = loader.glmed_gait
+            elif load_type == "glmax":
+                func = loader.glmax_gait
+                
+            for p in phases:
+                f_vec = func(p)
+                mag = np.linalg.norm(f_vec)
+                if mag > max_mag:
+                    max_mag = mag
+                    peak_phase = p
+        
+        peak_phase = comm.bcast(peak_phase, root=0)
                 
         # Now integrate FE traction at peak phase
         loader.update_loads(peak_phase)

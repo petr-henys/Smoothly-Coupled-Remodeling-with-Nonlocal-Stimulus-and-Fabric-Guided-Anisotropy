@@ -109,7 +109,8 @@ def test_gait_driver_daily_dose_scaling():
     vol = fem.assemble_scalar(fem.form(1.0 * cfg.dx))
     psi_avg = comm.allreduce(psi_val, op=MPI.SUM) / comm.allreduce(vol, op=MPI.SUM)
     
-    assert abs(psi_avg - psi_ref) < 1e-9, f"Equilibrium scaling failed: got {psi_avg}, expected {psi_ref}"
+    # Driver output is dimensionless ratio relative to equilibrium (1.0)
+    assert abs(psi_avg - 1.0) < 1e-9, f"Equilibrium scaling failed: got {psi_avg}, expected 1.0"
 
     # 2. Test General Scaling
     # If sigma_vm = 2 * sigma_vm_eq
@@ -120,7 +121,8 @@ def test_gait_driver_daily_dose_scaling():
     psi_val = fem.assemble_scalar(fem.form(driver.stimulus_expr() * cfg.dx))
     psi_avg = comm.allreduce(psi_val, op=MPI.SUM) / comm.allreduce(vol, op=MPI.SUM)
     
-    assert abs(psi_avg - 2.0 * psi_ref) < 1e-9, f"Linear scaling failed: got {psi_avg}, expected {2*psi_ref}"
+    # With n=1, doubling stress doubles the stimulus ratio
+    assert abs(psi_avg - 2.0) < 1e-9, f"Linear scaling failed: got {psi_avg}, expected 2.0"
 
 def test_gait_driver_exponent_scaling():
     """Verify GaitDriver handles power law exponent n correctly."""
@@ -163,7 +165,8 @@ def test_gait_driver_exponent_scaling():
     vol = fem.assemble_scalar(fem.form(1.0 * cfg.dx))
     psi_avg = comm.allreduce(psi_val, op=MPI.SUM) / comm.allreduce(vol, op=MPI.SUM)
     
-    assert abs(psi_avg - psi_ref) < 1e-9, f"Power law equilibrium failed: got {psi_avg}, expected {psi_ref}"
+    # Driver output is dimensionless ratio relative to equilibrium (1.0)
+    assert abs(psi_avg - 1.0) < 1e-9, f"Power law equilibrium failed: got {psi_avg}, expected 1.0"
 
 
 def test_traction_units_conversion():

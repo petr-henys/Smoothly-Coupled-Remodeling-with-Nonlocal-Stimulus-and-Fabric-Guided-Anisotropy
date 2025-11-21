@@ -312,6 +312,17 @@ class MechanicsSolver(_BaseLinearSolver):
         rel_error = abs(W_int - W_ext) / denom
         return W_int, W_ext, rel_error
 
+    def average_strain_energy(self):
+        """Compute domain-averaged strain energy density."""
+        psi = 0.5 * ufl.inner(self.sigma(self.u, self.rho, self.A_dir), self.eps(self.u))
+        E_local = fem.assemble_scalar(fem.form(psi * self.dx))
+        vol_local = fem.assemble_scalar(fem.form(1.0 * self.dx))
+        
+        E_total = self.comm.allreduce(E_local, op=MPI.SUM)
+        vol_total = self.comm.allreduce(vol_local, op=MPI.SUM)
+        
+        return E_total / max(vol_total, 1e-300)
+
 
 class StimulusSolver(_BaseLinearSolver):
     """Reaction-diffusion stimulus S driven by mechanical driver ψ(x)."""
