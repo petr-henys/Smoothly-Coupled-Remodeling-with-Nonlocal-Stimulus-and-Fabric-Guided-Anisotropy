@@ -69,17 +69,14 @@ class Remodeller:
                     "dir_time_s",
                     "solve_time_s_total",
                     "proj_res_last",
+                    "num_dofs_total",
+                    "rss_mem_mb",
+                    "mech_iters",
+                    "stim_iters",
+                    "dens_iters",
+                    "dir_iters",
                 ],
                 filename="steps.csv",
-            )
-            self.telemetry.register_csv(
-                "output_steps",
-                [
-                    "step", "time_days", "dt_days", "num_dofs_total", "rss_mem_mb",
-                    "mech_iters", "stim_iters", "dens_iters", "dir_iters",
-                    "coupling_iters", "coupling_time",
-                ],
-                filename="output_steps.csv",
             )
 
         self.dx = self.cfg.dx
@@ -93,6 +90,12 @@ class Remodeller:
         self.V = functionspace(self.domain, P1_vec)
         self.Q = functionspace(self.domain, P1)
         self.T = functionspace(self.domain, P1_ten)
+
+        # Total DOFs
+        dofs_V = self.V.dofmap.index_map.size_global * self.V.dofmap.index_map_bs
+        dofs_Q = self.Q.dofmap.index_map.size_global * self.Q.dofmap.index_map_bs
+        dofs_T = self.T.dofmap.index_map.size_global * self.T.dofmap.index_map_bs
+        self.num_dofs_total = int(dofs_V + dofs_Q + dofs_T)
 
         u = Function(self.V, name="u")
         self.rho = Function(self.Q, name="rho")
@@ -245,32 +248,8 @@ class Remodeller:
             )
         )
 
-        # Total DOFs and memory
-        dofs_V = self.V.dofmap.index_map.size_global * self.V.dofmap.index_map_bs
-        dofs_Q = self.Q.dofmap.index_map.size_global * self.Q.dofmap.index_map_bs
-        dofs_T = self.T.dofmap.index_map.size_global * self.T.dofmap.index_map_bs
-        num_dofs_total = int(dofs_V + dofs_Q + dofs_T)
-
-        rss_mb_local = current_memory_mb()
-        rss_mb_total = self.comm.allreduce(float(rss_mb_local), op=MPI.SUM)
-
         self.storage.write_fields("scalars", float(t))
         self.storage.write_fields("A", float(t))
-
-        if self.telemetry is not None:
-            self.telemetry.record("output_steps", {
-                "step": step,
-                "time_days": float(t),
-                "dt_days": float(self.cfg.dt),
-                "num_dofs_total": num_dofs_total,
-                "rss_mem_mb": rss_mb_total,
-                "mech_iters": self.fixedsolver.mech_iters_total,
-                "stim_iters": 1,  # Linear solve
-                "dens_iters": 1,  # Linear solve
-                "dir_iters": 1,   # Linear solve
-                "coupling_iters": coupling_stats.get("iters", 0),
-                "coupling_time": coupling_stats.get("time", 0.0),
-            }, csv_event=True)
 
     def step(self, dt: float, *, step_index: Optional[int] = None, time_days: Optional[float] = None) -> None:
         """Single timestep: fixed-point iteration until coupling tolerance met."""
@@ -308,6 +287,9 @@ class Remodeller:
         )
 
         if self.telemetry is not None:
+            rss_mb_local = current_memory_mb()
+            rss_mb_total = self.comm.allreduce(float(rss_mb_local), op=MPI.SUM)
+
             payload = {
                 "step": step_index,
                 "dt_days": float(dt),
@@ -318,6 +300,12 @@ class Remodeller:
                 "dens_time_s": float(self.fixedsolver.dens_time_total),
                 "dir_time_s": float(self.fixedsolver.dir_time_total),
                 "solve_time_s_total": total_time,
+                "num_dofs_total": self.num_dofs_total,
+                "rss_mem_mb": rss_mb_total,
+                "mech_iters": self.fixedsolver.mech_iters_total,
+                "stim_iters": 1,
+                "dens_iters": 1,
+                "dir_iters": 1,
             }
             if time_days is not None:
                 payload["time_days"] = float(time_days)

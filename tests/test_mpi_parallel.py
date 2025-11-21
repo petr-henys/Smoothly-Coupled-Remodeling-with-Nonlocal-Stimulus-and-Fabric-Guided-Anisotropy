@@ -223,18 +223,24 @@ class TestMPIIO:
     
                 rem.storage.write_fields("scalars", 0.0)
                 if rem.telemetry:
-                    rem.telemetry.record("output_steps", {
+                    rem.telemetry.record("steps", {
                         "step": 0,
                         "time_days": 0.0,
                         "dt_days": 1.0,
+                        "tol": 1e-6,
+                        "used_subiters": 3,
+                        "mech_time_s": 0.1,
+                        "stim_time_s": 0.1,
+                        "dens_time_s": 0.1,
+                        "dir_time_s": 0.1,
+                        "solve_time_s_total": 0.4,
+                        "proj_res_last": 1e-7,
                         "num_dofs_total": num_dofs_total,
                         "rss_mem_mb": rss_mb_total,
                         "mech_iters": 10,
                         "stim_iters": 5,
                         "dens_iters": 5,
                         "dir_iters": 5,
-                        "coupling_iters": 3,
-                        "coupling_time": 0.1
                     })
                 
                 # Should complete without hanging
@@ -266,18 +272,24 @@ class TestMPIIO:
     
                 rem.storage.write_fields("scalars", 0.0)
                 if rem.telemetry:
-                    rem.telemetry.record("output_steps", {
+                    rem.telemetry.record("steps", {
                         "step": 0,
                         "time_days": 0.0,
                         "dt_days": 1.0,
+                        "tol": 1e-6,
+                        "used_subiters": 3,
+                        "mech_time_s": 0.1,
+                        "stim_time_s": 0.1,
+                        "dens_time_s": 0.1,
+                        "dir_time_s": 0.1,
+                        "solve_time_s_total": 0.4,
+                        "proj_res_last": 1e-7,
                         "num_dofs_total": num_dofs_total,
                         "rss_mem_mb": rss_mb_total,
                         "mech_iters": 10,
                         "stim_iters": 5,
                         "dens_iters": 5,
                         "dir_iters": 5,
-                        "coupling_iters": 3,
-                        "coupling_time": 0.1
                     })
                 
                 rem.storage.close()
