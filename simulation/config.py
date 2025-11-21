@@ -27,7 +27,7 @@ class Config:
     nu: float = 0.3             # Poisson's ratio [-]
 
     # Density-stiffness relationship: E = E0 * rho^n(rho)
-    n_power: float = 1.5        # Exponent for stimulus calculation
+    n_power: float = 2.0        # Exponent for stimulus calculation
     n_trab: float = 2.0         # Exponent for trabecular bone
     n_cort: float = 1.2         # Exponent for cortical bone
     rho_trab_max: float = 0.6   # Max density for trabecular regime
@@ -41,6 +41,13 @@ class Config:
     rho0: float = 0.5           # Initial relative density
     lambda_rho: float = 0.05    # Remodeling rate [1/day]
 
+    # Frost-style mechanostat (two-threshold, smooth Heaviside)
+    S_form_th: float = 0.2     # Formation threshold in S units (steady S≈ψ-1)
+    S_resorb_th: float = -0.2  # Resorption threshold in S units
+    k_step: float = 6.0        # Step steepness for smooth thresholds
+    lambda_form: float = 0.05  # Formation rate [1/day]
+    lambda_resorb: float = 0.08 # Resorption rate [1/day]
+
     # Mechanostat parameters
     k_mech: float = 4.0         # Steepness of equilibrium curve
     S_shift: float = 0.0        # Setpoint shift
@@ -51,11 +58,11 @@ class Config:
     beta_perp: float = 0.1      # Perpendicular to fabric
 
     # --- Stimulus (Reaction-Diffusion) ---
-    psi_ref: float = 10.0       # σ_ref for Carter–Beaupré normalization [MPa]
+    psi_ref: float = 3.0       # Reference stress/energy [MPa]
     cS: float = 1.0             # Signaling capacity
     tauS: float = 1.0           # Decay rate [1/day]
     kappaS: float = 5.0         # Diffusion coefficient [mm^2/day]
-    rS_gain: float = 1.0             # Production gain for S source [1/day]
+    rS_gain: float = 1.0        # Transduction gain [1/day]
 
     # --- Fabric Tensor Evolution ---
     cA: float = 1.0             # Orientation capacity

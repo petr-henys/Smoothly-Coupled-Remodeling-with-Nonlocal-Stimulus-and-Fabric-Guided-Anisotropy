@@ -17,8 +17,11 @@ import numpy as np
 from mpi4py import MPI
 from dolfinx import fem
 import ufl
+import basix
 
 from simulation.config import Config
+from simulation.projector import L2Projector
+from simulation.logger import get_logger, Level
 
 
 def von_mises_stress(sig: ufl.core.expr.Expr, gdim: int) -> ufl.core.expr.Expr:
@@ -85,6 +88,15 @@ class GaitDriver:
         V = self.mech.u.function_space
         self.u_snap = [fem.Function(V, name=f"u_snap_{i}") for i in range(len(self.phases))]
 
+        # Setup L2 projector for VM stress monitoring
+        mesh = V.mesh
+        E_dg0 = basix.ufl.element("DG", mesh.basix_cell(), 0)
+        V_stress = fem.functionspace(mesh, E_dg0)
+        
+        self.projector = L2Projector(V_stress)
+        self.vm_stress = fem.Function(V_stress, name="vm_stress")
+        self.vm_stress_avg = fem.Function(V_stress, name="vm_stress_avg")
+
         self._tractions = (self.gait.t_hip, self.gait.t_glmed, self.gait.t_glmax)
         self.loads = self._precompute_loads()
 
@@ -92,6 +104,7 @@ class GaitDriver:
         self.M_expr: ufl.core.expr.Expr
         self._build_expressions()
         self._last_stats: Optional[Dict] = None
+        self.logger = get_logger(self.comm, verbose=self.cfg.verbose, name="Driver")
 
     def invalidate(self) -> None:
         """Rebuild expressions if psi_ref or exponent change in Config."""
@@ -112,6 +125,9 @@ class GaitDriver:
         times: List[float] = []
         iters: List[float] = []
 
+        self.vm_stress_avg.x.array[:] = 0.0
+        total_weight = 0.0
+
         for idx in range(len(self.phases)):
             start = MPI.Wtime()
             self._apply_load(idx)
@@ -122,9 +138,25 @@ class GaitDriver:
             times.append(float(elapsed))
             iters.append(float(its))
 
+            # Project VM stress
+            #sig = self.mech.sigma(self.mech.u, self.mech.rho, self.mech.A_dir)
+            #vm = von_mises_stress(sig, self.mech.gdim)
+            #self.projector.project(vm, result=self.vm_stress)
+            
+            # Accumulate average
+            w = self.weights[idx]
+            #self.vm_stress_avg.x.array[:] += w * self.vm_stress.x.array[:]
+            #self.logger.info(f"Phase {idx}: minmax VM: {self.vm_stress.x.array.min():.5e} .. {self.vm_stress.x.array.max():.5e}")
+            total_weight += w
+
             self.u_snap[idx].x.array[:] = self.mech.u.x.array
             self.u_snap[idx].x.scatter_forward()
 
+        #if total_weight > 0:
+        #    self.vm_stress_avg.x.array[:] /= total_weight
+        #self.vm_stress_avg.x.scatter_forward()
+        
+        #self.logger.info(f"Phase {idx}: minmax avg VM: {self.vm_stress_avg.x.array.min():.3f} .. {self.vm_stress_avg.x.array.max():.3f}")
         self.mech.u.x.scatter_forward()
 
         # Domain-average of the daily stress

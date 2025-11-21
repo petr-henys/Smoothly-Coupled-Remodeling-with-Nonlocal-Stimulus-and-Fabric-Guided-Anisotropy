@@ -176,7 +176,6 @@ class FixedPointSolver:
 
         # Direction (structure tensor via driver)
         t0 = MPI.Wtime()
-        #stats = self.driver.update_snapshots() or {}
         mech_time_total += float(stats.get("total_time", 0.0))
         phase_times.extend(stats.get("phase_times", []))
         phase_iters.extend(stats.get("phase_iters", []))

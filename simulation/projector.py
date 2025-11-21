@@ -88,9 +88,9 @@ class L2Projector:
     def project(self, expr, result: Optional[dolfinx.fem.Function] = None) -> dolfinx.fem.Function:
         """Project UFL expression to function space via mass matrix solve."""
         self.assemble_rhs(expr)
-        self._ksp.solve(self._b.x.petsc_vec, self._x.x.petsc_vec)
-        self._x.x.petsc_vec.ghostUpdate(addv=PETSc.InsertMode.INSERT_VALUES, mode=PETSc.ScatterMode.FORWARD)
-        return self._x
+        self._ksp.solve(self._b.x.petsc_vec, result.x.petsc_vec)
+        result.x.petsc_vec.ghostUpdate(addv=PETSc.InsertMode.INSERT_VALUES, mode=PETSc.ScatterMode.FORWARD)
+        return result
 
     def __del__(self):
         if hasattr(self, "_A"):

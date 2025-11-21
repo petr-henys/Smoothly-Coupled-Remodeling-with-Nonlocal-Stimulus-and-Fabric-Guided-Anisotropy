@@ -441,17 +441,38 @@ class DensitySolver(_BaseLinearSolver):
         self.L_form_template = None
         self.a_form = fem.form(self.build_lhs_form())
 
+    
     def _get_reaction_terms(self):
-        """Compute lazy-zone factor f(|S|) and equilibrium density ρ_eq(S)."""
+        """Frost-style two-threshold mechanostat with smooth Heaviside.
+        Returns:
+            lam_eff: effective remodeling rate [1/day], spatially varying
+            rho_eq: equilibrium density field in [rho_min, rho_max]
+        """
+        # Smooth thresholds for formation and resorption in S-units (steady S ≈ ψ - 1)
+        k = float(self.cfg.k_step)
+        S_f = float(self.cfg.S_form_th)
+        S_r = float(self.cfg.S_resorb_th)
+        # Smooth heavisides
+        Hf = 1.0 / (1.0 + ufl.exp(-k * (self.S - S_f)))      # formation active if S > S_f
+        Hr = 1.0 / (1.0 + ufl.exp(-k * (S_r - self.S)))      # resorption active if S < S_r
+        
+        # Disjoint weights (avoid overlap dominance)
+        w_form = Hf * (1.0 - Hr)
+        w_resorb = Hr * (1.0 - Hf)
+        w_neutral = 1.0 - w_form - w_resorb
+        
+        # Effective rate and equilibrium state
+        lam_eff = self.cfg.lambda_form * w_form + self.cfg.lambda_resorb * w_resorb
+        rho_eq = (self.cfg.rho_max * w_form
+                  + self.cfg.rho_min * w_resorb
+                  + self.rho_old * w_neutral)
+        
+        # Optional lazy-zone modulation around |S|≈0
         Sabs = smooth_abs(self.S, self.smooth_eps)
         S_lazy = float(self.cfg.S_lazy)
         f_S = Sabs / (Sabs + S_lazy) if S_lazy > 0.0 else 1.0
-
-        k_mech = float(self.cfg.k_mech)
-        S_shift = float(self.cfg.S_shift)
-        theta = 1.0 / (1.0 + ufl.exp(-k_mech * (self.S - S_shift)))
-        rho_eq = self.cfg.rho_min + (self.cfg.rho_max - self.cfg.rho_min) * theta
-        return f_S, rho_eq
+        lam_eff = lam_eff * f_S
+        return lam_eff, rho_eq
 
     def build_lhs_form(self):
         dt = self.cfg.dt
@@ -464,12 +485,12 @@ class DensitySolver(_BaseLinearSolver):
         Ahat = unittrace_psd_from_any(Asym, d, eps=self.smooth_eps)
         Bten = self.cfg.beta_perp * I + (self.cfg.beta_par - self.cfg.beta_perp) * Ahat
 
-        f_S, _ = self._get_reaction_terms()
+        lam_eff, _ = self._get_reaction_terms()
 
         return (
             (self.trial / dt) * self.test * self.dx
             + ufl.inner(Bten * ufl.grad(self.trial), ufl.grad(self.test)) * self.dx
-            + self.cfg.lambda_rho * f_S * self.trial * self.test * self.dx
+            + lam_eff * self.trial * self.test * self.dx
         )
 
     def setup(self):
@@ -484,9 +505,9 @@ class DensitySolver(_BaseLinearSolver):
             b_local.set(0.0)
 
         dt = self.cfg.dt
-        f_S, rho_eq = self._get_reaction_terms()
+        lam_eff, rho_eq = self._get_reaction_terms()
 
-        rhs_expr = (self.rho_old / dt) + self.cfg.lambda_rho * f_S * rho_eq
+        rhs_expr = (self.rho_old / dt) + lam_eff * rho_eq
         self.L_form_template = fem.form(rhs_expr * self.test * self.dx)
 
         assemble_vector(self.b, self.L_form_template)
@@ -512,10 +533,10 @@ class DensitySolver(_BaseLinearSolver):
         M_old = float(self.comm.allreduce(fem.assemble_scalar(fem.form(self.rho_old * one * self.dx)), op=MPI.SUM))
 
         dt = self.cfg.dt
-        f_S, rho_eq = self._get_reaction_terms()
+        lam_eff, rho_eq = self._get_reaction_terms()
 
-        decay = float(self.comm.allreduce(fem.assemble_scalar(fem.form(self.cfg.lambda_rho * f_S * self.rho * self.dx)), op=MPI.SUM))
-        src = float(self.comm.allreduce(fem.assemble_scalar(fem.form(self.cfg.lambda_rho * f_S * rho_eq * self.dx)), op=MPI.SUM))
+        decay = float(self.comm.allreduce(fem.assemble_scalar(fem.form(lam_eff * self.rho * self.dx)), op=MPI.SUM))
+        src = float(self.comm.allreduce(fem.assemble_scalar(fem.form(lam_eff * rho_eq * self.dx)), op=MPI.SUM))
 
         dM_dt = (M_new - M_old) / max(dt, 1e-30)
         R = dM_dt + decay - src
