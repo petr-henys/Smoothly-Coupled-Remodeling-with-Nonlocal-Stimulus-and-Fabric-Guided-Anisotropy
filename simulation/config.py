@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, fields
-from typing import Optional, TYPE_CHECKING, Any, Dict
+from typing import Optional, TYPE_CHECKING, Any, Dict, Union
 
 from dolfinx import mesh
 import ufl
@@ -39,16 +39,16 @@ class Config:
     rho_max: float = 1.00       # Max relative density
     rho0: float = 0.5           # Initial relative density
 
-    k_rho: float = 0.01         # Density remodeling rate [1/day]
+    k_rho: float = 1.         # Density remodeling rate [1/day]
 
     # Density diffusion [mm^2/day]
-    beta_par: float = 0.1       # Parallel to fabric
-    beta_perp: float = 0.1      # Perpendicular to fabric
+    beta_par: float = 0.05       # Parallel to fabric
+    beta_perp: float = 0.05      # Perpendicular to fabric
 
     # =========================================================================
     # Stimulus (Reaction-Diffusion)
     # =========================================================================
-    psi_ref: float = 0.004      # Reference value (Stress [MPa], Strain [-], or SED [MPa])
+    psi_ref: float = 0.04      # Reference value (Stress [MPa], Strain [-], or SED [MPa])
     
     cS: float = 1.0             # Signaling capacity
     tauS: float = 0.2           # Relaxation time [day] (was decay rate 5.0)
@@ -63,11 +63,6 @@ class Config:
     cA: float = 1.0             # Orientation capacity
     tauA: float = 200.0         # Relaxation time [day]
     ell: float = 2.0            # Diffusion length [mm]
-    
-    # Zysset-Curnier Constitutive Parameters
-    # E_i = E0 * rho^k * m_i^p
-    # G_ij = G0 * rho^k * (m_i * m_j)^(p/2)
-    # nu_ij = nu0 * (m_j/m_i)^(p/2) ? No, usually simpler.
     
     # Standard Zysset parameters (approximate)
     k_stiff: float = 1.9        # Density exponent for stiffness (often close to 2)
@@ -92,7 +87,7 @@ class Config:
     quadrature_degree: int = 4
     saving_interval: int = 1
     results_dir: str = ".results"
-    verbose: bool = True
+    verbose: Union[bool, str] = True
 
     # Linear Solver
     ksp_type: str = "minres"        # Changed from minres to cg for SPD elasticity

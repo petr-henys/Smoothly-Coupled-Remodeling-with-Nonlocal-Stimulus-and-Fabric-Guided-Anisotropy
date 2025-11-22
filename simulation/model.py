@@ -41,8 +41,13 @@ class Remodeller:
         self.cfg = cfg
         self.domain = self.cfg.domain
         self.closed = False
+        self.pbar = None
 
-        self.verbose = bool(self.cfg.verbose)
+        if self.cfg.verbose == "progressbar":
+            self.verbose = False
+        else:
+            self.verbose = bool(self.cfg.verbose)
+
         self.comm = self.domain.comm
         self.rank = self.comm.rank
         self.logger = get_logger(self.comm, verbose=self.verbose, name="Remodeller")
@@ -177,6 +182,7 @@ class Remodeller:
             mass_tonnes=float(self.cfg.body_mass_tonnes),
             n_samples=int(self.cfg.gait_samples),
             load_scale=float(self.cfg.load_scale),
+            verbose=self.verbose
         )
         
         neumann_bcs = [
@@ -279,6 +285,13 @@ class Remodeller:
     def _output(self, t: float, step: int, coupling_stats: Dict[str, float]):
         """Scatter, stats, log, write."""
         fields = self._collect_field_stats()
+
+        if self.pbar is not None:
+            self.pbar.set_postfix({
+                "t": f"{t:.1f}d",
+                "rho": f"{fields['rho_mean']:.2f}",
+                "GS": coupling_stats['iters']
+            })
 
         self.logger.info(
             lambda: (
@@ -423,6 +436,14 @@ class Remodeller:
         self.comm.Barrier()
         overall_start = MPI.Wtime()
 
+        if self.rank == 0 and self.cfg.verbose == "progressbar":
+            try:
+                from tqdm import tqdm
+                self.pbar = tqdm(total=n_steps, desc="Remodeling", unit="step")
+            except ImportError:
+                self.logger.warning("tqdm not installed, falling back to standard logging")
+                self.logger.level = Level.INFO
+
         for step in range(n_steps):
             step_time = t + dt
             self.step(dt, step_index=step, time_days=step_time)
@@ -434,6 +455,13 @@ class Remodeller:
                     "time": float(self.fixedsolver.mech_time_total + self.fixedsolver.stim_time_total + self.fixedsolver.dens_time_total + self.fixedsolver.dir_time_total)
                 }
                 self._output(t, step, coupling_stats)
+            
+            if self.pbar is not None:
+                self.pbar.update(1)
+
+        if self.pbar is not None:
+            self.pbar.close()
+            self.pbar = None
 
         self.comm.Barrier()
         overall_elapsed = MPI.Wtime() - overall_start

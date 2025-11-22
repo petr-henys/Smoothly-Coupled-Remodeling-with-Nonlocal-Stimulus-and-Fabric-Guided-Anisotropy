@@ -68,13 +68,14 @@ class FemurCSS:
         le_me: NDArrayF,
         side: Literal["left", "right"] = "left",
         save_head_sphere: str | Path | None = None,
+        verbose: bool = True,
     ) -> None:
         self.femur = femur
         self.side = side.lower()
         if self.side not in {"left", "right"}:
             raise ValueError("side must be 'left' or 'right'")
 
-        self.logger = get_logger(MPI.COMM_WORLD, verbose=True, name="FemurCSS")
+        self.logger = get_logger(MPI.COMM_WORLD, verbose=verbose, name="FemurCSS")
 
         self.fhc, self.head_radius = _fit_femoral_head(femur, head_line, save_head_sphere)
         self._build_axes(le_me)

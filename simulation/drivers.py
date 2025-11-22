@@ -42,7 +42,7 @@ class GaitDriver:
         self.gait = gait_loader
         self.cfg = config
         self.comm = self.mech.u.function_space.mesh.comm
-        self.logger = get_logger(self.comm, verbose=self.cfg.verbose, name="Driver")
+        self.logger = get_logger(self.comm, verbose=(self.cfg.verbose is True), name="Driver")
 
         # Cache config parameters
         self.psi_ref = float(config.psi_ref)

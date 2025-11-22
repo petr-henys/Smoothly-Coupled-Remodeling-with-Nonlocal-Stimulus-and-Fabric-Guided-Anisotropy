@@ -65,7 +65,8 @@ class FemurRemodellerGait:
         glmed_gait: Optional[Callable[[float], np.ndarray]],
         glmax_gait: Optional[Callable[[float], np.ndarray]],
         n_samples: int = 9,
-        load_scale: float = 1.0
+        load_scale: float = 1.0,
+        verbose: bool = True
     ):
         if n_samples < 2:
             raise ValueError("n_samples must be at least 2 for trapezoidal quadrature.")
@@ -87,6 +88,7 @@ class FemurRemodellerGait:
         self.n_samples = int(n_samples)
         self.load_scale = float(load_scale)
         self.coord_scale = 1.0  # Both DOLFINx mesh and PyVista mesh in mm
+        self.verbose = verbose
     
     
     def get_quadrature(self) -> List[Tuple[float, float]]:
@@ -124,7 +126,7 @@ class FemurRemodellerGait:
             local_max = np.max(np.abs(t.x.array)) if t.x.array.size > 0 else 0.0
             global_max = comm.allreduce(local_max, op=MPI.MAX)
             
-            if rank == 0 and global_max < 1e-14:
+            if rank == 0 and global_max < 1e-14 and self.verbose:
                 print(f"[FemurRemodellerGait] Warning: {name} is zero at phase {phase_percent:.1f}% (load_scale={scale}).", flush=True)
 
     def _apply_load(self, target_func: fem.Function, loader, scale: float):
@@ -170,7 +172,7 @@ class FemurRemodellerGait:
 
 
 def setup_femur_gait_loading(V: fem.FunctionSpace, mass_tonnes: float = 0.075, n_samples: int = 9,
-                             load_scale: float = 1.0) -> "FemurRemodellerGait":
+                             load_scale: float = 1.0, verbose: bool = True) -> "FemurRemodellerGait":
     """
     
     This function shows HOW to set up loading. Users must adapt this
@@ -207,10 +209,10 @@ def setup_femur_gait_loading(V: fem.FunctionSpace, mass_tonnes: float = 0.075, n
         pv_mesh = pv.read(str(vtk_path))
         head_line = load_json_points(FemurPaths.HEAD_LINE_JSON)
         le_me_line = load_json_points(FemurPaths.LE_ME_LINE_JSON)
-        css = FemurCSS(pv_mesh, head_line, le_me_line, side='left')
+        css = FemurCSS(pv_mesh, head_line, le_me_line, side='left', verbose=verbose)
 
         # Hip joint reaction force (from OrthoLoad database)
-        hip = HIPJointLoad(pv_mesh, css, use_cell_data=False)
+        hip = HIPJointLoad(pv_mesh, css, use_cell_data=False, verbose=verbose)
         hip_data = parse_hip_file(GaitPaths.HIP99_WALKING)["data"]
         hip_gait = gait_interpolator(orthoload2ISB(hip_data))
 
@@ -222,14 +224,14 @@ def setup_femur_gait_loading(V: fem.FunctionSpace, mass_tonnes: float = 0.075, n
         curves = segment_curves_grid(muscle_data, 4, 9)
 
         # Gluteus medius
-        gl_med = MuscleLoad(pv_mesh, css, use_cell_data=False)
+        gl_med = MuscleLoad(pv_mesh, css, use_cell_data=False, verbose=verbose)
         gl_med.set_attachment_points(load_json_points(FemurPaths.GL_MED_JSON))
         curve = rescale_curve(curves[0], x_scale=(0, 100), y_scale=(-1, 0.))
         load_vec = np.array([1.1, 1.87, 0.89]) * F_mag
         gl_med_gait = gait_interpolator(build_load(curve, load_vec))
 
         # Gluteus maximus
-        gl_max = MuscleLoad(pv_mesh, css, use_cell_data=False)
+        gl_max = MuscleLoad(pv_mesh, css, use_cell_data=False, verbose=verbose)
         gl_max.set_attachment_points(load_json_points(FemurPaths.GL_MAX_JSON))
         curve = rescale_curve(curves[3], x_scale=(0, 100), y_scale=(-1, 0.))
         load_vec = np.array([-0.3, 1.27, 0.39]) * F_mag
@@ -239,7 +241,7 @@ def setup_femur_gait_loading(V: fem.FunctionSpace, mass_tonnes: float = 0.075, n
         t_hip=t_hip, t_glmed=t_glmed, t_glmax=t_glmax,
         hip=hip, gl_med=gl_med, gl_max=gl_max, hip_gait=hip_gait,
         glmed_gait=gl_med_gait, glmax_gait=gl_max_gait,
-        n_samples=n_samples, load_scale=load_scale,
+        n_samples=n_samples, load_scale=load_scale, verbose=verbose
     )
 if __name__ == "__main__":
     mdl = FEBio2Dolfinx(FemurPaths.FEMUR_MESH_FEB)

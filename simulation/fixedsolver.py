@@ -173,13 +173,13 @@ class FixedPointSolver:
                 restart_on_stall=self.cfg.restart_on_stall,
                 restart_on_cond=self.cfg.restart_on_cond,
                 step_limit_factor=self.cfg.step_limit_factor,
-                verbose=self.cfg.verbose
+                verbose=(self.cfg.verbose is True)
             )
 
         self.driver.invalidate()
         x_k = self._flatten_state(copy=True)
         
-        log_enabled = (self.comm.rank == 0) and self.cfg.verbose
+        log_enabled = (self.comm.rank == 0) and (self.cfg.verbose is True)
         self.subiter_metrics = []
         
         self.mech_time_total = 0.0

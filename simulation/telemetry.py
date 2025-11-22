@@ -32,7 +32,7 @@ class Telemetry:
     ):
         self.comm = comm
         self.outdir = Path(outdir)
-        self.logger = get_logger(comm, verbose=bool(verbose), name="Telemetry")
+        self.logger = get_logger(comm, verbose=(verbose is True), name="Telemetry")
 
         if comm.rank == 0:
             self.outdir.mkdir(parents=True, exist_ok=True)

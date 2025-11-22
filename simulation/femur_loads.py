@@ -69,7 +69,7 @@ def orthoload2ISB(points: np.ndarray) -> np.ndarray:
 
 class GaussianSurfaceLoad:
 
-    def __init__(self, femur_mesh: pv.PolyData, femur_css: FemurCSS, use_cell_data: bool = True):
+    def __init__(self, femur_mesh: pv.PolyData, femur_css: FemurCSS, use_cell_data: bool = True, verbose: bool = True):
         self.css = femur_css
         self.head_center_world = femur_css.fhc
         self.head_radius = femur_css.head_radius
@@ -79,7 +79,7 @@ class GaussianSurfaceLoad:
         
         # Prepare surface mesh
         # create a class‐named logger for this instance
-        self.logger = get_logger(MPI.COMM_WORLD, verbose=True, name="GaussianSurfaceLoad")
+        self.logger = get_logger(MPI.COMM_WORLD, verbose=verbose, name="GaussianSurfaceLoad")
 
         self.logger.info(f"Init {self.__class__.__name__} (use_cell_data={use_cell_data})")
         self._setup_mesh(femur_mesh)
