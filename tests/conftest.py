@@ -96,8 +96,21 @@ class TolerancePresets:
 
 def pytest_configure(config: pytest.Config) -> None:
     """Register markers and silence non-rank-0 output."""
-    if MPI is not None and MPI.COMM_WORLD.rank != 0:
-        sys.stdout = sys.stderr = open(os.devnull, 'w')
+    if MPI is not None:
+        comm = MPI.COMM_WORLD
+        
+        # Silence non-root ranks
+        if comm.rank != 0:
+            sys.stdout = sys.stderr = open(os.devnull, 'w')
+            
+        # Set unique basetemp for each rank to avoid cleanup race conditions
+        if comm.size > 1 and not config.option.basetemp:
+            # Use a unique temporary directory for each rank
+            # This prevents "Directory not empty" errors during cleanup
+            # We use a fixed path structure to avoid accumulating random directories
+            base_tmp = Path(tempfile.gettempdir()) / f"pytest-mpi-{os.getuid()}" / f"rank-{comm.rank}"
+            base_tmp.mkdir(parents=True, exist_ok=True)
+            config.option.basetemp = str(base_tmp)
     
     # Register markers
     config.addinivalue_line("markers", "mpi: tests that are intended for MPI environments")

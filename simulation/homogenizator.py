@@ -74,6 +74,34 @@ class _HomogCommon:
         # Pre-calculate base forms
         self.a_base = ufl.inner(self._sigma(self.u), self._eps(self.v)) * self.dx
         self.L_zero = ufl.inner(fem.Constant(self.domain, default_scalar_type((0.0, 0.0, 0.0))), self.v) * self.dx
+        
+        self._init_averaging_forms()
+
+    def _init_averaging_forms(self):
+        """Pre-compile forms for averaging to avoid JIT overhead and enable batched MPI reduction."""
+        # 1. Stress forms (3x3 flattened)
+        # Note: We use self._u (the Function) not self.u (the TrialFunction)
+        sigma = self._sigma(self._u)
+        self._forms_stress = []
+        for i in range(3):
+            for j in range(3):
+                self._forms_stress.append(fem.form(sigma[i, j] * self.dx))
+        
+        # 2. Strain forms (6 components: 3 normal + 3 engineering shear)
+        eps = self._eps(self._u)
+        self._forms_strain = []
+        # Normal: 11, 22, 33
+        for i in range(3):
+            self._forms_strain.append(fem.form(eps[i, i] * self.dx))
+        # Shear (engineering): 2*23, 2*13, 2*12
+        for (i, j) in self._SHEAR_PAIRS:
+            self._forms_strain.append(fem.form(2.0 * eps[i, j] * self.dx))
+            
+        # 3. Fabric forms (3x3 flattened)
+        self._forms_fabric = []
+        for i in range(3):
+            for j in range(3):
+                self._forms_fabric.append(fem.form(self.A_dir[i, j] * self.dx))
 
     def _eps(self, u):
         """Symmetric gradient ε(u)."""
@@ -102,27 +130,30 @@ class _HomogCommon:
     def _log(self, msg: str):
         self._logger.info(msg)
 
-    def _average_stress(self, u: fem.Function) -> np.ndarray:
-        sigma = self._sigma(u)
-        S = np.zeros((3, 3), dtype=float)
-        for i in range(3):
-            for j in range(3):
-                val_loc = fem.assemble_scalar(fem.form(sigma[i, j] * self.dx))
-                S[i, j] = self.domain.comm.allreduce(val_loc, op=MPI.SUM) * self._inv_vol
+    def _average_stress(self) -> np.ndarray:
+        """Compute volume-averaged stress tensor using pre-compiled forms and batched reduction."""
+        # Assemble all 9 components locally
+        local_vals = np.array([fem.assemble_scalar(f) for f in self._forms_stress], dtype=float)
+        
+        # Single MPI reduction
+        global_vals = np.zeros_like(local_vals)
+        self.domain.comm.Allreduce(local_vals, global_vals, op=MPI.SUM)
+        
+        # Reshape to 3x3 and normalize
+        S = global_vals.reshape(3, 3) * self._inv_vol
         return S
 
-    def _average_engineering_strain(self, u: fem.Function) -> np.ndarray:
-        eps = ufl.sym(ufl.grad(u))
-        vals = np.zeros(6, dtype=float)
-        # Normal strains
-        for i in range(3):
-            val_loc = fem.assemble_scalar(fem.form(eps[i, i] * self.dx))
-            vals[i] = self.domain.comm.allreduce(val_loc, op=MPI.SUM) * self._inv_vol
-        # Shear strains (engineering: 2 * epsilon)
-        for k, (i, j) in enumerate(self._SHEAR_PAIRS, start=3):
-            val_loc = fem.assemble_scalar(fem.form((2.0 * eps[i, j]) * self.dx))
-            vals[k] = self.domain.comm.allreduce(val_loc, op=MPI.SUM) * self._inv_vol
-        return vals
+    def _average_engineering_strain(self) -> np.ndarray:
+        """Compute volume-averaged engineering strain vector using pre-compiled forms and batched reduction."""
+        # Assemble all 6 components locally
+        local_vals = np.array([fem.assemble_scalar(f) for f in self._forms_strain], dtype=float)
+        
+        # Single MPI reduction
+        global_vals = np.zeros_like(local_vals)
+        self.domain.comm.Allreduce(local_vals, global_vals, op=MPI.SUM)
+        
+        # Normalize
+        return global_vals * self._inv_vol
 
     @staticmethod
     def _stress_tensor_to_voigt(sig: np.ndarray) -> np.ndarray:
@@ -178,11 +209,14 @@ class _HomogCommon:
         return Minv, M_spd
 
     def _average_fabric_and_rotation(self) -> Tuple[np.ndarray, np.ndarray]:
-        Abar = np.zeros((3, 3), dtype=float)
-        for i in range(3):
-            for j in range(3):
-                val_local = fem.assemble_scalar(fem.form(self.A_dir[i, j] * self.dx))
-                Abar[i, j] = self.domain.comm.allreduce(val_local, op=MPI.SUM) * self._inv_vol
+        # Assemble all 9 components locally
+        local_vals = np.array([fem.assemble_scalar(f) for f in self._forms_fabric], dtype=float)
+        
+        # Single MPI reduction
+        global_vals = np.zeros_like(local_vals)
+        self.domain.comm.Allreduce(local_vals, global_vals, op=MPI.SUM)
+        
+        Abar = global_vals.reshape(3, 3) * self._inv_vol
         Abar = 0.5 * (Abar + Abar.T)
         vals, vecs = np.linalg.eigh(Abar)
         order = np.argsort(vals)[::-1]
@@ -366,7 +400,7 @@ class KUBCHomogenizer(_HomogCommon):
                 self._logger.warning(f"KUBC case {name} failed to converge (reason {reason})")
 
             # Post-process
-            sig_bar = self._average_stress(self._u)
+            sig_bar = self._average_stress()
             svec = self._stress_tensor_to_voigt(sig_bar)
             sval = float(eng[np.nonzero(eng)][0])
             C[:, j] = svec / sval
@@ -461,7 +495,7 @@ class SUBCHomogenizer(_HomogCommon):
             if reason < 0:
                 self._logger.warning(f"SUBC case {name} failed to converge (reason {reason})")
 
-            Ebar[:, j] = self._average_engineering_strain(self._u)
+            Ebar[:, j] = self._average_engineering_strain()
             b.destroy()
 
         S = 0.5 * (Ebar + Ebar.T) / sigma_mag

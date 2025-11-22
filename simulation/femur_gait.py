@@ -133,6 +133,19 @@ class FemurRemodellerGait:
         """
         comm = target_func.function_space.mesh.comm
         rank = comm.Get_rank()
+        
+        # Broadcast the interpolator from rank 0
+        interp = None
+        if rank == 0:
+            if loader is not None and hasattr(loader, '_interp'):
+                interp = loader._interp
+        
+        interp = comm.bcast(interp, root=0)
+        
+        if interp is None:
+             # If loader was not ready or None, do nothing
+             return
+
         V = target_func.function_space
         
         # Identify owned dofs
@@ -144,36 +157,13 @@ class FemurRemodellerGait:
         # We assume the first n_local nodes correspond to owned dofs.
         local_coords = V.tabulate_dof_coordinates()[:n_local]
         
-        # Gather to rank 0
-        local_coords_flat = local_coords.reshape(-1)
-        send_count = np.array([local_coords_flat.size], dtype=np.int32)
-        counts = None
-        if rank == 0:
-            counts = np.empty(comm.Get_size(), dtype=np.int32)
-        comm.Gather(send_count, counts, root=0)
-        
-        recvbuf = None
-        displs = None
-        if rank == 0:
-            displs = np.concatenate(([0], np.cumsum(counts[:-1])))
-            recvbuf = np.empty(np.sum(counts), dtype=np.float64)
-            
-        comm.Gatherv(local_coords_flat, [recvbuf, counts, displs, MPI.DOUBLE], root=0)
-        
-        # Compute values on rank 0
-        values_flat = None
-        if rank == 0:
-            all_coords = recvbuf.reshape(-1, 3)
-            vals = loader(all_coords) * scale
-            values_flat = vals.reshape(-1)
-            
-        # Scatter back
-        local_values_flat = np.empty(local_coords_flat.size, dtype=np.float64)
-        comm.Scatterv([values_flat, counts, displs, MPI.DOUBLE], local_values_flat, root=0)
+        # Compute values locally
+        # local_coords is (N, 3)
+        vals = interp(local_coords) * scale
         
         # Assign to function (owned dofs only)
         # target_func.x.array is flat. Owned dofs are the first n_local * bs elements.
-        target_func.x.array[:n_local * bs] = local_values_flat
+        target_func.x.array[:n_local * bs] = vals.reshape(-1)
         
         # Update ghosts
         target_func.x.scatter_forward()
