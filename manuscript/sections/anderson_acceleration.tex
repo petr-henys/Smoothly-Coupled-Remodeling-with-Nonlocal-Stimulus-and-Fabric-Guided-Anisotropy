@@ -30,9 +30,9 @@ We use the \emph{projected, RMS-per-DOF} merit and acceptance/backtracking defin
 The accelerated stacked state follows $(\rho,\mathbf A,S)$, while a single GS sweep updates blocks in the physical order $u\!\to\! S\!\to\!\rho\!\to\!\mathbf A$ (mechanics is recomputed inside the driver and is not part of the Anderson state). The interaction-gain matrix $J$ is indexed according to the $(\rho,\mathbf A,S)$ ordering.
 
 \subsection*{Anderson acceleration details}\label{subsec:aa_details}
-We use Type-II Anderson (Pulay) acceleration with the equality constraint $\sum_j \alpha_j=1$. The least-squares system is formed from the global Gram matrix $H=RR^\top$; Tikhonov regularization uses $\lambda_{\mathrm{eff}}=\lambda\max(\mathrm{tr}\,H/p,\,1)$. We impose a step limit $\|s\|\le c\,\|r\|$ (with $c=2$ in our runs) and perform line search/backtracking along $s$ guided by the projected merit defined in \S\ref{sec:fp-aa}. We restart the AA history upon (i) repeated rejections, (ii) stagnation with respect to the best Picard merit, or (iii) poor conditioning of the regularized Gram system. Accepted AA candidates re-enforce Dirichlet DOFs from the freshest Picard state.
-\paragraph{Setup and convergence metric}
-Convergence and acceptance use the same projected-residual metric and safeguards as in \S\ref{sec:fp-aa} (see \eqref{eq:kkt}, \eqref{eq:aa-update}, \eqref{eq:safeguard}).
+We employ the Type-II Anderson (Pulay) acceleration scheme described in \S\ref{sec:fp-aa}.
+Specific settings for the results below include a step limit factor $c=2$ and history depths $m$ as indicated in the figures.
+We restart the AA history upon (i) repeated rejections, (ii) stagnation with respect to the best Picard merit, or (iii) poor conditioning of the regularized Gram system. Accepted AA candidates re-enforce Dirichlet DOFs from the freshest Picard state.
 
 \paragraph{Performance diagnostics}
 To assess stability and tuning, we monitor Anderson metrics over time and their sensitivity to $(\Delta t, m, \beta)$ (\cref{fig:aa-metrics}). At fixed $\Delta t=25$ days, a sliding-window view of the Gram-matrix condition number $\kappa(\mathbf H)$ remains well behaved across tested histories $m$ and mixing factors $\beta$. Aggregated over late-time windows, the rejection rate stays moderate, the average history depth scales with $m$, and the median $\kappa(\mathbf H)$ shows only mild growth with larger $m$ or $\beta$.

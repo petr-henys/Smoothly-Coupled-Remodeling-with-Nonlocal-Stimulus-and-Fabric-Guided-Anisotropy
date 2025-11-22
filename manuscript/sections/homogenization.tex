@@ -19,6 +19,13 @@ where $\boldsymbol{\varepsilon}(\cdot)$ and $\boldsymbol{\sigma}(\cdot,\rho,\mat
 \overline{\boldsymbol{\sigma}}:=\frac{1}{|\Omega|}\int_{\Omega}\boldsymbol{\sigma}(\mathbf{u},\rho,\mathbf{A})\,\mathrm{d}x.
 \end{equation}
 
+\paragraph{SUBC homogenization.}
+Alternatively, we implement Static Uniform Boundary Conditions (SUBC) where a macroscopic stress $\boldsymbol{\Sigma}$ is prescribed via surface tractions $\mathbf{t} = \boldsymbol{\Sigma}\mathbf{n}$ on $\partial\Omega$. We solve the pure Neumann problem: find $\mathbf{u}\in[H^1(\Omega)]^d$ (modulo rigid motions) such that
+\begin{equation}\label{eq:subc-weak}
+(\boldsymbol{\sigma}(\mathbf{u},\rho,\mathbf{A}),\,\boldsymbol{\varepsilon}(\mathbf{v}))_{\Omega} \;=\; \langle \boldsymbol{\Sigma}\mathbf{n},\,\mathbf{v}\rangle_{\partial\Omega} \quad \forall \mathbf{v}\in[H^1(\Omega)]^d.
+\end{equation}
+The resulting average strain $\overline{\boldsymbol{\varepsilon}} = \frac{1}{|\Omega|}\int_\Omega \boldsymbol{\varepsilon}(\mathbf{u})\,\mathrm{d}x$ is computed for six independent stress states $\boldsymbol{\Sigma}^{(k)}$. This yields the apparent compliance tensor $\mathbf{S}_{\mathrm{app}}$, which is then inverted to obtain $\mathbf{C}_{\mathrm{app}} = \mathbf{S}_{\mathrm{app}}^{-1}$. The solver explicitly handles the rigid-body nullspace by projecting the right-hand side and orthogonalizing the solution.
+
 \paragraph{Six canonical tests and the apparent tensor.}
 We drive six strain cases of engineering magnitude $\varepsilon_{\mathrm{eng}}>0$:
 \[
