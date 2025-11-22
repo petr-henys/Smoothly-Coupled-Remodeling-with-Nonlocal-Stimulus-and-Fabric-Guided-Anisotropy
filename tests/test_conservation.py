@@ -260,8 +260,7 @@ class TestConservation:
         cfg = Config(domain=unit_cube, facet_tags=facet_tags, verbose=(comm.rank == 0))
         
         # Increase remodeling rate for this test to ensure measurable change in one step
-        cfg.lambda_form = 0.2
-        cfg.lambda_resorb = 0.2
+        cfg.k_rho = 0.2
         cfg.set_dt(10.0)
 
         P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)

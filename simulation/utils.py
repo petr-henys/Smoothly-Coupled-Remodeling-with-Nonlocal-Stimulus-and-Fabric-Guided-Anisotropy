@@ -8,6 +8,7 @@ from dolfinx.fem import FunctionSpace
 from petsc4py import PETSc
 import numpy as np
 from mpi4py import MPI
+import ufl
 
 dtype = PETSc.ScalarType
 
@@ -121,3 +122,99 @@ def current_memory_mb() -> float:
     """Current process resident memory (RSS) in MB."""
     mem_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     return mem_kb / 1024.0
+
+def spectral_decomposition_3x3(A):
+    """
+    Compute eigenvalues of a 3x3 symmetric tensor A using Cardano's formula.
+    Returns (lambda1, lambda2, lambda3).
+    """
+    # Invariants
+    I1 = ufl.tr(A)
+    I2 = 0.5 * (I1**2 - ufl.tr(A*A))
+    I3 = ufl.det(A)
+    
+    # Depressed cubic coefficients
+    p = I2 - I1**2 / 3.0
+    q = -2.0 * I1**3 / 27.0 + I1 * I2 / 3.0 - I3
+    
+    # Trigonometric solution
+    # Ensure argument for acos is in [-1, 1]
+    eps = 1e-16
+    p_safe = ufl.min_value(p, -eps) 
+    
+    r = ufl.sqrt(-p_safe / 3.0)
+    phi_arg = 3.0 * q / (2.0 * p_safe) * ufl.sqrt(-3.0 / p_safe)
+    phi_arg_clamped = ufl.max_value(-1.0, ufl.min_value(1.0, phi_arg))
+    phi = ufl.acos(phi_arg_clamped) / 3.0
+    
+    eig1 = 2.0 * r * ufl.cos(phi) + I1 / 3.0
+    eig2 = 2.0 * r * ufl.cos(phi + 2.0 * ufl.pi / 3.0) + I1 / 3.0
+    eig3 = 2.0 * r * ufl.cos(phi + 4.0 * ufl.pi / 3.0) + I1 / 3.0
+    
+    return eig1, eig2, eig3
+
+def matrix_function_3x3(A, func):
+    """
+    Compute f(A) for a scalar function f using Lagrange interpolation (Sylvester's formula).
+    f(A) = sum f(li) * product_{j!=i} (A - lj I) / (li - lj)
+    """
+    l1, l2, l3 = spectral_decomposition_3x3(A)
+    f1, f2, f3 = func(l1), func(l2), func(l3)
+    
+    # Regularized denominators to handle repeated eigenvalues
+    eps = 1e-5
+    
+    def safe_denom(d):
+        # If d is small, return eps with sign of d (or 1 if d=0)
+        return ufl.conditional(ufl.lt(abs(d), eps), eps, d)
+        
+    d12 = safe_denom(l1 - l2)
+    d13 = safe_denom(l1 - l3)
+    d23 = safe_denom(l2 - l3)
+    
+    I = ufl.Identity(3)
+    
+    P1 = (A - l2*I) * (A - l3*I) / (d12 * d13)
+    P2 = (A - l1*I) * (A - l3*I) / (-d12 * d23)
+    P3 = (A - l1*I) * (A - l2*I) / (-d13 * -d23)
+    
+    return f1 * P1 + f2 * P2 + f3 * P3
+
+def matrix_exp(A):
+    """Matrix exponential exp(A)."""
+    return matrix_function_3x3(A, ufl.exp)
+
+def matrix_ln(A):
+    """Matrix logarithm ln(A)."""
+    return matrix_function_3x3(A, ufl.ln)
+
+
+def unittrace_psd(B, dim: int, eps: float):
+    """Project PSD tensor B to unit-trace via B + εI."""
+    I = ufl.Identity(dim)
+    M = B + eps * I
+    return M / ufl.tr(M)
+
+
+# --- Smooth regularization helpers (C^∞ approximations) ---
+
+def smooth_abs(x, eps: float):
+    """C^∞ approximation of |x|."""
+    return ufl.sqrt(x * x + eps * eps)
+
+
+def smooth_plus(x, eps: float):
+    """C^∞ approximation of max(x, 0)."""
+    sabs = smooth_abs(x, eps)
+    return 0.5 * (x + sabs)
+
+
+def smooth_max(x, xmin, eps: float):
+    """C^∞ approximation of max(x, xmin)."""
+    dx = x - xmin
+    return xmin + 0.5 * (dx + ufl.sqrt(dx * dx + eps * eps))
+
+
+def smooth_heaviside(x, eps: float):
+    """C^∞ approximation of step function H(x)."""
+    return 0.5 * (1.0 + x / ufl.sqrt(x * x + eps * eps))

@@ -24,7 +24,7 @@ class FixedPointSolver:
                  densolver: DensitySolver,
                  dirsolver: DirectionSolver,
                  rho: fem.Function, rho_old: fem.Function,
-                 A: fem.Function, A_old: fem.Function,
+                 L: fem.Function, L_old: fem.Function,
                  S: fem.Function, S_old: fem.Function):
         self.comm = comm
         self.cfg = cfg
@@ -36,8 +36,8 @@ class FixedPointSolver:
 
         self.rho = rho
         self.rho_old = rho_old
-        self.A = A
-        self.A_old = A_old
+        self.L = L
+        self.L_old = L_old
         self.S = S
         self.S_old = S_old
 
@@ -52,7 +52,7 @@ class FixedPointSolver:
 
         # Local DOF counts
         self.n_rho = get_owned_size(rho)
-        self.n_A = get_owned_size(A)
+        self.n_L = get_owned_size(L)
         self.n_S = get_owned_size(S)
 
         self._build_state_slices()
@@ -74,29 +74,29 @@ class FixedPointSolver:
             )
 
     def _build_state_slices(self) -> None:
-        """Build slice indices for flattened (ρ, A, S) state vector."""
-        n_rho, n_A, n_S = self.n_rho, self.n_A, self.n_S
-        self.state_size = n_rho + n_A + n_S
+        """Build slice indices for flattened (ρ, L, S) state vector."""
+        n_rho, n_L, n_S = self.n_rho, self.n_L, self.n_S
+        self.state_size = n_rho + n_L + n_S
         self.state_slices = (
             slice(0, n_rho),
-            slice(n_rho, n_rho + n_A),
-            slice(n_rho + n_A, self.state_size)
+            slice(n_rho, n_rho + n_L),
+            slice(n_rho + n_L, self.state_size)
         )
 
     def _flatten_state(self, copy: bool = True) -> np.ndarray:
-        """Flatten current fields (ρ, A, S) to 1D array (local DOFs)."""
-        s_rho, s_A, s_S = self.state_slices
+        """Flatten current fields (ρ, L, S) to 1D array (local DOFs)."""
+        s_rho, s_L, s_S = self.state_slices
         buf = self.state_buffer
         buf[s_rho] = self.rho.x.array[:self.n_rho]
-        buf[s_A] = self.A.x.array[:self.n_A]
+        buf[s_L] = self.L.x.array[:self.n_L]
         buf[s_S] = self.S.x.array[:self.n_S]
         return buf.copy() if copy else buf
 
     def _restore_state(self, flat: np.ndarray) -> None:
         """Unpack flattened state back to field functions."""
-        s_rho, s_A, s_S = self.state_slices
+        s_rho, s_L, s_S = self.state_slices
         assign(self.rho, flat[s_rho])
-        assign(self.A, flat[s_A])
+        assign(self.L, flat[s_L])
         assign(self.S, flat[s_S])
 
     def _elapsed_max(self, t0: float) -> float:
@@ -114,6 +114,7 @@ class FixedPointSolver:
 
         # Stimulus
         t0 = MPI.Wtime()
+
         psi_expr = self.driver.stimulus_expr()
         self.stim.assemble_rhs(psi_expr)
         self.stim.solve()
@@ -128,8 +129,8 @@ class FixedPointSolver:
 
         # Direction
         t0 = MPI.Wtime()
-        M_expr = self.driver.structure_expr()
-        self.dir.assemble_rhs(M_expr)
+        L_target_expr = self.driver.log_structure_expr()
+        self.dir.assemble_rhs(L_target_expr)
         self.dir.solve()
         dir_time = self._elapsed_max(t0)
 
@@ -156,11 +157,11 @@ class FixedPointSolver:
         """Inner fixed-point loop: GS + Anderson acceleration until coupling_tol met."""
         # Weights for norm
         n_rho_g = self.comm.allreduce(self.n_rho, op=MPI.SUM)
-        n_A_g = self.comm.allreduce(self.n_A, op=MPI.SUM)
+        n_L_g = self.comm.allreduce(self.n_L, op=MPI.SUM)
         n_S_g = self.comm.allreduce(self.n_S, op=MPI.SUM)
         weights = (
             1.0 / max(int(n_rho_g), 1),
-            1.0 / max(int(n_A_g), 1),
+            1.0 / max(int(n_L_g), 1),
             1.0 / max(int(n_S_g), 1),
         )
 

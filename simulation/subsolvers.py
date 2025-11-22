@@ -17,51 +17,14 @@ from dolfinx.fem.petsc import (
 )
 import ufl
 
-from simulation.utils import build_nullspace
+from simulation.utils import (
+    build_nullspace, matrix_exp, spectral_decomposition_3x3, unittrace_psd,
+    smooth_abs, smooth_plus, smooth_max, smooth_heaviside
+)
 from simulation.logger import get_logger
 
 if TYPE_CHECKING:
     from simulation.config import Config
-
-
-# --- Smooth regularization helpers (C^∞ approximations) ---
-
-def smooth_abs(x, eps: float):
-    """C^∞ approximation of |x|."""
-    return ufl.sqrt(x * x + eps * eps)
-
-
-def smooth_plus(x, eps: float):
-    """C^∞ approximation of max(x, 0)."""
-    sabs = smooth_abs(x, eps)
-    return 0.5 * (x + sabs)
-
-
-def smooth_max(x, xmin, eps: float):
-    """C^∞ approximation of max(x, xmin)."""
-    dx = x - xmin
-    return xmin + 0.5 * (dx + ufl.sqrt(dx * dx + eps * eps))
-
-
-def smooth_heaviside(x, eps: float):
-    """C^∞ approximation of step function H(x)."""
-    return 0.5 * (1.0 + x / ufl.sqrt(x * x + eps * eps))
-
-
-# --- PSD + unit-trace projection helpers ---
-
-def unittrace_psd_from_any(T, dim: int, eps: float):
-    """Project arbitrary tensor T to unit-trace PSD via TᵀT + εI."""
-    I = ufl.Identity(dim)
-    M = ufl.dot(ufl.transpose(T), T) + eps * I
-    return M / ufl.tr(M)
-
-
-def unittrace_psd(B, dim: int, eps: float):
-    """Project PSD tensor B to unit-trace via B + εI."""
-    I = ufl.Identity(dim)
-    M = B + eps * I
-    return M / ufl.tr(M)
 
 
 def get_distal_damping_mask(mesh, z_min: float, height: float = 15.0, transition: float = 5.0):
@@ -234,37 +197,99 @@ class MechanicsSolver(_BaseLinearSolver):
         """Symmetric gradient ε(u)."""
         return ufl.sym(ufl.grad(u))
 
-    def sigma(self, u, rho, A_dir):
-        """Cauchy stress σ(u) [MPa].
+    def sigma(self, u, rho, L_dir):
+        """Cauchy stress σ(u) [MPa] using Zysset-Curnier orthotropic model.
 
-        E(ρ) = E0 * ρ^n(ρ), where n(ρ) transitions from n_trab to n_cort.
+        L_dir is the log-fabric tensor. A = exp(L_dir).
         """
         rho_eff = smooth_max(rho, self.cfg.rho_min, self.smooth_eps)
-
-        # Smooth transition factor w(ρ) in [0, 1]
-        rho1, rho2 = float(self.cfg.rho_trab_max), float(self.cfg.rho_cort_min)
-        if rho2 <= rho1:
-            n_eff = self.cfg.n_trab
-        else:
-            s_raw = (rho_eff - rho1) / (rho2 - rho1)
-            s0 = smooth_max(s_raw, 0.0, self.smooth_eps)
-            s1 = 1.0 - smooth_max(1.0 - s0, 0.0, self.smooth_eps)
-            w = 3.0 * s1**2 - 2.0 * s1**3
-            n_eff = (1.0 - w) * self.cfg.n_trab + w * self.cfg.n_cort
-
-        E = self.cfg.E0 * (rho_eff ** n_eff)
-
+        
+        # 1. Spectral Decomposition of L
+        l1, l2, l3 = spectral_decomposition_3x3(L_dir)
+        
+        # 2. Eigenvalues of A = exp(L)
+        m1 = ufl.exp(l1)
+        m2 = ufl.exp(l2)
+        m3 = ufl.exp(l3)
+        
+        # 3. Zysset-Curnier Stiffness Construction
+        # Parameters
+        k = self.cfg.k_stiff
+        p = self.cfg.p_stiff
+        E0 = self.cfg.E0_z
+        G0 = self.cfg.G0_z
+        nu0 = self.cfg.nu0_z
+        
+        # Eigenvalues of stiffness
+        # E_i = E0 * rho^k * m_i^p
+        E1 = E0 * (rho_eff**k) * (m1**p)
+        E2 = E0 * (rho_eff**k) * (m2**p)
+        E3 = E0 * (rho_eff**k) * (m3**p)
+        
+        # Shear moduli (approximate geometric mean)
+        # G_ij = G0 * rho^k * (mi*mj)^(p/2)
+        G12 = G0 * (rho_eff**k) * ((m1*m2)**(p/2.0))
+        G23 = G0 * (rho_eff**k) * ((m2*m3)**(p/2.0))
+        G31 = G0 * (rho_eff**k) * ((m3*m1)**(p/2.0))
+        
+        # Poisson ratios (assumed constant or weak dependence)
+        # nu_ij = nu0 * (mj/mi)^(p/2) ? 
+        # Simplified: nu_ij = nu0
+        nu12 = nu21 = nu23 = nu32 = nu31 = nu13 = nu0
+        
+        # Construct Stiffness Tensor C in principal frame of A
+        # We need eigenprojectors M_i = v_i (x) v_i
+        # Use Sylvester's formula on L to get M_i (same eigenvectors as A)
+        I = ufl.Identity(3)
+        eps = 1e-5
+        def safe_denom(d):
+            return ufl.conditional(ufl.lt(abs(d), eps), eps, d)
+            
+        d12 = safe_denom(l1 - l2)
+        d13 = safe_denom(l1 - l3)
+        d23 = safe_denom(l2 - l3)
+        
+        M1 = (L_dir - l2*I) * (L_dir - l3*I) / (d12 * d13)
+        M2 = (L_dir - l1*I) * (L_dir - l3*I) / (-d12 * d23)
+        M3 = (L_dir - l1*I) * (L_dir - l2*I) / (-d13 * -d23)
+        
+        # Strain
         eps_ten = self.eps(u)
-        I = ufl.Identity(self.gdim)
-        nu = self.cfg.nu
-        lmbda = E * nu / ((1 + nu) * (1 - 2 * nu))
-        mu = E / (2 * (1 + nu))
-
-        Asym = 0.5 * (A_dir + ufl.transpose(A_dir))
-        Ahat = unittrace_psd_from_any(Asym, self.gdim, self.smooth_eps)
-
-        sigma_aniso = (self.cfg.xi_aniso * E) * ufl.inner(Ahat, eps_ten) * Ahat
-        return 2 * mu * eps_ten + lmbda * ufl.tr(eps_ten) * I + sigma_aniso
+        
+        # Stress calculation: sigma = C : eps
+        
+        eps11 = ufl.inner(eps_ten, M1)
+        eps22 = ufl.inner(eps_ten, M2)
+        eps33 = ufl.inner(eps_ten, M3)
+        
+        factor = 1.0 / ((1.0 + nu0) * (1.0 - 2.0 * nu0))
+        lam_11 = E1 * (1.0 - nu0) * factor
+        lam_22 = E2 * (1.0 - nu0) * factor
+        lam_33 = E3 * (1.0 - nu0) * factor
+        
+        lam_12 = ufl.sqrt(E1 * E2) * nu0 * factor
+        lam_13 = ufl.sqrt(E1 * E3) * nu0 * factor
+        lam_23 = ufl.sqrt(E2 * E3) * nu0 * factor
+        
+        # Normal stress parts
+        # sigma_N = sum_i (sum_j lam_ij eps_jj) M_i
+        sig_N1 = (lam_11 * eps11 + lam_12 * eps22 + lam_13 * eps33) * M1
+        sig_N2 = (lam_12 * eps11 + lam_22 * eps22 + lam_23 * eps33) * M2
+        sig_N3 = (lam_13 * eps11 + lam_23 * eps22 + lam_33 * eps33) * M3
+        
+        # Shear stress parts
+        # sigma_S = sum_{i<j} 2 G_ij (Mi eps Mj)_sym
+        
+        # We can compute T_ij = (Mi eps Mj + Mj eps Mi) directly
+        T12 = M1 * eps_ten * M2 + M2 * eps_ten * M1
+        T23 = M2 * eps_ten * M3 + M3 * eps_ten * M2
+        T31 = M3 * eps_ten * M1 + M1 * eps_ten * M3
+        
+        sig_S12 = 2.0 * G12 * T12 # G12 is shear modulus, T12 contains shear strain
+        sig_S23 = 2.0 * G23 * T23
+        sig_S31 = 2.0 * G31 * T31
+        
+        return sig_N1 + sig_N2 + sig_N3 + sig_S12 + sig_S23 + sig_S31
 
     def get_strain_tensor(self, u=None):
         return self.eps(self.u if u is None else u)
@@ -419,56 +444,19 @@ class DensitySolver(_BaseLinearSolver):
         self,
         rho: fem.Function,
         rho_old: fem.Function,
-        A_dir: fem.Function,
+        L_dir: fem.Function,
         S: fem.Function,
         config: Config,
     ):
         super().__init__(config, rho, [], [])
         self.rho = self.state
         self.rho_old = rho_old
-        self.A_dir = A_dir
+        self.L_dir = L_dir
         self.S = S
         self.L_form_template = None
         self.a_form = fem.form(self.build_lhs_form())
 
     
-    def _get_reaction_terms(self):
-        """Compute lazy-zone factor f(|S|), effective reaction rate λ_eff(S), and equilibrium density ρ_eq(S)
-        for a Frost-like two-threshold mechanostat with smooth transitions.
-
-        Returns
-        -------
-        lam_eff : UFL expression
-            Effective reaction rate [1/day].
-        rho_eq : UFL expression
-            Target density given the current zone (form/resorb/neutral).
-        """
-        Sabs = smooth_abs(self.S, self.smooth_eps)
-        S_lazy = float(self.cfg.S_lazy)
-        fS = Sabs / (Sabs + S_lazy) if S_lazy > 0.0 else 1.0
-
-        # Smooth Heavisides
-        k_step = float(self.cfg.k_step)
-        S_form = float(self.cfg.S_form_th)
-        S_resorb = float(self.cfg.S_resorb_th)
-
-        H_form = 1.0/(1.0 + ufl.exp(-k_step*(self.S - S_form)))
-        H_resorb = 1.0/(1.0 + ufl.exp(-k_step*(S_resorb - self.S)))
-
-        lam_form = float(self.cfg.lambda_form)
-        lam_resorb = float(self.cfg.lambda_resorb)
-        lam_eff = fS * (lam_form*H_form + lam_resorb*H_resorb)
-
-        # Viscous regularization to avoid singularity in lazy zone
-        if hasattr(self.cfg, "viscous_damping") and self.cfg.viscous_damping > 0:
-             lam_eff = ufl.max_value(lam_eff, self.cfg.viscous_damping)
-
-        # Target density: rho_max in formation, rho_min in resorption, otherwise hold current rho
-        rho_eq = self.cfg.rho_max*H_form + self.cfg.rho_min*H_resorb + (1.0 - H_form - H_resorb)*self.rho
-
-        return lam_eff, rho_eq
-
-
     def build_lhs_form(self):
         dt = self.cfg.dt
         if dt <= 0:
@@ -476,16 +464,25 @@ class DensitySolver(_BaseLinearSolver):
         d = self.mesh.geometry.dim
         I = ufl.Identity(d)
 
-        Asym = 0.5 * (self.A_dir + ufl.transpose(self.A_dir))
-        Ahat = unittrace_psd_from_any(Asym, d, eps=self.smooth_eps)
+        # Recover Fabric A = exp(L)
+        A = matrix_exp(self.L_dir)
+        
+        # Normalize A to unit trace for diffusion tensor construction
+        Ahat = unittrace_psd(A, d, eps=self.smooth_eps)
+        
         Bten = self.cfg.beta_perp * I + (self.cfg.beta_par - self.cfg.beta_perp) * Ahat
 
-        lam_eff, _ = self._get_reaction_terms()
+        # Linear driver: rate = k_rho * (S_plus*(rho_max - rho) + S_minus*(rho_min - rho))
+        # LHS contribution: + k_rho * (S_plus + S_minus) * rho
+        S_plus = smooth_plus(self.S, self.smooth_eps)
+        S_minus = smooth_plus(-self.S, self.smooth_eps)
+        
+        reaction_coeff = self.cfg.k_rho * (S_plus + S_minus)
 
         return (
             (self.trial / dt) * self.test * self.dx
             + ufl.inner(Bten * ufl.grad(self.trial), ufl.grad(self.test)) * self.dx
-            + lam_eff * self.trial * self.test * self.dx
+            + reaction_coeff * self.trial * self.test * self.dx
         )
 
     def setup(self):
@@ -500,9 +497,14 @@ class DensitySolver(_BaseLinearSolver):
             b_local.set(0.0)
 
         dt = self.cfg.dt
-        lam_eff, rho_eq = self._get_reaction_terms()
+        
+        # Linear driver source term: k_rho * (S_plus*rho_max + S_minus*rho_min)
+        S_plus = smooth_plus(self.S, self.smooth_eps)
+        S_minus = smooth_plus(-self.S, self.smooth_eps)
+        
+        source_term = self.cfg.k_rho * (S_plus * self.cfg.rho_max + S_minus * self.cfg.rho_min)
 
-        rhs_expr = (self.rho_old / dt) + lam_eff * rho_eq
+        rhs_expr = (self.rho_old / dt) + source_term
         self.L_form_template = fem.form(rhs_expr * self.test * self.dx)
 
         assemble_vector(self.b, self.L_form_template)
@@ -518,10 +520,15 @@ class DensitySolver(_BaseLinearSolver):
         """Compute mass balance residual."""
         dt = self.cfg.dt
         rho, rho_old = self.rho, self.rho_old
-        lam_eff, rho_eq = self._get_reaction_terms()
+        
+        S_plus = smooth_plus(self.S, self.smooth_eps)
+        S_minus = smooth_plus(-self.S, self.smooth_eps)
+        
+        # rate = k_rho * (S_plus*(rho_max - rho) + S_minus*(rho_min - rho))
+        rate = self.cfg.k_rho * (S_plus * (self.cfg.rho_max - rho) + S_minus * (self.cfg.rho_min - rho))
         
         lhs = (rho - rho_old) / dt
-        rhs = lam_eff * (rho_eq - rho)
+        rhs = rate
         
         res_local = fem.assemble_scalar(fem.form((lhs - rhs) * self.dx))
         res_abs = self.comm.allreduce(res_local, op=MPI.SUM)
@@ -533,17 +540,21 @@ class DensitySolver(_BaseLinearSolver):
 
 
 class DirectionSolver(_BaseLinearSolver):
-    """Fabric tensor A: reaction-diffusion relaxing to strain-aligned target."""
+    """Log-Fabric tensor L: reaction-diffusion relaxing to log-target L_M.
+    
+    L = log(A).
+    Equation: cA dL/dt - div(D grad L) + r L = r L_M
+    """
 
     def __init__(
         self,
-        A_dir: fem.Function,
-        A_old: fem.Function,
+        L_dir: fem.Function,
+        L_old: fem.Function,
         config: Config,
     ):
-        super().__init__(config, A_dir, [], [])
-        self.A_dir = self.state
-        self.A_old = A_old
+        super().__init__(config, L_dir, [], [])
+        self.L_dir = self.state
+        self.L_old = L_old
         self._rhs_form = None
 
     def build_lhs_form(self):
@@ -555,6 +566,7 @@ class DirectionSolver(_BaseLinearSolver):
             raise ValueError(f"tauA must be positive, got {tauA}")
         ell2 = self.cfg.ell ** 2
         
+        # Diffusion of L
         return (
             (self.cfg.cA / dt + self.cfg.cA / tauA) * ufl.inner(self.trial, self.test) * self.dx
             + self.cfg.cA * (ell2 / tauA) * ufl.inner(ufl.grad(self.trial), ufl.grad(self.test)) * self.dx
@@ -567,12 +579,11 @@ class DirectionSolver(_BaseLinearSolver):
         self.create_ksp(prefix="direction", ksp_options=ksp_options)
         self._reset_stats()
 
-    def assemble_rhs(self, B_sum_expr):
-        B_hat = unittrace_psd(B_sum_expr, self.gdim, eps=self.smooth_eps)
+    def assemble_rhs(self, L_target_expr):
         dt = self.cfg.dt
         tauA = self.cfg.tauA
         
-        rhs_ten = (self.cfg.cA / dt) * self.A_old + (self.cfg.cA / tauA) * B_hat
+        rhs_ten = (self.cfg.cA / dt) * self.L_old + (self.cfg.cA / tauA) * L_target_expr
         self._rhs_form = fem.form(ufl.inner(rhs_ten, self.test) * self.dx)
 
         with self.b.localForm() as b_local:
@@ -586,15 +597,16 @@ class DirectionSolver(_BaseLinearSolver):
         self._maybe_warn(reason, "Direction")
         return its, reason
 
-    def trace_balance_residual(self, Mhat_expr):
-        """Compute domain-averaged trace of A and Mhat, and L2 residual of trace(A)-1."""
-        trA = ufl.tr(self.A_dir)
-        trM = ufl.tr(Mhat_expr)
+    def trace_balance_residual(self, L_target_expr):
+        """Compute domain-averaged trace of L and L_target."""
+        trL = ufl.tr(self.L_dir)
+        trLM = ufl.tr(L_target_expr)
         
         vol = self.comm.allreduce(fem.assemble_scalar(fem.form(1.0 * self.dx)), op=MPI.SUM)
-        trA_avg = self.comm.allreduce(fem.assemble_scalar(fem.form(trA * self.dx)), op=MPI.SUM) / vol
-        trM_avg = self.comm.allreduce(fem.assemble_scalar(fem.form(trM * self.dx)), op=MPI.SUM) / vol
+        trL_avg = self.comm.allreduce(fem.assemble_scalar(fem.form(trL * self.dx)), op=MPI.SUM) / vol
+        trLM_avg = self.comm.allreduce(fem.assemble_scalar(fem.form(trLM * self.dx)), op=MPI.SUM) / vol
         
-        res_sq = self.comm.allreduce(fem.assemble_scalar(fem.form((trA - 1.0)**2 * self.dx)), op=MPI.SUM)
+        # Residual of L - L_target
+        res_sq = self.comm.allreduce(fem.assemble_scalar(fem.form(ufl.inner(self.L_dir - L_target_expr, self.L_dir - L_target_expr) * self.dx)), op=MPI.SUM)
         import numpy as np
-        return trA_avg, trM_avg, np.sqrt(res_sq)
+        return trL_avg, trLM_avg, np.sqrt(res_sq)

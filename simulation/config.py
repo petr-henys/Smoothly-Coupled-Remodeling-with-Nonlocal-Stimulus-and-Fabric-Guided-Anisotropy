@@ -43,18 +43,11 @@ class Config:
     rho_max: float = 1.00       # Max relative density
     rho0: float = 0.5           # Initial relative density
 
-    # Mechanostat (dual-threshold Frost-like)
-    S_form_th: float = 0.2      # Formation threshold in S (dimensionless)
-    S_resorb_th: float = -0.2   # Resorption threshold in S (dimensionless)
-    k_step: float = 6.0         # Smooth step steepness
-    lambda_form: float = 0.01    # Formation rate [1/day]
-    lambda_resorb: float = 0.01  # Resorption rate [1/day]
-    S_lazy: float = 0.        # Lazy zone width
+    k_rho: float = 0.01         # Density remodeling rate [1/day]
 
     # Density diffusion [mm^2/day]
     beta_par: float = 0.1       # Parallel to fabric
     beta_perp: float = 0.1      # Perpendicular to fabric
-    viscous_damping: float = 1e-8 # Viscous regularization for lazy zone
 
     # =========================================================================
     # Stimulus (Reaction-Diffusion)
@@ -75,6 +68,20 @@ class Config:
     cA: float = 1.0             # Orientation capacity
     tauA: float = 100.0         # Relaxation time [day]
     ell: float = 2.0            # Diffusion length [mm]
+    
+    # Zysset-Curnier Constitutive Parameters
+    # E_i = E0 * rho^k * m_i^p
+    # G_ij = G0 * rho^k * (m_i * m_j)^(p/2)
+    # nu_ij = nu0 * (m_j/m_i)^(p/2) ? No, usually simpler.
+    
+    # Standard Zysset parameters (approximate)
+    k_stiff: float = 1.9        # Density exponent for stiffness (often close to 2)
+    p_stiff: float = 1.0        # Fabric exponent (linear or quadratic)
+    
+    # Base moduli [MPa]
+    E0_z: float = 15000.0       # Axial modulus
+    G0_z: float = 5000.0        # Shear modulus
+    nu0_z: float = 0.3          # Poisson ratio
 
     # =========================================================================
     # Gait & Loading
@@ -93,7 +100,7 @@ class Config:
     verbose: bool = True
 
     # Linear Solver
-    ksp_type: str = "minres"
+    ksp_type: str = "minres"        # Changed from minres to cg for SPD elasticity
     pc_type: str = "gamg"
     ksp_rtol: float = 1e-6
     ksp_atol: float = 1e-7
@@ -166,8 +173,6 @@ class Config:
             raise ValueError("rho_trab_max and rho_cort_min must satisfy rho_min <= rho_trab_max <= rho_cort_min <= rho_max.")
         if not (self.rho_min <= self.rho0 <= self.rho_max):
             raise ValueError("rho0 must lie within [rho_min, rho_max].")
-        if self.S_lazy < 0:
-            raise ValueError("S_lazy must be non-negative.")
         if self.beta_par < 0 or self.beta_perp < 0:
             raise ValueError("beta_par/beta_perp must be non-negative.")
         

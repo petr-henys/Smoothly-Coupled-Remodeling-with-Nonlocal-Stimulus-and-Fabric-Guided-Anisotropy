@@ -101,8 +101,8 @@ class Remodeller:
         self.rho = Function(self.Q, name="rho")
         self.rho_old = Function(self.Q, name="rho_old")
 
-        self.A = Function(self.T, name="dir_tensor")
-        self.A_old = Function(self.T, name="dir_tensor_old")
+        self.L = Function(self.T, name="log_dir_tensor")
+        self.L_old = Function(self.T, name="log_dir_tensor_old")
 
         self.S = Function(self.Q, name="stimulus")
         self.S_old = Function(self.Q, name="stimulus_old")
@@ -117,33 +117,59 @@ class Remodeller:
         self.S_rate_last = Function(self.Q, name="S_rate_last")
         self.S_rate_last2 = Function(self.Q, name="S_rate_last2")
         
-        self.A_rate_last = Function(self.T, name="A_rate_last")
-        self.A_rate_last2 = Function(self.T, name="A_rate_last2")
+        self.L_rate_last = Function(self.T, name="L_rate_last")
+        self.L_rate_last2 = Function(self.T, name="L_rate_last2")
         
         assign(self.rho_rate_last, 0.0)
         assign(self.rho_rate_last2, 0.0)
         assign(self.S_rate_last, 0.0)
         assign(self.S_rate_last2, 0.0)
-        assign(self.A_rate_last, 0.0)
-        assign(self.A_rate_last2, 0.0)
+        assign(self.L_rate_last, 0.0)
+        assign(self.L_rate_last2, 0.0)
 
         assign(self.rho, self.cfg.rho0)
 
         d = self.gdim
 
-        def _A_const(x):
+        def _L_init(x):
+            # Initialize L = log(A). A is approx I/3.
+            # We perturb eigenvalues to avoid singularity in spectral decomposition.
+            # A ~ diag(1/3, 1/3, 1/3) -> L ~ diag(ln(1/3), ln(1/3), ln(1/3))
+            # Perturbation: 1e-4
             n = x.shape[1]
-            vals = (np.eye(d, dtype=np.float64) / d).reshape(d * d, 1)
-            return np.tile(vals, (1, n))
+            
+            # Base value: ln(1/3)
+            val = np.log(1.0/3.0)
+            
+            # Perturbations
+            eps = 1e-4
+            # diag = [val - eps, val, val + eps]
+            # This ensures distinct eigenvalues for L, and thus for A = exp(L).
+            
+            vals = np.zeros((d*d, n), dtype=np.float64)
+            
+            # 3D case assumed
+            if d == 3:
+                # L11
+                vals[0, :] = val - eps
+                # L22
+                vals[4, :] = val
+                # L33
+                vals[8, :] = val + eps
+            elif d == 2:
+                vals[0, :] = val - eps
+                vals[3, :] = val + eps
+                
+            return vals
 
-        self.A.interpolate(_A_const)
-        self.A.x.scatter_forward()
+        self.L.interpolate(_L_init)
+        self.L.x.scatter_forward()
 
         assign(self.S, 0.0)
 
         # Register fields
         self.storage.fields.register("scalars", [self.rho, self.S], filename="scalars.bp")
-        self.storage.fields.register("A", [self.A], filename="A.bp")
+        self.storage.fields.register("L", [self.L], filename="L.bp")
 
         # Boundary conditions
         bc_mech = build_dirichlet_bcs(self.V, self.cfg.facet_tags, id_tag=1, value=0.0)
@@ -164,10 +190,10 @@ class Remodeller:
         ]
 
         # Subsolvers
-        mechsolver = MechanicsSolver(u, self.rho, self.A, self.cfg, bc_mech, neumann_bcs)
+        mechsolver = MechanicsSolver(u, self.rho, self.L, self.cfg, bc_mech, neumann_bcs)
         self.stimsolver = StimulusSolver(self.S, self.S_old, self.cfg)
-        self.densolver = DensitySolver(self.rho, self.rho_old, self.A, self.S, self.cfg)
-        self.dirsolver = DirectionSolver(self.A, self.A_old, self.cfg)
+        self.densolver = DensitySolver(self.rho, self.rho_old, self.L, self.S, self.cfg)
+        self.dirsolver = DirectionSolver(self.L, self.L_old, self.cfg)
 
         # Driver
         self.driver = GaitDriver(mechsolver, gait_loader, self.cfg)
@@ -181,8 +207,8 @@ class Remodeller:
             self.dirsolver,
             self.rho,
             self.rho_old,
-            self.A,
-            self.A_old,
+            self.L,
+            self.L_old,
             self.S,
             self.S_old,
         )
@@ -269,12 +295,12 @@ class Remodeller:
         )
 
         self.storage.write_fields("scalars", float(t))
-        self.storage.write_fields("A", float(t))
+        self.storage.write_fields("L", float(t))
 
     def step(self, dt: float, *, step_index: Optional[int] = None, time_days: Optional[float] = None) -> None:
         """Single timestep: fixed-point iteration until coupling tolerance met."""
         assign(self.rho_old, self.rho)
-        assign(self.A_old, self.A)
+        assign(self.L_old, self.L)
         assign(self.S_old, self.S)
 
         if not self.solvers_initialized:
@@ -302,21 +328,21 @@ class Remodeller:
                 self.S.x.array[:] = self.S_old.x.array + dt_curr * (
                     w1 * self.S_rate_last.x.array - w2 * self.S_rate_last2.x.array
                 )
-                self.A.x.array[:] = self.A_old.x.array + dt_curr * (
-                    w1 * self.A_rate_last.x.array - w2 * self.A_rate_last2.x.array
+                self.L.x.array[:] = self.L_old.x.array + dt_curr * (
+                    w1 * self.L_rate_last.x.array - w2 * self.L_rate_last2.x.array
                 )
             else:
                 # AB1 (Forward Euler)
                 self.rho.x.array[:] = self.rho_old.x.array + dt_curr * self.rho_rate_last.x.array
                 self.S.x.array[:] = self.S_old.x.array + dt_curr * self.S_rate_last.x.array
-                self.A.x.array[:] = self.A_old.x.array + dt_curr * self.A_rate_last.x.array
+                self.L.x.array[:] = self.L_old.x.array + dt_curr * self.L_rate_last.x.array
             
             # Enforce bounds for density
             np.clip(self.rho.x.array, self.cfg.rho_min, self.cfg.rho_max, out=self.rho.x.array)
             
             self.rho.x.scatter_forward()
             self.S.x.scatter_forward()
-            self.A.x.scatter_forward()
+            self.L.x.scatter_forward()
 
         # Update dt [days] and reassemble LHS for time-dependent solvers if dt changed
         if self._current_dt is None or abs(float(dt) - float(self._current_dt)) > 1e-12:
@@ -375,16 +401,16 @@ class Remodeller:
         # Shift history
         assign(self.rho_rate_last2, self.rho_rate_last)
         assign(self.S_rate_last2, self.S_rate_last)
-        assign(self.A_rate_last2, self.A_rate_last)
+        assign(self.L_rate_last2, self.L_rate_last)
         
         # Calculate new rates: (x_new - x_old) / dt
         self.rho_rate_last.x.array[:] = (self.rho.x.array - self.rho_old.x.array) / dt_curr
         self.S_rate_last.x.array[:] = (self.S.x.array - self.S_old.x.array) / dt_curr
-        self.A_rate_last.x.array[:] = (self.A.x.array - self.A_old.x.array) / dt_curr
+        self.L_rate_last.x.array[:] = (self.L.x.array - self.L_old.x.array) / dt_curr
         
         self.rho_rate_last.x.scatter_forward()
         self.S_rate_last.x.scatter_forward()
-        self.A_rate_last.x.scatter_forward()
+        self.L_rate_last.x.scatter_forward()
         
         self.dt_prev = dt_curr
         self.step_count += 1

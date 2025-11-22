@@ -132,7 +132,7 @@ class TestConstitutiveLaw:
 # =============================================================================
 
 class TestAdvancedConstitutiveLaws:
-    """Test new density-elasticity relationship and mechanostat regulation."""
+    """Test new density-elasticity relationship and density evolution."""
 
     @pytest.mark.parametrize("unit_cube", [6], indirect=True)
     def test_dual_power_law_stiffness(self, unit_cube, facet_tags):
@@ -198,66 +198,13 @@ class TestAdvancedConstitutiveLaws:
         assert E_low < E_trans < E_high,             f"Transition E({rho_trans})={E_trans:.2f} not between {E_low:.2f} and {E_high:.2f}"
 
     @pytest.mark.parametrize("unit_cube", [6], indirect=True)
-    def test_mechanostat_equilibrium_shift(self, unit_cube, facet_tags):
-        """Verify mechanostat equilibrium density shifts with S_shift."""
+    def test_linear_driver_rate(self, unit_cube, facet_tags, iso_tensor_factory):
+        """Verify density evolution rate is proportional to stimulus."""
         comm = MPI.COMM_WORLD
         cfg = Config(domain=unit_cube, facet_tags=facet_tags, verbose=(comm.rank == 0))
         
-        # Parameters
-        cfg.rho_min = 0.1
-        cfg.rho_max = 1.0
-        cfg.S_form_th = 0.2
-        cfg.S_resorb_th = -0.2
-        cfg.k_step = 10.0
-        
-        P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
-        Q = functionspace(unit_cube, P1)
-        
-        def get_rho_eq(S_val, current_rho=0.5):
-            S = Function(Q, name="S")
-            S.x.array[:] = S_val
-            S.x.scatter_forward()
-            
-            rho = Function(Q, name="rho")
-            rho.x.array[:] = current_rho
-            rho.x.scatter_forward()
-            
-            # Replicate rho_eq logic from DensitySolver
-            k_step = float(cfg.k_step)
-            S_form = float(cfg.S_form_th)
-            S_resorb = float(cfg.S_resorb_th)
-
-            H_form = 1.0/(1.0 + ufl.exp(-k_step*(S - S_form)))
-            H_resorb = 1.0/(1.0 + ufl.exp(-k_step*(S_resorb - S)))
-            
-            rho_eq_expr = cfg.rho_max*H_form + cfg.rho_min*H_resorb + (1.0 - H_form - H_resorb)*rho
-            
-            val_local = fem.assemble_scalar(fem.form(rho_eq_expr * cfg.dx))
-            vol_local = fem.assemble_scalar(fem.form(1.0 * cfg.dx))
-            return comm.allreduce(val_local, op=MPI.SUM) / comm.allreduce(vol_local, op=MPI.SUM)
-
-        # 1. Formation zone (S > S_form_th)
-        rho_form = get_rho_eq(0.5) # S=0.5 > 0.2
-        assert abs(rho_form - cfg.rho_max) < 0.05, f"Formation zone should target rho_max, got {rho_form}"
-
-        # 2. Resorption zone (S < S_resorb_th)
-        rho_resorb = get_rho_eq(-0.5) # S=-0.5 < -0.2
-        assert abs(rho_resorb - cfg.rho_min) < 0.05, f"Resorption zone should target rho_min, got {rho_resorb}"
-
-        # 3. Dead zone (S_resorb_th < S < S_form_th)
-        rho_dead = get_rho_eq(0.0, current_rho=0.5) # S=0
-        assert abs(rho_dead - 0.5) < 0.05, f"Dead zone should maintain current rho, got {rho_dead}"
-
-    @pytest.mark.parametrize("unit_cube", [6], indirect=True)
-    def test_mechanostat_lazy_zone(self, unit_cube, facet_tags, iso_tensor_factory):
-        """Verify lazy zone suppresses remodeling rate for small |S|."""
-        comm = MPI.COMM_WORLD
-        cfg = Config(domain=unit_cube, facet_tags=facet_tags, verbose=(comm.rank == 0))
-        
-        cfg.S_lazy = 0.5
-        cfg.lambda_form = 1.0
-        cfg.lambda_resorb = 1.0
-        cfg.dt = 0.01
+        cfg.k_rho = 1.0
+        cfg.dt = 0.1
         
         P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
         P1_ten = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3, 3))
@@ -275,7 +222,7 @@ class TestAdvancedConstitutiveLaws:
         
         S = Function(Q, name="S")
         
-        def get_rate_factor(S_val):
+        def get_rate(S_val):
             S.x.array[:] = S_val
             S.x.scatter_forward()
             
@@ -287,31 +234,22 @@ class TestAdvancedConstitutiveLaws:
             M_new = comm.allreduce(fem.assemble_scalar(fem.form(rho * cfg.dx)), op=MPI.SUM)
             M_old = comm.allreduce(fem.assemble_scalar(fem.form(rho_old * cfg.dx)), op=MPI.SUM)
             dM = M_new - M_old
+            vol = comm.allreduce(fem.assemble_scalar(fem.form(1.0 * cfg.dx)), op=MPI.SUM)
             
-            # Approximate driving force
-            # For S > 0 (formation), target is rho_max
-            # For S < 0 (resorption), target is rho_min
-            # Here we test S > 0
-            target = cfg.rho_max if S_val > 0 else cfg.rho_min
-            driving_force = cfg.lambda_form * (target - 0.5)
-            
-            if abs(driving_force) < 1e-6:
-                return 0.0
-            
-            return dM / (driving_force * cfg.dt)
+            return (dM / vol) / cfg.dt
         
-        # Case 1: Small S (Lazy zone active)
-        # S = 0.1 * S_lazy = 0.05
-        # f(S) = 0.05 / (0.05 + 0.5) ~ 0.09
-        # Also need to ensure we are in formation zone for the mechanostat logic to kick in
-        # Set S_form_th low so we are in formation zone
-        cfg.S_form_th = 0.01
+        # Rate should be k_rho * S * (rho_max - rho) for S > 0
+        # Rate should be k_rho * S * (rho - rho_min) for S < 0 (S is negative, so rate is negative)
         
-        f_small = get_rate_factor(0.05)
+        # Case 1: S = 0.1
+        rate_pos = get_rate(0.1)
+        expected_pos = cfg.k_rho * 0.1 * (cfg.rho_max - 0.5)
+        assert abs(rate_pos - expected_pos) < 1e-3, f"Positive rate mismatch: got {rate_pos}, expected {expected_pos}"
         
-        # Case 2: Large S (Lazy zone inactive)
-        # S = 10 * S_lazy = 5.0
-        f_large = get_rate_factor(5.0)
-        
-        assert f_small < 0.2, f"Lazy zone should suppress rate for small S, got factor {f_small:.2f}"
-        assert f_large > 0.8, f"Lazy zone should allow full rate for large S, got factor {f_large:.2f}"
+        # Case 2: S = -0.1
+        rate_neg = get_rate(-0.1)
+        # Formula: k_rho * (S_plus*rho_max + S_minus*rho_min - (S_plus+S_minus)*rho)
+        # S_plus=0, S_minus=0.1
+        # Rate = k_rho * (0.1 * rho_min - 0.1 * rho) = k_rho * 0.1 * (rho_min - rho)
+        expected_neg = cfg.k_rho * 0.1 * (cfg.rho_min - 0.5)
+        assert abs(rate_neg - expected_neg) < 1e-3, f"Negative rate mismatch: got {rate_neg}, expected {expected_neg}"

@@ -50,11 +50,14 @@ class RemodelingDriver(Protocol):
     def update_stiffness(self) -> None: ...
 
 
+from simulation.utils import matrix_ln
+
 class GaitDriver:
     """Gait-averaged Carter–Beaupré daily stress stimulus + structure tensor.
 
     ψ_day(x) = N_cyc * ⟨(σ_eff(x)/ψ_ref)^m⟩_cycle   [-]
     M(x) = ⟨ε_devᵀ ε_dev⟩_cycle
+    L_target(x) = log(M(x))
     """
 
     def __init__(self, mech: MechanicsSolver, gait_loader: FemurRemodellerGait, config: Config):
@@ -90,6 +93,7 @@ class GaitDriver:
         # UFL Expressions
         self.psi_expr: Optional[ufl.core.expr.Expr] = None
         self.M_expr: Optional[ufl.core.expr.Expr] = None
+        self.L_target_expr: Optional[ufl.core.expr.Expr] = None
         self._build_expressions()
         
         self._last_stats: Optional[Dict] = None
@@ -179,6 +183,9 @@ class GaitDriver:
 
     def structure_expr(self) -> ufl.core.expr.Expr:
         return self.M_expr
+    
+    def log_structure_expr(self) -> ufl.core.expr.Expr:
+        return self.L_target_expr
 
     def _precompute_loads(self) -> List[Tuple[np.ndarray, ...]]:
         """Pre-calculate traction vector arrays for all phases."""
@@ -263,4 +270,14 @@ class GaitDriver:
         # Final expressions
         self.psi_expr = N_cyc * J_cycle
         self.M_expr = M_cycle
+        
+        # Log-Euclidean Target
+        # Ensure M is SPD and unit trace before taking log
+        # M_cycle is already PSD (sum of outer products), so we use unittrace_psd
+        
+        d = self.mech.u.function_space.mesh.geometry.dim
+        from simulation.utils import unittrace_psd
+        M_hat = unittrace_psd(M_cycle, d, eps=self.cfg.smooth_eps)
+        self.L_target_expr = matrix_ln(M_hat)
+
 
