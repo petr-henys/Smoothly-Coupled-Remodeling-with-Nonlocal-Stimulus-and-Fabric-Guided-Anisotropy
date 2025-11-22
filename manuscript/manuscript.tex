@@ -416,11 +416,11 @@ Find $\mathbf{u}^{n}$ such that
 \end{equation}
 with $\boldsymbol{\sigma}$ given by \eqref{eq:stress-law-nd}, $E(\rho)$ by \eqref{eq:E-rho-nd} with the lower clamp \eqref{eq:smooth-max-nd}, and $\widehat{\mathbf{A}}$ built from $\mathbf{A}^{n}$ via \eqref{eq:Ahat-blend-nd}.
 
-\paragraph{Stimulus.} (We keep the reaction coefficient $\tau_S$ explicit to match the implementation constants.)
-Given $\psi(\mathbf{u}^{n},\rho^{n},\mathbf{A}^{n})$ from \eqref{eq:stim-psi-nd}, find $S^{n}$ such that
+\paragraph{Stimulus.} (We keep the reaction coefficient $\tau_S$ explicit to match the implementation constants.) We take $\psi_{\mathrm{ref}}:=1$ to match the homeostatic reference level in~\eqref{eq:stim-strong-nd}.
+Given $\psi_{\mathrm{day}}(\mathbf{u}^{n},\rho^{n},\mathbf{A}^{n})$ from \eqref{eq:stim-psi-nd}, find $S^{n}$ such that
 \begin{equation}\label{eq:be-stim}
 \frac{c_S}{\Delta t^n}\big(S^{n}-S^{n-1}\big)\;-\;\kappa_S\,\Delta S^{n}\;+\;\tau_S\,S^{n}
-\;=\; r_S\Big(\psi(\mathbf{u}^{n},\rho^{n},\mathbf{A}^{n})-\psi_{\mathrm{ref}}\Big)\quad\text{in }\Omega,
+\;=\; r_S\Big(\psi_{\mathrm{day}}(\mathbf{u}^{n},\rho^{n},\mathbf{A}^{n})-\psi_{\mathrm{ref}}\Big)\quad\text{in }\Omega,
 \end{equation}
 with the Neumann condition from \eqref{eq:stim-bc-ic-nd} and $S^{0}=S_0$.
 
@@ -614,14 +614,14 @@ The bone matrix is modeled as a locally orthotropic material. The isotropic base
 \[
 E(\rho) = E_0\,\rho^{n(\rho)}, \quad n(\rho) \in [n_{\mathrm{cort}}, n_{\mathrm{trab}}],
 \]
-with $E_0=15\,\mathrm{GPa}$, Poisson's ratio $\nu=0.3$, and exponents transitioning from $n_{\mathrm{trab}}=2.0$ (trabecular) to $n_{\mathrm{cort}}=1.2$ (cortical).
+with $E_0=15\,\mathrm{GPa}=15{,}000\,\mathrm{MPa}$, Poisson's ratio $\nu=0.3$, and exponents transitioning from $n_{\mathrm{trab}}=2.0$ (trabecular) to $n_{\mathrm{cort}}=1.2$ (cortical).
 Directional reinforcement is controlled by the anisotropy factor $\xi_{\mathrm{aniso}}=0.3$, which scales the rank-one contribution aligned with the fabric tensor $\widehat{\mathbf{A}}$.
 
 \paragraph{Mechanoregulation and Stimulus.}
 The remodeling signal is driven by the deviation of the daily stress stimulus $\psi_{\mathrm{day}}$ from a homeostatic reference $\psi_{\mathrm{ref}}=20.0\,\mathrm{MPa}$. The stimulus field $S$ evolves via a diffusion-reaction equation with capacity $c_S=1.0$, intrinsic decay $\tau_S=1.0\,\mathrm{day}^{-1}$, and diffusivity $\kappa_S=1.0\,\mathrm{mm}^2\,\mathrm{day}^{-1}$. The transduction gain is set to $r_S=1.0\,\mathrm{day}^{-1}$.
 
 \paragraph{Density Evolution.}
-Density kinetics follow a smooth dual-threshold mechanostat. The formation and resorption thresholds are set to $S_{\mathrm{form}}=0.2$ and $S_{\mathrm{resorb}}=-0.2$, respectively. A continuous gating factor with width $S_{\mathrm{lazy}}=0.25$ further suppresses remodeling activity near equilibrium ($S \approx 0$). The maximum remodeling rates are $\lambda_{\mathrm{form}}=\lambda_{\mathrm{resorb}}=0.1\,\mathrm{day}^{-1}$. Spatial regularization is provided by anisotropic density diffusion with $\beta_{\parallel}=\beta_{\perp}=0.1\,\mathrm{mm}^2\,\mathrm{day}^{-1}$.
+Density kinetics follow a smooth dual-threshold mechanostat. The formation and resorption thresholds are set to $S_{\mathrm{form}}=0.2$ and $S_{\mathrm{resorb}}=-0.2$, respectively. A continuous gating factor with width $S_{\mathrm{lazy}}=0.25$ further suppresses remodeling activity near equilibrium ($S \approx 0$). The maximum remodeling rates are $\lambda_{\mathrm{form}}=\lambda_{\mathrm{resorb}}=0.1\,\mathrm{day}^{-1}$. Spatial regularization is provided by anisotropic density diffusion with $\beta_{\parallel}=\beta_{\perp}=0.1\,\mathrm{mm}^2\,\mathrm{day}^{-1}$. We choose a nominal remodeling rate $\lambda_\rho>0$ with units $\mathrm{day}^{-1}$, of the same order as $|\lambda_{\mathrm{form}}|$ and $|\lambda_{\mathrm{resorb}}|$; it enters the Backward--Euler update~\eqref{eq:be-rho} through the smooth gate $f(|S^{n}|_{\varepsilon})$.
 
 \paragraph{Fabric Evolution.}
 The fabric tensor $\mathbf{A}$ relaxes toward the loading-induced target $\widehat{\mathbf{M}}$ with a time constant $\tau_A=100.0\,\mathrm{days}$ and capacity $c_A=1.0$. Spatial smoothness is enforced by a diffusion length scale $\ell=2.0\,\mathrm{mm}$, preventing the formation of singular orientation fields.
