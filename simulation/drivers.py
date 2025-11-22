@@ -26,18 +26,6 @@ if TYPE_CHECKING:
     from simulation.femur_gait import FemurRemodellerGait
 
 
-def von_mises_stress(sig: ufl.core.expr.Expr) -> ufl.core.expr.Expr:
-    """Von Mises equivalent stress σ_vm from Cauchy stress tensor."""
-    s = ufl.dev(sig)
-    # Add small epsilon for numerical stability of sqrt(0)
-    return ufl.sqrt(1.5 * ufl.inner(s, s) + 1e-16)
-
-def von_mises_strain(eps: ufl.core.expr.Expr) -> ufl.core.expr.Expr:
-    """Equivalent strain ε_eq = sqrt(2/3 * e_dev : e_dev)."""
-    e_dev = ufl.dev(eps)
-    return ufl.sqrt((2.0/3.0) * ufl.inner(e_dev, e_dev) + 1e-16)
-
-
 class RemodelingDriver(Protocol):
     """Protocol for drivers that provide mechanical fields to remodeling PDEs."""
 
@@ -70,7 +58,6 @@ class GaitDriver:
         # Cache config parameters
         self.psi_ref = float(config.psi_ref)
         self.exponent = float(config.n_power)
-        self.stimulus_type = config.stimulus_type
 
         # Quadrature setup
         quad = list(self.gait.get_quadrature())
@@ -119,10 +106,6 @@ class GaitDriver:
 
         if abs(self.exponent - float(self.cfg.n_power)) > 1e-9:
             self.exponent = float(self.cfg.n_power)
-            dirty = True
-            
-        if self.stimulus_type != self.cfg.stimulus_type:
-            self.stimulus_type = self.cfg.stimulus_type
             dirty = True
 
         if dirty:
@@ -226,31 +209,15 @@ class GaitDriver:
             structure_i = ufl.dot(ufl.transpose(e_dev_i), e_dev_i)
 
             # Calculate stimulus term based on type
-            if self.stimulus_type == "stress":
-                # ψ_term = w * (σ_vm / σ_ref)^m
-                sigma_vm_i = von_mises_stress(sig_i)
-                term = (sigma_vm_i / self.psi_ref) ** self.exponent
-                
-            elif self.stimulus_type == "strain":
-                # ψ_term = w * (ε_eq / ε_ref)^m
-                eps_eq_i = von_mises_strain(e_i)
-                term = (eps_eq_i / self.psi_ref) ** self.exponent
-                
-            elif self.stimulus_type == "sed":
-                # ψ_term = w * (SED_spec / SED_ref)^m
-                # U = 0.5 * σ : ε
-                U_i = 0.5 * ufl.inner(sig_i, e_i)
-                # Specific SED = U / rho
-                # Use max(rho, rho_min) to avoid division by zero
-                rho_safe = ufl.max_value(self.mech.rho, self.cfg.rho_min)
-                sed_spec = U_i / rho_safe
-                
-                term = (sed_spec / self.psi_ref) ** self.exponent
-                
-            else:
-                # Fallback to stress
-                sigma_vm_i = von_mises_stress(sig_i)
-                term = (sigma_vm_i / self.psi_ref) ** self.exponent
+            # ψ_term = w * (SED_spec / SED_ref)^m
+            # U = 0.5 * σ : ε
+            U_i = 0.5 * ufl.inner(sig_i, e_i)
+            # Specific SED = U / rho
+            # Use max(rho, rho_min) to avoid division by zero
+            rho_safe = ufl.max_value(self.mech.rho, self.cfg.rho_min)
+            sed_spec = U_i / rho_safe
+            
+            term = (sed_spec / self.psi_ref) ** self.exponent
 
             # Accumulate weighted terms
             psi_p_terms.append(weight * term)

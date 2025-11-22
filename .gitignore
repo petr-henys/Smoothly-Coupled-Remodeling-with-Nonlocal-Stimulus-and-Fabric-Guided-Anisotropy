@@ -12,6 +12,7 @@
 !/README.md
 !/parametrizer.py
 !/postprocessor.py
+!/run_remodeller.py
 
 # Python cache
 __pycache__/
@@ -44,6 +45,7 @@ results/
 *.synctex.gz
 *.toc
 *.spl
+*.pdf
 
 # IDE
 .vscode/

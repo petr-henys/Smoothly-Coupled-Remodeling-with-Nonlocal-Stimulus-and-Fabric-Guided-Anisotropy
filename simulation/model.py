@@ -305,7 +305,6 @@ class Remodeller:
 
         if not self.solvers_initialized:
             self.driver.setup()
-            self.stimulus_type = self.cfg.stimulus_type # Cache stimulus type
             self.stimsolver.setup()
             self.densolver.setup()
             self.dirsolver.setup()
