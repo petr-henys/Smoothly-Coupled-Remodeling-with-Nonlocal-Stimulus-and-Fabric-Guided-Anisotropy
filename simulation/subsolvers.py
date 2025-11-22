@@ -459,6 +459,10 @@ class DensitySolver(_BaseLinearSolver):
         lam_resorb = float(self.cfg.lambda_resorb)
         lam_eff = fS * (lam_form*H_form + lam_resorb*H_resorb)
 
+        # Viscous regularization to avoid singularity in lazy zone
+        if hasattr(self.cfg, "viscous_damping") and self.cfg.viscous_damping > 0:
+             lam_eff = ufl.max_value(lam_eff, self.cfg.viscous_damping)
+
         # Target density: rho_max in formation, rho_min in resorption, otherwise hold current rho
         rho_eq = self.cfg.rho_max*H_form + self.cfg.rho_min*H_resorb + (1.0 - H_form - H_resorb)*self.rho
 

@@ -107,6 +107,26 @@ class Remodeller:
         self.S = Function(self.Q, name="stimulus")
         self.S_old = Function(self.Q, name="stimulus_old")
 
+        # Predictor state (Adams-Bashforth)
+        self.step_count = 0
+        self.dt_prev: Optional[float] = None
+        
+        self.rho_rate_last = Function(self.Q, name="rho_rate_last")
+        self.rho_rate_last2 = Function(self.Q, name="rho_rate_last2")
+        
+        self.S_rate_last = Function(self.Q, name="S_rate_last")
+        self.S_rate_last2 = Function(self.Q, name="S_rate_last2")
+        
+        self.A_rate_last = Function(self.T, name="A_rate_last")
+        self.A_rate_last2 = Function(self.T, name="A_rate_last2")
+        
+        assign(self.rho_rate_last, 0.0)
+        assign(self.rho_rate_last2, 0.0)
+        assign(self.S_rate_last, 0.0)
+        assign(self.S_rate_last2, 0.0)
+        assign(self.A_rate_last, 0.0)
+        assign(self.A_rate_last2, 0.0)
+
         assign(self.rho, self.cfg.rho0)
 
         d = self.gdim
@@ -259,10 +279,44 @@ class Remodeller:
 
         if not self.solvers_initialized:
             self.driver.setup()
+            self.stimulus_type = self.cfg.stimulus_type # Cache stimulus type
             self.stimsolver.setup()
             self.densolver.setup()
             self.dirsolver.setup()
             self.solvers_initialized = True
+
+        # Predictor step (Adams-Bashforth)
+        if self.step_count > 0:
+            dt_curr = float(dt)
+            dt_prev = self.dt_prev if self.dt_prev is not None else dt_curr
+            
+            # Coefficients
+            if self.step_count >= 2:
+                # AB2
+                w1 = 1.0 + dt_curr / (2.0 * dt_prev)
+                w2 = dt_curr / (2.0 * dt_prev)
+                
+                self.rho.x.array[:] = self.rho_old.x.array + dt_curr * (
+                    w1 * self.rho_rate_last.x.array - w2 * self.rho_rate_last2.x.array
+                )
+                self.S.x.array[:] = self.S_old.x.array + dt_curr * (
+                    w1 * self.S_rate_last.x.array - w2 * self.S_rate_last2.x.array
+                )
+                self.A.x.array[:] = self.A_old.x.array + dt_curr * (
+                    w1 * self.A_rate_last.x.array - w2 * self.A_rate_last2.x.array
+                )
+            else:
+                # AB1 (Forward Euler)
+                self.rho.x.array[:] = self.rho_old.x.array + dt_curr * self.rho_rate_last.x.array
+                self.S.x.array[:] = self.S_old.x.array + dt_curr * self.S_rate_last.x.array
+                self.A.x.array[:] = self.A_old.x.array + dt_curr * self.A_rate_last.x.array
+            
+            # Enforce bounds for density
+            np.clip(self.rho.x.array, self.cfg.rho_min, self.cfg.rho_max, out=self.rho.x.array)
+            
+            self.rho.x.scatter_forward()
+            self.S.x.scatter_forward()
+            self.A.x.scatter_forward()
 
         # Update dt [days] and reassemble LHS for time-dependent solvers if dt changed
         if self._current_dt is None or abs(float(dt) - float(self._current_dt)) > 1e-12:
@@ -314,6 +368,26 @@ class Remodeller:
                 if proj_val is not None:
                     payload["proj_res_last"] = float(proj_val)
             self.telemetry.record("steps", payload, csv_event=True)
+
+        # Update rates for next step (Adams-Bashforth history)
+        dt_curr = float(dt)
+        
+        # Shift history
+        assign(self.rho_rate_last2, self.rho_rate_last)
+        assign(self.S_rate_last2, self.S_rate_last)
+        assign(self.A_rate_last2, self.A_rate_last)
+        
+        # Calculate new rates: (x_new - x_old) / dt
+        self.rho_rate_last.x.array[:] = (self.rho.x.array - self.rho_old.x.array) / dt_curr
+        self.S_rate_last.x.array[:] = (self.S.x.array - self.S_old.x.array) / dt_curr
+        self.A_rate_last.x.array[:] = (self.A.x.array - self.A_old.x.array) / dt_curr
+        
+        self.rho_rate_last.x.scatter_forward()
+        self.S_rate_last.x.scatter_forward()
+        self.A_rate_last.x.scatter_forward()
+        
+        self.dt_prev = dt_curr
+        self.step_count += 1
 
     def simulate(self, dt: float, total_time: float) -> None:
         """Run remodeling loop for ``total_time`` [days] with fixed ``dt`` [days]."""

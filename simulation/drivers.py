@@ -230,12 +230,15 @@ class GaitDriver:
                 term = (eps_eq_i / self.psi_ref) ** self.exponent
                 
             elif self.stimulus_type == "sed":
-                # ψ_term = w * (U / U_ref)^m
+                # ψ_term = w * (SED_spec / SED_ref)^m
                 # U = 0.5 * σ : ε
                 U_i = 0.5 * ufl.inner(sig_i, e_i)
-                # Ensure non-negative U for power (though U should be >= 0)
-                # U_i = ufl.max_value(U_i, 0.0) 
-                term = (U_i / self.psi_ref) ** self.exponent
+                # Specific SED = U / rho
+                # Use max(rho, rho_min) to avoid division by zero
+                rho_safe = ufl.max_value(self.mech.rho, self.cfg.rho_min)
+                sed_spec = U_i / rho_safe
+                
+                term = (sed_spec / self.psi_ref) ** self.exponent
                 
             else:
                 # Fallback to stress
