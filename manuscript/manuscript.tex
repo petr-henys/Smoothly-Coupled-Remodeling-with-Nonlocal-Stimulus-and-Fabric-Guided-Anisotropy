@@ -61,7 +61,7 @@
     country={Czechia}}
 %% Abstract
 \begin{abstract}
-We propose a four-field bone-remodeling formulation that co-evolves displacement $\mathbf{u}$, apparent density $\rho$, fabric $\mathbf{A}$, and a nonlocal mechanotransductive stimulus $S$. The elastic response couples a density-scaled isotropic baseline with a nonnegative rank-one reinforcement aligned to a trace-safe normalization of $\mathbf{A}$ (without explicit PSD projection). The stimulus follows a diffusion--reaction balance driven by elastic energy; density evolves via anisotropic transport guided by $\widehat{\mathbf{A}}$ and a smooth stimulus-gated relaxation to $[\rho_{\min},\rho_{\max}]$; fabric relaxes toward a trace-safe normalization of $\boldsymbol{\varepsilon}^\top\boldsymbol{\varepsilon}$ with spatial diffusion. Time integration is fully implicit Backward--Euler; space is discretized by conforming $H^1$ finite elements in a unified weak-form notation. Nonlinear coupling is solved by a partitioned block Gauss--Seidel sweep (mechanics $\rightarrow$ stimulus $\rightarrow$ density $\rightarrow$ fabric) wrapped in Type-I Anderson acceleration with Tikhonov regularization and residual safeguards. A single smoothing policy used across clamping, stimulus gates, and normalizations ensures differentiability and preserves coercivity, while the solver architecture yields stable, mesh-robust convergence without monolithic Jacobians.
+We propose a four-field bone-remodeling formulation that co-evolves displacement $\mathbf{u}$, apparent density $\rho$, fabric $\mathbf{A}$, and a nonlocal mechanotransductive stimulus $S$. The elastic response couples a density-scaled isotropic baseline with a nonnegative rank-one reinforcement aligned to a trace-safe normalization of $\mathbf{A}$ (without explicit PSD projection). The stimulus follows a diffusion--reaction balance driven by elastic energy; density evolves via anisotropic transport guided by $\widehat{\mathbf{A}}$ and a smooth stimulus-gated relaxation to $[\rho_{\min},\rho_{\max}]$; fabric relaxes toward a trace-safe normalization of $\boldsymbol{\varepsilon}^\top\boldsymbol{\varepsilon}$ with spatial diffusion. Time integration is fully implicit Backward--Euler; space is discretized by conforming $H^1$ finite elements in a unified weak-form notation. Nonlinear coupling is solved by a partitioned block Gauss--Seidel sweep (mechanics $\rightarrow$ stimulus $\rightarrow$ density $\rightarrow$ fabric) wrapped in Type-II Anderson acceleration with Tikhonov regularization and residual safeguards. A single smoothing policy used across clamping, stimulus gates, and normalizations ensures differentiability and preserves coercivity, while the solver architecture yields stable, mesh-robust convergence without monolithic Jacobians.
 \end{abstract}
 %% Keywords
 \begin{keyword}
@@ -91,14 +91,9 @@ In the \emph{evolution} of anisotropy, several authors align fabric with stress 
 
 % (Solver recap moved earlier; see \S\ref{sec:fp-aa} for details.)
 
-\section*{Strong form (nondimensionalized) equations}\label{sec:strong-forms-nd}
-\paragraph{Scaling and nondimensionalization.}
-We adopt characteristic scales $L_c$ (length), $u_c$ (displacement), $\rho_c$ (apparent density), $E_0$ (reference modulus), and $t_c=1/\tau_S^{\rm dim}$ (time). Stresses and energy are measured by $\sigma_c=E_0(u_c/L_c)$ and $\psi_c=E_0(u_c/L_c)^2$. Dimensional fields $(x,t,\mathbf{u},\rho,S,\mathbf{A})$ map to dimensionless ones via
-\[
-x=L_c\,x',\quad t=t_c\,t',\quad \mathbf{u}=u_c\,\mathbf{u}',\quad
-\rho=\rho_c\,\rho',\quad S=\frac{1}{\gamma_\rho t_c}\,S',\quad \mathbf{A}=\mathbf{A}'.
-\]
-All equations below are written in primeless variables after dropping the primes. In the reference implementation, the same primeless formulas are evaluated directly in the dimensional $(\mathrm{mm},\mathrm{day},\mathrm{MPa})$ unit system of \texttt{Config}. The boundary partition is $\partial\Omega=\Gamma_D\cup\Gamma_N$ with outward unit normal $\mathbf{n}$. The nondimensional traction vector $\mathbf{t}$ is scaled by $\sigma_c$; for example, uniaxial compression is expressed as $\mathbf{t}=(-t_p/\sigma_c,0,\ldots)$ on $\Gamma_N$. We use a \emph{single} smoothness parameter $\varepsilon>0$ consistently across operators whenever possible (density clamp, stimulus split, and trace-safe normalizations); when separate symbols appear (e.g., $\varepsilon_B$ in the direction target), they default to $\varepsilon$ unless stated otherwise for numerical reasons. Likewise, we keep a single steepness parameter $k>0$ for gating functions, with $k_B=k$ unless noted.
+\section*{Governing equations}\label{sec:strong-forms-nd}
+\paragraph{Units and scaling.}
+The reference implementation solves the governing equations in dimensional form using the unit system: length [mm], time [day], mass [tonne], and stress/energy [MPa]. The stimulus $S$ and relative density $\rho$ are dimensionless fields, while fabric $\mathbf{A}$ is dimensionless. The coefficients $c_S, \kappa_S, \tau_S$ carry appropriate physical units to ensure dimensional consistency. The boundary partition is $\partial\Omega=\Gamma_D\cup\Gamma_N$ with outward unit normal $\mathbf{n}$.
 
 \subsection*{Mechanical submodel}
 \label{subsec:mech-nd}
@@ -169,7 +164,7 @@ We form the symmetric part $\mathbf{A}_{\mathrm{sym}}:=\tfrac12(\mathbf{A}+\math
 This map yields a \emph{symmetric, unit-trace} tensor; for any $\varepsilon>0$ it is in fact \emph{positive-definite}. No conditional branching or explicit cone projections are used.
 
 \paragraph{Ellipticity and energy bounds without degeneracy.}
-Define the nondimensional strain-energy density
+Define the strain-energy density
 \begin{equation*}
 \psi(\mathbf{u},\rho,\mathbf{A})
 :=\mu(\rho)\,\boldsymbol{\varepsilon}(\mathbf{u}):\boldsymbol{\varepsilon}(\mathbf{u})
@@ -194,12 +189,12 @@ with a constant $c_{\mathrm{iso}}>0$ depending only on $(\nu,n,\rho_{\min},E_0)$
 The density--modulus law \eqref{eq:E-rho-nd} encodes the empirical power-law scaling between bone volume fraction (BV/TV) and apparent stiffness. The directional reinforcement supplements this isotropic baseline by increasing stiffness along preferred fabric directions, consistent with homogenized tissue-level elasticity models and with observations of strain-adaptive anisotropy in trabecular bone. The smooth lower clamp \eqref{eq:smooth-max-nd} guarantees strictly positive stiffness even in highly porous regions, thus preventing mechanical degeneracy and preserving differentiability. The normalization \eqref{eq:Ahat-blend-nd} filters the computed direction field into a \emph{symmetric, unit-trace} descriptor; with $\varepsilon>0$ it is \emph{positive-definite}. This combination yields a mechanically transparent, numerically robust model suitable for coupling with remodeling stimuli and evolution equations.
 
 \subsection*{Stimulus submodel}\label{subsec:stim-nd}
-We represent the mechanotransductive drive by a dimensionless scalar field $S:\Omega\times(0,T]\to\mathbb{R}$ that is \emph{generated} by mechanical activity and \emph{transported} through osteocytic/vascular pathways. Positive values correspond to net formation drive and negative values to net resorption drive; downstream remodeling laws act on smooth decompositions $S^\pm$ and $|S|$, so the sign of $S$ is intentional and no positivity constraint is imposed on the stimulus itself.
+We represent the mechanotransductive drive by a scalar field $S:\Omega\times(0,T]\to\mathbb{R}$ that is \emph{generated} by mechanical activity and \emph{transported} through osteocytic/vascular pathways. Positive values correspond to net formation drive and negative values to net resorption drive.
 
-The stimulus obeys a linear diffusion--reaction balance with a source proportional to departures from a homeostatic elastic-energy level,
+The stimulus obeys a linear diffusion--reaction balance driven by the deviation of a daily mechanical stimulus $\psi_{\mathrm{day}}$ from a homeostatic reference level of $1$:
 \begin{equation}\label{eq:stim-strong-nd}
 c_S\,\partial_t S \;-\; \kappa_S\,\Delta S \;+\; \tau_S\,S
-\;=\; r_S\big(\psi(\mathbf{u},\rho,\mathbf{A})-\psi_{\mathrm{ref}}\big)
+\;=\; r_S\big(\psi_{\mathrm{day}}(\mathbf{u},\rho,\mathbf{A}) - 1\big)
 \quad\text{in }\Omega\times(0,T],
 \end{equation}
 supplemented with homogeneous Neumann boundary conditions and an initial state,
@@ -207,30 +202,29 @@ supplemented with homogeneous Neumann boundary conditions and an initial state,
 \nabla S\!\cdot\!\mathbf{n}=0\ \ \text{on }\partial\Omega\times(0,T],\qquad
 S(\cdot,0)=S_0\ \ \text{in }\Omega.
 \end{equation}
-Here $c_S>0$ denotes a temporal capacity, $\kappa_S\ge 0$ a diffusivity, and $\tau_S>0$ the reaction/turnover rate. (Choosing $t_c=1/\tau_S^{\rm dim}$ would set $\tau_S\equiv1$ in nondimensional variables, but in the implementation we \emph{retain} $\tau_S$ explicitly.) The mechanical drive is the instantaneous nondimensional elastic-energy density
+Here $c_S>0$ denotes a temporal capacity, $\kappa_S\ge 0$ a diffusivity, and $\tau_S>0$ the reaction/turnover rate. The mechanical drive $\psi_{\mathrm{day}}$ is a cycle-averaged, normalized stress measure (Carter--Beaupr\'e type). For a gait cycle with $N_{\mathrm{cyc}}$ cycles per day, period $T_{\mathrm{cyc}}$, and weighting $w(t)$, it is defined as
 \begin{equation}\label{eq:stim-psi-nd}
-\psi(\mathbf{u},\rho,\mathbf{A}) \;=\; \tfrac12\,\boldsymbol{\sigma}(\mathbf{u},\rho,\mathbf{A}):\boldsymbol{\varepsilon}(\mathbf{u})\ \ge 0,
+\psi_{\mathrm{day}}(x) \;=\; N_{\mathrm{cyc}} \int_0^{T_{\mathrm{cyc}}} w(t) \left( \frac{\sigma_{\mathrm{vm}}(x,t)}{\sigma_{\mathrm{ref}}} \right)^m \,\frac{\mathrm{d}t}{T_{\mathrm{cyc}}},
 \end{equation}
-with $\boldsymbol{\varepsilon}$ and $\boldsymbol{\sigma}$ defined in the mechanical model.
+where $\sigma_{\mathrm{vm}}$ is the Von Mises equivalent stress, $\sigma_{\mathrm{ref}}$ is a reference stress (e.g., $20\,\mathrm{MPa}$), and $m$ is an empirical exponent.
 
 \paragraph{Quantitative analysis and biological interpretation.}
-Equation \eqref{eq:stim-strong-nd} acts as a spatio-temporal low-pass filter of the mechanical drive $\psi-\psi_{\mathrm{ref}}$. Regions of sustained supra-homeostatic energy ($\psi>\psi_{\mathrm{ref}}$) accumulate positive stimulus, while sub-homeostatic regions accumulate negative stimulus. Diffusion broadens and smooths these regions over the characteristic length
+Equation \eqref{eq:stim-strong-nd} acts as a spatio-temporal low-pass filter of the mechanical drive $\psi_{\mathrm{day}}-1$. Regions of sustained overload ($\psi_{\mathrm{day}}>1$) accumulate positive stimulus, while underloaded regions accumulate negative stimulus. Diffusion broadens and smooths these regions over the characteristic length
 \(
 \ell_S=\sqrt{\kappa_S/\tau_S}
-\)
-(in general), while the reaction term damps transient fluctuations with a characteristic time
+\), while the reaction term damps transient fluctuations with a characteristic time
 \(
 t_S=c_S/\tau_S
 \).
 The capacity $c_S$ thus sets the inertia with respect to temporal fluctuations in the drive, $\kappa_S$ controls spatial spread via gap-junction/vascular pathways, and $\tau_S$ sets the local turnover toward homeostasis. The homogeneous Neumann condition corresponds to zero normal flux of $S$ at $\partial\Omega$.
 
 \subsection*{Density submodel}\label{subsec:density-nd}
-The nondimensional apparent density $\rho=\rho(x,t)$ evolves under anisotropic transport aligned with the fabric and under a stimulus-driven relaxation toward admissible bounds $\rho_{\min}$ and $\rho_{\max}$ (both nondimensional). The stimulus $S=S(x,t)$ is the dimensionless field introduced in the stimulus submodel; its sign distinguishes formation ($S>0$) from resorption ($S<0$). The nondimensional strong form reads, for $(x,t)\in\Omega\times(0,T]$,
+The apparent density $\rho=\rho(x,t)$ evolves under anisotropic transport aligned with the fabric and under a stimulus-driven relaxation toward admissible bounds $\rho_{\min}$ and $\rho_{\max}$. The stimulus $S=S(x,t)$ drives a dual-threshold mechanostat. The strong form reads, for $(x,t)\in\Omega\times(0,T]$,
 \begin{equation}\label{eq:density-strong-nd}
 \begin{aligned}
 \partial_t \rho \;&-\; \nabla\!\cdot\!\big(\mathbf{D}_\rho(x,t)\,\nabla\rho\big)
-\;+\; \lambda_\rho\,f\!\big(|S|_{\varepsilon}\big)\,\rho
-\;=\; \lambda_\rho\,f\!\big(|S|_{\varepsilon}\big)\,\rho_{\mathrm{eq}}(S).
+\;+\; \lambda_{\mathrm{eff}}(S)\,\rho
+\;=\; \lambda_{\mathrm{eff}}(S)\,\rho_{\mathrm{eq}}(S).
 \end{aligned}\end{equation}
 supplemented with homogeneous no-flux boundary conditions and an admissible initial state,
 \begin{equation}\label{eq:density-bc-ic-nd}
@@ -243,31 +237,30 @@ Directional transport is modeled by the symmetric diffusion tensor
 \begin{equation}\label{eq:Drho-nd}
 \mathbf{D}_\rho(x,t) \;=\; \beta_{\perp}\,\mathbf{I} \;+\; \big(\beta_{\parallel}-\beta_{\perp}\big)\,\widehat{\mathbf{A}}(x,t),
 \end{equation}
-where $\beta_{\parallel},\beta_{\perp}>0$ are nondimensional diffusivities along and transverse to the fabric, respectively, and $\widehat{\mathbf{A}}(x,t)$ is the \emph{unit-trace, symmetric, positive-definite} fabric tensor obtained by the Gram normalisation described above. With $\beta_{\parallel},\beta_{\perp}>0$ this yields a uniformly positive-definite $\mathbf{D}_\rho$ without any conditional branching or explicit cone projections.
+where $\beta_{\parallel},\beta_{\perp}>0$ are diffusivities along and transverse to the fabric, respectively, and $\widehat{\mathbf{A}}(x,t)$ is the \emph{unit-trace, symmetric, positive-definite} fabric tensor obtained by the Gram normalisation described above.
 
-\paragraph{Stimulus gating and soft mechanostat.}
-To keep the kinetic terms in \eqref{eq:density-strong-nd} smooth at $S=0$, we adopt the same $\mathcal{C}^{\infty}$ approximation of the absolute value as in the implementation:
-\begin{equation}\label{eq:smooth-splits-nd}
-|S|_{\varepsilon}:=\sqrt{S^2+\varepsilon^2}.
-\end{equation}
-A stimulus-dependent weight and soft mechanostat target are then defined by
-\begin{equation*}
-f\!\big(|S|_{\varepsilon}\big)
-:=\begin{cases}
-\dfrac{|S|_{\varepsilon}}{|S|_{\varepsilon}+S_{\mathrm{lazy}}}, & S_{\mathrm{lazy}}>0,\\[1ex]
-1, & S_{\mathrm{lazy}}=0,
-\end{cases}
-\qquad
-\rho_{\mathrm{eq}}(S)
-:=\rho_{\min}+(\rho_{\max}-\rho_{\min})\,\dfrac{1}{1+\exp\!\big(-k_{\mathrm{mech}}(S-S_{\mathrm{shift}})\big)}.
-\end{equation*}
-Here $S_{\mathrm{lazy}}\ge 0$ sets the width of a “lazy zone’’ (small $|S|$ implies slow remodeling), $k_{\mathrm{mech}}>0$ controls the steepness of the logistic transition in $S$-space, and $S_{\mathrm{shift}}$ shifts the homeostatic setpoint.
+\paragraph{Stimulus gating and dual-threshold mechanostat.}
+We implement a smooth Frost-like mechanostat with a "lazy zone" near $S=0$ and distinct formation/resorption regimes. Let $|S|_{\varepsilon}=\sqrt{S^2+\varepsilon^2}$ and define a lazy-zone gating factor
+\[
+f(|S|) := \frac{|S|_{\varepsilon}}{|S|_{\varepsilon} + S_{\mathrm{lazy}}}.
+\]
+We define smooth activation functions for formation ($S > S_{\mathrm{form}}$) and resorption ($S < S_{\mathrm{resorb}}$) using sigmoids:
+\[
+H_{\mathrm{form}}(S) = \frac{1}{1 + e^{-k(S - S_{\mathrm{form}})}}, \qquad
+H_{\mathrm{resorb}}(S) = \frac{1}{1 + e^{-k(S_{\mathrm{resorb}} - S)}}.
+\]
+The effective rate $\lambda_{\mathrm{eff}}$ and target density $\rho_{\mathrm{eq}}$ are
+\begin{align*}
+\lambda_{\mathrm{eff}}(S) &:= f(|S|)\,\big(\lambda_{\mathrm{form}} H_{\mathrm{form}}(S) + \lambda_{\mathrm{resorb}} H_{\mathrm{resorb}}(S)\big), \\
+\rho_{\mathrm{eq}}(S) &:= \rho_{\max} H_{\mathrm{form}}(S) + \rho_{\min} H_{\mathrm{resorb}}(S) + \big(1 - H_{\mathrm{form}}(S) - H_{\mathrm{resorb}}(S)\big)\rho.
+\end{align*}
+In the "dead zone" where neither threshold is exceeded, $\rho_{\mathrm{eq}} \approx \rho$ and the reaction term vanishes, leaving only diffusion.
 
 \paragraph{Quantitative analysis and biological interpretation.}
-Equation \eqref{eq:density-strong-nd} combines anisotropic diffusion with a stimulus-gated soft mechanostat. The diffusion term $\nabla\!\cdot(\mathbf{D}_\rho\nabla\rho)$ spreads mass preferentially along the principal directions of $\widehat{\mathbf{A}}$, while the reaction terms drive $\rho$ toward the bounded logistic target $\rho_{\mathrm{eq}}(S)\in[\rho_{\min},\rho_{\max}]$ at a rate modulated by $f(|S|_{\varepsilon})$. Large $|S|$ (outside the lazy zone) yields fast relaxation toward $\rho_{\mathrm{eq}}$, whereas in regions where $S\approx 0$ the dynamics is transport-dominated. Under the no-flux boundary condition \eqref{eq:density-bc-ic-nd} and with $\rho_{\min}\le\rho_0\le\rho_{\max}$ a.e., the interval $[\rho_{\min},\rho_{\max}]$ remains dynamically invariant for the spatial average, consistent with the mass-balance diagnostics used in the implementation.
+Equation \eqref{eq:density-strong-nd} combines anisotropic diffusion with a stimulus-gated mechanostat. The diffusion term $\nabla\!\cdot(\mathbf{D}_\rho\nabla\rho)$ spreads mass preferentially along the principal directions of $\widehat{\mathbf{A}}$. The reaction terms drive $\rho$ toward $\rho_{\max}$ in regions of high stimulus ($S > S_{\mathrm{form}}$) and toward $\rho_{\min}$ in regions of low stimulus ($S < S_{\mathrm{resorb}}$). Inside the lazy zone, remodeling is suppressed.
 
 \subsection*{Direction (fabric) submodel}\label{subsec:direction-nd}
-The local fabric is described by a second-order, dimensionless tensor field $\mathbf{A}=\mathbf{A}(x,t)\in\mathbb{R}^{d\times d}$ ($d\in\{2,3\}$), which aligns with mechanically preferred directions and is smoothed in space by diffusion. We regard $\mathbf{A}$ as symmetric and treat its dynamics as a relaxation--diffusion flow toward a unit-trace, positive-definite target extracted from the current mechanical state. The nondimensional strong form on a bounded Lipschitz domain is
+The local fabric is described by a second-order, dimensionless tensor field $\mathbf{A}=\mathbf{A}(x,t)\in\mathbb{R}^{d\times d}$ ($d\in\{2,3\}$), which aligns with mechanically preferred directions and is smoothed in space by diffusion. We regard $\mathbf{A}$ as symmetric and treat its dynamics as a relaxation--diffusion flow toward a unit-trace, positive-definite target extracted from the current mechanical state. The strong form on a bounded Lipschitz domain is
 \begin{equation}\label{eq:A-strong-nd}
 \begin{aligned}
 c_A\,\partial_t \mathbf{A} \;-\; \frac{c_A\,\ell^2}{\tau_A}\,\Delta \mathbf{A} \;+\; \frac{c_A}{\tau_A}\,\mathbf{A}
@@ -279,18 +272,18 @@ supplemented with homogeneous no-flux boundary conditions and an admissible init
 \qquad
 \mathbf{A}(\cdot,0)=\mathbf{A}_0\ \ \text{in }\Omega.
 \end{equation}
-Here $\ell>0$ is a nondimensional interaction length, $c_A>0$ a capacity, and $\tau_A>0$ a relaxation time constant. The Laplacian and normal derivative act componentwise on $\mathbf{A}$. Equation \eqref{eq:A-strong-nd} is linear and uniformly parabolic in space--time for $\ell>0$ (and uniformly elliptic in space at each time with $\tau_A>0$).
+Here $\ell>0$ is an interaction length, $c_A>0$ a capacity, and $\tau_A>0$ a relaxation time constant. The Laplacian and normal derivative act componentwise on $\mathbf{A}$. Equation \eqref{eq:A-strong-nd} is linear and uniformly parabolic in space--time for $\ell>0$ (and uniformly elliptic in space at each time with $\tau_A>0$).
 
 \paragraph{Target construction from mechanics.}
-Let $\boldsymbol{\varepsilon}(\mathbf{u})$ be the small-strain tensor from the mechanical submodel. The instantaneous, dimensionless alignment tensor
+Let $\boldsymbol{\varepsilon}(\mathbf{u})$ be the small-strain tensor from the mechanical submodel and $\boldsymbol{\varepsilon}_{\mathrm{dev}} = \boldsymbol{\varepsilon} - \frac{1}{3}(\mathrm{tr}\,\boldsymbol{\varepsilon})\mathbf{I}$ be its deviatoric part. The instantaneous, dimensionless alignment tensor is defined by the deviatoric strain covariance:
 \begin{equation}\label{eq:M-def-nd}
-\mathbf{M}(\mathbf{u}) \;:=\; \boldsymbol{\varepsilon}(\mathbf{u})^\top\,\boldsymbol{\varepsilon}(\mathbf{u})
+\mathbf{M}(\mathbf{u}) \;:=\; \boldsymbol{\varepsilon}_{\mathrm{dev}}(\mathbf{u})^\top\,\boldsymbol{\varepsilon}_{\mathrm{dev}}(\mathbf{u}).
 \end{equation}
-is symmetric and positive semidefinite. We normalize it by the same \emph{trace-safe shift-and-rescale} used throughout (no blending or gating),
+We normalize it by the same \emph{trace-safe shift-and-rescale} used throughout (no blending or gating),
 \begin{equation}\label{eq:M-hat-nd}
 \widehat{\mathbf{M}} \;=\; \frac{\mathbf{M}+\varepsilon_M\,\mathbf{I}}{\mathrm{tr}\!\big(\mathbf{M}+\varepsilon_M\,\mathbf{I}\big)}\,,
 \end{equation}
-which is smooth in $\mathbf{M}$, symmetric, \emph{positive-definite for $\varepsilon_M>0$}, and unit-trace by construction.
+which is smooth in $\mathbf{M}$, symmetric, \emph{positive-definite for $\varepsilon_M>0$}, and unit-trace by construction. In the gait-driven context, $\mathbf{M}$ is averaged over the loading cycle.
 
 \paragraph{Quantitative analysis and biological interpretation.}
 The reaction term $\frac{c_A}{\tau_A}(\widehat{\mathbf{M}}-\mathbf{A})$ in \eqref{eq:A-strong-nd} drives $\mathbf{A}$ toward the mechanically informed, unit-trace target, while the diffusion $-\frac{c_A \ell^2}{\tau_A}\Delta\mathbf{A}$ spreads directional information and regularizes spatial oscillations. The homogeneous Neumann boundary condition represents no flux of directional content across $\partial\Omega$. Symmetry is preserved by the dynamics; the choice of a unit-trace target ensures that, at steady state ($\partial_t\mathbf{A}=0$), the solution coincides with a spatially smoothed version of $\widehat{\mathbf{M}}$. Tracing \eqref{eq:A-strong-nd} and using $\mathrm{tr}\,\widehat{\mathbf{M}}=1$ gives
@@ -302,7 +295,7 @@ so the spatial average of $\mathrm{tr}\,\mathbf{A}$ relaxes monotonically to $1$
 \paragraph{Regularization parameters and defaults.}
 Unless a sensitivity study dictates otherwise, we recommend using a unified smoothness $\varepsilon$ (and gate steepness $k$) across \eqref{eq:smooth-max-nd}, \eqref{eq:smooth-splits-nd}, \eqref{eq:Ahat-blend-nd}, and \eqref{eq:M-hat-nd} by setting $\varepsilon_B\!=\!\varepsilon_M\!=\!\varepsilon$ and $k_B\!=\!k_M\!=\!k$. With the Gram maps \eqref{eq:Ahat-blend-nd} and \eqref{eq:M-hat-nd}, both $\widehat{\mathbf{A}}$ and $\widehat{\mathbf{M}}$ are \emph{unit-trace and SPD} for any $\varepsilon>0$; the same $\mathcal{C}^\infty$ regularization supplies smooth clamps and lazy-zone weights in the density kinetics without explicit cone projections or case distinctions.
 
-\section*{Backward--Euler time discretization (nondimensional)}
+\section*{Backward--Euler time discretization}
 \label{sec:be-time}
 Let $0=t^0<t^1<\dots<t^N=T$ be a partition with $\Delta t^n:=t^n-t^{n-1}>0$. For any time-dependent field $X$, write $X^n\approx X(\cdot,t^n)$. Mechanics is quasi-static (no time derivative); $S$, $\rho$, and $\mathbf{A}$ are advanced by fully implicit Backward--Euler steps. Boundary and initial conditions are enforced at each time level exactly as in \eqref{eq:stim-bc-ic-nd}, \eqref{eq:density-bc-ic-nd}, and \eqref{eq:A-bc-ic-nd}.
 
@@ -393,33 +386,31 @@ With $\mathbf{M}(\mathbf{u}^{n})=\boldsymbol{\varepsilon}(\mathbf{u}^{n})^\top\b
 
 \section*{Fixed-point solver at a given time level: block Gauss--Seidel with Anderson acceleration}
 \label{sec:fp-aa}
-We describe the nonlinear solver used to obtain $(\mathbf{u}^n,S^n,\rho^n,\mathbf{A}^n)$ at a fixed time level $t^n$ from the Backward--Euler subproblems \eqref{eq:be-mech}--\eqref{eq:be-A}. Let
+We describe the nonlinear solver used to obtain $(\mathbf{u}^n,S^n,\rho^n,\mathbf{A}^n)$ at a fixed time level $t^n$ from the Backward--Euler subproblems \eqref{eq:be-mech}--\eqref{eq:be-A}. Let the remodeling state be
 \begin{equation*}
-\mathcal{X} \;:=\; V\times Q\times Q\times T,\qquad
-\mathbf{x} \;=\; (\mathbf{u},S,\rho,\mathbf{A}) \in \mathcal{X},
+\mathcal{X} \;:=\; Q\times T\times Q,\qquad
+\mathbf{x} \;=\; (\rho,\mathbf{A},S) \in \mathcal{X},
 \end{equation*}
 with the product inner product
 \begin{equation}\label{eq:product-norm}
 \langle \mathbf{x},\mathbf{y}\rangle_{\mathcal{X}} \;=\;
-\alpha_u\,(\boldsymbol{\varepsilon}(\mathbf{u}),\boldsymbol{\varepsilon}(\mathbf{v})) \;+\;
-\alpha_S\,(S,q) \;+\; \alpha_\rho\,(\rho,p) \;+\; \alpha_A\,(\mathbf{A},\mathbf{Q}) ,
+\alpha_\rho\,(\rho,p) \;+\; \alpha_A\,(\mathbf{A},\mathbf{Q}) \;+\; \alpha_S\,(S,q),
 \end{equation}
-for $\mathbf{y}=(\mathbf{v},q,p,\mathbf{Q})$ and positive weights $\alpha_\bullet$. Conceptually the fixed-point map acts on all four fields, but in the implementation the \emph{accelerated state} is restricted to the remodeling variables $(\rho,\mathbf{A},S)$: mechanics is re-solved inside each Gauss--Seidel sweep and its DOFs are not mixed by Anderson. The merit/stopping metric is a projected 2--norm on the flattened state $(\rho,\mathbf{A},S)$ with RMS-per-DOF block weights (i.e., $w_i=1/N_i$) that projects out any constrained DOFs.
+for $\mathbf{y}=(p,\mathbf{Q},q)$ and positive weights $\alpha_\bullet$. The mechanics field $\mathbf{u}$ is treated as a dependent variable $\mathbf{u}(\rho,\mathbf{A})$ determined by the equilibrium equations. The merit/stopping metric is a projected 2--norm on the flattened state $(\rho,\mathbf{A},S)$ with RMS-per-DOF block weights (i.e., $w_i=1/N_i$) that projects out any constrained DOFs.
 
 \paragraph{Block map.}
 Define the block Gauss--Seidel map $\mathcal{G}:\mathcal{X}\to\mathcal{X}$ by
 \begin{equation}\label{eq:block-map}
-\mathcal{G}(\mathbf{u},S,\rho,\mathbf{A})
+\mathcal{G}(\rho,\mathbf{A},S)
 :=
-\Big(\ \underbrace{\mathsf{U}(\rho,\mathbf{A})}_{\text{mech}},\ \underbrace{\mathsf{S}(\mathbf{u},\rho,\mathbf{A})}_{\text{stim}},\ \underbrace{\mathsf{R}(S,\mathbf{A})}_{\text{density}},\ \underbrace{\mathsf{A}(\mathbf{u})}_{\text{fabric}}\ \Big),
+\Big(\ \underbrace{\mathsf{R}(S_{\mathrm{new}},\mathbf{A})}_{\text{density}},\ \underbrace{\mathsf{A}(\mathbf{u}_{\mathrm{new}})}_{\text{fabric}},\ \underbrace{\mathsf{S}(\mathbf{u}_{\mathrm{new}},\rho,\mathbf{A})}_{\text{stim}}\ \Big),
 \end{equation}
-where each component is the unique solution of the corresponding linear elliptic BE subproblem at time $t^n$: mechanics uses coefficients from $(\rho,\widehat{\mathbf{A}})$, stimulus is driven by $\psi(\mathbf{u},\rho,\mathbf{A})$, density uses the soft mechanostat law $\rho_{\mathrm{eq}}(S)$ together with the transport tensor $\mathbf{D}_\rho(\widehat{\mathbf{A}})$ frozen at the argument, and fabric uses the target $\widehat{\mathbf{M}}(\mathbf{u})$. In code, $\mathsf{U}$ is realized by repeated mechanics solves inside a gait-averaged driver, while Anderson acceleration is applied only to the $(\rho,\mathbf{A},S)$ blocks. In the femur application, this driver builds a Carter/Beaupr\'e-style daily equivalent energy $\psi_{\mathrm{eq}}$ from phase-specific strain--energy densities via
+where $\mathbf{u}_{\mathrm{new}}=\mathsf{U}(\rho,\mathbf{A})$ is the equilibrium displacement and $S_{\mathrm{new}}=\mathsf{S}(\mathbf{u}_{\mathrm{new}},\rho,\mathbf{A})$ is the updated stimulus. In the femur application, the mechanics solver $\mathsf{U}$ builds a Carter/Beaupr\'e-style daily stress stimulus $\psi_{\mathrm{day}}$ from phase-specific Von Mises stresses via
 $
-J_{\mathrm{cycle}}(x)=\sum w\,(\psi(x)/\psi_{\mathrm{ref}})^{n_{\mathrm{power}}}\big/\sum w,\quad
-J_{\mathrm{day}}(x)=N_{\mathrm{cyc}}\,J_{\mathrm{cycle}}(x),\quad
-\psi_{\mathrm{eq}}(x)=\psi_{\mathrm{ref}}\,J_{\mathrm{day}}(x),
+J_{\mathrm{cycle}}(x)=\sum w\,(\sigma_{\mathrm{vm}}(x)/\sigma_{\mathrm{ref}})^{m}\big/\sum w,\quad
+\psi_{\mathrm{day}}(x)=N_{\mathrm{cyc}}\,J_{\mathrm{cycle}}(x),
 $
-with exponent $n_{\mathrm{power}}$ and cycle count $N_{\mathrm{cyc}}=\texttt{gait\_cycles\_per\_day}$ taken from \texttt{Config}; $\psi_{\mathrm{eq}}$ then enters the stimulus source term in place of the instantaneous $\psi$.
+with exponent $m$ and cycle count $N_{\mathrm{cyc}}=\texttt{gait\_cycles\_per\_day}$ taken from \texttt{Config}; $\psi_{\mathrm{day}}$ then enters the stimulus source term.
 
 The fixed point at $t^n$ solves
 \begin{equation}\label{eq:fp-residual}
@@ -427,19 +418,18 @@ The fixed point at $t^n$ solves
 \end{equation}
 
 \paragraph{Block Gauss--Seidel iteration.}
-Starting from $\mathbf{x}^{(0)}=(\mathbf{u}^{(0)},S^{(0)},\rho^{(0)},\mathbf{A}^{(0)})$, perform the sweep
+Given the state $\mathbf{x}^{(m)}=(\rho^{(m)},\mathbf{A}^{(m)},S^{(m)})$, we first compute the equilibrium displacement $\mathbf{u} = \mathsf{U}(\rho^{(m)},\mathbf{A}^{(m)})$ and then perform the updates:
 \begin{equation}\label{eq:gs-sweep}
 \begin{aligned}
-\mathbf{u}^{(m+1)} &:= \mathsf{U}\big(\rho^{(m)},\mathbf{A}^{(m)}\big),\\
-S^{(m+1)} &:= \mathsf{S}\big(\mathbf{u}^{(m+1)},\rho^{(m)},\mathbf{A}^{(m)}\big),\\
+S^{(m+1)} &:= \mathsf{S}\big(\mathbf{u},\rho^{(m)},\mathbf{A}^{(m)}\big),\\
 \rho^{(m+1)} &:= \mathsf{R}\big(S^{(m+1)},\mathbf{A}^{(m)}\big),\\
-\mathbf{A}^{(m+1)} &:= \mathsf{A}\big(\mathbf{u}^{(m+1)}\big).
+\mathbf{A}^{(m+1)} &:= \mathsf{A}\big(\mathbf{u}\big).
 \end{aligned}
 \end{equation}
-Let $x_{\mathrm{raw}}^{(m+1)}:=\mathcal{G}(\mathbf{x}^{(m)})$ denote the result of \eqref{eq:gs-sweep}. No external scalar damping $\omega_m$ is used; instead, damping/backtracking and step limiting are handled inside the accelerator (see below). Dirichlet DOFs in mechanics are always taken from the fresh GS result $x_{\mathrm{raw}}^{(m+1)}$ when forming any mixed iterate.
+The sweep \eqref{eq:gs-sweep} defines the raw update $x_{\mathrm{raw}}^{(m+1)}:=\mathcal{G}(\mathbf{x}^{(m)})$. No external scalar damping $\omega_m$ is used; instead, damping/backtracking and step limiting are handled inside the accelerator (see below).
 
-\paragraph{Anderson acceleration (Type~I with $\sum\alpha=1$).}
-We use a global, MPI-aware Type~I Anderson (Pulay) accelerator built on \emph{residual} snapshots
+\paragraph{Anderson acceleration (Type~II with $\sum\alpha=1$).}
+We use a global, MPI-aware Type~II Anderson (Pulay) accelerator built on \emph{residual} snapshots
 \(
 r^{(j)}:=x_{\mathrm{raw}}^{(j)}-\mathbf{x}^{(j-1)}
 \)
@@ -460,7 +450,7 @@ The accelerated candidate is then assembled as
 \mathbf{y} \;=\; \sum_{j=1}^{p} \alpha_j\Big(\mathbf{x}^{(m-p+j)} + \beta\,r^{(m-p+j+1)}\Big),\qquad
 \mathbf{s}:=\mathbf{y}-\mathbf{x}^{(m)},
 \end{equation}
-with a \emph{step limiter} enforcing $\|\mathbf{s}\|_2 \le \mathrm{factor}\,\|r^{(m+1)}\|_2$ (user parameter). The mixed iterate is $\mathbf{x}^{(m)}+\mathbf{s}$, after which mechanics Dirichlet DOFs are overwritten by the fresh GS values.
+with a \emph{step limiter} enforcing $\|\mathbf{x}_{\mathrm{cand}} - x_{\mathrm{raw}}^{(m+1)}\|_{\mathrm{proj}} \le \mathrm{factor}\,\|x_{\mathrm{raw}}^{(m+1)} - \mathbf{x}^{(m)}\|_{\mathrm{proj}}$. The mixed iterate is $\mathbf{x}^{(m)}+\mathbf{s}$.
 
 \paragraph{Projected-residual merit, safeguard, and backtracking.}
 The acceptance test uses a \emph{projected, RMS-per-DOF block-weighted} 2--norm on the flattened state $(\rho,\mathbf{A},S)$: let $\mathsf{P}$ project out any constrained DOFs and choose weights $w_i=1/N_i$ for each block. Denote by $\|\cdot\|_{\mathrm{proj}}$ the resulting norm. With
@@ -496,7 +486,7 @@ On bounded sets where the smooth gates/clamps are Lipschitz, $\mathcal{G}$ is lo
 \item For $m=1,2,\dots$ until the stopping test holds:
   \begin{enumerate}
   \item Perform one GS sweep to get $x_{\mathrm{raw}}^{(m+1)}$.
-  \item If AA is enabled, form $H$ from residual histories, solve \eqref{eq:kkt}, assemble $\mathbf{y}$, apply step limiting, and build $\mathbf{x}_{\mathrm{cand}}$ with mechanics Dirichlet DOFs taken from $x_{\mathrm{raw}}^{(m+1)}$.
+  \item If AA is enabled, form $H$ from residual histories, solve \eqref{eq:kkt}, assemble $\mathbf{y}$, apply step limiting, and build $\mathbf{x}_{\mathrm{cand}}$.
   \item Evaluate the projected-residual merit and apply the safeguard/backtracking \eqref{eq:safeguard}; fall back to Picard if needed.
   \item Accept the step, update histories (and schedule a restart if a trigger fires), and log diagnostics.
   \end{enumerate}
@@ -513,26 +503,26 @@ At the tissue scale, measurements place the Young's modulus in the high one- to 
 \paragraph{Trabecular fabric and anisotropy control.}
 Directionality is characterized by a unit-trace orientation/fabric tensor \(\widehat{\mathbf A}\). We introduce a scalar gain \(\xi_{\mathrm{aniso}}\) that multiplies a rank-one stiffness contribution aligned with \(\widehat{\mathbf A}\), thereby tuning the ratio \(E_{\max}/E_{\min}\). Mid-density human trabecular bone typically exhibits moderate elastic anisotropy \(E_{\max}/E_{\min}\approx 1.7\text{--}2.0\); we target this range during calibration. In the reference implementation we use \(\xi_{\mathrm{aniso}}=0.30\). \cite*{Hollister1994,vanRietbergen1995}
 
-\paragraph{Reference SED for mechanoregulation.}
-We anchor remodeling to a physiologic reference centered on strain amplitudes of order \(10^{-3}\) (mechanostat). Using \(\psi=\tfrac12 E\,\varepsilon^2\), these strains correspond to reference strain--energy densities in the \(10^{-4}\text{--}10^{-2}\,\mathrm{MPa}\) range for trabecular tissue stiffness. In code we take \(\psi_{\mathrm{ref}}=20.0\,\mathrm{MPa}\) (parameter \texttt{psi\_ref}). \cite*{Robling2006}
+\paragraph{Reference stress for mechanoregulation.}
+We anchor remodeling to a physiologic reference stress. In code we take $\sigma_{\mathrm{ref}}=20.0\,\mathrm{MPa}$ (parameter \texttt{psi\_ref}).
 
 \paragraph{Stimulus transport and kinetics: roles of \(\boldsymbol{\kappa_S}\), \(\boldsymbol{\tau_S}\), and \(\boldsymbol{c_S}\).}
-Osteocyte mechanotransduction combines rapid fluid-shear sensing and strain amplification at cell processes with solute transport through the lacunar--canalicular system (LCS). This motivates a diffusive--relaxing field \(S\) driven by local mechanical energy:
-\((c_S/\Delta t+\tau_S)S-\kappa_S\nabla^2 S=(c_S/\Delta t)S^{\mathrm{old}}+r_S(\psi-\psi_{\mathrm{ref}})\).
-Here, \(\kappa_S\) (\(\mathrm{mm^2\,day^{-1}}\)) controls spatial spread, \(\tau_S\) (\(\mathrm{day^{-1}}\)) sets the intrinsic relaxation rate, and \(c_S\) (dimensionless) is a \emph{capacity} that lumps fast receptor/second-messenger kinetics, effectively low-pass filtering the stimulus at time step \(\Delta t\). In the reference implementation we use \(c_S=1.0\), \(\tau_S=1.0\,\mathrm{day^{-1}}\), \(\kappa_S=2.5\,\mathrm{mm^2\,day^{-1}}\), and a mechano-transduction gain \(r_S=0.1\,\mathrm{(MPa\cdot day)^{-1}}\); these values yield stimulus magnitudes \(S=\mathcal{O}(1)\) under typical loading. In all runs \(\kappa_S\) is taken isotropic. \cite*{Wang2005PNAS,Price2011JBMR,Weinbaum1994,Robling2006}
+Osteocyte mechanotransduction combines rapid fluid-shear sensing and strain amplification at cell processes with solute transport through the lacunar--canalicular system (LCS). This motivates a diffusive--relaxing field \(S\) driven by local mechanical stimulus:
+\((c_S/\Delta t+\tau_S)S-\kappa_S\nabla^2 S=(c_S/\Delta t)S^{\mathrm{old}}+r_S(\psi_{\mathrm{day}}-1)\).
+Here, \(\kappa_S\) (\(\mathrm{mm^2\,day^{-1}}\)) controls spatial spread, \(\tau_S\) (\(\mathrm{day^{-1}}\)) sets the intrinsic relaxation rate, and \(c_S\) (dimensionless) is a \emph{capacity} that lumps fast receptor/second-messenger kinetics. In the reference implementation we use \(c_S=1.0\), \(\tau_S=1.0\,\mathrm{day^{-1}}\), \(\kappa_S=1.0\,\mathrm{mm^2\,day^{-1}}\), and a mechano-transduction gain \(r_S=1.0\,\mathrm{day^{-1}}\). \cite*{Wang2005PNAS,Price2011JBMR,Weinbaum1994,Robling2006}
 
 \paragraph{From apparent modulus to load prescription.}
 For uniaxial tests we prescribe the traction magnitude \(t_p = E_{\mathrm{app}}\,\varepsilon_{\mathrm{app}}\). In convergence studies we therefore: (i) compute \(E_{\mathrm{app}}\) by homogenization on the \(5\,\mathrm{mm}\) cube under PMUBC; (ii) select \(\varepsilon_{\mathrm{app}}=10^{-3}\) (and optionally \(1.5\times 10^{-3}\)); and (iii) set \(t_p\) accordingly, keeping boundary conditions identical across mesh refinements. \cite*{Hollister1994,vanRietbergen1995,Pahr2008}
 
 \paragraph{Calibration protocol (single pass).}
-(i) Fix \(L=5\,\mathrm{mm}\) and the sample's apparent density; (ii) set \(E_{0}\approx 15\,\mathrm{GPa}\), \(\nu=0.30\), and exponents \((n_{\mathrm{trab}},n_{\mathrm{cort}})\) as in \eqref{eq:E-rho-nd}, then run the six canonical homogenization cases to obtain \(\mathbb{C}_{\mathrm{app}}\) and principal \(E_i\); (iii) tune \(\xi_{\mathrm{aniso}}\) to match \(E_{\max}/E_{\min}\) in the fabric axes; (iv) set \(\psi_{\mathrm{ref}}=20.0\,\mathrm{MPa}\); (v) choose \((c_S,\tau_S,\kappa_S,r_S)\) within physiologically plausible ranges around the reference values above. \cite*{Helgason2008,Pahr2008,Wang2005PNAS,Robling2006}
+(i) Fix \(L=5\,\mathrm{mm}\) and the sample's apparent density; (ii) set \(E_{0}\approx 15\,\mathrm{GPa}\), \(\nu=0.30\), and exponents \((n_{\mathrm{trab}},n_{\mathrm{cort}})\) as in \eqref{eq:E-rho-nd}, then run the six canonical homogenization cases to obtain \(\mathbb{C}_{\mathrm{app}}\) and principal \(E_i\); (iii) tune \(\xi_{\mathrm{aniso}}\) to match \(E_{\max}/E_{\min}\) in the fabric axes; (iv) set \(\sigma_{\mathrm{ref}}=20.0\,\mathrm{MPa}\); (v) choose \((c_S,\tau_S,\kappa_S,r_S)\) within physiologically plausible ranges around the reference values above. \cite*{Helgason2008,Pahr2008,Wang2005PNAS,Robling2006}
 
 \paragraph{Baseline parameter set for spatial convergence (fixed across meshes).}
 \emph{Geometry:} \(L=5\,\mathrm{mm}\). \
 \emph{Elasticity:} \(E_{0}=15\,\mathrm{GPa}\), \(n_{\mathrm{trab}}=2.0\), \(n_{\mathrm{cort}}=1.2\), \(\nu=0.30\). \
 \emph{Anisotropy:} \(\xi_{\mathrm{aniso}}=0.30\). \
-\emph{Mechanoregulation:} \(\psi_{\mathrm{ref}}=20.0\,\mathrm{MPa}\). \
-\emph{Stimulus transport/kinetics:} \(c_S=1.0\), \(\tau_S=1.0\,\mathrm{day^{-1}}\), \(\kappa_S=2.5\,\mathrm{mm^2\,day^{-1}}\); sensitivity studies vary these within plausible lacunar--canalicular transport ranges. \
+\emph{Mechanoregulation:} \(\sigma_{\mathrm{ref}}=20.0\,\mathrm{MPa}\). \
+\emph{Stimulus transport/kinetics:} \(c_S=1.0\), \(\tau_S=1.0\,\mathrm{day^{-1}}\), \(\kappa_S=1.0\,\mathrm{mm^2\,day^{-1}}\); sensitivity studies vary these within plausible lacunar--canalicular transport ranges. \
 \emph{Loading:} \(t_p=E_{\mathrm{app}}\times 10^{-3}\) (and \(1.5\times 10^{-3}\) for the higher level), using identical PMUBC across refinements.
 \input{sections/homogenization}
 

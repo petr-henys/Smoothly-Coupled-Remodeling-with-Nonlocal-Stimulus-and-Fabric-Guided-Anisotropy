@@ -2,7 +2,7 @@
 \subsection*{Anderson acceleration: convergence and diagnostics}
 \label{subsec:anderson}
 \paragraph{Motivation and scope}
-To reduce the number of block fixed-point (block Picard/Gauss--Seidel) sub-iterations, we employ Type-I Anderson acceleration (AA-I) with finite memory $m$. We compare (i) a plain block Picard baseline and (ii) AA-I with standard safeguards (restart on deterioration and backtracking/damping) across representative couplings and time-step sizes $\Delta t$. We also report diagnostics that help choose~$m$ and monitor robustness.
+To reduce the number of block fixed-point (block Picard/Gauss--Seidel) sub-iterations, we employ Type-II Anderson acceleration (AA-II) with finite memory $m$. We compare (i) a plain block Picard baseline and (ii) AA-II with standard safeguards (restart on deterioration and backtracking/damping) across representative couplings and time-step sizes $\Delta t$. We also report diagnostics that help choose~$m$ and monitor robustness.
 % ==== Added clarifications (implementation-faithful) ====
 \subsection*{Interaction-gain diagnostics and spectral radius}\label{subsec:diag_rhoJ}
 We estimate a $3\times 3$ interaction-gain matrix $J$ of the Gauss--Seidel (GS) fixed-point map $G$ at the current state by finite-difference GS sweeps on the accelerated remodeling state $(\rho,\mathbf A,S)$: for each block we form a small deterministic perturbation $\delta_j$ and measure
@@ -30,7 +30,7 @@ We use the \emph{projected, RMS-per-DOF} merit and acceptance/backtracking defin
 The accelerated stacked state follows $(\rho,\mathbf A,S)$, while a single GS sweep updates blocks in the physical order $u\!\to\! S\!\to\!\rho\!\to\!\mathbf A$ (mechanics is recomputed inside the driver and is not part of the Anderson state). The interaction-gain matrix $J$ is indexed according to the $(\rho,\mathbf A,S)$ ordering.
 
 \subsection*{Anderson acceleration details}\label{subsec:aa_details}
-We use Type-I Anderson (Pulay) acceleration with the equality constraint $\sum_j \alpha_j=1$. The least-squares system is formed from the global Gram matrix $H=RR^\top$; Tikhonov regularization uses $\lambda_{\mathrm{eff}}=\lambda\max(\mathrm{tr}\,H/p,\,1)$. We impose a step limit $\|s\|\le c\,\|r\|$ (with $c=2$ in our runs) and perform line search/backtracking along $s$ guided by the projected merit defined in \S\ref{sec:fp-aa}. We restart the AA history upon (i) repeated rejections, (ii) stagnation with respect to the best Picard merit, or (iii) poor conditioning of the regularized Gram system. Accepted AA candidates re-enforce Dirichlet DOFs from the freshest Picard state.
+We use Type-II Anderson (Pulay) acceleration with the equality constraint $\sum_j \alpha_j=1$. The least-squares system is formed from the global Gram matrix $H=RR^\top$; Tikhonov regularization uses $\lambda_{\mathrm{eff}}=\lambda\max(\mathrm{tr}\,H/p,\,1)$. We impose a step limit $\|s\|\le c\,\|r\|$ (with $c=2$ in our runs) and perform line search/backtracking along $s$ guided by the projected merit defined in \S\ref{sec:fp-aa}. We restart the AA history upon (i) repeated rejections, (ii) stagnation with respect to the best Picard merit, or (iii) poor conditioning of the regularized Gram system. Accepted AA candidates re-enforce Dirichlet DOFs from the freshest Picard state.
 \paragraph{Setup and convergence metric}
 Convergence and acceptance use the same projected-residual metric and safeguards as in \S\ref{sec:fp-aa} (see \eqref{eq:kkt}, \eqref{eq:aa-update}, \eqref{eq:safeguard}).
 
@@ -47,13 +47,13 @@ To assess stability and tuning, we monitor Anderson metrics over time and their 
 \end{figure}
 
 \paragraph{AA vs. Picard}
-We compare the baseline block Picard scheme with AA-I across representative timestep sizes and coupling strengths (\cref{fig:aa-vs-picard}). In our runs, AA-I consistently reduces sub-iterations per timestep and total walltime while preserving acceptance and stability safeguards; the benefit is largest in tighter couplings, with comparable behavior to Picard in mild regimes.
+We compare the baseline block Picard scheme with AA-II across representative timestep sizes and coupling strengths (\cref{fig:aa-vs-picard}). In our runs, AA-II consistently reduces sub-iterations per timestep and total walltime while preserving acceptance and stability safeguards; the benefit is largest in tighter couplings, with comparable behavior to Picard in mild regimes.
 
 \begin{figure}[htbp]
   \centering
   \IfFileExists{images/anderson_vs_picard.png}{%
     \includegraphics[width=1\linewidth]{images/anderson_vs_picard.png}%
   }{\fbox{\parbox{0.9\linewidth}{\centering Missing image: \texttt{images/anderson_vs_picard.png}}}}
-  \caption{Comparison of block Picard and Anderson acceleration (AA-I) at representative $\Delta t$ and coupling strengths. Left: convergence behavior over time (projected-residual trends). Right: per-timestep subiterations and walltime summaries. AA-I reduces sub-iterations and computational cost while retaining robustness relative to Picard.}
+  \caption{Comparison of block Picard and Anderson acceleration (AA-II) at representative $\Delta t$ and coupling strengths. Left: convergence behavior over time (projected-residual trends). Right: per-timestep subiterations and walltime summaries. AA-II reduces sub-iterations and computational cost while retaining robustness relative to Picard.}
   \label{fig:aa-vs-picard}
 \end{figure}

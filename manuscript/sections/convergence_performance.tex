@@ -20,7 +20,7 @@ Smaller $\Delta t$ typically improves time-to-solution (faster contraction), whe
 % --- ORIGINAL CONTENT BELOW (preserved) ---
 \subsection*{Convergence and performance}
 
-We verify spatial consistency using field–norm error estimates on nested meshes with non-matching transfer. All quantities are nondimensional under the scaling in \S\ref{sec:strong-forms-nd}; averages are normalized by $|\Omega|$.
+We verify spatial consistency using field–norm error estimates on nested meshes with non-matching transfer. All quantities are dimensional; averages are normalized by $|\Omega|$.
 
 \paragraph{Meshes and notation.}
 Let $\{\mathcal{T}_i\}_{i=1}^L$ be a family of tetrahedral meshes on $\Omega$ obtained by uniform refinement, with characteristic sizes $h_i=1/N_i$ (we report $h_i=1/N_i$ explicitly). On each $\mathcal{T}_i$ we solve the fully coupled problem to a fixed time $T$ with \emph{the same} $\Delta t$ and model parameters; this avoids additional time–discretization bias from remounting left–hand sides. Denote by
