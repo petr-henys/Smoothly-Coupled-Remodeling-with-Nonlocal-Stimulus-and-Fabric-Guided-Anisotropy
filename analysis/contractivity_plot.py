@@ -23,7 +23,7 @@ from postprocessor import SweepLoader
 from analysis.plot_utils import (
     setup_axis_style, save_figure, print_banner,
     PUBLICATION_DPI, PLOT_LINEWIDTH, PLOT_MARKERSIZE,
-    SUBSOLVER_COLORS, SUBSOLVER_LABELS, 
+    SUBSOLVER_COLORS, SUBSOLVER_LABELS,
     DT_COLORS, DT_MARKERS, format_dt_label,
     FIGSIZE_FULL_WIDTH, add_subplot_legend,
 )

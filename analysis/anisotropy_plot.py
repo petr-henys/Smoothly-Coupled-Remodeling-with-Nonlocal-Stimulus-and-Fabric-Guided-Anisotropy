@@ -64,30 +64,75 @@ def get_fabric_tensor(type_str):
     else:
         return np.diag([0.5, 0.5])
 
-def calculate_directional_stiffness(theta, A, E0=15000, nu=0.3, xi=1.0):
+def calculate_directional_stiffness(theta, A, rho=1.0, E0=15000, k=2.0, p=0.5, nu=0.3):
     """
-    Calculate longitudinal stiffness C_nnnn(theta).
+    Calculate longitudinal stiffness E(theta) using Zysset-Curnier model.
     
-    C_nnnn = 2mu + lambda + xi * E * (n.A.n)^2
+    E(n) approx n . C . n
+    But Zysset defines E_i along principal axes.
+    For an orthotropic material, 1/E(n) = sum (n_i^2 / E_i) + shear terms...
+    Actually, let's compute the full stiffness tensor C and project it: E(n) = n . C . n
     """
-    # Lame parameters
-    lmbda = E0 * nu / ((1 + nu) * (1 - 2 * nu))
-    mu = E0 / (2 * (1 + nu))
-    C_iso = 2 * mu + lmbda
+    # 1. Eigenvalues of A
+    w, v = np.linalg.eigh(A)
+    # Sort descending
+    idx = w.argsort()[::-1]
+    w = w[idx]
+    v = v[:, idx]
     
-    # Direction vector n
-    nx = np.cos(theta)
-    ny = np.sin(theta)
+    m1, m2 = w[0], w[1]
     
-    # n.A.n
-    # A = [[Axx, Axy], [Ayx, Ayy]]
-    # n.A.n = Axx*nx^2 + 2*Axy*nx*ny + Ayy*ny^2
-    nAn = A[0,0]*nx**2 + 2*A[0,1]*nx*ny + A[1,1]*ny**2
+    # 2. Principal Stiffnesses
+    # E_i = E0 * rho^k * m_i^p
+    E1 = E0 * (rho**k) * (m1**p)
+    E2 = E0 * (rho**k) * (m2**p)
     
-    # Stiffness
-    C = C_iso + (xi * E0) * (nAn**2)
+    # Shear modulus (approx)
+    # G12 = G0 * rho^k * (m1*m2)^(p/2)
+    # Assume G0 approx E0 / (2(1+nu))
+    G0 = E0 / (2 * (1 + nu))
+    G12 = G0 * (rho**k) * ((m1*m2)**(p/2))
     
-    return C, nAn
+    # Poisson ratio
+    nu12 = nu # Simplified
+    nu21 = nu12 * (E2/E1)
+    
+    # Compliance Matrix S in principal frame
+    # [1/E1, -nu21/E2, 0]
+    # [-nu12/E1, 1/E2, 0]
+    # [0, 0, 1/G12]
+    
+    S_mat = np.zeros((3,3))
+    S_mat[0,0] = 1.0/E1
+    S_mat[1,1] = 1.0/E2
+    S_mat[0,1] = -nu12/E1
+    S_mat[1,0] = -nu12/E1 # Symmetry check: nu12/E1 = nu21/E2
+    S_mat[2,2] = 1.0/G12
+    
+    # Stiffness Matrix C = inv(S)
+    C_mat = np.linalg.inv(S_mat)
+    
+    # 3. Rotate to global frame
+    # We need n in principal frame.
+    # n_global = [cos(theta), sin(theta)]
+    # n_local = V.T @ n_global
+    
+    n_global = np.array([np.cos(theta), np.sin(theta)])
+    n_local = v.T @ n_global
+    
+    # Voigt notation for strain: eps = [e11, e22, 2e12]
+    # n . C . n is not quite right for E(n).
+    # Young's modulus E(n) is usually defined as stress/strain in direction n.
+    # 1/E(n) = n_local_i^4 / E1 + n_local_j^4 / E2 + ...
+    # For 2D orthotropic:
+    # 1/E(theta) = (c^4)/E1 + (s^4)/E2 + (1/G12 - 2*nu12/E1)*c^2*s^2
+    
+    c = n_local[0]
+    s = n_local[1]
+    
+    inv_E = (c**4)/E1 + (s**4)/E2 + (1.0/G12 - 2.0*nu12/E1)*(c**2)*(s**2)
+    
+    return 1.0/inv_E, m1
 
 def calculate_directional_diffusion(theta, A, beta_par=0.1, beta_perp=0.01):
     """
@@ -107,11 +152,14 @@ def plot_stiffness_polar(ax, fabric_types):
     
     for ftype, color in fabric_types.items():
         A = get_fabric_tensor(ftype)
-        C, _ = calculate_directional_stiffness(theta, A, xi=2.0) # High xi to exaggerate effect
-        ax.plot(theta, C, color=color, linewidth=2, label=ftype.capitalize())
+        C_vals = []
+        for t in theta:
+            val, _ = calculate_directional_stiffness(t, A, p=1.0) # p=1 for strong effect
+            C_vals.append(val)
+        ax.plot(theta, C_vals, color=color, linewidth=2, label=ftype.capitalize())
         
-    ax.set_title(r'(a) Directional Stiffness $C(\theta)$', loc='left', fontweight='bold', pad=20)
-    ax.set_rticks([20000, 30000, 40000])
+    ax.set_title(r'(a) Directional Stiffness $E(\theta)$', loc='left', fontweight='bold', pad=20)
+    # ax.set_rticks([10000, 20000, 30000])
     ax.set_rlabel_position(45)
     ax.grid(True, alpha=0.3)
     ax.legend(loc='upper right', bbox_to_anchor=(1.3, 1.1), fontsize=8)
@@ -130,21 +178,24 @@ def plot_diffusion_polar(ax, fabric_types):
     ax.set_rlabel_position(45)
     ax.grid(True, alpha=0.3)
 
-def plot_stiffness_xi_sensitivity(ax):
-    """Linear plot of stiffness vs angle for different xi."""
+def plot_stiffness_p_sensitivity(ax):
+    """Linear plot of stiffness vs angle for different p (fabric exponent)."""
     theta = np.linspace(0, np.pi, 180) # Half circle sufficient
     A = get_fabric_tensor('uniaxial') # Aligned
     
-    xis = [0.0, 0.5, 1.0, 2.0]
+    ps = [0.2, 0.5, 1.0, 2.0]
     colors = [COLORS['grey'], COLORS['cyan'], COLORS['blue'], COLORS['black']]
     
-    for xi, c in zip(xis, colors):
-        C, _ = calculate_directional_stiffness(theta, A, xi=xi)
-        ax.plot(np.degrees(theta), C/1000, color=c, label=r'$\xi=' + str(xi) + '$')
+    for p, c in zip(ps, colors):
+        vals = []
+        for t in theta:
+            val, _ = calculate_directional_stiffness(t, A, p=p)
+            vals.append(val)
+        ax.plot(np.degrees(theta), np.array(vals)/1000, color=c, label=r'$p=' + str(p) + '$')
         
-    ax.set_title(r'(c) Anisotropy Factor Sensitivity ($\xi$)', loc='left', fontweight='bold')
+    ax.set_title(r'(c) Anisotropy Sensitivity ($p$)', loc='left', fontweight='bold')
     ax.set_xlabel(r'Angle $\theta$ [deg]')
-    ax.set_ylabel(r'Stiffness $C$ [GPa]')
+    ax.set_ylabel(r'Stiffness $E$ [GPa]')
     ax.set_xlim(0, 180)
     ax.legend(fontsize=8)
 
@@ -168,28 +219,21 @@ def plot_diffusion_beta_sensitivity(ax):
     ax.set_xlim(0, 180)
     ax.legend(fontsize=8)
 
-def plot_fabric_reinforcement_term(ax):
-    """Visualize the reinforcement term (n.A.n)^2."""
-    theta = np.linspace(0, 2*np.pi, 360)
-    A_uni = get_fabric_tensor('uniaxial')
-    A_iso = get_fabric_tensor('isotropic')
+def plot_eigenvalue_scaling(ax):
+    """Visualize how stiffness scales with eigenvalues for different p."""
+    m = np.linspace(0.1, 1.0, 100)
+    ps = [0.5, 1.0, 2.0]
+    colors = [COLORS['cyan'], COLORS['blue'], COLORS['black']]
     
-    # n.A.n
-    nx = np.cos(theta)
-    ny = np.sin(theta)
-    
-    nAn_uni = A_uni[0,0]*nx**2 + 2*A_uni[0,1]*nx*ny + A_uni[1,1]*ny**2
-    nAn_iso = A_iso[0,0]*nx**2 + 2*A_iso[0,1]*nx*ny + A_iso[1,1]*ny**2
-    
-    ax.plot(theta, nAn_uni**2, color=COLORS['blue'], label='Uniaxial Fabric')
-    ax.plot(theta, nAn_iso**2, color=COLORS['grey'], linestyle='--', label='Isotropic Fabric')
-    
-    ax.set_title(r'(e) Reinforcement Factor $(\mathbf{n}\cdot\mathbf{A}\cdot\mathbf{n})^2$', loc='left', fontweight='bold')
-    ax.set_xlabel(r'Angle $\theta$ [rad]')
+    for p, c in zip(ps, colors):
+        E_factor = m**p
+        ax.plot(m, E_factor, color=c, label=f'$p={p}$')
+        
+    ax.set_title(r'(e) Stiffness Scaling $m^p$', loc='left', fontweight='bold')
+    ax.set_xlabel(r'Eigenvalue $m$ [-]')
     ax.set_ylabel(r'Factor [-]')
-    ax.set_xticks([0, np.pi/2, np.pi, 3*np.pi/2, 2*np.pi])
-    ax.set_xticklabels(['0', r'$\pi/2$', r'$\pi$', r'$3\pi/2$', r'$2\pi$'])
     ax.legend(fontsize=8)
+    ax.grid(True, alpha=0.3)
 
 def plot_projection_concept(ax):
     """Conceptual plot of unit trace projection."""
@@ -217,8 +261,8 @@ def generate_anisotropy_plot():
     set_modern_style()
     
     # Layout: 2 rows x 3 columns
-    # Row 1: (a) Stiffness Polar, (b) Diffusion Polar, (c) Xi Sensitivity
-    # Row 2: (d) Beta Sensitivity, (e) Reinforcement, (f) Eigenvalues
+    # Row 1: (a) Stiffness Polar, (b) Diffusion Polar, (c) p Sensitivity
+    # Row 2: (d) Beta Sensitivity, (e) Eigenvalue Scaling, (f) Eigenvalues
     
     fig = plt.figure(figsize=(11.69, 7.0))
     
@@ -240,9 +284,9 @@ def generate_anisotropy_plot():
     
     plot_stiffness_polar(ax1, fabric_types)
     plot_diffusion_polar(ax2, fabric_types)
-    plot_stiffness_xi_sensitivity(ax3)
+    plot_stiffness_p_sensitivity(ax3)
     plot_diffusion_beta_sensitivity(ax4)
-    plot_fabric_reinforcement_term(ax5)
+    plot_eigenvalue_scaling(ax5)
     plot_projection_concept(ax6)
     
     plt.tight_layout()

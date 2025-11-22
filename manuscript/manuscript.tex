@@ -122,12 +122,16 @@ We adopt the Zysset-Curnier orthotropic material model \cite{Zysset1995_Alternat
 The orthotropic engineering constants are given by:
 \begin{equation}\label{eq:zysset-curnier}
 \begin{aligned}
-    E_i &= E_0 \, \widetilde{\rho}^k \, m_i^p, \\
-    G_{ij} &= G_0 \, \widetilde{\rho}^k \, (m_i m_j)^{p/2}, \\
+    E_i &= E_0 \, \widetilde{\rho}^{k(\rho)} \, m_i^p, \\
+    G_{ij} &= G_0 \, \widetilde{\rho}^{k(\rho)} \, (m_i m_j)^{p/2}, \\
     \nu_{ij} &= \nu_0,
 \end{aligned}
 \end{equation}
-where $E_0, G_0, \nu_0$ are reference moduli, $k$ is the density exponent, and $p$ is the fabric exponent. The density $\widetilde{\rho}$ is smoothly clamped to a minimum value $\rho_{\min}$ to ensure positive definiteness. The stress is then $\boldsymbol{\sigma} = \mathbb{C} : \boldsymbol{\varepsilon}$.
+where $E_0, G_0, \nu_0$ are reference moduli, $p$ is the fabric exponent, and $k(\rho)$ is a density-dependent exponent. To capture the distinct mechanical behavior of trabecular and cortical bone, $k(\rho)$ transitions smoothly from a trabecular exponent $n_{\mathrm{trab}}$ to a cortical exponent $n_{\mathrm{cort}}$:
+\begin{equation}\label{eq:variable-exponent}
+k(\rho) = n_{\mathrm{trab}} (1 - w(\rho)) + n_{\mathrm{cort}} w(\rho),
+\end{equation}
+where $w(\rho)$ is a smooth interpolation function (smoothstep) transitioning from 0 to 1 over the range $[\rho_{\mathrm{trab}}^{\max}, \rho_{\mathrm{cort}}^{\min}]$. The density $\widetilde{\rho}$ is smoothly clamped to a minimum value $\rho_{\min}$ to ensure positive definiteness. The stress is then $\boldsymbol{\sigma} = \mathbb{C} : \boldsymbol{\varepsilon}$.
 
 \paragraph{Smooth lower density clamp.}
 To maintain uniform strong ellipticity and avoid case distinctions in highly porous regions, we use the same smooth ``max'' as in the implementation:
@@ -143,6 +147,13 @@ To ensure the fabric tensor $\mathbf{A}$ remains symmetric and positive-definite
 \paragraph{Quantitative analysis and biological interpretation.}
 Figure \ref{fig:constitutive_law} illustrates the behavior of the density-elasticity law. Panel (a) shows the stiffness $E(\rho)$ transitioning from a quadratic trabecular regime ($n_{\mathrm{trab}}=2.0$) to a near-linear cortical regime ($n_{\mathrm{cort}}=1.2$). This dual-power law captures the stiffening efficiency of dense bone while maintaining the rapid compliance increase in porous bone. Panel (b) explicitly plots the exponent $n(\rho)$, which varies smoothly between the two regimes via the cubic smoothstep function shown in (f). Panels (c) and (d) demonstrate the sensitivity of the stiffness curve to the transition thresholds $\rho_{\mathrm{trab}}^{\max}$ and $\rho_{\mathrm{cort}}^{\min}$; shifting these parameters allows for calibration to specific anatomical sites where the trabecular-cortical boundary may differ. Panel (e) highlights the effect of the exponents themselves; higher $n_{\mathrm{trab}}$ suppresses stiffness in low-density regions, effectively modeling the loss of connectivity in osteoporotic bone. The smooth lower clamp \eqref{eq:smooth-max-nd} guarantees strictly positive stiffness even in highly porous regions, thus preventing mechanical degeneracy and preserving differentiability. The normalization \eqref{eq:Ahat-blend-nd} filters the computed direction field into a \emph{symmetric, unit-trace} descriptor; with $\varepsilon>0$ it is \emph{positive-definite}. This combination yields a mechanically transparent, numerically robust model suitable for coupling with remodeling stimuli and evolution equations.
 
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{../results/constitutive_analysis/constitutive_law.png}
+    \caption{Constitutive Law Analysis. (a) Stiffness-density relationship $E(\rho)$ showing the transition from trabecular ($n=2.0$) to cortical ($n=1.2$) behavior. (b) The variable exponent $n(\rho)$. (c, d) Sensitivity of the transition to threshold parameters. (e) Effect of exponent choices on stiffness. (f) The cubic smoothstep function used for interpolation.}
+    \label{fig:constitutive_law}
+\end{figure}
+
 \subsection*{Stimulus submodel}\label{subsec:stim-nd}
 We represent the mechanotransductive drive by a scalar field $S:\Omega\times(0,T]\to\mathbb{R}$ that is \emph{generated} by mechanical activity and \emph{transported} through osteocytic/vascular pathways. Positive values correspond to net formation drive and negative values to net resorption drive.
 
@@ -157,11 +168,11 @@ supplemented with homogeneous Neumann boundary conditions and an initial state,
 \nabla S\!\cdot\!\mathbf{n}=0\ \ \text{on }\partial\Omega\times(0,T],\qquad
 S(\cdot,0)=S_0\ \ \text{in }\Omega.
 \end{equation}
-Here $c_S>0$ denotes a temporal capacity, $\kappa_S\ge 0$ a diffusivity, and $\tau_S>0$ the reaction/turnover rate. The mechanical drive $\psi_{\mathrm{day}}$ is a cycle-averaged, normalized stress measure (Carter--Beaupr\'e type). For a gait cycle with $N_{\mathrm{cyc}}$ cycles per day, period $T_{\mathrm{cyc}}$, and weighting $w(t)$, it is defined as
+Here $c_S>0$ denotes a temporal capacity, $\kappa_S\ge 0$ a diffusivity, and $\tau_S>0$ the reaction/turnover rate. The mechanical drive $\psi_{\mathrm{day}}$ is a cycle-averaged, normalized Specific Strain Energy Density (SED). For a gait cycle with $N_{\mathrm{cyc}}$ cycles per day, period $T_{\mathrm{cyc}}$, and weighting $w(t)$, it is defined as
 \begin{equation}\label{eq:stim-psi-nd}
-\psi_{\mathrm{day}}(x) \;=\; N_{\mathrm{cyc}} \int_0^{T_{\mathrm{cyc}}} w(t) \left( \frac{\sigma_{\mathrm{vm}}(x,t)}{\sigma_{\mathrm{ref}}} \right)^m \,\frac{\mathrm{d}t}{T_{\mathrm{cyc}}},
+\psi_{\mathrm{day}}(x) \;=\; N_{\mathrm{cyc}} \int_0^{T_{\mathrm{cyc}}} w(t) \left( \frac{U(x,t)/\rho(x,t)}{\psi_{\mathrm{ref}}} \right)^m \,\frac{\mathrm{d}t}{T_{\mathrm{cyc}}},
 \end{equation}
-where $\sigma_{\mathrm{vm}}$ is the Von Mises equivalent stress, $\sigma_{\mathrm{ref}}$ is a reference stress (e.g., $20\,\mathrm{MPa}$), and $m$ is an empirical exponent.
+where $U = \frac{1}{2}\boldsymbol{\sigma}:\boldsymbol{\varepsilon}$ is the strain energy density, $\psi_{\mathrm{ref}}$ is a reference specific energy (e.g., corresponding to homeostatic load), and $m$ is an empirical exponent. The specific SED $U/\rho$ is used to reflect the cellular sensation of strain energy per unit of bone mass.
 
 \paragraph{Quantitative analysis and biological interpretation.}
 Equation \eqref{eq:stim-strong-nd} acts as a spatio-temporal low-pass filter of the mechanical drive $\psi_{\mathrm{day}}-1$, as illustrated in Figure \ref{fig:nonlocal_stimulus}. Regions of sustained overload ($\psi_{\mathrm{day}}>1$) accumulate positive stimulus, while underloaded regions accumulate negative stimulus. Diffusion broadens and smooths these regions over the characteristic length
@@ -192,21 +203,32 @@ Directional transport is modeled by the symmetric diffusion tensor
 \begin{equation}\label{eq:Drho-nd}
 \mathbf{D}_\rho(x,t) \;=\; \beta_{\perp}\,\mathbf{I} \;+\; \big(\beta_{\parallel}-\beta_{\perp}\big)\,\widehat{\mathbf{A}}(x,t),
 \end{equation}
-where $\beta_{\parallel},\beta_{\perp}>0$ are diffusivities along and transverse to the fabric, respectively. Here $\widehat{\mathbf{A}}$ is the unit-trace normalization of the fabric tensor $\mathbf{A} = \exp(\mathbf{L})$, ensuring that diffusion is guided by the principal directions of the microstructure.
+where $\beta_{\parallel},\beta_{\perp}>0$ are diffusivities along and transverse to the fabric, respectively. Here $\widehat{\mathbf{A}}$ is the unit-trace normalization of the fabric tensor $\mathbf{A} = \exp(\mathbf{L})$,
+\begin{equation}\label{eq:Ahat-blend-nd}
+\widehat{\mathbf{A}} \;=\; \frac{\mathbf{A}+\varepsilon_A\,\mathbf{I}}{\mathrm{tr}(\mathbf{A}+\varepsilon_A\,\mathbf{I})},
+\end{equation}
+ensuring that diffusion is guided by the principal directions of the microstructure while maintaining positive definiteness via $\varepsilon_A>0$.
 
 \paragraph{Linear thermodynamic driver.}
-We replace the discontinuous mechanostat with a continuous, thermodynamically consistent driver. The density evolution is driven by the stimulus $S$ such that positive stimulus drives growth toward $\rho_{\max}$ and negative stimulus drives resorption toward $\rho_{\min}$:
-\begin{equation}\label{eq:linear-driver}
-\dot{\rho}_{\mathrm{react}} = k_\rho \left[ \mathcal{H}(S)(\rho_{\max} - \rho) + \mathcal{H}(-S)(\rho_{\min} - \rho) \right],
+We replace the discontinuous mechanostat with a continuous, thermodynamically consistent driver. The density evolution is driven by the stimulus $S$ such that positive stimulus drives growth toward $\rho_{\max}$ and negative stimulus drives resorption toward $\rho_{\min}$. We employ smooth positive and negative part functions $S_\varepsilon^\pm$:
+\begin{equation}\label{eq:smooth-splits-nd}
+S_\varepsilon^+(S) := \tfrac12\left(S+\sqrt{S^2+\varepsilon^2}\right), \qquad S_\varepsilon^-(S) := \tfrac12\left(-S+\sqrt{S^2+\varepsilon^2}\right).
 \end{equation}
-where $k_\rho$ is a rate constant and $\mathcal{H}(\cdot)$ is a smooth approximation of the Heaviside step function (implemented as $\text{pos}(S) = \max(0, S)$). This formulation ensures that density remains naturally bounded within $[\rho_{\min}, \rho_{\max}]$ without the need for hard constraints, as the driving force vanishes at the boundaries. The total evolution equation is:
+The total evolution equation is:
 \begin{equation}\label{eq:density-strong-nd}
-\partial_t \rho - \nabla \cdot (\mathbf{D}_\rho \nabla \rho) = k_\rho \left[ S^+ (\rho_{\max} - \rho) + S^- (\rho_{\min} - \rho) \right],
+\partial_t \rho - \nabla \cdot (\mathbf{D}_\rho \nabla \rho) = k_\rho \left[ S_\varepsilon^+(S) (\rho_{\max} - \rho) + S_\varepsilon^-(S) (\rho_{\min} - \rho) \right].
 \end{equation}
-where $S^+ = \max(0, S)$ and $S^- = \max(0, -S)$.
+This formulation ensures that density remains naturally bounded within $[\rho_{\min}, \rho_{\max}]$ without the need for hard constraints, as the driving force vanishes at the boundaries.
 
 \paragraph{Quantitative analysis and biological interpretation.}
 Equation \eqref{eq:density-strong-nd} represents a significant departure from discontinuous mechanostat models. Instead of a "lazy zone" with sharp thresholds, the linear thermodynamic driver provides a continuous response to mechanical stimulus, where the remodeling rate is proportional to the stimulus magnitude and the distance to the saturation limits. The terms $(\rho_{\max} - \rho)$ and $(\rho_{\min} - \rho)$ act as soft variational clamps, ensuring that the density remains strictly bounded within $[\rho_{\min}, \rho_{\max}]$ without imposing artificial hard constraints. As $\rho \to \rho_{\max}$, the growth rate naturally vanishes, and similarly for resorption as $\rho \to \rho_{\min}$. This formulation improves numerical stability and differentiability, facilitating the use of Newton-type solvers. The diffusion term $\nabla\!\cdot(\mathbf{D}_\rho\nabla\rho)$ introduces a spatial regularization length scale, preventing the formation of checkerboard patterns and ensuring mesh-independent solutions. The anisotropy of $\mathbf{D}_\rho$, guided by the fabric tensor $\widehat{\mathbf{A}}$, promotes the formation of continuous trabecular structures aligned with the principal stress trajectories.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{../results/constitutive_analysis/density_evolution_law.png}
+    \caption{Linear Thermodynamic Driver. (A) Remodeling rate $\dot{\rho}$ as a function of stimulus $S$ for different densities. Positive stimulus drives growth (red), negative drives resorption (blue). (B) Rate scaling with density distance to bounds. The rate vanishes linearly as $\rho \to \rho_{\max}$ (growth) or $\rho \to \rho_{\min}$ (resorption), providing a soft constraint. (C) Temporal evolution of density under constant positive/negative stimulus, showing smooth saturation.}
+    \label{fig:density_law}
+\end{figure}
 
 \begin{figure}[htbp]
     \centering
@@ -249,7 +271,7 @@ which is smooth in $\mathbf{M}$, symmetric, \emph{positive-definite for $\vareps
 \end{figure}
 
 \paragraph{Quantitative analysis and biological interpretation.}
-Figure \ref{fig:anisotropy_law} visualizes the fabric-dependent properties. Panel (a) presents polar plots of the directional stiffness $C(\theta)$ for isotropic, uniaxial, and shear fabric states. The uniaxial case shows a pronounced stiffening along the principal axis, while the shear case exhibits a rotated symmetry. Panel (b) shows the corresponding directional diffusability $D(\theta)$, which facilitates mass transport along the trabecular grain. Panel (c) demonstrates how the anisotropy factor $\xi_{\mathrm{aniso}}$ controls the magnitude of the directional reinforcement; higher $\xi$ leads to a more eccentric stiffness profile. Panel (d) shows the effect of the transverse diffusivity ratio $\beta_{\perp}/\beta_{\parallel}$ on the transport anisotropy. Panel (e) plots the reinforcement factor $(\mathbf{n}\cdot\mathbf{A}\cdot\mathbf{n})^2$, which is the geometric driver of the stiffness increase. Finally, Panel (f) maps the fabric tensors into the eigenvalue space of unit-trace tensors (Barycentric coordinates), illustrating the feasible region for fabric states ranging from isotropic (center) to perfectly uniaxial (corners). The reaction term $\frac{c_A}{\tau_A}(\widehat{\mathbf{M}}-\mathbf{A})$ in \eqref{eq:A-strong-nd} drives $\mathbf{A}$ toward the mechanically informed, unit-trace target, while the diffusion $-\frac{c_A \ell^2}{\tau_A}\Delta\mathbf{A}$ spreads directional information and regularizes spatial oscillations. The homogeneous Neumann boundary condition represents no flux of directional content across $\partial\Omega$. Symmetry is preserved by the dynamics; the choice of a unit-trace target ensures that, at steady state ($\partial_t\mathbf{A}=0$), the solution coincides with a spatially smoothed version of $\widehat{\mathbf{M}}$. Tracing \eqref{eq:A-strong-nd} and using $\mathrm{tr}\,\widehat{\mathbf{M}}=1$ gives
+Figure \ref{fig:anisotropy_law} visualizes the fabric-dependent properties. Panel (a) presents polar plots of the directional stiffness $E(\theta)$ for isotropic, uniaxial, and shear fabric states. The uniaxial case shows a pronounced stiffening along the principal axis, while the shear case exhibits a rotated symmetry. Panel (b) shows the corresponding directional diffusability $D(\theta)$, which facilitates mass transport along the trabecular grain. Panel (c) demonstrates how the fabric exponent $p$ controls the sensitivity of stiffness to fabric eigenvalues; higher $p$ leads to a more eccentric stiffness profile. Panel (d) shows the effect of the transverse diffusivity ratio $\beta_{\perp}/\beta_{\parallel}$ on the transport anisotropy. Panel (e) plots the stiffness scaling factor $m^p$, which determines how eigenvalue variations translate to stiffness changes. Finally, Panel (f) maps the fabric tensors into the eigenvalue space of unit-trace tensors (Barycentric coordinates), illustrating the feasible region for fabric states ranging from isotropic (center) to perfectly uniaxial (corners). The reaction term $\frac{c_A}{\tau_A}(\widehat{\mathbf{M}}-\mathbf{A})$ in \eqref{eq:A-strong-nd} drives $\mathbf{A}$ toward the mechanically informed, unit-trace target, while the diffusion $-\frac{c_A \ell^2}{\tau_A}\Delta\mathbf{A}$ spreads directional information and regularizes spatial oscillations. The homogeneous Neumann boundary condition represents no flux of directional content across $\partial\Omega$. Symmetry is preserved by the dynamics; the choice of a unit-trace target ensures that, at steady state ($\partial_t\mathbf{A}=0$), the solution coincides with a spatially smoothed version of $\widehat{\mathbf{M}}$. Tracing \eqref{eq:A-strong-nd} and using $\mathrm{tr}\,\widehat{\mathbf{M}}=1$ gives
 \begin{equation*}
 \partial_t\big(\mathrm{tr}\,\mathbf{A}\big) - \frac{\ell^2}{\tau_A}\,\Delta\big(\mathrm{tr}\,\mathbf{A}\big) + \frac{1}{\tau_A}\,\mathrm{tr}\,\mathbf{A} \;=\; \frac{1}{\tau_A},
 \end{equation*}
@@ -265,61 +287,23 @@ so the spatial average of $\mathrm{tr}\,\mathbf{A}$ relaxes monotonically to $1$
 \paragraph{Regularization parameters and defaults.}
 Unless a sensitivity study dictates otherwise, we recommend using a unified smoothness $\varepsilon$ (and gate steepness $k$) across \eqref{eq:smooth-max-nd}, \eqref{eq:smooth-splits-nd}, \eqref{eq:Ahat-blend-nd}, and \eqref{eq:M-hat-nd} by setting $\varepsilon_B\!=\!\varepsilon_M\!=\!\varepsilon$ and $k_B\!=\!k_M\!=\!k$. With the Gram maps \eqref{eq:Ahat-blend-nd} and \eqref{eq:M-hat-nd}, both $\widehat{\mathbf{A}}$ and $\widehat{\mathbf{M}}$ are \emph{unit-trace and SPD} for any $\varepsilon>0$; the same $\mathcal{C}^\infty$ regularization supplies smooth clamps and lazy-zone weights in the density kinetics without explicit cone projections or case distinctions.
 
-\section*{Constitutive Properties and Stability Analysis}
+\section*{Constitutive Properties and Gait Integration}
 
 \subsection*{Gait Cycle Integration and Stimulus Accumulation}
-The daily mechanical stimulus $\psi_{\mathrm{day}}$ aggregates the loading history over a full gait cycle. Following the Carter--Beaupr\'e theory, we employ a stress-power weighting:
+The daily mechanical stimulus $\psi_{\mathrm{day}}$ aggregates the loading history over a full gait cycle. Following the Carter--Beaupr\'e theory, we employ a specific-energy weighting:
 \begin{equation}
-    \psi_{\mathrm{day}}(x) = N_{\mathrm{cyc}} \frac{1}{T} \int_0^T \left( \frac{\sigma_{\mathrm{vm}}(x,t)}{\sigma_{\mathrm{ref}}} \right)^m \, \mathrm{d}t \approx N_{\mathrm{cyc}} \frac{\sum_i w_i (\sigma_i/\sigma_{\mathrm{ref}})^m}{\sum_i w_i}.
+    \psi_{\mathrm{day}}(x) = N_{\mathrm{cyc}} \frac{1}{T} \int_0^T \left( \frac{U(x,t)/\rho(x,t)}{\psi_{\mathrm{ref}}} \right)^m \, \mathrm{d}t \approx N_{\mathrm{cyc}} \frac{\sum_i w_i (U_i/\rho_i / \psi_{\mathrm{ref}})^m}{\sum_i w_i}.
 \end{equation}
-The exponent $m$ plays a critical role in filtering the mechanical signal. For $m=1$, the stimulus is simply proportional to the average stress. However, empirical bone remodeling laws typically suggest $m \in [2, 4]$ or even higher. As $m$ increases, the stimulus becomes increasingly dominated by peak loads, while low-magnitude "background" loads contribute negligibly.
+The exponent $m$ plays a critical role in filtering the mechanical signal. For $m=1$, the stimulus is simply proportional to the average specific energy. However, empirical bone remodeling laws typically suggest $m \in [2, 4]$ or even higher. As $m$ increases, the stimulus becomes increasingly dominated by peak loads, while low-magnitude "background" loads contribute negligibly.
 
 \begin{figure}[htbp]
     \centering
     \includegraphics[width=\textwidth]{../results/constitutive_analysis/gait_stimulus_analysis.png}
-    \caption{Gait Cycle Stimulus Integration. (A) Representative hip contact force profile normalized to body weight (BW), showing the characteristic heel-strike and toe-off peaks. (B) Instantaneous stimulus kernel $(\sigma/\sigma_{\mathrm{ref}})^m$ for varying exponents $m$. Higher exponents selectively amplify peak loads while suppressing the contribution of the swing phase. (C) The cycle-averaged stimulus factor $\langle (\sigma/\sigma_{\mathrm{ref}})^m \rangle$ as a function of $m$. The dynamic gait load (solid line) generates a much stronger stimulus than a constant load of equivalent average magnitude (dashed line), highlighting the importance of peak magnitudes in the remodeling drive.}
+    \caption{Gait Cycle Stimulus Integration. (A) Representative hip contact force profile normalized to body weight (BW), showing the characteristic heel-strike and toe-off peaks. (B) Instantaneous stimulus kernel $(U/U_{\mathrm{ref}})^m$ for varying exponents $m$. Since $U \propto F^2$, the signal is effectively $F^{2m}$, which strongly amplifies peak loads. (C) The cycle-averaged stimulus factor $\langle (U/U_{\mathrm{ref}})^m \rangle$ as a function of $m$. The dynamic gait load (solid line) generates a much stronger stimulus than a constant load of equivalent average magnitude (dashed line), highlighting the importance of peak magnitudes in the remodeling drive.}
     \label{fig:gait_stimulus}
 \end{figure}
 
-Figure \ref{fig:gait_stimulus} illustrates this effect using a synthetic hip contact force profile. Panel (A) shows a typical double-peak gait cycle. Panel (B) demonstrates how the instantaneous drive $(\sigma/\sigma_{\mathrm{ref}})^m$ sharpens around the peaks as $m$ increases. Panel (C) compares the cycle-averaged stimulus factor for the dynamic gait load versus a constant load of equivalent average magnitude. Because of the convexity of the function $x^m$ (for $m>1$), the dynamic load generates a significantly higher stimulus than its static average, a phenomenon known as Jensen's inequality. This captures the biological reality that dynamic, high-impact activities are more osteogenic than static loading.
-
-\subsection*{Stability Analysis: Stress vs. Strain and SED Drivers}
-To elucidate the stability characteristics of the coupled constitutive laws, we perform a zero-dimensional (0D) phase space analysis. We consider a representative volume element with uniform density $\rho$ and stimulus $S$, subjected to uniaxial loading. We compare two common mechanical drivers: the stress-based driver used in our 3D formulation ($\psi_\sigma$) and a strain-energy density (SED) or strain-based driver ($\psi_\varepsilon$).
-
-\paragraph{Stress Driver (Neutral Stability).}
-Our formulation uses a stress-based driver $\psi_\sigma \propto (\sigma/\sigma_{\mathrm{ref}})^m$. The stress is constitutively defined as $\sigma(\rho,\varepsilon) = E(\rho)\varepsilon$. Under \emph{force control}, the external load $\sigma_{\mathrm{ext}}$ is fixed, so equilibrium requires $\sigma = \sigma_{\mathrm{ext}}$. The strain must therefore adjust as $\varepsilon(\rho) = \sigma_{\mathrm{ext}}/E(\rho)$. Substituting this back into the driver:
-\begin{equation}
-    \psi_\sigma(\rho) = \left( \frac{E(\rho)\varepsilon(\rho)}{\sigma_{\mathrm{ref}}} \right)^m = \left( \frac{E(\rho)}{\sigma_{\mathrm{ref}}} \cdot \frac{\sigma_{\mathrm{ext}}}{E(\rho)} \right)^m = \left( \frac{\sigma_{\mathrm{ext}}}{\sigma_{\mathrm{ref}}} \right)^m = \mathrm{const}.
-\end{equation}
-Since the driver is constant with respect to density ($\partial \psi_\sigma / \partial \rho = 0$), the system exhibits \textbf{neutral stability}: a perturbation in density does not alter the stimulus. If the system is outside the lazy zone, it will continue to remodel indefinitely until it hits a bound ($\rho_{\min}$ or $\rho_{\max}$) or enters the lazy zone. There is no intrinsic feedback mechanism to arrest the growth or resorption.
-
-\paragraph{Strain Driver (Negative Feedback).}
-Consider a driver based on local strain magnitude, $\psi_{\varepsilon} = \varepsilon / \varepsilon_{\mathrm{ref}}$. Under force control ($\sigma = \sigma_{\mathrm{ext}}$), the strain is inversely proportional to stiffness:
-\begin{equation}
-    \psi_{\varepsilon}(\rho) = \frac{\sigma_{\mathrm{ext}}}{E(\rho)\varepsilon_{\mathrm{ref}}} \quad \implies \quad \frac{\partial \psi_{\varepsilon}}{\partial \rho} = -\frac{\sigma_{\mathrm{ext}} E'(\rho)}{E(\rho)^2 \varepsilon_{\mathrm{ref}}} < 0.
-\end{equation}
-Since $E'(\rho) > 0$, an increase in density reduces strain, lowering the stimulus. This provides a strong negative feedback loop that stabilizes the remodeling process.
-
-\paragraph{Strain Energy Density (SED) Driver.}
-Similarly, a driver based on strain energy density $U = \frac{1}{2}\sigma\varepsilon$ scales with the square of the stress under force control:
-\begin{equation}
-    \psi_{\mathrm{SED}}(\rho) = \frac{U}{U_{\mathrm{ref}}} = \frac{\sigma_{\mathrm{ext}}^2}{2 E(\rho) U_{\mathrm{ref}}} \quad \implies \quad \frac{\partial \psi_{\mathrm{SED}}}{\partial \rho} = -\frac{\sigma_{\mathrm{ext}}^2 E'(\rho)}{2 E(\rho)^2 U_{\mathrm{ref}}} < 0.
-\end{equation}
-Both the Strain and SED drivers share the same stability characteristic: under force control, they both depend inversely on stiffness ($E^{-1}$), creating intrinsic self-stabilization.
-
-\paragraph{Implications for 3D Modeling.}
-While the SED driver offers superior intrinsic stability, we employ the stress driver $\psi_\sigma$ to capture specific physiological responses where bone mass correlates with load magnitude rather than deformation. To compensate for the lack of intrinsic negative feedback in the stress driver, our model relies on:
-1.  \textbf{Bounded Driver:} The linear thermodynamic driver explicitly bounds the density within $[\rho_{\min}, \rho_{\max}]$ and drives it towards these bounds based on the sign of the stimulus.
-2.  \textbf{Global Coupling:} In a redundant 3D structure, local stiffening sheds load to surrounding softer material (stress shielding), effectively reintroducing a form of negative feedback at the structural level even if the local constitutive law is neutrally stable.
-
-Figure \ref{fig:mechanostat_optimization} illustrates these dynamics. Panel (A) shows the phase space trajectories. Panel (B) maps the stability regions. Panel (E) explicitly compares the feedback loops: the "Stress Control" curve is flat (neutral), while a hypothetical "Strain Control" curve would have a negative slope (intrinsic stability). This analysis justifies the necessity of the bounded driver formulation.
-
-\begin{figure}[htbp]
-    \centering
-    \includegraphics[width=\textwidth]{../results/constitutive_analysis/mechanostat_optimization.png}
-    \caption{0D Stability Analysis. (A) Phase space trajectories ($\dot{\rho}$ vs. $\rho$) showing the evolution of density under constant load. (B) Stability map illustrating the lazy zone and formation/resorption thresholds. The filled region corresponds to the Stress Driver used in this work ($\varepsilon \propto \rho^{-n}$); dotted lines show the hypothetical thresholds for an SED Driver ($\varepsilon \propto \rho^{-n/2}$), which are less sensitive to density changes. (E) Feedback loop comparison: The Stress Driver (used in this work) exhibits a flat response (neutral stability) under force control, necessitating a lazy zone for convergence. A Strain or SED driver (dot-dashed line) would exhibit a negative slope (intrinsic stability).}
-    \label{fig:mechanostat_optimization}
-\end{figure}
+Figure \ref{fig:gait_stimulus} illustrates this effect using a synthetic hip contact force profile. Panel (A) shows a typical double-peak gait cycle. Panel (B) demonstrates how the instantaneous drive $(U/U_{\mathrm{ref}})^m$ sharpens around the peaks as $m$ increases. Panel (C) compares the cycle-averaged stimulus factor for the dynamic gait load versus a constant load of equivalent average magnitude. Because of the convexity of the function $x^m$ (for $m>1$), the dynamic load generates a significantly higher stimulus than its static average, a phenomenon known as Jensen's inequality. This captures the biological reality that dynamic, high-impact activities are more osteogenic than static loading.
 
 \section*{Backward--Euler time discretization}
 \label{sec:be-time}

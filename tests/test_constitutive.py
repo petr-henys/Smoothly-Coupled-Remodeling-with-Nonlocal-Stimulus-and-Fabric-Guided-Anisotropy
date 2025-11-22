@@ -7,7 +7,7 @@ import basix
 import ufl
 
 from simulation.config import Config
-from simulation.utils import build_dirichlet_bcs, build_facetag
+from simulation.utils import build_dirichlet_bcs
 from simulation.subsolvers import MechanicsSolver, smooth_max, DensitySolver
 
 # =============================================================================

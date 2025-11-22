@@ -12,7 +12,6 @@ Tests cover:
 
 import pytest
 from pathlib import Path
-import shutil
 
 # Import after sys.path manipulation in conftest
 from simulation.paths import (

@@ -3,7 +3,6 @@ import numpy as np
 from mpi4py import MPI
 from dolfinx import fem, default_scalar_type
 from dolfinx.fem import Function, functionspace
-import basix
 import ufl
 
 from simulation.config import Config

@@ -48,9 +48,11 @@ COLORS = {
 def smooth_abs(x, eps=1e-6):
     return np.sqrt(x*x + eps*eps)
 
-def calculate_mechanostat(S_array, rho_val, **kwargs):
+def calculate_density_rate(S_array, rho_val, **kwargs):
     """
     Calculate remodeling rate d_rho/dt for a range of stimulus values.
+    Using the Linear Thermodynamic Driver:
+    rate = k_rho * [S+ * (rho_max - rho) + S- * (rho_min - rho)]
     
     Parameters:
     -----------
@@ -65,98 +67,70 @@ def calculate_mechanostat(S_array, rho_val, **kwargs):
     --------
     d_rho : np.ndarray
         Remodeling rate [1/day].
-    lam_eff : np.ndarray
-        Effective rate coefficient.
-    rho_eq : np.ndarray
-        Target density.
+    S_plus : np.ndarray
+        Positive part of stimulus (Formation driver).
+    S_minus : np.ndarray
+        Negative part of stimulus (Resorption driver).
     """
     # Default parameters from Config
     params = {
-        'S_form_th': 0.2,
-        'S_resorb_th': -0.2,
-        'k_step': 6.0,
-        'lambda_form': 0.1,
-        'lambda_resorb': 0.1,
-        'S_lazy': 0.25,
+        'k_rho': 0.01,
         'rho_min': 0.1,
         'rho_max': 1.0,
         'smooth_eps': 1e-6
     }
     params.update(kwargs)
     
-    S_form = params['S_form_th']
-    S_resorb = params['S_resorb_th']
-    k_step = params['k_step']
-    lam_form = params['lambda_form']
-    lam_resorb = params['lambda_resorb']
-    S_lazy = params['S_lazy']
+    k_rho = params['k_rho']
     rho_min = params['rho_min']
     rho_max = params['rho_max']
     eps = params['smooth_eps']
 
-    # 1. Signal saturation factor f(S)
-    Sabs = smooth_abs(S_array, eps)
-    fS = Sabs / (Sabs + S_lazy) if S_lazy > 0.0 else np.ones_like(Sabs)
-
-    # 2. Smooth Heaviside functions
-    # H_form = 1 / (1 + exp(-k * (S - S_form)))
-    H_form = 1.0 / (1.0 + np.exp(-k_step * (S_array - S_form)))
+    # Smooth positive/negative parts
+    # S+ = (S + sqrt(S^2 + eps^2)) / 2
+    S_plus = (S_array + np.sqrt(S_array**2 + eps**2)) / 2.0
     
-    # H_resorb = 1 / (1 + exp(-k * (S_resorb - S)))  -> Note direction!
-    H_resorb = 1.0 / (1.0 + np.exp(-k_step * (S_resorb - S_array)))
+    # S- = (-S + sqrt(S^2 + eps^2)) / 2  (Note: S- is positive magnitude of negative S)
+    # Actually in code: S_minus = smooth_plus(-S)
+    S_minus = (-S_array + np.sqrt(S_array**2 + eps**2)) / 2.0
 
-    # 3. Effective rate lambda_eff
-    lam_eff = fS * (lam_form * H_form + lam_resorb * H_resorb)
-
-    # 4. Equilibrium density rho_eq
-    # If formation -> rho_max
-    # If resorption -> rho_min
-    # If lazy -> rho_val (current density)
-    # We use the partition of unity: H_form + H_resorb + H_lazy = 1 (approx)
-    # Actually the code uses: rho_eq = rho_max*Hf + rho_min*Hr + (1 - Hf - Hr)*rho
-    rho_eq = rho_max * H_form + rho_min * H_resorb + (1.0 - H_form - H_resorb) * rho_val
-
-    # 5. Rate d_rho/dt = lam_eff * (rho_eq - rho)
-    d_rho = lam_eff * (rho_eq - rho_val)
+    # Rate equation
+    # rate = k_rho * (S_plus * (rho_max - rho) + S_minus * (rho_min - rho))
+    d_rho = k_rho * (S_plus * (rho_max - rho_val) + S_minus * (rho_min - rho_val))
     
-    return d_rho, lam_eff, rho_eq, H_form, H_resorb, fS
+    return d_rho, S_plus, S_minus
 
-def plot_mechanostat_curve(ax):
-    """(a) Standard Mechanostat Curve: d_rho/dt vs S."""
+def plot_density_rate_curve(ax):
+    """(a) Density Rate Curve: d_rho/dt vs S."""
     S = np.linspace(-1.0, 1.0, 1000)
     rho = 0.5
-    d_rho, _, _, _, _, _ = calculate_mechanostat(S, rho)
+    d_rho, _, _ = calculate_density_rate(S, rho)
     
     ax.plot(S, d_rho, color=COLORS['blue'], linewidth=2.5, label=r'$\rho=0.5$')
     
-    # Annotate zones
-    ax.axvspan(-0.2, 0.2, color=COLORS['grey'], alpha=0.1, label='Lazy Zone')
-    ax.axvline(0.2, color=COLORS['black'], linestyle=':', alpha=0.4)
-    ax.axvline(-0.2, color=COLORS['black'], linestyle=':', alpha=0.4)
+    ax.text(0.6, 0.002, 'Formation', ha='center', color=COLORS['teal'], fontweight='bold')
+    ax.text(-0.6, -0.002, 'Resorption', ha='center', color=COLORS['red'], fontweight='bold')
     
-    ax.text(0.6, 0.02, 'Formation', ha='center', color=COLORS['teal'], fontweight='bold')
-    ax.text(-0.6, -0.02, 'Resorption', ha='center', color=COLORS['red'], fontweight='bold')
-    ax.text(0.0, 0.0, 'Lazy', ha='center', va='center', color=COLORS['grey'])
-    
-    ax.set_title(r'(a) Mechanostat Curve ($\dot{\rho}$ vs $S$)', loc='left', fontweight='bold')
+    ax.set_title(r'(a) Remodeling Rate ($\dot{\rho}$ vs $S$)', loc='left', fontweight='bold')
     ax.set_xlabel(r'Stimulus $S$ [-]')
     ax.set_ylabel(r'Rate $\dot{\rho}$ [1/day]')
     ax.axhline(0, color='black', linewidth=0.5)
+    ax.axvline(0, color='black', linewidth=0.5, linestyle=':')
 
-def plot_rate_components(ax):
-    """(b) Components: H_form, H_resorb, f(S)."""
+def plot_driver_components(ax):
+    """(b) Components: S+, S-."""
     S = np.linspace(-1.0, 1.0, 1000)
     rho = 0.5
-    _, _, _, H_form, H_resorb, fS = calculate_mechanostat(S, rho)
+    _, S_plus, S_minus = calculate_density_rate(S, rho)
     
-    ax.plot(S, H_form, color=COLORS['teal'], label=r'$H_{form}$')
-    ax.plot(S, H_resorb, color=COLORS['red'], label=r'$H_{resorb}$')
-    ax.plot(S, fS, color=COLORS['grey'], linestyle='--', label=r'$f(S)$ (Saturation)')
+    ax.plot(S, S_plus, color=COLORS['teal'], label=r'$S^+$ (Formation)')
+    ax.plot(S, S_minus, color=COLORS['red'], label=r'$S^-$ (Resorption)')
     
-    ax.set_title(r'(b) Activation Functions', loc='left', fontweight='bold')
+    ax.set_title(r'(b) Driver Components', loc='left', fontweight='bold')
     ax.set_xlabel(r'Stimulus $S$ [-]')
-    ax.set_ylabel(r'Activation [-]')
+    ax.set_ylabel(r'Magnitude [-]')
     ax.legend(fontsize=8)
+    ax.axvline(0, color='black', linewidth=0.5, linestyle=':')
 
 def plot_density_effect(ax):
     """(c) Effect of Current Density."""
@@ -165,7 +139,7 @@ def plot_density_effect(ax):
     colors = [COLORS['cyan'], COLORS['blue'], COLORS['magenta']]
     
     for r, c in zip(rhos, colors):
-        d_rho, _, _, _, _, _ = calculate_mechanostat(S, r)
+        d_rho, _, _ = calculate_density_rate(S, r)
         ax.plot(S, d_rho, color=c, linewidth=2, label=r'$\rho=' + str(r) + '$')
         
     ax.set_title(r'(c) Effect of Current Density $\rho$', loc='left', fontweight='bold')
@@ -173,71 +147,84 @@ def plot_density_effect(ax):
     ax.set_ylabel(r'Rate $\dot{\rho}$')
     ax.legend(fontsize=8)
     ax.axhline(0, color='black', linewidth=0.5)
+    ax.axvline(0, color='black', linewidth=0.5, linestyle=':')
 
-def plot_threshold_sensitivity(ax):
-    """(d) Threshold Sensitivity."""
+def plot_rate_sensitivity(ax):
+    """(d) Rate Constant Sensitivity (k_rho)."""
     S = np.linspace(0.0, 1.0, 1000) # Focus on formation side
     rho = 0.5
-    thresholds = [0.1, 0.2, 0.4]
+    ks = [0.005, 0.01, 0.02]
     colors = [COLORS['teal'], COLORS['blue'], COLORS['magenta']]
     
-    for th, c in zip(thresholds, colors):
-        d_rho, _, _, _, _, _ = calculate_mechanostat(S, rho, S_form_th=th)
-        ax.plot(S, d_rho, color=c, label=f'$S_{{form}}={th}$')
+    for k, c in zip(ks, colors):
+        d_rho, _, _ = calculate_density_rate(S, rho, k_rho=k)
+        ax.plot(S, d_rho, color=c, label=f'$k_{{\\rho}}={k}$')
         
-    ax.set_title(r'(d) Threshold Sensitivity ($S_{form}$)', loc='left', fontweight='bold')
+    ax.set_title(r'(d) Rate Sensitivity ($k_{\rho}$)', loc='left', fontweight='bold')
     ax.set_xlabel(r'Stimulus $S$ [-]')
     ax.set_ylabel(r'Rate $\dot{\rho}$')
     ax.legend(fontsize=8)
 
-def plot_steepness_sensitivity(ax):
-    """(e) Steepness Sensitivity (k_step)."""
-    S = np.linspace(0.0, 0.6, 1000) # Zoom in on transition
+def plot_bounds_sensitivity(ax):
+    """(e) Bounds Sensitivity (rho_max)."""
+    S = np.linspace(0.0, 1.0, 1000)
     rho = 0.5
-    ks = [2.0, 6.0, 20.0]
+    rmaxs = [0.8, 1.0, 1.2]
     colors = [COLORS['cyan'], COLORS['blue'], COLORS['black']]
     
-    for k, c in zip(ks, colors):
-        d_rho, _, _, _, _, _ = calculate_mechanostat(S, rho, k_step=k)
-        ax.plot(S, d_rho, color=c, label=f'$k_{{step}}={k}$')
+    for rm, c in zip(rmaxs, colors):
+        d_rho, _, _ = calculate_density_rate(S, rho, rho_max=rm)
+        ax.plot(S, d_rho, color=c, label=f'$\\rho_{{max}}={rm}$')
         
-    ax.set_title(r'(e) Transition Steepness ($k_{step}$)', loc='left', fontweight='bold')
+    ax.set_title(r'(e) Bounds Sensitivity ($\rho_{max}$)', loc='left', fontweight='bold')
     ax.set_xlabel(r'Stimulus $S$ [-]')
     ax.set_ylabel(r'Rate $\dot{\rho}$')
     ax.legend(fontsize=8)
-    ax.axvline(0.2, color='grey', linestyle=':', label=r'$S_{form}=0.2$')
 
-def plot_saturation_sensitivity(ax):
-    """(f) Saturation Sensitivity (S_lazy)."""
-    S = np.linspace(0.0, 2.0, 1000)
-    rho = 0.5
-    # S_lazy controls how fast f(S) approaches 1
-    # f(S) = S / (S + S_lazy)
-    slazies = [0.05, 0.25, 1.0]
-    colors = [COLORS['red'], COLORS['blue'], COLORS['grey']]
+def plot_equilibrium_map(ax):
+    """(f) Equilibrium Density Map (rho_eq vs S)."""
+    # For linear driver, rho_eq is not a single function of S, 
+    # but we can look at where rate = 0.
+    # rate = k * [S+ (rmax - rho) + S- (rmin - rho)] = 0
+    # S+ rmax + S- rmin = rho (S+ + S-)
+    # rho_eq = (S+ rmax + S- rmin) / (S+ + S-)
+    # If S > 0: S+ = S, S- = 0 -> rho_eq = rmax
+    # If S < 0: S+ = 0, S- = -S -> rho_eq = rmin
+    # So it's a step function (bang-bang target), but the rate is proportional to S.
     
-    for sl, c in zip(slazies, colors):
-        d_rho, _, _, _, _, _ = calculate_mechanostat(S, rho, S_lazy=sl)
-        ax.plot(S, d_rho, color=c, label=f'$S_{{lazy}}={sl}$')
-        
-    ax.set_title(r'(f) Signal Saturation ($S_{lazy}$)', loc='left', fontweight='bold')
+    S = np.linspace(-1.0, 1.0, 1000)
+    # Add small epsilon to avoid 0/0 at S=0
+    S_plus = (S + np.abs(S))/2 + 1e-9
+    S_minus = (-S + np.abs(S))/2 + 1e-9
+    
+    rho_max = 1.0
+    rho_min = 0.1
+    
+    rho_target = (S_plus * rho_max + S_minus * rho_min) / (S_plus + S_minus)
+    
+    ax.plot(S, rho_target, color=COLORS['black'], linewidth=2, label=r'Target $\rho$')
+    
+    ax.set_title(r'(f) Target Density Attractor', loc='left', fontweight='bold')
     ax.set_xlabel(r'Stimulus $S$ [-]')
-    ax.set_ylabel(r'Rate $\dot{\rho}$')
-    ax.legend(fontsize=8)
+    ax.set_ylabel(r'Target Density $\rho_{target}$')
+    ax.set_ylim(0, 1.1)
+    ax.grid(True, alpha=0.3)
+    ax.text(0.5, 0.9, r'$\rightarrow \rho_{max}$', ha='center', color=COLORS['teal'])
+    ax.text(-0.5, 0.2, r'$\rightarrow \rho_{min}$', ha='center', color=COLORS['red'])
 
 def generate_mechanostat_plot():
     set_modern_style()
     fig, axes = plt.subplots(2, 3, figsize=(11.69, 6.5))
     
-    plot_mechanostat_curve(axes[0, 0])
-    plot_rate_components(axes[0, 1])
+    plot_density_rate_curve(axes[0, 0])
+    plot_driver_components(axes[0, 1])
     plot_density_effect(axes[0, 2])
-    plot_threshold_sensitivity(axes[1, 0])
-    plot_steepness_sensitivity(axes[1, 1])
-    plot_saturation_sensitivity(axes[1, 2])
+    plot_rate_sensitivity(axes[1, 0])
+    plot_bounds_sensitivity(axes[1, 1])
+    plot_equilibrium_map(axes[1, 2])
     
     plt.tight_layout()
-    output_path = os.path.join(OUTPUT_DIR, 'mechanostat_law.png')
+    output_path = os.path.join(OUTPUT_DIR, 'density_evolution_law.png')
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close()
     print(f"Generated {output_path}")

@@ -14,18 +14,9 @@ from simulation.logger import get_logger
 
 
 class SimulationLoader:
-    """Load and analyze results from a parametrizer sweep run directory.
+    """Load sweep run results: config, fields, metrics (MPI-parallel).
     
-    Provides MPI-parallel access to configuration, fields, and metrics.
-    
-    Directory structure expected:
-        output_dir/
-            config.json          # Configuration parameters
-            run_summary.json     # Run metadata
-            steps.csv            # Per-timestep metrics
-            subiterations.csv    # Per-subiteration metrics
-            u.npz, rho.npz, S.npz, A.npz  # Field snapshots
-            u.bp/, scalars.bp/, A.bp/     # VTX field time series (optional)
+    Expected structure: config.json, steps.csv, field .npz files, optional .bp time series.
     """
     
     __slots__ = (
@@ -34,12 +25,12 @@ class SimulationLoader:
     )
     
     def __init__(self, output_dir: str | Path, comm: MPI.Comm, verbose: bool = True):
-        """Initialize loader for a single simulation run directory.
+        """Initialize loader.
         
         Args:
-            output_dir: Path to run directory (hash-named subdirectory from parametrizer)
-            comm: MPI communicator
-            verbose: Enable logging
+            output_dir: Run directory path.
+            comm: MPI communicator.
+            verbose: Enable logging.
         """
         self.output_dir = Path(output_dir)
         self.comm = comm

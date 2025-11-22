@@ -1,8 +1,4 @@
-"""Anderson (Pulay) acceleration for fixed-point iteration.
-
-MPI-collective Gram matrix, Tikhonov regularization, restart heuristics,
-and backtracking safeguard for monotone convergence.
-"""
+"""Anderson acceleration with MPI-collective Gram matrix and adaptive restart."""
 
 from collections import deque
 from typing import Callable, Dict, Optional, Sequence, Tuple
@@ -13,7 +9,7 @@ from simulation.logger import get_logger
 
 
 class _Anderson:
-    """Anderson acceleration with adaptive restart."""
+    """Anderson acceleration with backtracking and restart heuristics."""
 
     def __init__(
         self,

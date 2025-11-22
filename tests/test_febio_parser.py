@@ -1,7 +1,6 @@
 """Test suite for febio_parser.py - simplified parser for tet4 meshes with surface tags."""
 
 import numpy as np
-import pytest
 from pathlib import Path
 from simulation.febio_parser import FEBio2Dolfinx
 

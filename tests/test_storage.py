@@ -15,7 +15,6 @@ import numpy as np
 from mpi4py import MPI
 from dolfinx import mesh, fem
 from pathlib import Path
-import tempfile
 
 from simulation.storage import FieldStorage, UnifiedStorage
 from simulation.config import Config

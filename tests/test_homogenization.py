@@ -5,7 +5,6 @@ import ufl
 from types import SimpleNamespace
 from mpi4py import MPI
 from dolfinx import mesh, fem, default_scalar_type
-from petsc4py import PETSc
 
 from simulation.homogenizator import KUBCHomogenizer, SUBCHomogenizer
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, fields
 from typing import Optional, TYPE_CHECKING, Any, Dict
 
-from dolfinx import mesh, default_scalar_type
+from dolfinx import mesh
 import ufl
 
 if TYPE_CHECKING:
@@ -25,10 +25,6 @@ class Config:
     # =========================================================================
     # Material Properties
     # =========================================================================
-    E0: float = 15e3            # Young's modulus [MPa] at rho=1
-    nu: float = 0.3             # Poisson's ratio [-]
-    xi_aniso: float = 0.3       # Anisotropic reinforcement factor
-
     # Density-stiffness relationship: E = E0 * rho^n(rho)
     n_power: float = 1.0        # Exponent for stimulus calculation
     n_trab: float = 2.0         # Exponent for trabecular bone
@@ -52,21 +48,20 @@ class Config:
     # =========================================================================
     # Stimulus (Reaction-Diffusion)
     # =========================================================================
-    stimulus_type: str = "sed"  # "stress", "strain", "sed"
-    psi_ref: float = 0.001      # Reference value (Stress [MPa], Strain [-], or SED [MPa])
+    psi_ref: float = 0.004      # Reference value (Stress [MPa], Strain [-], or SED [MPa])
     
     cS: float = 1.0             # Signaling capacity
-    tauS: float = 1.0           # Decay rate [1/day]
+    tauS: float = 0.2           # Relaxation time [day] (was decay rate 5.0)
     kappaS: float = 1.0         # Diffusion coefficient [mm^2/day]
     rS_gain: float = 1.0        # Transduction gain [1/day]
-    distal_damping_height: float = 60.0       # Height of distal damping zone [mm]
+    distal_damping_height: float = 1       # Height of distal damping zone [mm]
     distal_damping_transition: float = 5.0    # Transition width of distal damping zone [mm]
 
     # =========================================================================
     # Fabric Tensor Evolution
     # =========================================================================
     cA: float = 1.0             # Orientation capacity
-    tauA: float = 100.0         # Relaxation time [day]
+    tauA: float = 200.0         # Relaxation time [day]
     ell: float = 2.0            # Diffusion length [mm]
     
     # Zysset-Curnier Constitutive Parameters
@@ -76,7 +71,7 @@ class Config:
     
     # Standard Zysset parameters (approximate)
     k_stiff: float = 1.9        # Density exponent for stiffness (often close to 2)
-    p_stiff: float = 1.0        # Fabric exponent (linear or quadratic)
+    p_stiff: float = 0.5        # Fabric exponent (linear or quadratic)
     
     # Base moduli [MPa]
     E0_z: float = 15000.0       # Axial modulus
@@ -159,10 +154,6 @@ class Config:
     def validate(self):
         """Validate configuration parameters."""
         # Material
-        if not (-1.0 < self.nu < 0.5):
-            raise ValueError(f"Poisson ratio nu={self.nu} must be in range (-1, 0.5).")
-        if self.E0 <= 0:
-            raise ValueError(f"Young's modulus E0={self.E0} must be positive.")
         if self.n_trab <= 0 or self.n_cort <= 0:
             raise ValueError("n_trab and n_cort must be positive.")
         
@@ -177,12 +168,10 @@ class Config:
             raise ValueError("beta_par/beta_perp must be non-negative.")
         
         # Stimulus
-        if self.stimulus_type not in ("stress", "strain", "sed"):
-            raise ValueError(f"stimulus_type must be 'stress', 'strain', or 'sed', got {self.stimulus_type!r}")
         if self.psi_ref <= 0:
             raise ValueError("Reference value psi_ref must be positive.")
-        if self.cS <= 0 or self.tauS < 0 or self.kappaS < 0 or self.rS_gain < 0:
-            raise ValueError("cS>0, tauS>=0, kappaS>=0, rS_gain>=0 required.")
+        if self.cS <= 0 or self.tauS <= 0 or self.kappaS < 0 or self.rS_gain < 0:
+            raise ValueError("cS>0, tauS>0, kappaS>=0, rS_gain>=0 required.")
         
         # Fabric
         if self.cA <= 0 or self.tauA < 0 or self.ell <= 0:

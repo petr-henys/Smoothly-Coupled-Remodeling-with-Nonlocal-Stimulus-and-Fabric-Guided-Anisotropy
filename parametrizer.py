@@ -1,7 +1,4 @@
-"""Parameter sweep framework for scientific simulations.
-
-Hash-based directory naming ensures uniqueness across all parameter combinations.
-"""
+"""Parameter sweep framework with hash-based output naming."""
 
 import csv
 import hashlib
@@ -25,7 +22,7 @@ class Runnable(Protocol):
 
 @dataclass
 class ParameterSweep:
-    """Parameter sweep configuration with hash-based output naming."""
+    """Parameter sweep with Cartesian product and hash-based paths."""
     params: ParamDict
     base_output_dir: Path
     metadata: Dict[str, Any] = field(default_factory=dict)
@@ -41,13 +38,13 @@ class ParameterSweep:
         self.base_output_dir = Path(self.base_output_dir)
     
     def generate_points(self) -> List[Dict[str, ParamValue]]:
-        """Generate all parameter combinations (Cartesian product)."""
+        """Cartesian product of all parameter values."""
         param_names = list(self.params.keys())
         param_values = [self.params[k] for k in param_names]
         return [dict(zip(param_names, values)) for values in itertools.product(*param_values)]
     
     def format_output_path(self, param_point: Dict[str, ParamValue]) -> Path:
-        """Generate output path using 8-char hash of parameter point."""
+        """Output path via 8-char hash of parameter point."""
         param_str = json.dumps(param_point, sort_keys=True, separators=(",", ":"))
         params_hash = hashlib.sha1(param_str.encode("utf-8")).hexdigest()[:8]
         return self.base_output_dir / params_hash

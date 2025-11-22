@@ -16,7 +16,6 @@ if str(project_root) not in sys.path:
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from matplotlib.lines import Line2D
 
 from analysis.plot_utils import (
     FIELD_NAMES, FIELD_LABELS, FIELD_COLORS, FIELD_MARKERS,

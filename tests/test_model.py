@@ -16,7 +16,6 @@ from mpi4py import MPI
 from dolfinx import fem
 
 from simulation.config import Config
-from simulation.utils import build_facetag
 from simulation.model import Remodeller
 
 @pytest.fixture(autouse=True)

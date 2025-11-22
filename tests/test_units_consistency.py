@@ -1,13 +1,11 @@
 """Tests for physical unit consistency and scaling laws."""
 
-import pytest
 import numpy as np
 import ufl
 from dolfinx import fem, mesh
 from mpi4py import MPI
 
 from simulation.config import Config
-from simulation.drivers import GaitDriver
 from simulation.femur_gait import FemurRemodellerGait
 
 class MockMechanicsSolver:

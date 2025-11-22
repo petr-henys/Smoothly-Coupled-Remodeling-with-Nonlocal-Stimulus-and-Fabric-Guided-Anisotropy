@@ -1,12 +1,11 @@
-"""Unified field (VTX) and metrics (CSV) storage with MPI-safe I/O."""
+"""MPI-safe VTX field and CSV metrics storage."""
 
 from __future__ import annotations
 
-import csv
 from collections import defaultdict
 import os
 from pathlib import Path
-from typing import Dict, List, Sequence, TYPE_CHECKING
+from typing import Dict, List, TYPE_CHECKING
 
 from mpi4py import MPI
 from dolfinx import fem
@@ -22,7 +21,7 @@ FLUSH_INTERVAL: int = 10
 
 
 class FieldStorage:
-    """VTX field output manager (COLLECTIVE operations)."""
+    """VTX field output manager (MPI-collective)."""
 
     __slots__ = ("comm", "logger", "output_dir", "_writers", "_write_counts")
 
@@ -51,7 +50,7 @@ class FieldStorage:
         filename: str | None = None,
         engine: str = "bp4",
     ) -> None:
-        """Register VTX writer for field group (COLLECTIVE)."""
+        """Register VTX writer (MPI-collective)."""
         path = self.output_dir / (filename or f"{key}.bp")
         writer = VTXWriter(self.comm, str(path), list(fields), engine=engine)
         self._writers[key] = writer
@@ -59,7 +58,7 @@ class FieldStorage:
         self.logger.debug(lambda: f"Registered '{key}': {path}")
 
     def write(self, key: str, t: float) -> None:
-        """Write timestep (COLLECTIVE)."""
+        """Write timestep (MPI-collective)."""
         self._writers[key].write(t)
         self._write_counts[key] += 1
 

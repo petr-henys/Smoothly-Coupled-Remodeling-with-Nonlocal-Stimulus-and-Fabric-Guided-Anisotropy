@@ -29,8 +29,8 @@ from postprocessor import SweepLoader
 from analysis.plot_utils import (
     setup_axis_style, save_figure, print_banner,
     PUBLICATION_DPI, PLOT_LINEWIDTH, PLOT_MARKERSIZE,
-    DT_COLORS, DT_MARKERS, DT_LINESTYLES, format_dt_label,
-    add_subplot_legend, FIGSIZE_DOUBLE_COLUMN, PLOT_ALPHA_OVERLAY,
+    DT_COLORS, DT_MARKERS, format_dt_label,
+    add_subplot_legend, FIGSIZE_DOUBLE_COLUMN,
     LEGEND_FONTSIZE,
 )
 

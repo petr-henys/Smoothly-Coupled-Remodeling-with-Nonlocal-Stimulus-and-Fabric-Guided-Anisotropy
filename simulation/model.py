@@ -7,7 +7,7 @@ for a given finite-element domain and :class:`simulation.config.Config`.
 
 from __future__ import annotations
 
-from typing import Dict, Tuple, List, Optional
+from typing import Dict, List, Optional
 
 import numpy as np
 from mpi4py import MPI
@@ -25,22 +25,18 @@ from simulation.drivers import GaitDriver
 
 
 class Remodeller:
-    """High-level remodeling driver.
-
-    The class is intentionally thin: it owns FE fields, subsolvers and
-    storage/telemetry, but does not hide configuration or provide fallback
-    behaviour. All required parameters must be supplied via :class:`Config`.
+    """High-level bone remodeling orchestrator.
+    
+    Owns FE fields, subsolvers, and storage. Requires fully specified Config.
     """
 
     def __init__(self, cfg: Config):
-        """Bind configuration, allocate fields and construct subsolvers.
-
+        """Initialize remodeler with configuration.
+        
         Parameters
         ----------
-        cfg:
-            Fully specified simulation configuration; in particular,
-            ``cfg.domain`` and ``cfg.facet_tags`` must already be set and
-            consistent.
+        cfg : Config
+            Complete simulation configuration with domain and facet_tags.
         """
         self.cfg = cfg
         self.domain = self.cfg.domain

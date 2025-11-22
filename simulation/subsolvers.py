@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from mpi4py import MPI
 from petsc4py import PETSc
-from dolfinx import fem, default_scalar_type
+from dolfinx import fem
 from dolfinx.fem.petsc import (
     assemble_matrix,
     assemble_vector,
@@ -18,7 +18,7 @@ from dolfinx.fem.petsc import (
 import ufl
 
 from simulation.utils import (
-    build_nullspace, matrix_exp, spectral_decomposition_3x3, unittrace_psd,
+    build_nullspace, unittrace_psd, spectral_decomposition_3x3, matrix_exp,
     smooth_abs, smooth_plus, smooth_max, smooth_heaviside
 )
 from simulation.logger import get_logger
@@ -28,14 +28,7 @@ if TYPE_CHECKING:
 
 
 def get_distal_damping_mask(mesh, z_min: float, height: float = 15.0, transition: float = 5.0):
-    """
-    Returns a UFL expression for a spatial mask that dampens values near the distal boundary.
-
-    The mask is:
-      - 0.0 for z < z_min + height
-      - Transitions from 0.0 to 1.0 for z in [z_min + height, z_min + height + transition]
-      - 1.0 for z > z_min + height + transition
-    """
+    """Spatial mask dampening distal boundary: 0 below z_min+height, smooth transition, 1 above."""
     x = ufl.SpatialCoordinate(mesh)
     z = x[2]
     z_start = z_min + height
@@ -51,7 +44,7 @@ def get_distal_damping_mask(mesh, z_min: float, height: float = 15.0, transition
 # --- Base linear solver class ---
 
 class _BaseLinearSolver:
-    """Base KSP solver with setup, assembly, solve, and stats tracking."""
+    """Base linear solver with assembly, KSP solve, and iteration tracking."""
 
     def __init__(
         self,
@@ -166,7 +159,7 @@ class _BaseLinearSolver:
 # --- Subsolver implementations ---
 
 class MechanicsSolver(_BaseLinearSolver):
-    """Elastic equilibrium with anisotropic fabric reinforcement."""
+    """Anisotropic elastic equilibrium solver (Zysset-Curnier model)."""
 
     def __init__(
         self,
@@ -194,14 +187,11 @@ class MechanicsSolver(_BaseLinearSolver):
         return ufl.inner(self.sigma(self.trial, self.rho, self.A_dir), self.eps(self.test)) * self.dx
 
     def eps(self, u):
-        """Symmetric gradient ε(u)."""
+        """Strain tensor: sym(grad(u))."""
         return ufl.sym(ufl.grad(u))
 
     def sigma(self, u, rho, L_dir):
-        """Cauchy stress σ(u) [MPa] using Zysset-Curnier orthotropic model.
-
-        L_dir is the log-fabric tensor. A = exp(L_dir).
-        """
+        """Cauchy stress [MPa] via Zysset-Curnier model with log-fabric L_dir."""
         rho_eff = smooth_max(rho, self.cfg.rho_min, self.smooth_eps)
         
         # 1. Spectral Decomposition of L
@@ -214,23 +204,36 @@ class MechanicsSolver(_BaseLinearSolver):
         
         # 3. Zysset-Curnier Stiffness Construction
         # Parameters
-        k = self.cfg.k_stiff
+        # k = self.cfg.k_stiff  <-- Replaced by variable exponent
         p = self.cfg.p_stiff
         E0 = self.cfg.E0_z
         G0 = self.cfg.G0_z
         nu0 = self.cfg.nu0_z
         
+        # Variable exponent k(rho) interpolating between n_trab and n_cort
+        # We use a smooth transition based on rho
+        # k(rho) = n_trab * (1 - w) + n_cort * w
+        # w(rho) = smoothstep(rho, rho_trab_max, rho_cort_min)
+        
+        def smoothstep(x, edge0, edge1):
+            # Clamp x to [edge0, edge1] and map to [0, 1]
+            t = ufl.max_value(0.0, ufl.min_value(1.0, (x - edge0) / (edge1 - edge0)))
+            return t * t * (3.0 - 2.0 * t)
+
+        w = smoothstep(rho_eff, self.cfg.rho_trab_max, self.cfg.rho_cort_min)
+        k_var = self.cfg.n_trab * (1.0 - w) + self.cfg.n_cort * w
+        
         # Eigenvalues of stiffness
         # E_i = E0 * rho^k * m_i^p
-        E1 = E0 * (rho_eff**k) * (m1**p)
-        E2 = E0 * (rho_eff**k) * (m2**p)
-        E3 = E0 * (rho_eff**k) * (m3**p)
+        E1 = E0 * (rho_eff**k_var) * (m1**p)
+        E2 = E0 * (rho_eff**k_var) * (m2**p)
+        E3 = E0 * (rho_eff**k_var) * (m3**p)
         
         # Shear moduli (approximate geometric mean)
         # G_ij = G0 * rho^k * (mi*mj)^(p/2)
-        G12 = G0 * (rho_eff**k) * ((m1*m2)**(p/2.0))
-        G23 = G0 * (rho_eff**k) * ((m2*m3)**(p/2.0))
-        G31 = G0 * (rho_eff**k) * ((m3*m1)**(p/2.0))
+        G12 = G0 * (rho_eff**k_var) * ((m1*m2)**(p/2.0))
+        G23 = G0 * (rho_eff**k_var) * ((m2*m3)**(p/2.0))
+        G31 = G0 * (rho_eff**k_var) * ((m3*m1)**(p/2.0))
         
         # Poisson ratios (assumed constant or weak dependence)
         # nu_ij = nu0 * (mj/mi)^(p/2) ? 
@@ -321,7 +324,7 @@ class MechanicsSolver(_BaseLinearSolver):
         return its, reason
 
     def energy_balance(self):
-        """Compute internal and external work and their relative error."""
+        """Internal/external work and relative error."""
         # Internal work: a(u,u)
         a_uu_local = fem.assemble_scalar(fem.form(ufl.inner(self.sigma(self.u, self.rho, self.A_dir), self.eps(self.u)) * self.dx))
         W_int = self.comm.allreduce(a_uu_local, op=MPI.SUM)
@@ -338,7 +341,7 @@ class MechanicsSolver(_BaseLinearSolver):
         return W_int, W_ext, rel_error
 
     def average_strain_energy(self):
-        """Compute domain-averaged strain energy density."""
+        """Domain-averaged strain energy density."""
         psi = 0.5 * ufl.inner(self.sigma(self.u, self.rho, self.A_dir), self.eps(self.u))
         E_local = fem.assemble_scalar(fem.form(psi * self.dx))
         vol_local = fem.assemble_scalar(fem.form(1.0 * self.dx))
@@ -350,7 +353,7 @@ class MechanicsSolver(_BaseLinearSolver):
 
 
 class StimulusSolver(_BaseLinearSolver):
-    """Reaction-diffusion stimulus S driven by mechanical driver ψ(x)."""
+    """Reaction-diffusion stimulus solver with mechanical driver."""
 
     def __init__(
         self,
@@ -375,8 +378,11 @@ class StimulusSolver(_BaseLinearSolver):
         dt = self.cfg.dt
         if dt <= 0:
             raise ValueError(f"dt must be positive, got {dt}")
+        if self.cfg.tauS <= 0:
+            raise ValueError(f"tauS must be positive, got {self.cfg.tauS}")
+            
         return (
-            (self.cfg.cS / dt + self.cfg.tauS) * self.trial * self.test * self.dx
+            (self.cfg.cS / dt + self.cfg.cS / self.cfg.tauS) * self.trial * self.test * self.dx
             + self.cfg.kappaS * ufl.inner(ufl.grad(self.trial), ufl.grad(self.test)) * self.dx
         )
 
@@ -417,7 +423,7 @@ class StimulusSolver(_BaseLinearSolver):
         
         # Terms
         storage = (self.cfg.cS / dt) * (S - S_old)
-        decay = self.cfg.tauS * S
+        decay = (self.cfg.cS / self.cfg.tauS) * S
         
         # Source
         z_min = self._compute_z_min()
@@ -438,7 +444,7 @@ class StimulusSolver(_BaseLinearSolver):
 
 
 class DensitySolver(_BaseLinearSolver):
-    """Density evolution ρ: anisotropic diffusion with soft mechanostat ρ_eq(S)."""
+    """Density evolution with anisotropic diffusion and mechanostat remodeling."""
 
     def __init__(
         self,
@@ -540,10 +546,9 @@ class DensitySolver(_BaseLinearSolver):
 
 
 class DirectionSolver(_BaseLinearSolver):
-    """Log-Fabric tensor L: reaction-diffusion relaxing to log-target L_M.
+    """Log-fabric tensor solver: reaction-diffusion toward strain-aligned target.
     
-    L = log(A).
-    Equation: cA dL/dt - div(D grad L) + r L = r L_M
+    Evolves L = log(A) with cA dL/dt - div(D grad L) + r L = r L_M.
     """
 
     def __init__(

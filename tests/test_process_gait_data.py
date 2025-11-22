@@ -3,9 +3,6 @@
 Split out from `test_gaitloader.py` for clarity.
 """
 
-import json
-from pathlib import Path
-
 import numpy as np
 import pandas as pd
 import pytest

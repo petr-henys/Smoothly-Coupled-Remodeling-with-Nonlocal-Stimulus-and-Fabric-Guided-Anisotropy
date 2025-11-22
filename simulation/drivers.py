@@ -1,13 +1,4 @@
-"""Remodeling drivers for stimulus and direction solvers.
-
-This module provides driver objects that translate mechanics results (displacements u) into:
-- a scalar stimulus driver ψ(u) [-] (dimensionless daily load dose)
-- a structure tensor M(u) capturing preferred loading directions
-
-Used as inputs for:
-- StimulusSolver (source term from ψ)
-- DirectionSolver (evolution of fabric tensor from M)
-"""
+"""Remodeling drivers: translate mechanics to stimulus ψ(u) and structure M(u)."""
 
 from __future__ import annotations
 
@@ -41,11 +32,9 @@ class RemodelingDriver(Protocol):
 from simulation.utils import matrix_ln
 
 class GaitDriver:
-    """Gait-averaged Carter–Beaupré daily stress stimulus + structure tensor.
-
-    ψ_day(x) = N_cyc * ⟨(σ_eff(x)/ψ_ref)^m⟩_cycle   [-]
-    M(x) = ⟨ε_devᵀ ε_dev⟩_cycle
-    L_target(x) = log(M(x))
+    """Gait-averaged Carter-Beaupré stimulus and strain-aligned target tensor.
+    
+    ψ = N_cyc * ⟨(σ/ψ_ref)^m⟩, M = ⟨ε_dev^T ε_dev⟩, L_target = log(M).
     """
 
     def __init__(self, mech: MechanicsSolver, gait_loader: FemurRemodellerGait, config: Config):
@@ -215,7 +204,7 @@ class GaitDriver:
             # Specific SED = U / rho
             # Use max(rho, rho_min) to avoid division by zero
             rho_safe = ufl.max_value(self.mech.rho, self.cfg.rho_min)
-            sed_spec = U_i / rho_safe
+            sed_spec = U_i / rho_safe # is this corect?????
             
             term = (sed_spec / self.psi_ref) ** self.exponent
 

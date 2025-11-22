@@ -17,13 +17,12 @@ from dolfinx import mesh, fem
 from dolfinx.fem import Function
 import tempfile
 from pathlib import Path
-import csv as csv_module
 
 from simulation.config import Config
 from simulation.utils import build_facetag
 from simulation.model import Remodeller
 from simulation.telemetry import Telemetry
-from simulation.logger import get_logger, Level
+from simulation.logger import get_logger
 
 comm = MPI.COMM_WORLD
 

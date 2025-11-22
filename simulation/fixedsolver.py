@@ -1,4 +1,4 @@
-"""Fixed-point solver orchestrating coupled PDE subsolvers with Anderson acceleration."""
+"""Fixed-point coupling with Anderson acceleration for coupled PDEs."""
 
 from __future__ import annotations
 from typing import Optional, List, Dict, Any, Tuple
@@ -16,7 +16,7 @@ from simulation.drivers import RemodelingDriver
 
 
 class FixedPointSolver:
-    """Orchestrate Gauss-Seidel iteration over four coupled PDEs with Anderson or Picard."""
+    """Gauss-Seidel coupling with Anderson/Picard acceleration."""
 
     def __init__(self, comm: MPI.Comm, cfg: Config,
                  driver: RemodelingDriver,
@@ -74,7 +74,7 @@ class FixedPointSolver:
             )
 
     def _build_state_slices(self) -> None:
-        """Build slice indices for flattened (ρ, L, S) state vector."""
+        """Slice indices for flattened state (ρ, L, S)."""
         n_rho, n_L, n_S = self.n_rho, self.n_L, self.n_S
         self.state_size = n_rho + n_L + n_S
         self.state_slices = (

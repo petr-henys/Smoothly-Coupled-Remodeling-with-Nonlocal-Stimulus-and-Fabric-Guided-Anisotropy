@@ -1,6 +1,6 @@
 """Utility functions: nullspace, projection, Dirichlet BCs, field operations, memory tracking."""
 
-from typing import List, Tuple
+from typing import List
 import resource
 
 from dolfinx import fem, la, mesh, default_scalar_type
@@ -110,24 +110,13 @@ def collect_dirichlet_dofs(bcs, n_owned: int) -> np.ndarray:
     return np.unique(np.concatenate(chunks))
 
 
-def _global_dot(comm: MPI.Comm, a: np.ndarray, b: np.ndarray) -> float:
-    """MPI-global dot product."""
-    return comm.allreduce(float(a @ b), op=MPI.SUM)
-
-def _global_norm(comm: MPI.Comm, v: np.ndarray) -> float:
-    """MPI-global L2 norm."""
-    return _global_dot(comm, v, v) ** 0.5
-
 def current_memory_mb() -> float:
     """Current process resident memory (RSS) in MB."""
     mem_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     return mem_kb / 1024.0
 
 def spectral_decomposition_3x3(A):
-    """
-    Compute eigenvalues of a 3x3 symmetric tensor A using Cardano's formula.
-    Returns (lambda1, lambda2, lambda3).
-    """
+    """Eigenvalues of 3x3 symmetric tensor via Cardano's formula."""
     # Invariants
     I1 = ufl.tr(A)
     I2 = 0.5 * (I1**2 - ufl.tr(A*A))
@@ -154,10 +143,7 @@ def spectral_decomposition_3x3(A):
     return eig1, eig2, eig3
 
 def matrix_function_3x3(A, func):
-    """
-    Compute f(A) for a scalar function f using Lagrange interpolation (Sylvester's formula).
-    f(A) = sum f(li) * product_{j!=i} (A - lj I) / (li - lj)
-    """
+    """Matrix function f(A) via Sylvester's formula."""
     l1, l2, l3 = spectral_decomposition_3x3(A)
     f1, f2, f3 = func(l1), func(l2), func(l3)
     
@@ -199,22 +185,22 @@ def unittrace_psd(B, dim: int, eps: float):
 # --- Smooth regularization helpers (C^∞ approximations) ---
 
 def smooth_abs(x, eps: float):
-    """C^∞ approximation of |x|."""
+    """Smooth |x| approximation."""
     return ufl.sqrt(x * x + eps * eps)
 
 
 def smooth_plus(x, eps: float):
-    """C^∞ approximation of max(x, 0)."""
+    """Smooth max(x, 0) approximation."""
     sabs = smooth_abs(x, eps)
     return 0.5 * (x + sabs)
 
 
 def smooth_max(x, xmin, eps: float):
-    """C^∞ approximation of max(x, xmin)."""
+    """Smooth max(x, xmin) approximation."""
     dx = x - xmin
     return xmin + 0.5 * (dx + ufl.sqrt(dx * dx + eps * eps))
 
 
 def smooth_heaviside(x, eps: float):
-    """C^∞ approximation of step function H(x)."""
+    """Smooth Heaviside step function."""
     return 0.5 * (1.0 + x / ufl.sqrt(x * x + eps * eps))
