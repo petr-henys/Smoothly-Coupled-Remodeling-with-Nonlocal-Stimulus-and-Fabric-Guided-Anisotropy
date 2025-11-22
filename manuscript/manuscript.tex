@@ -551,11 +551,11 @@ H \;:=\; R\,R^\top \quad(\text{reduced across MPI ranks}),
 \end{equation}
 then solve the equality--constrained, Tikhonov-regularized system for the weights $\boldsymbol{\alpha}\in\mathbb{R}^p$
 \begin{equation}\label{eq:kkt}
-\begin{bmatrix} H + \lambda_{\mathrm{eff}} I & \mathbf{1} \\ \mathbf{1}^\top & 0 \end{bmatrix}
+\begin{bmatrix} H + \lambda_{\mathrm{AA}} I & \mathbf{1} \\ \mathbf{1}^\top & 0 \end{bmatrix}
 \begin{bmatrix} \boldsymbol{\alpha} \\ \eta \end{bmatrix}
 =
 \begin{bmatrix} \mathbf{0} \\ 1 \end{bmatrix},\qquad
-\lambda_{\mathrm{eff}} \;=\; \lambda\,\max\!\left(\frac{\mathrm{tr}(H)}{p},\,1\right).
+\lambda_{\mathrm{AA}} \;=\; \lambda\,\max\!\left(\frac{\mathrm{tr}(H)}{p},\,1\right).
 \end{equation}
 The accelerated candidate is then assembled as
 \begin{equation}\label{eq:aa-update}
@@ -580,7 +580,7 @@ r_{\mathrm{proxy}}^{(m+1)} \;\le\; (1-\gamma)\,r_{\mathrm{Pic}}^{(m+1)}.
 Otherwise we backtrack along $\mathbf{s}$ by halving ($\le$ a user cap) until \eqref{eq:safeguard} holds; if backtracking fails, we \emph{fall back} to the raw Picard/GS iterate $x_{\mathrm{raw}}^{(m+1)}$. This safeguard is \emph{cheap}: it requires no extra GS sweep because the proxy only uses differences of already known states.
 
 \paragraph{Automatic restarts and conditioning.}
-The accelerator maintains the best Picard merit seen so far and schedules a history reset (on the \emph{next} call) if any of the following triggers fire: (i) a streak of $\ge k$ consecutive AA rejections; (ii) Picard merit stalls, i.e., $r_{\mathrm{Pic}}^{(m+1)}$ exceeds the best so far by a user factor; (iii) the estimated condition number of $H+\lambda_{\mathrm{eff}}I$ exceeds a threshold. In case of linear-algebra failure in \eqref{eq:kkt}, uniform weights are used as a safe fallback. No preconditioner-driven resets are used; preconditioner maintenance (if any) is decoupled from Anderson.
+The accelerator maintains the best Picard merit seen so far and schedules a history reset (on the \emph{next} call) if any of the following triggers fire: (i) a streak of $\ge k$ consecutive AA rejections; (ii) Picard merit stalls, i.e., $r_{\mathrm{Pic}}^{(m+1)}$ exceeds the best so far by a user factor; (iii) the estimated condition number of $H+\lambda_{\mathrm{AA}}I$ exceeds a threshold. In case of linear-algebra failure in \eqref{eq:kkt}, uniform weights are used as a safe fallback. No preconditioner-driven resets are used; preconditioner maintenance (if any) is decoupled from Anderson.
 
 \paragraph{Stopping and logging.}
 In the implementation we monitor the projected Picard residual $r_{\mathrm{Pic}}^{(m+1)}$ itself and stop once $r_{\mathrm{Pic}}^{(m+1)}<\mathrm{tol}$ and at least a user-specified minimum number of subiterations has been taken. The safeguard/backtracking \eqref{eq:safeguard} and step limiting ensure that any accepted Anderson step has a residual no worse than the contemporaneous Picard update in this metric. A separate \emph{blockwise relative iterate change} and Anderson diagnostics (history depth, conditioning, restarts) are recorded for analysis but are not used for stopping.
@@ -636,11 +636,11 @@ Unless stated otherwise, each linear block solve uses PETSc MINRES with GAMG pre
 \input{sections/anderson_acceleration}
 \input{sections/discussion}
 \input{sections/reproducibility}
-\section*{Conflict of interest statement}
-The authors declare no conflict of interest.
+\section*{Conflict of interest}
+The authors declare that they have no known competing financial interests or personal relationships that could have appeared to influence the work reported in this paper.
 
-\section*{Using AI}
-The author uses ChatGPT to improve language flow and formal writing. The author is fully responsible for the content of the article.
+\section*{Use of AI tools}
+A large language model (ChatGPT, OpenAI) was used as a writing aid to polish the language and improve the consistency of the exposition. All modelling assumptions, derivations, and interpretations were designed, checked, and validated by the authors, who retain full responsibility for the scientific content of this article.
 
 \section*{Acknowledgments}
 Czech Science Foundation Grant No. 24-10862S supported the research.

@@ -47,9 +47,9 @@ class Config:
     S_form_th: float = 0.2      # Formation threshold in S (dimensionless)
     S_resorb_th: float = -0.2   # Resorption threshold in S (dimensionless)
     k_step: float = 6.0         # Smooth step steepness
-    lambda_form: float = 0.1    # Formation rate [1/day]
-    lambda_resorb: float = 0.1  # Resorption rate [1/day]
-    S_lazy: float = 0.25        # Lazy zone width
+    lambda_form: float = 0.01    # Formation rate [1/day]
+    lambda_resorb: float = 0.01  # Resorption rate [1/day]
+    S_lazy: float = 0.        # Lazy zone width
 
     # Density diffusion [mm^2/day]
     beta_par: float = 0.1       # Parallel to fabric
@@ -58,8 +58,8 @@ class Config:
     # =========================================================================
     # Stimulus (Reaction-Diffusion)
     # =========================================================================
-    stimulus_type: str = "stress" # "stress", "strain", "sed"
-    psi_ref: float = 20.0       # Reference value (Stress [MPa], Strain [-], or SED [MPa])
+    stimulus_type: str = "sed" # "stress", "strain", "sed"
+    psi_ref: float = 1e-2       # Reference value (Stress [MPa], Strain [-], or SED [MPa])
     
     cS: float = 1.0             # Signaling capacity
     tauS: float = 1.0           # Decay rate [1/day]
