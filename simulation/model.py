@@ -337,9 +337,6 @@ class Remodeller:
                 self.S.x.array[:] = self.S_old.x.array + dt_curr * self.S_rate_last.x.array
                 self.L.x.array[:] = self.L_old.x.array + dt_curr * self.L_rate_last.x.array
             
-            # Enforce bounds for density
-            np.clip(self.rho.x.array, self.cfg.rho_min, self.cfg.rho_max, out=self.rho.x.array)
-            
             self.rho.x.scatter_forward()
             self.S.x.scatter_forward()
             self.L.x.scatter_forward()
