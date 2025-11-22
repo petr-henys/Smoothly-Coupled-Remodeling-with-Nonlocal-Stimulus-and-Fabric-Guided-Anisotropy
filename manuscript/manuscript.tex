@@ -63,6 +63,13 @@
 \begin{abstract}
 We propose a four-field bone-remodeling formulation that co-evolves displacement $\mathbf{u}$, apparent density $\rho$, fabric $\mathbf{A}$, and a nonlocal mechanotransductive stimulus $S$. The elastic response couples a density-scaled isotropic baseline with a nonnegative rank-one reinforcement aligned to a trace-safe normalization of $\mathbf{A}$ (without explicit PSD projection). The stimulus follows a diffusion--reaction balance driven by elastic energy; density evolves via anisotropic transport guided by $\widehat{\mathbf{A}}$ and a smooth stimulus-gated relaxation to $[\rho_{\min},\rho_{\max}]$; fabric relaxes toward a trace-safe normalization of $\boldsymbol{\varepsilon}^\top\boldsymbol{\varepsilon}$ with spatial diffusion. Time integration is fully implicit Backward--Euler; space is discretized by conforming $H^1$ finite elements in a unified weak-form notation. Nonlinear coupling is solved by a partitioned block Gauss--Seidel sweep (mechanics $\rightarrow$ stimulus $\rightarrow$ density $\rightarrow$ fabric) wrapped in Type-II Anderson acceleration with Tikhonov regularization and residual safeguards. A single smoothing policy used across clamping, stimulus gates, and normalizations ensures differentiability and preserves coercivity, while the solver architecture yields stable, mesh-robust convergence without monolithic Jacobians.
 \end{abstract}
+
+%% Graphical abstract
+\begin{graphicalabstract}
+\centering
+\includegraphics[width=\textwidth]{images/graphical_abstract.jpg}
+\end{graphicalabstract}
+
 %% Keywords
 \begin{keyword}
 Bone remodeling \sep finite element method \sep Backward--Euler \sep Anderson acceleration \sep Gauss--Seidel splitting \sep anisotropic transport \sep fabric tensor \sep diffusion--reaction stimulus.
@@ -128,6 +135,14 @@ with $s$ smoothly clamped to $[0,1]$ via the same $\mathcal{C}^\infty$ “max'' 
 n(\widetilde{\rho}) \;:=\; (1-w(\widetilde{\rho}))\,n_{\mathrm{trab}} + w(\widetilde{\rho})\,n_{\mathrm{cort}}.
 \]
 For $\widetilde{\rho}\lesssim\rho_{\mathrm{trab}}^{\max}$ we recover the trabecular law $E\approx E_0\widetilde{\rho}^{\,n_{\mathrm{trab}}}$; for $\widetilde{\rho}\gtrsim\rho_{\mathrm{cort}}^{\min}$ we obtain a milder cortical scaling $E\approx E_0\widetilde{\rho}^{\,n_{\mathrm{cort}}}$.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{../results/constitutive_analysis/constitutive_law.png}
+    \caption{Density-elasticity constitutive law. (a) Stiffness $E(\rho)$ transitions from a trabecular power law ($n=2.0$) to a cortical one ($n=1.2$). (b) The exponent $n(\rho)$ varies smoothly between regimes. (c, d) Sensitivity to transition thresholds. (e) Effect of exponents on stiffness. (f) The cubic smoothstep function ensuring $C^1$ continuity.}
+    \label{fig:constitutive_law}
+\end{figure}
+
 The stress law is
 \begin{equation}\label{eq:stress-law-nd}
 \boldsymbol{\sigma}(\mathbf{u},\rho,\mathbf{A})
@@ -186,7 +201,7 @@ Hence it cannot deteriorate the Legendre--Hadamard constant of the isotropic bas
 with a constant $c_{\mathrm{iso}}>0$ depending only on $(\nu,n,\rho_{\min},E_0)$. Korn’s inequality then yields the standard global coercivity.
 
 \paragraph{Quantitative analysis and biological interpretation.}
-The density--modulus law \eqref{eq:E-rho-nd} encodes the empirical power-law scaling between bone volume fraction (BV/TV) and apparent stiffness. The directional reinforcement supplements this isotropic baseline by increasing stiffness along preferred fabric directions, consistent with homogenized tissue-level elasticity models and with observations of strain-adaptive anisotropy in trabecular bone. The smooth lower clamp \eqref{eq:smooth-max-nd} guarantees strictly positive stiffness even in highly porous regions, thus preventing mechanical degeneracy and preserving differentiability. The normalization \eqref{eq:Ahat-blend-nd} filters the computed direction field into a \emph{symmetric, unit-trace} descriptor; with $\varepsilon>0$ it is \emph{positive-definite}. This combination yields a mechanically transparent, numerically robust model suitable for coupling with remodeling stimuli and evolution equations.
+Figure \ref{fig:constitutive_law} illustrates the behavior of the density-elasticity law. Panel (a) shows the stiffness $E(\rho)$ transitioning from a quadratic trabecular regime ($n_{\mathrm{trab}}=2.0$) to a near-linear cortical regime ($n_{\mathrm{cort}}=1.2$). This dual-power law captures the stiffening efficiency of dense bone while maintaining the rapid compliance increase in porous bone. Panel (b) explicitly plots the exponent $n(\rho)$, which varies smoothly between the two regimes via the cubic smoothstep function shown in (f). Panels (c) and (d) demonstrate the sensitivity of the stiffness curve to the transition thresholds $\rho_{\mathrm{trab}}^{\max}$ and $\rho_{\mathrm{cort}}^{\min}$; shifting these parameters allows for calibration to specific anatomical sites where the trabecular-cortical boundary may differ. Panel (e) highlights the effect of the exponents themselves; higher $n_{\mathrm{trab}}$ suppresses stiffness in low-density regions, effectively modeling the loss of connectivity in osteoporotic bone. The smooth lower clamp \eqref{eq:smooth-max-nd} guarantees strictly positive stiffness even in highly porous regions, thus preventing mechanical degeneracy and preserving differentiability. The normalization \eqref{eq:Ahat-blend-nd} filters the computed direction field into a \emph{symmetric, unit-trace} descriptor; with $\varepsilon>0$ it is \emph{positive-definite}. This combination yields a mechanically transparent, numerically robust model suitable for coupling with remodeling stimuli and evolution equations.
 
 \subsection*{Stimulus submodel}\label{subsec:stim-nd}
 We represent the mechanotransductive drive by a scalar field $S:\Omega\times(0,T]\to\mathbb{R}$ that is \emph{generated} by mechanical activity and \emph{transported} through osteocytic/vascular pathways. Positive values correspond to net formation drive and negative values to net resorption drive.
@@ -209,7 +224,7 @@ Here $c_S>0$ denotes a temporal capacity, $\kappa_S\ge 0$ a diffusivity, and $\t
 where $\sigma_{\mathrm{vm}}$ is the Von Mises equivalent stress, $\sigma_{\mathrm{ref}}$ is a reference stress (e.g., $20\,\mathrm{MPa}$), and $m$ is an empirical exponent.
 
 \paragraph{Quantitative analysis and biological interpretation.}
-Equation \eqref{eq:stim-strong-nd} acts as a spatio-temporal low-pass filter of the mechanical drive $\psi_{\mathrm{day}}-1$. Regions of sustained overload ($\psi_{\mathrm{day}}>1$) accumulate positive stimulus, while underloaded regions accumulate negative stimulus. Diffusion broadens and smooths these regions over the characteristic length
+Equation \eqref{eq:stim-strong-nd} acts as a spatio-temporal low-pass filter of the mechanical drive $\psi_{\mathrm{day}}-1$, as illustrated in Figure \ref{fig:nonlocal_stimulus}. Regions of sustained overload ($\psi_{\mathrm{day}}>1$) accumulate positive stimulus, while underloaded regions accumulate negative stimulus. Diffusion broadens and smooths these regions over the characteristic length
 \(
 \ell_S=\sqrt{\kappa_S/\tau_S}
 \), while the reaction term damps transient fluctuations with a characteristic time
@@ -217,6 +232,13 @@ Equation \eqref{eq:stim-strong-nd} acts as a spatio-temporal low-pass filter of 
 t_S=c_S/\tau_S
 \).
 The capacity $c_S$ thus sets the inertia with respect to temporal fluctuations in the drive, $\kappa_S$ controls spatial spread via gap-junction/vascular pathways, and $\tau_S$ sets the local turnover toward homeostasis. The homogeneous Neumann condition corresponds to zero normal flux of $S$ at $\partial\Omega$.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{images/nonlocal_stimulus.png}
+    \caption{Nonlocal Stimulus Field. The diffusion-reaction equation smooths the raw mechanical signal (which can be noisy or checkerboard-prone) into a continuous biological stimulus $S$, representing the osteocytic communication network. This nonlocal field drives the remodeling process, preventing numerical instabilities and mimicking the physiological range of cellular signaling.}
+    \label{fig:nonlocal_stimulus}
+\end{figure}
 
 \subsection*{Density submodel}\label{subsec:density-nd}
 The apparent density $\rho=\rho(x,t)$ evolves under anisotropic transport aligned with the fabric and under a stimulus-driven relaxation toward admissible bounds $\rho_{\min}$ and $\rho_{\max}$. The stimulus $S=S(x,t)$ drives a dual-threshold mechanostat. The strong form reads, for $(x,t)\in\Omega\times(0,T]$,
@@ -256,8 +278,22 @@ The effective rate $\lambda_{\mathrm{eff}}$ and target density $\rho_{\mathrm{eq
 \end{align*}
 In the "dead zone" where neither threshold is exceeded, $\rho_{\mathrm{eq}} \approx \rho$ and the reaction term vanishes, leaving only diffusion.
 
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{../results/constitutive_analysis/mechanostat_law.png}
+    \caption{Mechanostat evolution law. (a) Remodeling rate $\dot{\rho}$ vs stimulus $S$, showing formation, resorption, and lazy zones. (b) Smooth activation functions $H_{\mathrm{form}}$, $H_{\mathrm{resorb}}$ and saturation $f(S)$. (c) Rate dependence on current density. (d) Sensitivity to formation threshold. (e) Effect of transition steepness. (f) Signal saturation behavior.}
+    \label{fig:mechanostat_law}
+\end{figure}
+
 \paragraph{Quantitative analysis and biological interpretation.}
-Equation \eqref{eq:density-strong-nd} combines anisotropic diffusion with a stimulus-gated mechanostat. The diffusion term $\nabla\!\cdot(\mathbf{D}_\rho\nabla\rho)$ spreads mass preferentially along the principal directions of $\widehat{\mathbf{A}}$. The reaction terms drive $\rho$ toward $\rho_{\max}$ in regions of high stimulus ($S > S_{\mathrm{form}}$) and toward $\rho_{\min}$ in regions of low stimulus ($S < S_{\mathrm{resorb}}$). Inside the lazy zone, remodeling is suppressed.
+Figure \ref{fig:mechanostat_law} details the kinetics of the mechanostat. Panel (a) plots the remodeling rate $\dot{\rho}$ as a function of the stimulus $S$. The "lazy zone" (or dead zone) is clearly visible near $S=0$, where the rate is negligible, preventing unnecessary turnover in equilibrium states. As $S$ exceeds the formation threshold $S_{\mathrm{form}}$ or drops below the resorption threshold $S_{\mathrm{resorb}}$, the rate increases smoothly. Panel (b) decomposes this behavior into the formation ($H_{\mathrm{form}}$) and resorption ($H_{\mathrm{resorb}}$) activation functions, along with the lazy-zone gating factor $f(|S|)$. Panel (c) shows that the rate scales linearly with the current density $\rho$, consistent with surface-area-dependent remodeling theories. Panels (d) and (e) explore the sensitivity to the formation threshold and the transition steepness $k$; a sharper transition (higher $k$) approaches a classical "bang-bang" control, while a lower $k$ yields a more gradual response. Panel (f) demonstrates the signal saturation, ensuring that extreme mechanical stimuli do not lead to unbounded growth rates. Equation \eqref{eq:density-strong-nd} combines this kinetics with anisotropic diffusion, resulting in the density distribution shown in Figure \ref{fig:remodeling_evolution}. The diffusion term $\nabla\!\cdot(\mathbf{D}_\rho\nabla\rho)$ spreads mass preferentially along the principal directions of $\widehat{\mathbf{A}}$. The reaction terms drive $\rho$ toward $\rho_{\max}$ in regions of high stimulus ($S > S_{\mathrm{form}}$) and toward $\rho_{\min}$ in regions of low stimulus ($S < S_{\mathrm{resorb}}$). Inside the lazy zone, remodeling is suppressed.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{images/remodeling.jpg}
+    \caption{Macroscopic Density Evolution. The coupled system evolves the apparent density $\rho$ from a uniform initial state to a heterogeneous structure optimized for the applied loads. High-stress regions densify (cortical bone), while low-stress regions become porous (trabecular bone), governed by the stimulus-driven mechanostat.}
+    \label{fig:remodeling_evolution}
+\end{figure}
 
 \subsection*{Direction (fabric) submodel}\label{subsec:direction-nd}
 The local fabric is described by a second-order, dimensionless tensor field $\mathbf{A}=\mathbf{A}(x,t)\in\mathbb{R}^{d\times d}$ ($d\in\{2,3\}$), which aligns with mechanically preferred directions and is smoothed in space by diffusion. We regard $\mathbf{A}$ as symmetric and treat its dynamics as a relaxation--diffusion flow toward a unit-trace, positive-definite target extracted from the current mechanical state. The strong form on a bounded Lipschitz domain is
@@ -285,12 +321,26 @@ We normalize it by the same \emph{trace-safe shift-and-rescale} used throughout 
 \end{equation}
 which is smooth in $\mathbf{M}$, symmetric, \emph{positive-definite for $\varepsilon_M>0$}, and unit-trace by construction. In the gait-driven context, $\mathbf{M}$ is averaged over the loading cycle.
 
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{../results/constitutive_analysis/anisotropy_law.png}
+    \caption{Fabric-guided anisotropy. (a) Directional stiffness $C(\theta)$ for isotropic, uniaxial, and shear fabrics. (b) Directional diffusivity $D(\theta)$. (c) Sensitivity of stiffness to anisotropy factor $\xi$. (d) Sensitivity of diffusion to anisotropy ratio $\beta_{\perp}$. (e) The reinforcement factor $(\mathbf{n}\cdot\mathbf{A}\cdot\mathbf{n})^2$. (f) Conceptual eigenvalue space of unit-trace fabric tensors.}
+    \label{fig:anisotropy_law}
+\end{figure}
+
 \paragraph{Quantitative analysis and biological interpretation.}
-The reaction term $\frac{c_A}{\tau_A}(\widehat{\mathbf{M}}-\mathbf{A})$ in \eqref{eq:A-strong-nd} drives $\mathbf{A}$ toward the mechanically informed, unit-trace target, while the diffusion $-\frac{c_A \ell^2}{\tau_A}\Delta\mathbf{A}$ spreads directional information and regularizes spatial oscillations. The homogeneous Neumann boundary condition represents no flux of directional content across $\partial\Omega$. Symmetry is preserved by the dynamics; the choice of a unit-trace target ensures that, at steady state ($\partial_t\mathbf{A}=0$), the solution coincides with a spatially smoothed version of $\widehat{\mathbf{M}}$. Tracing \eqref{eq:A-strong-nd} and using $\mathrm{tr}\,\widehat{\mathbf{M}}=1$ gives
+Figure \ref{fig:anisotropy_law} visualizes the fabric-dependent properties. Panel (a) presents polar plots of the directional stiffness $C(\theta)$ for isotropic, uniaxial, and shear fabric states. The uniaxial case shows a pronounced stiffening along the principal axis, while the shear case exhibits a rotated symmetry. Panel (b) shows the corresponding directional diffusivity $D(\theta)$, which facilitates mass transport along the trabecular grain. Panel (c) demonstrates how the anisotropy factor $\xi_{\mathrm{aniso}}$ controls the magnitude of the directional reinforcement; higher $\xi$ leads to a more eccentric stiffness profile. Panel (d) shows the effect of the transverse diffusivity ratio $\beta_{\perp}/\beta_{\parallel}$ on the transport anisotropy. Panel (e) plots the reinforcement factor $(\mathbf{n}\cdot\mathbf{A}\cdot\mathbf{n})^2$, which is the geometric driver of the stiffness increase. Finally, Panel (f) maps the fabric tensors into the eigenvalue space of unit-trace tensors (Barycentric coordinates), illustrating the feasible region for fabric states ranging from isotropic (center) to perfectly uniaxial (corners). The reaction term $\frac{c_A}{\tau_A}(\widehat{\mathbf{M}}-\mathbf{A})$ in \eqref{eq:A-strong-nd} drives $\mathbf{A}$ toward the mechanically informed, unit-trace target, while the diffusion $-\frac{c_A \ell^2}{\tau_A}\Delta\mathbf{A}$ spreads directional information and regularizes spatial oscillations. The homogeneous Neumann boundary condition represents no flux of directional content across $\partial\Omega$. Symmetry is preserved by the dynamics; the choice of a unit-trace target ensures that, at steady state ($\partial_t\mathbf{A}=0$), the solution coincides with a spatially smoothed version of $\widehat{\mathbf{M}}$. Tracing \eqref{eq:A-strong-nd} and using $\mathrm{tr}\,\widehat{\mathbf{M}}=1$ gives
 \begin{equation*}
 \partial_t\big(\mathrm{tr}\,\mathbf{A}\big) - \frac{\ell^2}{\tau_A}\,\Delta\big(\mathrm{tr}\,\mathbf{A}\big) + \frac{1}{\tau_A}\,\mathrm{tr}\,\mathbf{A} \;=\; \frac{1}{\tau_A},
 \end{equation*}
-so the spatial average of $\mathrm{tr}\,\mathbf{A}$ relaxes monotonically to $1$ under no-flux boundaries; pointwise, the relaxation term anchors $\mathrm{tr}\,\mathbf{A}$ toward unity while diffusion communicates this constraint across $\Omega$. The coupling \eqref{eq:M-def-nd}--\eqref{eq:M-hat-nd} aligns principal directions of $\mathbf{A}$ with those of a local strain metric, consistent with strain-adaptation hypotheses in trabecular microstructures, while maintaining global smoothness and avoiding non-differentiable thresholds.
+so the spatial average of $\mathrm{tr}\,\mathbf{A}$ relaxes monotonically to $1$ under no-flux boundaries; pointwise, the relaxation term anchors $\mathrm{tr}\,\mathbf{A}$ toward unity while diffusion communicates this constraint across $\Omega$. The coupling \eqref{eq:M-def-nd}--\eqref{eq:M-hat-nd} aligns principal directions of $\mathbf{A}$ with those of a local strain metric, as visualized in Figure \ref{fig:fabric_orientation}, consistent with strain-adaptation hypotheses in trabecular microstructures, while maintaining global smoothness and avoiding non-differentiable thresholds.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{images/fabric_orientation.jpg}
+    \caption{Fabric Tensor Orientation. The principal directions of the fabric tensor $\mathbf{A}$ (visualized as glyphs) align with the principal stress trajectories. This alignment creates an orthotropic material response that efficiently carries load, minimizing shear stresses relative to the material axes.}
+    \label{fig:fabric_orientation}
+\end{figure}
 
 \paragraph{Regularization parameters and defaults.}
 Unless a sensitivity study dictates otherwise, we recommend using a unified smoothness $\varepsilon$ (and gate steepness $k$) across \eqref{eq:smooth-max-nd}, \eqref{eq:smooth-splits-nd}, \eqref{eq:Ahat-blend-nd}, and \eqref{eq:M-hat-nd} by setting $\varepsilon_B\!=\!\varepsilon_M\!=\!\varepsilon$ and $k_B\!=\!k_M\!=\!k$. With the Gram maps \eqref{eq:Ahat-blend-nd} and \eqref{eq:M-hat-nd}, both $\widehat{\mathbf{A}}$ and $\widehat{\mathbf{M}}$ are \emph{unit-trace and SPD} for any $\varepsilon>0$; the same $\mathcal{C}^\infty$ regularization supplies smooth clamps and lazy-zone weights in the density kinetics without explicit cone projections or case distinctions.
@@ -399,13 +449,17 @@ with the product inner product
 for $\mathbf{y}=(p,\mathbf{Q},q)$ and positive weights $\alpha_\bullet$. The mechanics field $\mathbf{u}$ is treated as a dependent variable $\mathbf{u}(\rho,\mathbf{A})$ determined by the equilibrium equations. The merit/stopping metric is a projected 2--norm on the flattened state $(\rho,\mathbf{A},S)$ with RMS-per-DOF block weights (i.e., $w_i=1/N_i$) that projects out any constrained DOFs.
 
 \paragraph{Block map.}
-Define the block Gauss--Seidel map $\mathcal{G}:\mathcal{X}\to\mathcal{X}$ by
+We define the fixed-point iteration in terms of the mechanical drivers $\psi_{\mathrm{day}}$ (scalar stimulus driver) and $\mathbf{M}$ (fabric target). Given the state $(\rho, \mathbf{A})$, the mechanics solver $\mathsf{U}$ determines equilibrium $\mathbf{u} = \mathsf{U}(\rho, \mathbf{A})$, which in turn generates the drivers:
+\[
+\psi_{\mathrm{new}} = \psi_{\mathrm{day}}(\mathbf{u}, \rho, \mathbf{A}), \qquad \mathbf{M}_{\mathrm{new}} = \mathbf{M}(\mathbf{u}).
+\]
+The block Gauss--Seidel map $\mathcal{G}:\mathcal{X}\to\mathcal{X}$ is then defined by
 \begin{equation}\label{eq:block-map}
 \mathcal{G}(\rho,\mathbf{A},S)
 :=
-\Big(\ \underbrace{\mathsf{R}(S_{\mathrm{new}},\mathbf{A})}_{\text{density}},\ \underbrace{\mathsf{A}(\mathbf{u}_{\mathrm{new}})}_{\text{fabric}},\ \underbrace{\mathsf{S}(\mathbf{u}_{\mathrm{new}},\rho,\mathbf{A})}_{\text{stim}}\ \Big),
+\Big(\ \underbrace{\mathsf{R}(S_{\mathrm{new}},\mathbf{A})}_{\text{density}},\ \underbrace{\mathsf{A}(\mathbf{M}_{\mathrm{new}})}_{\text{fabric}},\ \underbrace{\mathsf{S}(\psi_{\mathrm{new}})}_{\text{stim}}\ \Big),
 \end{equation}
-where $\mathbf{u}_{\mathrm{new}}=\mathsf{U}(\rho,\mathbf{A})$ is the equilibrium displacement and $S_{\mathrm{new}}=\mathsf{S}(\mathbf{u}_{\mathrm{new}},\rho,\mathbf{A})$ is the updated stimulus. In the femur application, the mechanics solver $\mathsf{U}$ builds a Carter/Beaupr\'e-style daily stress stimulus $\psi_{\mathrm{day}}$ from phase-specific Von Mises stresses via
+where $S_{\mathrm{new}}=\mathsf{S}(\psi_{\mathrm{new}})$ is the updated stimulus. This structure highlights that the solvers $\mathsf{S}$ and $\mathsf{A}$ depend on the displacement field $\mathbf{u}$ only through the intermediate drivers. In the femur application, the mechanics solver $\mathsf{U}$ builds a Carter/Beaupr\'e-style daily stress stimulus $\psi_{\mathrm{day}}$ from phase-specific Von Mises stresses via
 $
 J_{\mathrm{cycle}}(x)=\sum w\,(\sigma_{\mathrm{vm}}(x)/\sigma_{\mathrm{ref}})^{m}\big/\sum w,\quad
 \psi_{\mathrm{day}}(x)=N_{\mathrm{cyc}}\,J_{\mathrm{cycle}}(x),
@@ -418,12 +472,12 @@ The fixed point at $t^n$ solves
 \end{equation}
 
 \paragraph{Block Gauss--Seidel iteration.}
-Given the state $\mathbf{x}^{(m)}=(\rho^{(m)},\mathbf{A}^{(m)},S^{(m)})$, we first compute the equilibrium displacement $\mathbf{u} = \mathsf{U}(\rho^{(m)},\mathbf{A}^{(m)})$ and then perform the updates:
+Given the state $\mathbf{x}^{(m)}=(\rho^{(m)},\mathbf{A}^{(m)},S^{(m)})$, we first compute the equilibrium displacement $\mathbf{u} = \mathsf{U}(\rho^{(m)},\mathbf{A}^{(m)})$ and evaluate the drivers $\psi = \psi_{\mathrm{day}}(\mathbf{u}, \rho^{(m)}, \mathbf{A}^{(m)})$ and $\mathbf{M} = \mathbf{M}(\mathbf{u})$. Then we perform the updates:
 \begin{equation}\label{eq:gs-sweep}
 \begin{aligned}
-S^{(m+1)} &:= \mathsf{S}\big(\mathbf{u},\rho^{(m)},\mathbf{A}^{(m)}\big),\\
+S^{(m+1)} &:= \mathsf{S}\big(\psi\big),\\
 \rho^{(m+1)} &:= \mathsf{R}\big(S^{(m+1)},\mathbf{A}^{(m)}\big),\\
-\mathbf{A}^{(m+1)} &:= \mathsf{A}\big(\mathbf{u}\big).
+\mathbf{A}^{(m+1)} &:= \mathsf{A}\big(\mathbf{M}\big).
 \end{aligned}
 \end{equation}
 The sweep \eqref{eq:gs-sweep} defines the raw update $x_{\mathrm{raw}}^{(m+1)}:=\mathcal{G}(\mathbf{x}^{(m)})$. No external scalar damping $\omega_m$ is used; instead, damping/backtracking and step limiting are handled inside the accelerator (see below).
@@ -524,6 +578,62 @@ For uniaxial tests we prescribe the traction magnitude \(t_p = E_{\mathrm{app}}\
 \emph{Mechanoregulation:} \(\sigma_{\mathrm{ref}}=20.0\,\mathrm{MPa}\). \
 \emph{Stimulus transport/kinetics:} \(c_S=1.0\), \(\tau_S=1.0\,\mathrm{day^{-1}}\), \(\kappa_S=1.0\,\mathrm{mm^2\,day^{-1}}\); sensitivity studies vary these within plausible lacunar--canalicular transport ranges. \
 \emph{Loading:} \(t_p=E_{\mathrm{app}}\times 10^{-3}\) (and \(1.5\times 10^{-3}\) for the higher level), using identical PMUBC across refinements.
+
+\subsection*{Stability Analysis: Stress vs. Strain and SED Drivers}
+To elucidate the stability characteristics of the coupled constitutive laws, we perform a zero-dimensional (0D) phase space analysis. We consider a representative volume element with uniform density $\rho$ and stimulus $S$, subjected to uniaxial loading. We compare two common mechanical drivers: the stress-based driver used in our 3D formulation ($\psi_\sigma$) and a strain-energy density (SED) or strain-based driver ($\psi_\varepsilon$).
+
+\paragraph{Stress Driver (Neutral Stability).}
+Our formulation uses a stress-based driver $\psi_\sigma \propto (\sigma/\sigma_{\mathrm{ref}})^m$. The stress is constitutively defined as $\sigma(\rho,\varepsilon) = E(\rho)\varepsilon$. Under \emph{force control}, the external load $\sigma_{\mathrm{ext}}$ is fixed, so equilibrium requires $\sigma = \sigma_{\mathrm{ext}}$. The strain must therefore adjust as $\varepsilon(\rho) = \sigma_{\mathrm{ext}}/E(\rho)$. Substituting this back into the driver:
+\begin{equation}
+    \psi_\sigma(\rho) = \left( \frac{E(\rho)\varepsilon(\rho)}{\sigma_{\mathrm{ref}}} \right)^m = \left( \frac{E(\rho)}{\sigma_{\mathrm{ref}}} \cdot \frac{\sigma_{\mathrm{ext}}}{E(\rho)} \right)^m = \left( \frac{\sigma_{\mathrm{ext}}}{\sigma_{\mathrm{ref}}} \right)^m = \mathrm{const}.
+\end{equation}
+Since the driver is constant with respect to density ($\partial \psi_\sigma / \partial \rho = 0$), the system exhibits \textbf{neutral stability}: a perturbation in density does not alter the stimulus. If the system is outside the lazy zone, it will continue to remodel indefinitely until it hits a bound ($\rho_{\min}$ or $\rho_{\max}$) or enters the lazy zone. There is no intrinsic feedback mechanism to arrest the growth or resorption.
+
+\paragraph{Strain Driver (Negative Feedback).}
+Consider a driver based on local strain magnitude, $\psi_{\varepsilon} = \varepsilon / \varepsilon_{\mathrm{ref}}$. Under force control ($\sigma = \sigma_{\mathrm{ext}}$), the strain is inversely proportional to stiffness:
+\begin{equation}
+    \psi_{\varepsilon}(\rho) = \frac{\sigma_{\mathrm{ext}}}{E(\rho)\varepsilon_{\mathrm{ref}}} \quad \implies \quad \frac{\partial \psi_{\varepsilon}}{\partial \rho} = -\frac{\sigma_{\mathrm{ext}} E'(\rho)}{E(\rho)^2 \varepsilon_{\mathrm{ref}}} < 0.
+\end{equation}
+Since $E'(\rho) > 0$, an increase in density reduces strain, lowering the stimulus. This provides a strong negative feedback loop that stabilizes the remodeling process.
+
+\paragraph{Strain Energy Density (SED) Driver.}
+Similarly, a driver based on strain energy density $U = \frac{1}{2}\sigma\varepsilon$ scales with the square of the stress under force control:
+\begin{equation}
+    \psi_{\mathrm{SED}}(\rho) = \frac{U}{U_{\mathrm{ref}}} = \frac{\sigma_{\mathrm{ext}}^2}{2 E(\rho) U_{\mathrm{ref}}} \quad \implies \quad \frac{\partial \psi_{\mathrm{SED}}}{\partial \rho} = -\frac{\sigma_{\mathrm{ext}}^2 E'(\rho)}{2 E(\rho)^2 U_{\mathrm{ref}}} < 0.
+\end{equation}
+Both the Strain and SED drivers share the same stability characteristic: under force control, they both depend inversely on stiffness ($E^{-1}$), creating intrinsic self-stabilization.
+
+\subsection*{Gait Cycle Integration and Stimulus Accumulation}
+The daily mechanical stimulus $\psi_{\mathrm{day}}$ aggregates the loading history over a full gait cycle. Following the Carter--Beaupr\'e theory, we employ a stress-power weighting:
+\begin{equation}
+    \psi_{\mathrm{day}}(x) = N_{\mathrm{cyc}} \frac{1}{T} \int_0^T \left( \frac{\sigma_{\mathrm{vm}}(x,t)}{\sigma_{\mathrm{ref}}} \right)^m \, \mathrm{d}t \approx N_{\mathrm{cyc}} \frac{\sum_i w_i (\sigma_i/\sigma_{\mathrm{ref}})^m}{\sum_i w_i}.
+\end{equation}
+The exponent $m$ plays a critical role in filtering the mechanical signal. For $m=1$, the stimulus is simply proportional to the average stress. However, empirical bone remodeling laws typically suggest $m \in [2, 4]$ or even higher. As $m$ increases, the stimulus becomes increasingly dominated by peak loads, while low-magnitude "background" loads contribute negligibly.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{../results/constitutive_analysis/gait_stimulus_analysis.png}
+    \caption{Gait Cycle Stimulus Integration. (A) Representative hip contact force profile normalized to body weight (BW), showing the characteristic heel-strike and toe-off peaks. (B) Instantaneous stimulus kernel $(\sigma/\sigma_{\mathrm{ref}})^m$ for varying exponents $m$. Higher exponents selectively amplify peak loads while suppressing the contribution of the swing phase. (C) The cycle-averaged stimulus factor $\langle (\sigma/\sigma_{\mathrm{ref}})^m \rangle$ as a function of $m$. The dynamic gait load (solid line) generates a much stronger stimulus than a constant load of equivalent average magnitude (dashed line), highlighting the importance of peak magnitudes in the remodeling drive.}
+    \label{fig:gait_stimulus}
+\end{figure}
+
+Figure \ref{fig:gait_stimulus} illustrates this effect using a synthetic hip contact force profile. Panel (A) shows a typical double-peak gait cycle. Panel (B) demonstrates how the instantaneous drive $(\sigma/\sigma_{\mathrm{ref}})^m$ sharpens around the peaks as $m$ increases. Panel (C) compares the cycle-averaged stimulus factor for the dynamic gait load versus a constant load of the same average magnitude. Because of the convexity of the function $x^m$ (for $m>1$), the dynamic load generates a significantly higher stimulus than its static average, a phenomenon known as Jensen's inequality. This captures the biological reality that dynamic, high-impact activities are more osteogenic than static loading.
+
+\paragraph{Implications for 3D Modeling.}
+While the SED driver offers superior intrinsic stability, we employ the stress driver $\psi_\sigma$ to capture specific physiological responses where bone mass correlates with load magnitude rather than deformation. To compensate for the lack of intrinsic negative feedback in the stress driver, our model relies on:
+1.  \textbf{The Lazy Zone:} A finite deadband $S_{\mathrm{lazy}}$ that arrests remodeling when the stimulus is near equilibrium.
+2.  \textbf{Saturation:} Smooth sigmoid functions that bound the remodeling rate, preventing runaway instabilities.
+3.  \textbf{Global Coupling:} In a redundant 3D structure, local stiffening sheds load to surrounding softer material (stress shielding), effectively reintroducing a form of negative feedback at the structural level even if the local constitutive law is neutrally stable.
+
+Figure \ref{fig:mechanostat_optimization} illustrates these dynamics. Panel (A) shows the phase space trajectories. Panel (B) maps the stability regions; note that the lazy zone for the Stress Driver (filled) follows constant stress isolines ($\varepsilon \propto 1/E$), whereas an SED driver would yield shallower thresholds ($\varepsilon \propto 1/\sqrt{E}$, dotted lines). Panel (E) explicitly compares the feedback loops: the "Stress Control" curve is flat (neutral), while a hypothetical "Strain Control" curve would have a negative slope (intrinsic stability). This analysis justifies the necessity of the lazy zone and saturation functions in our stress-driven formulation.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{../results/constitutive_analysis/mechanostat_optimization.png}
+    \caption{0D Stability Analysis. (A) Phase space trajectories ($\dot{\rho}$ vs. $\rho$) showing the evolution of density under constant load. (B) Stability map illustrating the lazy zone and formation/resorption thresholds. The filled region corresponds to the Stress Driver used in this work ($\varepsilon \propto \rho^{-n}$); dotted lines show the hypothetical thresholds for an SED Driver ($\varepsilon \propto \rho^{-n/2}$), which are less sensitive to density changes. (E) Feedback loop comparison: The Stress Driver (used in this work) exhibits a flat response (neutral stability) under force control, necessitating a lazy zone for convergence. A Strain or SED driver (dot-dashed line) would exhibit a negative slope (intrinsic stability).}
+    \label{fig:mechanostat_optimization}
+\end{figure}
+
 \input{sections/homogenization}
 
 \subsection*{Linear solver defaults and preconditioner maintenance}\label{subsec:ksp_defaults}

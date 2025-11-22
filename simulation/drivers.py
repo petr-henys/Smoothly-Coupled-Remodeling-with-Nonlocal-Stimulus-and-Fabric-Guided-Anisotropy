@@ -32,6 +32,11 @@ def von_mises_stress(sig: ufl.core.expr.Expr) -> ufl.core.expr.Expr:
     # Add small epsilon for numerical stability of sqrt(0)
     return ufl.sqrt(1.5 * ufl.inner(s, s) + 1e-16)
 
+def von_mises_strain(eps: ufl.core.expr.Expr) -> ufl.core.expr.Expr:
+    """Equivalent strain ε_eq = sqrt(2/3 * e_dev : e_dev)."""
+    e_dev = ufl.dev(eps)
+    return ufl.sqrt((2.0/3.0) * ufl.inner(e_dev, e_dev) + 1e-16)
+
 
 class RemodelingDriver(Protocol):
     """Protocol for drivers that provide mechanical fields to remodeling PDEs."""
@@ -62,6 +67,7 @@ class GaitDriver:
         # Cache config parameters
         self.psi_ref = float(config.psi_ref)
         self.exponent = float(config.n_power)
+        self.stimulus_type = config.stimulus_type
 
         # Quadrature setup
         quad = list(self.gait.get_quadrature())
@@ -109,6 +115,10 @@ class GaitDriver:
 
         if abs(self.exponent - float(self.cfg.n_power)) > 1e-9:
             self.exponent = float(self.cfg.n_power)
+            dirty = True
+            
+        if self.stimulus_type != self.cfg.stimulus_type:
+            self.stimulus_type = self.cfg.stimulus_type
             dirty = True
 
         if dirty:
@@ -204,15 +214,36 @@ class GaitDriver:
             # Stress and Strain from snapshot u_i
             # Note: rho and A_dir are shared (current state of remodeling)
             sig_i = self.mech.sigma(u_i, self.mech.rho, self.mech.A_dir)
-            sigma_vm_i = von_mises_stress(sig_i)
-
             e_i = self.mech.get_strain_tensor(u_i)
             e_dev_i = ufl.dev(e_i)
             structure_i = ufl.dot(ufl.transpose(e_dev_i), e_dev_i)
 
+            # Calculate stimulus term based on type
+            if self.stimulus_type == "stress":
+                # ψ_term = w * (σ_vm / σ_ref)^m
+                sigma_vm_i = von_mises_stress(sig_i)
+                term = (sigma_vm_i / self.psi_ref) ** self.exponent
+                
+            elif self.stimulus_type == "strain":
+                # ψ_term = w * (ε_eq / ε_ref)^m
+                eps_eq_i = von_mises_strain(e_i)
+                term = (eps_eq_i / self.psi_ref) ** self.exponent
+                
+            elif self.stimulus_type == "sed":
+                # ψ_term = w * (U / U_ref)^m
+                # U = 0.5 * σ : ε
+                U_i = 0.5 * ufl.inner(sig_i, e_i)
+                # Ensure non-negative U for power (though U should be >= 0)
+                # U_i = ufl.max_value(U_i, 0.0) 
+                term = (U_i / self.psi_ref) ** self.exponent
+                
+            else:
+                # Fallback to stress
+                sigma_vm_i = von_mises_stress(sig_i)
+                term = (sigma_vm_i / self.psi_ref) ** self.exponent
+
             # Accumulate weighted terms
-            # ψ_term = w * (σ_vm / σ_ref)^m
-            psi_p_terms.append(weight * (sigma_vm_i / self.psi_ref) ** self.exponent)
+            psi_p_terms.append(weight * term)
             
             # M_term = w * (ε_devᵀ ε_dev)
             structure_terms.append(weight * structure_i)

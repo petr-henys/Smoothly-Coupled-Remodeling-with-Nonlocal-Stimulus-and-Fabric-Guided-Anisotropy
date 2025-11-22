@@ -58,7 +58,9 @@ class Config:
     # =========================================================================
     # Stimulus (Reaction-Diffusion)
     # =========================================================================
-    psi_ref: float = 20.0       # Reference (σ_ref) for Carter–Beaupré normalization [MPa]
+    stimulus_type: str = "stress" # "stress", "strain", "sed"
+    psi_ref: float = 20.0       # Reference value (Stress [MPa], Strain [-], or SED [MPa])
+    
     cS: float = 1.0             # Signaling capacity
     tauS: float = 1.0           # Decay rate [1/day]
     kappaS: float = 1.0         # Diffusion coefficient [mm^2/day]
@@ -169,6 +171,10 @@ class Config:
             raise ValueError("beta_par/beta_perp must be non-negative.")
         
         # Stimulus
+        if self.stimulus_type not in ("stress", "strain", "sed"):
+            raise ValueError(f"stimulus_type must be 'stress', 'strain', or 'sed', got {self.stimulus_type!r}")
+        if self.psi_ref <= 0:
+            raise ValueError("Reference value psi_ref must be positive.")
         if self.cS <= 0 or self.tauS < 0 or self.kappaS < 0 or self.rS_gain < 0:
             raise ValueError("cS>0, tauS>=0, kappaS>=0, rS_gain>=0 required.")
         
