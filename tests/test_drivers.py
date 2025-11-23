@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 from mpi4py import MPI
 from dolfinx import fem
+import ufl
 
 from simulation.config import Config
 from simulation.subsolvers import MechanicsSolver
@@ -39,6 +40,10 @@ class TestGaitDriverUnitCube:
 
     def test_energy_scales_with_load(self, mech_with_dummy_gait):
         mech, gait = mech_with_dummy_gait
+        # Set n_power to 2.0 so that psi ~ stress^2 ~ load^2.
+        # Default is 4.0 which gives load^4.
+        mech.cfg.n_power = 2.0
+
         gait.load_scale = 1.0
         drv_base = GaitDriver(mech, gait, mech.cfg)
         drv_base.update_snapshots()

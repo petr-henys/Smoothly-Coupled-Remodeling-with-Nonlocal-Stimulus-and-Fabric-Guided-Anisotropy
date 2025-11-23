@@ -72,6 +72,10 @@ class GaitDriver:
         self.L_target_expr: Optional[ufl.core.expr.Expr] = None
         self._build_expressions()
         
+        # Auxiliary function space for statistics
+        self.V_stats = fem.functionspace(self.mech.u.function_space.mesh, ("DG", 0))
+        self.psi_stats = fem.Function(self.V_stats)
+
         self._last_stats: Optional[Dict] = None
 
     def setup(self) -> None:
@@ -139,6 +143,26 @@ class GaitDriver:
         )
         psi_avg = psi_int / vol if vol > 0 else 0.0
 
+        # Compute min, max, median
+        psi_expr_compiled = fem.Expression(self.psi_expr, self.V_stats.element.interpolation_points)
+        self.psi_stats.interpolate(psi_expr_compiled)
+        local_vals = self.psi_stats.x.array
+
+        local_min = np.min(local_vals) if local_vals.size > 0 else float('inf')
+        local_max = np.max(local_vals) if local_vals.size > 0 else float('-inf')
+
+        psi_min = self.comm.allreduce(local_min, op=MPI.MIN)
+        psi_max = self.comm.allreduce(local_max, op=MPI.MAX)
+
+        # Median (approximate via gather to rank 0)
+        all_vals = self.comm.gather(local_vals, root=0)
+        psi_median = 0.0
+        if self.comm.rank == 0:
+            full_data = np.concatenate(all_vals)
+            if full_data.size > 0:
+                psi_median = float(np.median(full_data))
+        psi_median = self.comm.bcast(psi_median, root=0)
+
         stats = {
             "phase_iters": iters,
             "phase_times": times,
@@ -146,6 +170,9 @@ class GaitDriver:
             "median_time": float(np.median(times)) if times else 0.0,
             "median_iters": float(np.median(iters)) if iters else 0.0,
             "psi_avg": psi_avg,
+            "psi_min": psi_min,
+            "psi_max": psi_max,
+            "psi_median": psi_median,
         }
         self._last_stats = stats
         return stats

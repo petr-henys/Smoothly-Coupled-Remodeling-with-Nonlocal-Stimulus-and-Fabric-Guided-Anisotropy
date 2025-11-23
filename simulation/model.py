@@ -7,7 +7,7 @@ for a given finite-element domain and :class:`simulation.config.Config`.
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 from mpi4py import MPI
@@ -16,7 +16,7 @@ from dolfinx import fem
 from dolfinx.fem import Function, functionspace
 
 from simulation.storage import UnifiedStorage
-from simulation.logger import get_logger, Level
+from simulation.logger import get_logger, Level, configure_logging
 from simulation.utils import build_dirichlet_bcs, assign, current_memory_mb
 from simulation.config import Config
 from simulation.subsolvers import MechanicsSolver, StimulusSolver, DensitySolver, DirectionSolver
@@ -51,6 +51,9 @@ class Remodeller:
 
         self.comm = self.domain.comm
         self.rank = self.comm.rank
+        
+        # Configure global logging
+        configure_logging(self.cfg.log_file)
         self.logger = get_logger(self.comm, verbose=self.verbose, name="Remodeller")
 
         self.storage = UnifiedStorage(cfg)
@@ -274,13 +277,20 @@ class Remodeller:
         S_min, S_max, S_mean = self._field_stats(self.S)
 
         psi_avg = 0.0
+        psi_min = 0.0
+        psi_max = 0.0
+        psi_median = 0.0
+        
         if hasattr(self.driver, "_last_stats") and self.driver._last_stats:
             psi_avg = self.driver._last_stats.get("psi_avg", 0.0)
+            psi_min = self.driver._last_stats.get("psi_min", 0.0)
+            psi_max = self.driver._last_stats.get("psi_max", 0.0)
+            psi_median = self.driver._last_stats.get("psi_median", 0.0)
 
         return dict(
             rho_min=rho_min, rho_max=rho_max, rho_mean=rho_mean,
             S_min=S_min, S_max=S_max, S_mean=S_mean,
-            psi_avg=psi_avg
+            psi_avg=psi_avg, psi_min=psi_min, psi_max=psi_max, psi_median=psi_median
         )
 
     def _output(self, t: float, step: int, coupling_stats: Dict[str, float]):
@@ -297,7 +307,7 @@ class Remodeller:
                 f"Step {step:2d} | t={t:6.1f}d | "
                 f"ρ=[{fields['rho_min']:.3f},{fields['rho_max']:.3f}] (μ={fields['rho_mean']:.3f}) | "
                 f"S=[{fields['S_min']:.2e},{fields['S_max']:.2e}] (μ={fields['S_mean']:.2e}) | "
-                f"ψ_avg={fields['psi_avg']:.3e} | "
+                f"ψ=[{fields['psi_min']:.2e},{fields['psi_max']:.2e}] (μ={fields['psi_avg']:.2e}, med={fields['psi_median']:.2e}) | "
                 f"GS={coupling_stats['iters']}"
             )
         )

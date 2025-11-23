@@ -26,7 +26,7 @@ class Config:
     # Material Properties
     # =========================================================================
     # Density-stiffness relationship: E = E0 * rho^n(rho)
-    n_power: float = 1.5        # Exponent for stimulus calculation (proximal femur, fatigue-like)
+    n_power: float = 4.        # Exponent for stimulus calculation (proximal femur, fatigue-like)
     n_trab: float = 2.0         # Exponent for trabecular bone
     n_cort: float = 1.2         # Exponent for cortical bone
     rho_trab_max: float = 0.6   # Max density for trabecular regime
@@ -49,7 +49,7 @@ class Config:
     # =========================================================================
     # Stimulus (Reaction-Diffusion)
     # =========================================================================
-    psi_ref: float = 100.     # Reference effective stress [MPa] for daily stimulus in proximal femur
+    psi_ref: float = 1.     # Reference effective stress [MPa] for daily stimulus in proximal femur
     cS: float = 1.0             # Signaling capacity
     tauS: float = 1.0           # Relaxation time [day] of mechanostat signal
     kappaS: float = 0.5         # Diffusion coefficient [mm^2/day] for mechanostat signal
@@ -75,7 +75,7 @@ class Config:
     # =========================================================================
     # Gait & Loading
     # =========================================================================
-    gait_cycles_per_day: float = 4000   # Daily equivalent hip loading cycles (walking, stairs)
+    gait_cycles_per_day: float = 1.   # Daily equivalent hip loading cycles (walking, stairs)
     load_scale: float = 1.0      # Keep loads from musculoskeletal model unscaled
     gait_samples: int = 9
     body_mass_tonnes: float = 0.075   # 0.075 t ≈ 75 kg (proximal femur subject)
@@ -87,6 +87,7 @@ class Config:
     saving_interval: int = 1
     results_dir: str = ".results"
     verbose: Union[bool, str] = True
+    log_file: str = "simulation.log"
 
     # Linear Solver
     ksp_type: str = "minres"        # Changed from minres to cg for SPD elasticity
