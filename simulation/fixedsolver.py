@@ -1,5 +1,3 @@
-"""Fixed-point coupling with Anderson acceleration for coupled PDEs."""
-
 from __future__ import annotations
 from typing import Optional, List, Dict, Any, Tuple
 
@@ -32,7 +30,6 @@ class FixedPointSolver:
         self.stim = stimsolver
         self.den = densolver
         self.dir = dirsolver
-        # self.mech removed - use self.driver.update_stiffness()
 
         self.rho = rho
         self.rho_old = rho_old
@@ -114,7 +111,6 @@ class FixedPointSolver:
 
         # Stimulus
         t0 = MPI.Wtime()
-
         psi_expr = self.driver.stimulus_expr()
         self.stim.assemble_rhs(psi_expr)
         self.stim.solve()
@@ -136,15 +132,12 @@ class FixedPointSolver:
 
         return mech_time, stim_time, dens_time, dir_time, mech_iters
 
-    def _proj_residual_norm(self, x_old: np.ndarray, x_test: np.ndarray,
-                           x_raw: np.ndarray, weights: Tuple[float, float, float]) -> float:
-        """Weighted residual ||x_test - x_base||_W with per-block weights."""
-        is_picard = (x_test is x_raw)
+    def _weighted_dist(self, x_a: np.ndarray, x_b: np.ndarray, weights: Tuple[float, float, float]) -> float:
+        """Robust weighted distance ||x_a - x_b||_W."""
         local_dots = np.zeros(3, dtype=float)
         
         for i, s in enumerate(self.state_slices):
-            base = x_old[s] if is_picard else x_raw[s]
-            diff = x_test[s] - base
+            diff = x_a[s] - x_b[s]
             local_dots[i] = float(diff @ diff)
             
         global_dots = np.zeros_like(local_dots)
@@ -190,7 +183,6 @@ class FixedPointSolver:
 
         inner_task_id = None
         if progress is not None:
-            # Initialize with spaces to reserve width
             inner_task_id = progress.add_task(f"  Coupling", total=self.cfg.max_subiters, info=" " * 15)
 
         for itr in range(1, self.cfg.max_subiters + 1):
@@ -206,7 +198,7 @@ class FixedPointSolver:
             # Acceleration
             info: Dict[str, Any] = {
                 "accepted": True, "backtracks": 0, "aa_hist": 0,
-                "r_norm": self._proj_residual_norm(x_k, x_raw, x_raw, weights),
+                "r_norm": self._weighted_dist(x_raw, x_k, weights),
                 "restart_reason": ""
             }
             
@@ -214,25 +206,30 @@ class FixedPointSolver:
             if accelerator:
                 x_next, info = accelerator.mix(
                     x_old=x_k, x_raw=x_raw, mask_fixed=None,
-                    proj_residual_norm=lambda x_ref, x_test, xR: self._proj_residual_norm(x_ref, x_test, xR, weights),
-                    gamma=self.cfg.gamma, use_safeguard=self.cfg.safeguard, backtrack_max=self.cfg.backtrack_max
+                    norm_func=lambda a, b: self._weighted_dist(a, b, weights),
+                    gamma=self.cfg.gamma, use_safeguard=self.cfg.safeguard, 
+                    backtrack_max=self.cfg.backtrack_max
                 )
 
             self._restore_state(x_next)
-            proj_norm = self._proj_residual_norm(x_k, x_raw, x_raw, weights)
+            
+            # This is the actual residual of the step just taken (Picard step size)
+            proj_norm = self._weighted_dist(x_raw, x_k, weights)
 
             if log_enabled:
                 msg = f"      Substep {itr}: proj-res = {proj_norm:.3e}"
                 if accelerator:
-                    msg += f" | AA_hist={info['aa_hist']} | accepted={'Y' if info['accepted'] else 'N'}"
+                    msg += f" | AA={info['aa_hist']} | acc={'Y' if info['accepted'] else 'N'}"
+                    if info['backtracks'] > 0:
+                        msg += f" | bt={info['backtracks']}"
+                    if info['restart_reason']:
+                        msg += f" | R: {info['restart_reason']}"
                 self.logger.info(msg)
 
             if progress is not None and inner_task_id is not None:
-                # Fixed width formatting
                 res_str = f"res={proj_norm:.2e}"
                 progress.update(inner_task_id, advance=1, info=f"{res_str:<15}")
 
-            # Record metrics
             mem_local = current_memory_mb()
             mem_sum = self.comm.allreduce(mem_local, op=MPI.SUM)
 
