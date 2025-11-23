@@ -537,8 +537,8 @@ class TestConservationChecks:
 
         def compute_residual(dt_scale: float) -> float:
             cfg.dt = dt_scale
-            # Source term in solver is rS_gain * (psi - 1.0)
-            stor = cfg.rS_gain * (psi_val - 1.0) - cfg.tauS * 0.2
+            # Source term in solver is (psi - 1.0)
+            stor = (psi_val - 1.0) - cfg.tauS * 0.2
             S.x.array[:] = 0.2 + dt_scale * stor / cfg.cS
             S.x.scatter_forward()
             R_abs, R_rel = stim.power_balance_residual(psi)

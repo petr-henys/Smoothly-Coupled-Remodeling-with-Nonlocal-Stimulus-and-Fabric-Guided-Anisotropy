@@ -405,7 +405,7 @@ class StimulusSolver(_BaseLinearSolver):
                                        transition=self.cfg.distal_damping_transition)
         psi_effective = psi_expr * mask
 
-        rhs = (self.cfg.cS / dt) * self.S_old + self.cfg.rS_gain * (psi_effective - 1.0)
+        rhs = (self.cfg.cS / dt) * self.S_old + (psi_effective - 1.0)
         self._rhs_form = fem.form(rhs * self.test * self.dx)
         assemble_vector(self.b, self._rhs_form)
         self.b.ghostUpdate(PETSc.InsertMode.ADD, PETSc.ScatterMode.REVERSE)
@@ -430,7 +430,7 @@ class StimulusSolver(_BaseLinearSolver):
         mask = get_distal_damping_mask(self.mesh, z_min, height=self.cfg.distal_damping_height, 
                                        transition=self.cfg.distal_damping_transition)
         psi_eff = psi_expr * mask
-        source = self.cfg.rS_gain * (psi_eff - 1.0)
+        source = (psi_eff - 1.0)
         
         integrand = storage + decay - source
         res_local = fem.assemble_scalar(fem.form(integrand * self.dx))

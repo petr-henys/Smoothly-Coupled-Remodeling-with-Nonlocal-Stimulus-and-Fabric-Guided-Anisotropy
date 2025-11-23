@@ -39,7 +39,7 @@ class Config:
     rho_max: float = 1.00       # Max relative density
     rho0: float = 0.5           # Initial relative density
 
-    k_rho: float = 1.         # Density remodeling rate [1/day]
+    k_rho: float = 0.001          # Density remodeling rate [1/day]
 
     # Density diffusion [mm^2/day]
     beta_par: float = 0.05       # Parallel to fabric
@@ -53,7 +53,6 @@ class Config:
     cS: float = 1.0             # Signaling capacity
     tauS: float = 0.2           # Relaxation time [day] (was decay rate 5.0)
     kappaS: float = 1.0         # Diffusion coefficient [mm^2/day]
-    rS_gain: float = 1.0        # Transduction gain [1/day]
     distal_damping_height: float = 1       # Height of distal damping zone [mm]
     distal_damping_transition: float = 5.0    # Transition width of distal damping zone [mm]
 
@@ -165,8 +164,8 @@ class Config:
         # Stimulus
         if self.psi_ref <= 0:
             raise ValueError("Reference value psi_ref must be positive.")
-        if self.cS <= 0 or self.tauS <= 0 or self.kappaS < 0 or self.rS_gain < 0:
-            raise ValueError("cS>0, tauS>0, kappaS>=0, rS_gain>=0 required.")
+        if self.cS <= 0 or self.tauS <= 0 or self.kappaS < 0:
+            raise ValueError("cS>0, tauS>0, kappaS>=0 required.")
         
         # Fabric
         if self.cA <= 0 or self.tauA < 0 or self.ell <= 0:
