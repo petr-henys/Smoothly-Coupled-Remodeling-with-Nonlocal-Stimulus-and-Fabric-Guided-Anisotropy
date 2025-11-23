@@ -37,22 +37,22 @@ class Config:
     # =========================================================================
     rho_min: float = 0.05       # Min relative density (very low trabecular)
     rho_max: float = 1.00       # Max relative density
-    rho0: float = 0.45           # Initial relative density (proximal femur: mostly trabecular)
-    k_rho: float = 0.002        # Density remodeling rate [1/day] (half-time ~1 year)
+    rho0: float = 0.4           # Initial relative density (proximal femur: mostly trabecular)
+    k_rho: float = 0.02        # Density remodeling rate [1/day] (half-time ~1 year)
     S_sat: float = 5.          # Characteristic stimulus magnitude for saturation of remodeling
 
 
     # Density diffusion [mm^2/day]
-    beta_par: float = 0.10       # Parallel to fabric [mm^2/day] (proximal femur trabeculae)
-    beta_perp: float = 0.10      # Perpendicular to fabric [mm^2/day]
+    beta_par: float = 0.1       # Parallel to fabric [mm^2/day] (proximal femur trabeculae)
+    beta_perp: float = 0.05      # Perpendicular to fabric [mm^2/day]
 
     # =========================================================================
     # Stimulus (Reaction-Diffusion)
     # =========================================================================
-    psi_ref: float = 1.     # Reference effective stress [MPa] for daily stimulus in proximal femur
+    psi_ref: float = 0.5     # Reference effective stress [MPa] for daily stimulus in proximal femur
     cS: float = 1.0             # Signaling capacity
     tauS: float = 1.0           # Relaxation time [day] of mechanostat signal
-    kappaS: float = 0.5         # Diffusion coefficient [mm^2/day] for mechanostat signal
+    kappaS: float = 5.0         # Diffusion coefficient [mm^2/day] for mechanostat signal
     distal_damping_height: float = 1.0     # Height of distal damping zone [mm] (cut shaft of femur)
     distal_damping_transition: float = 0.5    # Transition width of distal damping zone [mm]
 
@@ -142,6 +142,10 @@ class Config:
         if self.domain is None:
             raise ValueError("Config requires a valid 'domain' (dolfinx.mesh.Mesh).")
         
+        # Resolve log_file path relative to results_dir
+        from pathlib import Path
+        self.log_file = str(Path(self.results_dir) / self.log_file)
+
         self.validate()
         self._build_measures()
         self._init_telemetry()

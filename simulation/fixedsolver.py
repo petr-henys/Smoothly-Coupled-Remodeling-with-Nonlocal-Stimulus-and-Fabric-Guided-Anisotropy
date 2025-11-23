@@ -55,7 +55,8 @@ class FixedPointSolver:
         self._build_state_slices()
         self.state_buffer = np.zeros(self.state_size, dtype=self.rho.x.array.dtype)
 
-        self.logger = get_logger(self.comm, verbose=bool(self.cfg.verbose), name="FixedPoint")
+        # Only enable console logging if verbose is strictly True (not "progressbar")
+        self.logger = get_logger(self.comm, verbose=(self.cfg.verbose is True), name="FixedPoint")
         self.telemetry = self.cfg.telemetry
         
         if self.telemetry:
@@ -100,7 +101,7 @@ class FixedPointSolver:
         """Max wall time across ranks since t0."""
         return self.comm.allreduce(MPI.Wtime() - t0, op=MPI.MAX)
 
-    def _gauss_seidel_sweep(self) -> Tuple[float, float, float, float, int]:
+    def _gauss_seidel_sweep(self) -> Dict[str, Dict[str, Any]]:
         """One GS sweep: mechanics + S → ρ → A."""
         # Mechanics
         t0 = MPI.Wtime()
@@ -113,24 +114,29 @@ class FixedPointSolver:
         t0 = MPI.Wtime()
         psi_expr = self.driver.stimulus_expr()
         self.stim.assemble_rhs(psi_expr)
-        self.stim.solve()
+        its_s, reason_s = self.stim.solve()
         stim_time = self._elapsed_max(t0)
 
         # Density
         t0 = MPI.Wtime()
         self.den.assemble_lhs()
         self.den.assemble_rhs()
-        self.den.solve()
+        its_d, reason_d = self.den.solve()
         dens_time = self._elapsed_max(t0)
 
         # Direction
         t0 = MPI.Wtime()
         L_target_expr = self.driver.log_structure_expr()
         self.dir.assemble_rhs(L_target_expr)
-        self.dir.solve()
+        its_dir, reason_dir = self.dir.solve()
         dir_time = self._elapsed_max(t0)
 
-        return mech_time, stim_time, dens_time, dir_time, mech_iters
+        return {
+            "mech": {"time": mech_time, "iters": mech_iters, "reason": 0},
+            "stim": {"time": stim_time, "iters": its_s, "reason": reason_s},
+            "dens": {"time": dens_time, "iters": its_d, "reason": reason_d},
+            "dir":  {"time": dir_time,  "iters": its_dir, "reason": reason_dir},
+        }
 
     def _weighted_dist(self, x_a: np.ndarray, x_b: np.ndarray, weights: Tuple[float, float, float]) -> float:
         """Robust weighted distance ||x_a - x_b||_W."""
@@ -172,7 +178,8 @@ class FixedPointSolver:
         self.driver.invalidate()
         x_k = self._flatten_state(copy=True)
         
-        log_enabled = (self.comm.rank == 0) and (self.cfg.verbose is True)
+        # Enable logging on rank 0 regardless of verbose setting (Logger handles console/file split)
+        log_enabled = (self.comm.rank == 0)
         self.subiter_metrics = []
         
         self.mech_time_total = 0.0
@@ -181,12 +188,33 @@ class FixedPointSolver:
         self.dens_time_total = 0.0
         self.dir_time_total = 0.0
 
+        # Initialize detailed stats accumulator
+        self.solver_stats = {
+            "mech": {"time": 0.0, "iters": 0, "reason": 0},
+            "stim": {"time": 0.0, "iters": 0, "reason": 0},
+            "dens": {"time": 0.0, "iters": 0, "reason": 0},
+            "dir":  {"time": 0.0, "iters": 0, "reason": 0},
+        }
+
         inner_task_id = None
         if progress is not None:
             inner_task_id = progress.add_task(f"  Coupling", total=self.cfg.max_subiters, info=" " * 15)
 
         for itr in range(1, self.cfg.max_subiters + 1):
-            tm, ts, td, tdir, m_iters = self._gauss_seidel_sweep()
+            sweep_stats = self._gauss_seidel_sweep()
+            
+            # Accumulate stats
+            for key in ["mech", "stim", "dens", "dir"]:
+                self.solver_stats[key]["time"] += sweep_stats[key]["time"]
+                self.solver_stats[key]["iters"] += sweep_stats[key]["iters"]
+                self.solver_stats[key]["reason"] = sweep_stats[key]["reason"]
+
+            tm = sweep_stats["mech"]["time"]
+            ts = sweep_stats["stim"]["time"]
+            td = sweep_stats["dens"]["time"]
+            tdir = sweep_stats["dir"]["time"]
+            m_iters = sweep_stats["mech"]["iters"]
+
             self.mech_time_total += tm
             self.mech_iters_total += int(m_iters)
             self.stim_time_total += ts

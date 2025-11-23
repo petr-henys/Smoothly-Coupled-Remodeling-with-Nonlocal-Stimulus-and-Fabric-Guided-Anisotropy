@@ -19,14 +19,17 @@ class FEBio2Dolfinx:
     parameters remain physically consistent.
     """
 
-    def __init__(self, feb_file: str, verbose: bool = True):
-        """Parse FEBio file and build DOLFINx mesh with matched surface tags.
+    def __init__(self, feb_file: str, verbose: bool | str = True):
+        """Parse FEBio file and build DOLFINx mesh with surface tags.
         
         Args:
             feb_file: Path to FEBio .feb file
-            verbose: Whether to log progress
+            verbose: Whether to log progress (True, False, or "progressbar")
         """
-        self.logger = get_logger(MPI.COMM_WORLD, verbose=verbose, name="FEBio2Dolfinx")
+        # If verbose is "progressbar", we suppress console output (treat as False)
+        is_verbose = False if verbose == "progressbar" else bool(verbose)
+        
+        self.logger = get_logger(MPI.COMM_WORLD, verbose=is_verbose, name="FEBio2Dolfinx")
         self.feb_file = Path(feb_file)
         
         comm = MPI.COMM_WORLD

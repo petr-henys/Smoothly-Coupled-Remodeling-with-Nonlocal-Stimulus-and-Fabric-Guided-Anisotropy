@@ -26,11 +26,12 @@ class Level(IntEnum):
 class Logger:
     """Rank-0 logger with lazy string evaluation."""
 
-    __slots__ = ("comm", "level", "name", "prefix", "filepath")
+    __slots__ = ("comm", "console_level", "file_level", "name", "prefix", "filepath")
 
-    def __init__(self, comm: MPI.Comm, level: Level, name: str, filepath: str = None):
+    def __init__(self, comm: MPI.Comm, console_level: Level, file_level: Level, name: str, filepath: str = None):
         self.comm = comm
-        self.level = level
+        self.console_level = console_level
+        self.file_level = file_level
         self.name = name
         self.prefix = f"[{name}] " if name else ""
         
@@ -40,7 +41,9 @@ class Logger:
 
     def is_enabled_for(self, lvl: Level) -> bool:
         """Check if level enabled."""
-        return lvl >= self.level
+        if self.filepath:
+            return lvl >= self.console_level or lvl >= self.file_level
+        return lvl >= self.console_level
 
     def _format(self, msg: Union[str, Callable[[], str]], args: tuple) -> str:
         """Evaluate lazy message and format args."""
@@ -51,11 +54,13 @@ class Logger:
         """Log if level enabled (rank-0 only output)."""
         if self.is_enabled_for(lvl):
             text = self._format(msg, args)
-            PETSc.Sys.Print(text, comm=self.comm)
             
-            if self.filepath and self.comm.rank == 0:
+            if lvl >= self.console_level:
+                PETSc.Sys.Print(text, comm=self.comm)
+            
+            if self.filepath and self.comm.rank == 0 and lvl >= self.file_level:
                 try:
-                    with open(self.filepath, "a") as f:
+                    with open(self.filepath, "a", encoding="utf-8") as f:
                         f.write(text + "\n")
                 except IOError:
                     pass  # Fail silently if cannot write to log file
@@ -75,6 +80,7 @@ class Logger:
 
 def get_logger(comm: MPI.Comm, verbose: bool, name: str = "", filepath: str = None) -> Logger:
     """Create logger with level INFO (verbose=True) or WARNING (verbose=False)."""
-    level = Level.INFO if verbose else Level.WARNING
-    return Logger(comm, level, name, filepath)
+    console_level = Level.INFO if verbose else Level.WARNING
+    file_level = Level.INFO
+    return Logger(comm, console_level, file_level, name, filepath)
 

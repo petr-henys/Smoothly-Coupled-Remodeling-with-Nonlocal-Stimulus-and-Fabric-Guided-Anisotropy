@@ -27,6 +27,7 @@ class RemodelingDriver(Protocol):
     def setup(self) -> None: ...
     def destroy(self) -> None: ...
     def update_stiffness(self) -> None: ...
+    def get_stimulus_stats(self) -> Dict[str, float]: ...
 
 
 from simulation.utils import matrix_ln
@@ -133,6 +134,17 @@ class GaitDriver:
             
             total_weight += weight
 
+        stats = {
+            "phase_iters": iters,
+            "phase_times": times,
+            "total_time": float(sum(times)),
+            "median_time": float(np.median(times)) if times else 0.0,
+            "median_iters": float(np.median(iters)) if iters else 0.0,
+        }
+        return stats
+
+    def get_stimulus_stats(self) -> Dict[str, float]:
+        """Compute statistics of the daily stimulus field (min, max, mean, median)."""
         # Compute domain-average of the daily stress for reporting
         # This uses the updated u_snap fields via psi_expr
         psi_int = self.comm.allreduce(
@@ -163,19 +175,12 @@ class GaitDriver:
                 psi_median = float(np.median(full_data))
         psi_median = self.comm.bcast(psi_median, root=0)
 
-        stats = {
-            "phase_iters": iters,
-            "phase_times": times,
-            "total_time": float(sum(times)),
-            "median_time": float(np.median(times)) if times else 0.0,
-            "median_iters": float(np.median(iters)) if iters else 0.0,
+        return {
             "psi_avg": psi_avg,
             "psi_min": psi_min,
             "psi_max": psi_max,
             "psi_median": psi_median,
         }
-        self._last_stats = stats
-        return stats
 
     def stimulus_expr(self) -> ufl.core.expr.Expr:
         return self.psi_expr

@@ -229,9 +229,7 @@ class MuscleLoad(GaussianSurfaceLoad):
             raise RuntimeError("Set attachment points first")
 
         F_world, F_norm = self._resolve_force_vector(force_vector_css)
-        if flip:
-            F_world = -F_world
-            self.logger.info("Force direction flipped")
+        # Do not flip F_world here; _compute_traction handles flipping if needed.
         unit_force = F_world / F_norm
 
         # Find distances to curve and apply Gaussian weighting

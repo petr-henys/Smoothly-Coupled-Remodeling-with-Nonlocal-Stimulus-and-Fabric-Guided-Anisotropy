@@ -8,6 +8,7 @@ for a given finite-element domain and :class:`simulation.config.Config`.
 from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple
+from pathlib import Path
 
 import numpy as np
 from mpi4py import MPI
@@ -54,7 +55,20 @@ class Remodeller:
         
         # Configure global logging
         configure_logging(self.cfg.log_file)
+        
+        # Initialize log file (create directory and clear file) on rank 0
+        if self.rank == 0:
+            try:
+                log_path = Path(self.cfg.log_file)
+                if log_path.parent:
+                    log_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(self.cfg.log_file, "w", encoding="utf-8") as f:
+                    pass
+            except IOError:
+                pass
+
         self.logger = get_logger(self.comm, verbose=self.verbose, name="Remodeller")
+        self.logger.info("Initializing Remodeller...")
 
         self.storage = UnifiedStorage(cfg)
         self.telemetry = self.cfg.telemetry
@@ -186,7 +200,8 @@ class Remodeller:
             mass_tonnes=float(self.cfg.body_mass_tonnes),
             n_samples=int(self.cfg.gait_samples),
             load_scale=float(self.cfg.load_scale),
-            verbose=self.verbose
+            verbose=self.verbose,
+            debug_export_dir=Path(self.cfg.results_dir) / "loads"
         )
         
         neumann_bcs = [
@@ -249,8 +264,8 @@ class Remodeller:
         self.comm.Barrier()
         self.closed = True
 
-    def _field_stats(self, field: fem.Function) -> Tuple[float, float, float]:
-        """MPI global min/max/mean."""
+    def _field_stats(self, field: fem.Function) -> Tuple[float, float, float, float]:
+        """MPI global min/max/mean/median."""
         if len(field.x.array) > 0:
             field_min_local = field.x.array.min()
             field_max_local = field.x.array.max()
@@ -262,55 +277,104 @@ class Remodeller:
 
         bs = field.function_space.dofmap.index_map_bs
         local_size = field.x.index_map.size_local * bs
-        local_sum = np.sum(field.x.array[:local_size])
+        local_data = field.x.array[:local_size]
+        local_sum = np.sum(local_data)
         local_count = local_size
 
         global_sum = self.comm.allreduce(local_sum, op=MPI.SUM)
         global_count = self.comm.allreduce(local_count, op=MPI.SUM)
         field_mean = global_sum / global_count if global_count > 0 else 0.0
 
-        return field_min, field_max, field_mean
+        # Median (approximate via gather to rank 0)
+        all_data = self.comm.gather(local_data, root=0)
+        field_median = 0.0
+        if self.comm.rank == 0:
+            full_data = np.concatenate(all_data)
+            if full_data.size > 0:
+                field_median = float(np.median(full_data))
+        field_median = self.comm.bcast(field_median, root=0)
+
+        return field_min, field_max, field_mean, field_median
 
     def _collect_field_stats(self) -> Dict[str, float]:
         """Gather field min/max/mean and energy for reporting."""
-        rho_min, rho_max, rho_mean = self._field_stats(self.rho)
-        S_min, S_max, S_mean = self._field_stats(self.S)
+        rho_min, rho_max, rho_mean, rho_median = self._field_stats(self.rho)
+        S_min, S_max, S_mean, S_median = self._field_stats(self.S)
 
         psi_avg = 0.0
         psi_min = 0.0
         psi_max = 0.0
         psi_median = 0.0
         
-        if hasattr(self.driver, "_last_stats") and self.driver._last_stats:
-            psi_avg = self.driver._last_stats.get("psi_avg", 0.0)
-            psi_min = self.driver._last_stats.get("psi_min", 0.0)
-            psi_max = self.driver._last_stats.get("psi_max", 0.0)
-            psi_median = self.driver._last_stats.get("psi_median", 0.0)
+        if hasattr(self.driver, "get_stimulus_stats"):
+            psi_stats = self.driver.get_stimulus_stats()
+            psi_avg = psi_stats.get("psi_avg", 0.0)
+            psi_min = psi_stats.get("psi_min", 0.0)
+            psi_max = psi_stats.get("psi_max", 0.0)
+            psi_median = psi_stats.get("psi_median", 0.0)
 
         return dict(
-            rho_min=rho_min, rho_max=rho_max, rho_mean=rho_mean,
-            S_min=S_min, S_max=S_max, S_mean=S_mean,
+            rho_min=rho_min, rho_max=rho_max, rho_mean=rho_mean, rho_median=rho_median,
+            S_min=S_min, S_max=S_max, S_mean=S_mean, S_median=S_median,
             psi_avg=psi_avg, psi_min=psi_min, psi_max=psi_max, psi_median=psi_median
         )
 
     def _output(self, t: float, step: int, coupling_stats: Dict[str, float]):
         """Scatter, stats, log, write."""
         fields = self._collect_field_stats()
+        
+        # Get solver stats from fixedsolver
+        s_stats = self.fixedsolver.solver_stats
+        
+        # Memory
+        mem_mb = self.comm.allreduce(current_memory_mb(), op=MPI.SUM)
 
         if self.progress is not None and self.main_task_id is not None:
             # Fixed width formatting to prevent progress bar resizing
             info_str = f"t={t:6.1f}d rho={fields['rho_mean']:4.2f} GS={coupling_stats['iters']:2d}"
             self.progress.update(self.main_task_id, info=f"{info_str:<35}")
 
-        self.logger.info(
-            lambda: (
-                f"Step {step:2d} | t={t:6.1f}d | "
-                f"ρ=[{fields['rho_min']:.3f},{fields['rho_max']:.3f}] (μ={fields['rho_mean']:.3f}) | "
-                f"S=[{fields['S_min']:.2e},{fields['S_max']:.2e}] (μ={fields['S_mean']:.2e}) | "
-                f"ψ=[{fields['psi_min']:.2e},{fields['psi_max']:.2e}] (μ={fields['psi_avg']:.2e}, med={fields['psi_median']:.2e}) | "
-                f"GS={coupling_stats['iters']}"
-            )
-        )
+        # Concise summary line
+        self.logger.info(f"Step {step:2d} | t={t:6.1f}d | GS={coupling_stats['iters']}")
+
+        # Detailed table
+        def format_table():
+            lines = []
+            lines.append("-" * 96)
+            lines.append(f"{'Field':>10} | {'Min':>12} | {'Max':>12} | {'Mean':>12} | {'Median':>12} |")
+            lines.append("-" * 96)
+            
+            # Rows
+            lines.append(f"{'rho':>10} | {fields['rho_min']:12.3e} | {fields['rho_max']:12.3e} | {fields['rho_mean']:12.3e} | {fields['rho_median']:12.3e} |")
+            lines.append(f"{'S':>10} | {fields['S_min']:12.3e} | {fields['S_max']:12.3e} | {fields['S_mean']:12.3e} | {fields['S_median']:12.3e} |")
+            lines.append(f"{'psi':>10} | {fields['psi_min']:12.3e} | {fields['psi_max']:12.3e} | {fields['psi_avg']:12.3e} | {fields['psi_median']:12.3e} |")
+            
+            lines.append("-" * 96)
+            lines.append(f"{'Solver':>10} | {'Tot Time':>12} | {'Avg Time':>12} | {'Tot Iters':>12} | {'Avg Iters':>12} | {'Reason':>12} |")
+            lines.append("-" * 96)
+            
+            gs_iters = max(1, coupling_stats['iters'])
+            
+            for name, key in [("Mechanics", "mech"), ("Stimulus", "stim"), ("Density", "dens"), ("Direction", "dir")]:
+                st = s_stats[key]
+                
+                # Mechanics solver runs for each gait sample in every GS iteration
+                if key == "mech":
+                    n_solves = gs_iters * self.cfg.gait_samples
+                else:
+                    n_solves = gs_iters
+                    
+                avg_its = st['iters'] / max(1, n_solves)
+                avg_time = st['time'] / max(1, n_solves)
+                lines.append(f"{name:>10} | {st['time']:12.2f} | {avg_time:12.4f} | {st['iters']:12d} | {avg_its:12.1f} | {st['reason']:12d} |")
+            
+            lines.append("-" * 96)
+            lines.append(f"Memory (RSS): {mem_mb:.1f} MB")
+            lines.append("-" * 96)
+            
+            return "\n" + "\n".join(lines)
+
+        self.logger.info(format_table)
 
         self.storage.write_fields("scalars", float(t))
         self.storage.write_fields("L", float(t))

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 import os
 from pathlib import Path
-from typing import Dict, List, TYPE_CHECKING
+from typing import Dict, Sequence, TYPE_CHECKING
 
 from mpi4py import MPI
 from dolfinx import fem

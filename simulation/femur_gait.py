@@ -113,8 +113,8 @@ class FemurRemodellerGait:
             
             # Apply loads to create interpolators (in MPa = N/mm²)
             self.hip.apply_gaussian_load(force_vector_css=F_hip, sigma_deg=10.0, flip=True)
-            self.gl_med.apply_gaussian_load(force_vector_css=F_glmed, sigma=3.0, flip=False)
-            self.gl_max.apply_gaussian_load(force_vector_css=F_glmax, sigma=3.0, flip=False)
+            self.gl_med.apply_gaussian_load(force_vector_css=F_glmed, sigma=3.0, flip=True)
+            self.gl_max.apply_gaussian_load(force_vector_css=F_glmax, sigma=3.0, flip=True)
         
         # Interpolate into DOLFINx functions using distributed strategy
         self._apply_load(self.t_hip, self.hip if rank == 0 else None, scale)
@@ -170,9 +170,27 @@ class FemurRemodellerGait:
         # Update ghosts
         target_func.x.scatter_forward()
 
+    def save_loads_to_vtx(self, output_dir: Path) -> None:
+        """Export traction fields for all quadrature phases to VTX (ADIOS2)."""
+        from dolfinx.io import VTXWriter
+        
+        comm = self.t_hip.function_space.mesh.comm
+        if comm.rank == 0:
+            output_dir.mkdir(parents=True, exist_ok=True)
+        comm.Barrier()
+        
+        if self.verbose and comm.rank == 0:
+            print(f"[FemurRemodellerGait] Exporting load phases to {output_dir}...", flush=True)
+
+        with VTXWriter(comm, output_dir / "loads_gait.bp", [self.t_hip, self.t_glmed, self.t_glmax], engine="BP4") as vtx:
+            for phase, _ in self.get_quadrature():
+                self.update_loads(phase)
+                vtx.write(phase)
+
 
 def setup_femur_gait_loading(V: fem.FunctionSpace, mass_tonnes: float = 0.075, n_samples: int = 9,
-                             load_scale: float = 1.0, verbose: bool = True) -> "FemurRemodellerGait":
+                             load_scale: float = 1.0, verbose: bool = True,
+                             debug_export_dir: Optional[Path] = None) -> "FemurRemodellerGait":
     """
     
     This function shows HOW to set up loading. Users must adapt this
@@ -186,6 +204,8 @@ def setup_femur_gait_loading(V: fem.FunctionSpace, mass_tonnes: float = 0.075, n
         Number of trapezoidal samples over the gait cycle.
     load_scale : float
         Additional global multiplier applied to tractions.
+    debug_export_dir : Path, optional
+        If provided, exports the load fields for all phases to this directory (VTX/BP4).
     """
     if mass_tonnes <= 0:
         raise ValueError("mass_tonnes must be positive (tonnes).")
@@ -237,12 +257,17 @@ def setup_femur_gait_loading(V: fem.FunctionSpace, mass_tonnes: float = 0.075, n
         load_vec = np.array([-0.3, 1.27, 0.39]) * F_mag
         gl_max_gait = gait_interpolator(build_load(curve, load_vec))
 
-    return FemurRemodellerGait(
+    loader = FemurRemodellerGait(
         t_hip=t_hip, t_glmed=t_glmed, t_glmax=t_glmax,
         hip=hip, gl_med=gl_med, gl_max=gl_max, hip_gait=hip_gait,
         glmed_gait=gl_med_gait, glmax_gait=gl_max_gait,
         n_samples=n_samples, load_scale=load_scale, verbose=verbose
     )
+    
+    if debug_export_dir is not None:
+        loader.save_loads_to_vtx(debug_export_dir)
+        
+    return loader
 if __name__ == "__main__":
     mdl = FEBio2Dolfinx(FemurPaths.FEMUR_MESH_FEB)
     mdl.save_mesh_vtk("tt.vtk")
