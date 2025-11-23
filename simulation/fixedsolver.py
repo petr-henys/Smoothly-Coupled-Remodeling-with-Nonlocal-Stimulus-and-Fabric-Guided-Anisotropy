@@ -153,7 +153,7 @@ class FixedPointSolver:
         total = sum(w * d for w, d in zip(weights, global_dots))
         return float(max(total, 0.0) ** 0.5)
 
-    def run(self, *, time_days: Optional[float] = None, step_index: Optional[int] = None) -> None:
+    def run(self, *, time_days: Optional[float] = None, step_index: Optional[int] = None, progress: Any = None) -> None:
         """Inner fixed-point loop: GS + Anderson acceleration until coupling_tol met."""
         # Weights for norm
         n_rho_g = self.comm.allreduce(self.n_rho, op=MPI.SUM)
@@ -187,6 +187,11 @@ class FixedPointSolver:
         self.stim_time_total = 0.0
         self.dens_time_total = 0.0
         self.dir_time_total = 0.0
+
+        inner_task_id = None
+        if progress is not None:
+            # Initialize with spaces to reserve width
+            inner_task_id = progress.add_task(f"  Coupling", total=self.cfg.max_subiters, info=" " * 15)
 
         for itr in range(1, self.cfg.max_subiters + 1):
             tm, ts, td, tdir, m_iters = self._gauss_seidel_sweep()
@@ -222,6 +227,11 @@ class FixedPointSolver:
                     msg += f" | AA_hist={info['aa_hist']} | accepted={'Y' if info['accepted'] else 'N'}"
                 self.logger.info(msg)
 
+            if progress is not None and inner_task_id is not None:
+                # Fixed width formatting
+                res_str = f"res={proj_norm:.2e}"
+                progress.update(inner_task_id, advance=1, info=f"{res_str:<15}")
+
             # Record metrics
             mem_local = current_memory_mb()
             mem_sum = self.comm.allreduce(mem_local, op=MPI.SUM)
@@ -252,5 +262,8 @@ class FixedPointSolver:
                 break
 
             x_k = x_next
+
+        if progress is not None and inner_task_id is not None:
+            progress.remove_task(inner_task_id)
 
         self.total_gs_iters += itr

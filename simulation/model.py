@@ -41,7 +41,8 @@ class Remodeller:
         self.cfg = cfg
         self.domain = self.cfg.domain
         self.closed = False
-        self.pbar = None
+        self.progress = None
+        self.main_task_id = None
 
         if self.cfg.verbose == "progressbar":
             self.verbose = False
@@ -286,12 +287,10 @@ class Remodeller:
         """Scatter, stats, log, write."""
         fields = self._collect_field_stats()
 
-        if self.pbar is not None:
-            self.pbar.set_postfix({
-                "t": f"{t:.1f}d",
-                "rho": f"{fields['rho_mean']:.2f}",
-                "GS": coupling_stats['iters']
-            })
+        if self.progress is not None and self.main_task_id is not None:
+            # Fixed width formatting to prevent progress bar resizing
+            info_str = f"t={t:6.1f}d rho={fields['rho_mean']:4.2f} GS={coupling_stats['iters']:2d}"
+            self.progress.update(self.main_task_id, info=f"{info_str:<35}")
 
         self.logger.info(
             lambda: (
@@ -358,7 +357,7 @@ class Remodeller:
                 self.dirsolver.assemble_lhs()
             self._current_dt = float(dt)
         
-        self.fixedsolver.run(time_days=time_days, step_index=step_index)
+        self.fixedsolver.run(time_days=time_days, step_index=step_index, progress=self.progress if self.rank == 0 else None)
 
         metrics = list(self.fixedsolver.subiter_metrics)
         used_subiters = len(metrics)
@@ -438,10 +437,28 @@ class Remodeller:
 
         if self.rank == 0 and self.cfg.verbose == "progressbar":
             try:
-                from tqdm import tqdm
-                self.pbar = tqdm(total=n_steps, desc="Remodeling", unit="step")
+                from rich.progress import Progress, TextColumn, BarColumn, TimeRemainingColumn, TimeElapsedColumn, SpinnerColumn
+                from rich.console import Console
+                
+                # Force terminal output to stderr to ensure visibility even if stdout is buffered/redirected
+                console = Console(stderr=True, force_terminal=True)
+                
+                self.progress = Progress(
+                    SpinnerColumn(),
+                    TextColumn("[progress.description]{task.description}"),
+                    BarColumn(bar_width=60),
+                    TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                    TimeElapsedColumn(),
+                    TimeRemainingColumn(),
+                    TextColumn("{task.fields[info]}"),
+                    console=console,
+                    transient=False, # Keep the main progress bar visible
+                )
+                # Initialize with spaces to reserve width and prevent resizing
+                self.main_task_id = self.progress.add_task("Remodeling", total=n_steps, info=" " * 35)
+                self.progress.start()
             except ImportError:
-                self.logger.warning("tqdm not installed, falling back to standard logging")
+                self.logger.warning("rich not installed, falling back to standard logging")
                 self.logger.level = Level.INFO
 
         for step in range(n_steps):
@@ -456,12 +473,13 @@ class Remodeller:
                 }
                 self._output(t, step, coupling_stats)
             
-            if self.pbar is not None:
-                self.pbar.update(1)
+            if self.progress is not None and self.main_task_id is not None:
+                self.progress.update(self.main_task_id, advance=1)
 
-        if self.pbar is not None:
-            self.pbar.close()
-            self.pbar = None
+        if self.progress is not None:
+            self.progress.stop()
+            self.progress = None
+            self.main_task_id = None
 
         self.comm.Barrier()
         overall_elapsed = MPI.Wtime() - overall_start
