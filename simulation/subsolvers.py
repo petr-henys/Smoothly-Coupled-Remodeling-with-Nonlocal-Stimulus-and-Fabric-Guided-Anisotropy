@@ -478,12 +478,22 @@ class DensitySolver(_BaseLinearSolver):
         
         Bten = self.cfg.beta_perp * I + (self.cfg.beta_par - self.cfg.beta_perp) * Ahat
 
-        # Linear driver: rate = k_rho * (S_plus*(rho_max - rho) + S_minus*(rho_min - rho))
+        # Linear driver with saturated mechanostat signal:
+        # raw rate = k_rho * (S_plus*(rho_max - rho) + S_minus*(rho_min - rho))
         # LHS contribution: + k_rho * (S_plus + S_minus) * rho
-        S_plus = smooth_plus(self.S, self.smooth_eps)
-        S_minus = smooth_plus(-self.S, self.smooth_eps)
-        
+        # To avoid unbounded rates for large |S| we first saturate S:
+        #   S_eff = S_sat * tanh(S / S_sat)
+        S_raw = self.S
+        if self.cfg.S_sat > 0.0:
+            S_eff = self.cfg.S_sat * ufl.tanh(S_raw / self.cfg.S_sat)
+        else:
+            S_eff = S_raw
+
+        S_plus = smooth_plus(S_eff, self.smooth_eps)
+        S_minus = smooth_plus(-S_eff, self.smooth_eps)
+
         reaction_coeff = self.cfg.k_rho * (S_plus + S_minus)
+
 
         return (
             (self.trial / dt) * self.test * self.dx
@@ -504,11 +514,20 @@ class DensitySolver(_BaseLinearSolver):
 
         dt = self.cfg.dt
         
-        # Linear driver source term: k_rho * (S_plus*rho_max + S_minus*rho_min)
-        S_plus = smooth_plus(self.S, self.smooth_eps)
-        S_minus = smooth_plus(-self.S, self.smooth_eps)
-        
+        # Linear driver source term with saturated mechanostat signal:
+        # rate = k_rho * (S_plus*(rho_max - rho) + S_minus*(rho_min - rho))
+        # We reuse the same saturation of S as in the LHS.
+        S_raw = self.S
+        if self.cfg.S_sat > 0.0:
+            S_eff = self.cfg.S_sat * ufl.tanh(S_raw / self.cfg.S_sat)
+        else:
+            S_eff = S_raw
+
+        S_plus = smooth_plus(S_eff, self.smooth_eps)
+        S_minus = smooth_plus(-S_eff, self.smooth_eps)
+
         source_term = self.cfg.k_rho * (S_plus * self.cfg.rho_max + S_minus * self.cfg.rho_min)
+
 
         rhs_expr = (self.rho_old / dt) + source_term
         self.L_form_template = fem.form(rhs_expr * self.test * self.dx)

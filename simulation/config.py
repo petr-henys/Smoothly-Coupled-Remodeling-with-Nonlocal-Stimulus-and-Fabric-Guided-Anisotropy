@@ -26,7 +26,7 @@ class Config:
     # Material Properties
     # =========================================================================
     # Density-stiffness relationship: E = E0 * rho^n(rho)
-    n_power: float = 1.0        # Exponent for stimulus calculation
+    n_power: float = 4.0        # Exponent for stimulus calculation (proximal femur, fatigue-like)
     n_trab: float = 2.0         # Exponent for trabecular bone
     n_cort: float = 1.2         # Exponent for cortical bone
     rho_trab_max: float = 0.6   # Max density for trabecular regime
@@ -35,33 +35,33 @@ class Config:
     # =========================================================================
     # Density Evolution (Remodeling)
     # =========================================================================
-    rho_min: float = 0.1        # Min relative density
+    rho_min: float = 0.05       # Min relative density (very low trabecular)
     rho_max: float = 1.00       # Max relative density
-    rho0: float = 0.5           # Initial relative density
+    rho0: float = 0.8           # Initial relative density (proximal femur: mostly trabecular)
+    k_rho: float = 0.002        # Density remodeling rate [1/day] (half-time ~1 year)
+    S_sat: float = 1.0          # Characteristic stimulus magnitude for saturation of remodeling
 
-    k_rho: float = 0.001          # Density remodeling rate [1/day]
 
     # Density diffusion [mm^2/day]
-    beta_par: float = 0.05       # Parallel to fabric
-    beta_perp: float = 0.05      # Perpendicular to fabric
+    beta_par: float = 0.10       # Parallel to fabric [mm^2/day] (proximal femur trabeculae)
+    beta_perp: float = 0.10      # Perpendicular to fabric [mm^2/day]
 
     # =========================================================================
     # Stimulus (Reaction-Diffusion)
     # =========================================================================
-    psi_ref: float = 0.04      # Reference value (Stress [MPa], Strain [-], or SED [MPa])
-    
+    psi_ref: float = 1.     # Reference effective stress [MPa] for daily stimulus in proximal femur
     cS: float = 1.0             # Signaling capacity
-    tauS: float = 0.2           # Relaxation time [day] (was decay rate 5.0)
-    kappaS: float = 1.0         # Diffusion coefficient [mm^2/day]
-    distal_damping_height: float = 1       # Height of distal damping zone [mm]
-    distal_damping_transition: float = 5.0    # Transition width of distal damping zone [mm]
+    tauS: float = 1.0           # Relaxation time [day] of mechanostat signal
+    kappaS: float = 0.5         # Diffusion coefficient [mm^2/day] for mechanostat signal
+    distal_damping_height: float = 1.0     # Height of distal damping zone [mm] (cut shaft of femur)
+    distal_damping_transition: float = 0.5    # Transition width of distal damping zone [mm]
 
     # =========================================================================
     # Fabric Tensor Evolution
     # =========================================================================
     cA: float = 1.0             # Orientation capacity
-    tauA: float = 200.0         # Relaxation time [day]
-    ell: float = 2.0            # Diffusion length [mm]
+    tauA: float = 200.0         # Relaxation time [day] for fabric (slow trabecular reorientation)
+    ell: float = 3.0            # Diffusion length [mm] for fabric (trabecular packets)
     
     # Standard Zysset parameters (approximate)
     k_stiff: float = 1.9        # Density exponent for stiffness (often close to 2)
@@ -75,10 +75,10 @@ class Config:
     # =========================================================================
     # Gait & Loading
     # =========================================================================
-    gait_cycles_per_day: float = 1.0
-    load_scale: float = 1.0
+    gait_cycles_per_day: float = 4000   # Daily equivalent hip loading cycles (walking, stairs)
+    load_scale: float = 1.0      # Keep loads from musculoskeletal model unscaled
     gait_samples: int = 9
-    body_mass_tonnes: float = 0.075   # 0.075 t ≈ 75 kg
+    body_mass_tonnes: float = 0.075   # 0.075 t ≈ 75 kg (proximal femur subject)
 
     # =========================================================================
     # Numerics & I/O

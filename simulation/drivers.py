@@ -62,7 +62,7 @@ class GaitDriver:
 
         # Tractions to update
         self._tractions = [self.gait.t_hip, self.gait.t_glmed, self.gait.t_glmax]
-        
+        #self._tractions = [self.gait.t_hip]
         # Precompute load vectors for all phases to avoid re-interpolation
         self.loads = self._precompute_loads()
 
@@ -197,23 +197,23 @@ class GaitDriver:
             e_dev_i = ufl.dev(e_i)
             structure_i = ufl.dot(ufl.transpose(e_dev_i), e_dev_i)
 
-            # Calculate stimulus term based on type
-            # ψ_term = w * (SED_spec / SED_ref)^m
-            # U = 0.5 * σ : ε
+            # Carter–Beaupré / Jacobs-style stimulus:
+            # use an effective stress derived from the strain energy density,
+            # without dividing by density (no specific-SED scaling).
+            # U = 0.5 * σ : ε  (strain energy density)
             U_i = 0.5 * ufl.inner(sig_i, e_i)
-            # Specific SED = U / rho
-            # Use max(rho, rho_min) to avoid division by zero
-            rho_safe = ufl.max_value(self.mech.rho, self.cfg.rho_min)
-            sed_spec = U_i / rho_safe # is this corect?????
-            
-            term = (sed_spec / self.psi_ref) ** self.exponent
+            U_safe = ufl.max_value(U_i, 0.0)
+            # Effective scalar stress measure σ_eff = sqrt(2 U)
+            sigma_eff = ufl.sqrt(2.0 * U_safe + self.cfg.smooth_eps)
+
+            term = (sigma_eff / self.psi_ref) ** self.exponent
 
             # Accumulate weighted terms
             psi_p_terms.append(weight * term)
-            
+
             # M_term = w * (ε_devᵀ ε_dev)
             structure_terms.append(weight * structure_i)
-            
+
             total_weight += weight
 
         if total_weight <= 0.0:

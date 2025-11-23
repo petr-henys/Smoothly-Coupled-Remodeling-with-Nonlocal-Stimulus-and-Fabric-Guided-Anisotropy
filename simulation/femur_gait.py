@@ -227,14 +227,14 @@ def setup_femur_gait_loading(V: fem.FunctionSpace, mass_tonnes: float = 0.075, n
         gl_med = MuscleLoad(pv_mesh, css, use_cell_data=False, verbose=verbose)
         gl_med.set_attachment_points(load_json_points(FemurPaths.GL_MED_JSON))
         curve = rescale_curve(curves[0], x_scale=(0, 100), y_scale=(-1, 0.))
-        load_vec = np.array([1.1, 1.87, 0.89]) * F_mag
+        load_vec = np.array([1.1, 1.87, 0.89]) * F_mag * 1e-5
         gl_med_gait = gait_interpolator(build_load(curve, load_vec))
 
         # Gluteus maximus
         gl_max = MuscleLoad(pv_mesh, css, use_cell_data=False, verbose=verbose)
         gl_max.set_attachment_points(load_json_points(FemurPaths.GL_MAX_JSON))
         curve = rescale_curve(curves[3], x_scale=(0, 100), y_scale=(-1, 0.))
-        load_vec = np.array([-0.3, 1.27, 0.39]) * F_mag
+        load_vec = np.array([-0.3, 1.27, 0.39]) * F_mag * 1e-5
         gl_max_gait = gait_interpolator(build_load(curve, load_vec))
 
     return FemurRemodellerGait(
