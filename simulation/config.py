@@ -26,7 +26,7 @@ class Config:
     # Material Properties
     # =========================================================================
     # Density-stiffness relationship: E = E0 * rho^n(rho)
-    n_power: float = 4.0        # Exponent for stimulus calculation (proximal femur, fatigue-like)
+    n_power: float = 1.5        # Exponent for stimulus calculation (proximal femur, fatigue-like)
     n_trab: float = 2.0         # Exponent for trabecular bone
     n_cort: float = 1.2         # Exponent for cortical bone
     rho_trab_max: float = 0.6   # Max density for trabecular regime
@@ -37,9 +37,9 @@ class Config:
     # =========================================================================
     rho_min: float = 0.05       # Min relative density (very low trabecular)
     rho_max: float = 1.00       # Max relative density
-    rho0: float = 0.8           # Initial relative density (proximal femur: mostly trabecular)
+    rho0: float = 0.45           # Initial relative density (proximal femur: mostly trabecular)
     k_rho: float = 0.002        # Density remodeling rate [1/day] (half-time ~1 year)
-    S_sat: float = 1.0          # Characteristic stimulus magnitude for saturation of remodeling
+    S_sat: float = 5.          # Characteristic stimulus magnitude for saturation of remodeling
 
 
     # Density diffusion [mm^2/day]
@@ -49,7 +49,7 @@ class Config:
     # =========================================================================
     # Stimulus (Reaction-Diffusion)
     # =========================================================================
-    psi_ref: float = 1.     # Reference effective stress [MPa] for daily stimulus in proximal femur
+    psi_ref: float = 100.     # Reference effective stress [MPa] for daily stimulus in proximal femur
     cS: float = 1.0             # Signaling capacity
     tauS: float = 1.0           # Relaxation time [day] of mechanostat signal
     kappaS: float = 0.5         # Diffusion coefficient [mm^2/day] for mechanostat signal
@@ -61,7 +61,7 @@ class Config:
     # =========================================================================
     cA: float = 1.0             # Orientation capacity
     tauA: float = 200.0         # Relaxation time [day] for fabric (slow trabecular reorientation)
-    ell: float = 3.0            # Diffusion length [mm] for fabric (trabecular packets)
+    ell: float = 2.0            # Diffusion length [mm] for fabric (trabecular packets)
     
     # Standard Zysset parameters (approximate)
     k_stiff: float = 1.9        # Density exponent for stiffness (often close to 2)
@@ -99,7 +99,7 @@ class Config:
     accel_type: str = "anderson"
     m: int = 8                  # Anderson history size
     beta: float = 1.0           # Mixing parameter
-    lam: float = 1e-10          # Regularization
+    lam: float = 1e-8          # Regularization
     gamma: float = 0.05         # Safeguard tolerance
     safeguard: bool = True
     backtrack_max: int = 6

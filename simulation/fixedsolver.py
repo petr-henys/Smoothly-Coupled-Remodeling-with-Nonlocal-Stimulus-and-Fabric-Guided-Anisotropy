@@ -53,7 +53,7 @@ class FixedPointSolver:
         self.n_S = get_owned_size(S)
 
         self._build_state_slices()
-        self.state_buffer = np.empty(self.state_size, dtype=self.rho.x.array.dtype)
+        self.state_buffer = np.zeros(self.state_size, dtype=self.rho.x.array.dtype)
 
         self.logger = get_logger(self.comm, verbose=bool(self.cfg.verbose), name="FixedPoint")
         self.telemetry = self.cfg.telemetry

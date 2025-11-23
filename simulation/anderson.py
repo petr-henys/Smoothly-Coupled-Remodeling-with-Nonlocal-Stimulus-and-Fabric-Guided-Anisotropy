@@ -65,20 +65,26 @@ class _Anderson:
         return self.comm.allreduce(H_loc, op=MPI.SUM)
     
     def _solve_kkt(self, H: np.ndarray, lam_eff: float) -> np.ndarray:
-        """Solve equality-constrained LS: min ||α||²_{H+λI} s.t. 1ᵀα=1."""
+        """Solve min ||alpha||_{H+lam I} s.t. 1^T alpha = 1 using closed-form.
+        
+        alpha = (H+lam I)^{-1} 1 / (1^T (H+lam I)^{-1} 1)
+        """
         p = H.shape[0]
         if p == 0:
             return np.zeros(0, dtype=float)
         Hp = H + lam_eff * np.eye(p)
         one = np.ones(p, dtype=float)
-        
-        y, _, _, _ = np.linalg.lstsq(Hp, one, rcond=None)
-        
+        try:
+            y = np.linalg.solve(Hp, one)
+        except np.linalg.LinAlgError:
+            w, V = np.linalg.eigh(Hp + 1e-15 * np.eye(p))
+            w = np.clip(w, 1e-15, None)
+            y = V @ (V.T @ one / w)
         denom = float(one @ y)
         if abs(denom) < 1e-30:
             return np.full(p, 1.0 / p, dtype=float)
         return y / denom
-
+    
     def _condition_number(self, H: np.ndarray, lam_eff: float) -> float:
         """Condition number κ(H + λI) via eigenvalues."""
         p = H.shape[0]
