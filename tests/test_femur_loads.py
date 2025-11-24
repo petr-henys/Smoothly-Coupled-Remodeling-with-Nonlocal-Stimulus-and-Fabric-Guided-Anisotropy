@@ -10,6 +10,7 @@ Split out from `test_gaitloader.py` for clarity.
 """
 
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pyvista as pv

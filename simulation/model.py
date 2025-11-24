@@ -20,7 +20,7 @@ from simulation.storage import UnifiedStorage
 from simulation.logger import get_logger, Level, configure_logging
 from simulation.utils import build_dirichlet_bcs, assign, current_memory_mb
 from simulation.config import Config
-from simulation.subsolvers import MechanicsSolver, StimulusSolver, DensitySolver, DirectionSolver
+from simulation.subsolvers import MechanicsSolver, DensitySolver
 from simulation.fixedsolver import FixedPointSolver
 from simulation.drivers import GaitDriver
 
@@ -83,17 +83,13 @@ class Remodeller:
                     "tol",
                     "used_subiters",
                     "mech_time_s",
-                    "stim_time_s",
                     "dens_time_s",
-                    "dir_time_s",
                     "solve_time_s_total",
                     "proj_res_last",
                     "num_dofs_total",
                     "rss_mem_mb",
                     "mech_iters",
-                    "stim_iters",
                     "dens_iters",
-                    "dir_iters",
                 ],
                 filename="steps.csv",
             )
@@ -104,27 +100,18 @@ class Remodeller:
 
         P1_vec = basix.ufl.element("Lagrange", self.domain.basix_cell(), 1, shape=(self.gdim,))
         P1 = basix.ufl.element("Lagrange", self.domain.basix_cell(), 1)
-        P1_ten = basix.ufl.element("Lagrange", self.domain.basix_cell(), 1, shape=(self.gdim, self.gdim))
 
         self.V = functionspace(self.domain, P1_vec)
         self.Q = functionspace(self.domain, P1)
-        self.T = functionspace(self.domain, P1_ten)
 
         # Total DOFs
         dofs_V = self.V.dofmap.index_map.size_global * self.V.dofmap.index_map_bs
         dofs_Q = self.Q.dofmap.index_map.size_global * self.Q.dofmap.index_map_bs
-        dofs_T = self.T.dofmap.index_map.size_global * self.T.dofmap.index_map_bs
-        self.num_dofs_total = int(dofs_V + dofs_Q + dofs_T)
+        self.num_dofs_total = int(dofs_V + dofs_Q)
 
         u = Function(self.V, name="u")
         self.rho = Function(self.Q, name="rho")
         self.rho_old = Function(self.Q, name="rho_old")
-
-        self.L = Function(self.T, name="log_dir_tensor")
-        self.L_old = Function(self.T, name="log_dir_tensor_old")
-
-        self.S = Function(self.Q, name="stimulus")
-        self.S_old = Function(self.Q, name="stimulus_old")
 
         # Predictor state (Adams-Bashforth)
         self.step_count = 0
@@ -133,62 +120,13 @@ class Remodeller:
         self.rho_rate_last = Function(self.Q, name="rho_rate_last")
         self.rho_rate_last2 = Function(self.Q, name="rho_rate_last2")
         
-        self.S_rate_last = Function(self.Q, name="S_rate_last")
-        self.S_rate_last2 = Function(self.Q, name="S_rate_last2")
-        
-        self.L_rate_last = Function(self.T, name="L_rate_last")
-        self.L_rate_last2 = Function(self.T, name="L_rate_last2")
-        
         assign(self.rho_rate_last, 0.0)
         assign(self.rho_rate_last2, 0.0)
-        assign(self.S_rate_last, 0.0)
-        assign(self.S_rate_last2, 0.0)
-        assign(self.L_rate_last, 0.0)
-        assign(self.L_rate_last2, 0.0)
 
         assign(self.rho, self.cfg.rho0)
 
-        d = self.gdim
-
-        def _L_init(x):
-            # Initialize L = log(A). A is approx I/3.
-            # We perturb eigenvalues to avoid singularity in spectral decomposition.
-            # A ~ diag(1/3, 1/3, 1/3) -> L ~ diag(ln(1/3), ln(1/3), ln(1/3))
-            # Perturbation: 1e-4
-            n = x.shape[1]
-            
-            # Base value: ln(1/3)
-            val = np.log(1.0/3.0)
-            
-            # Perturbations
-            eps = 1e-4
-            # diag = [val - eps, val, val + eps]
-            # This ensures distinct eigenvalues for L, and thus for A = exp(L).
-            
-            vals = np.zeros((d*d, n), dtype=np.float64)
-            
-            # 3D case assumed
-            if d == 3:
-                # L11
-                vals[0, :] = val - eps
-                # L22
-                vals[4, :] = val
-                # L33
-                vals[8, :] = val + eps
-            elif d == 2:
-                vals[0, :] = val - eps
-                vals[3, :] = val + eps
-                
-            return vals
-
-        self.L.interpolate(_L_init)
-        self.L.x.scatter_forward()
-
-        assign(self.S, 0.0)
-
         # Register fields
-        self.storage.fields.register("scalars", [self.rho, self.S], filename="scalars.bp")
-        self.storage.fields.register("L", [self.L], filename="L.bp")
+        self.storage.fields.register("scalars", [self.rho], filename="scalars.bp")
 
         # Boundary conditions
         bc_mech = build_dirichlet_bcs(self.V, self.cfg.facet_tags, id_tag=1, value=0.0)
@@ -211,10 +149,8 @@ class Remodeller:
         ]
 
         # Subsolvers
-        mechsolver = MechanicsSolver(u, self.rho, self.L, self.cfg, bc_mech, neumann_bcs)
-        self.stimsolver = StimulusSolver(self.S, self.S_old, self.cfg)
-        self.densolver = DensitySolver(self.rho, self.rho_old, self.L, self.S, self.cfg)
-        self.dirsolver = DirectionSolver(self.L, self.L_old, self.cfg)
+        mechsolver = MechanicsSolver(u, self.rho, self.cfg, bc_mech, neumann_bcs)
+        self.densolver = DensitySolver(self.rho, self.rho_old, self.cfg)
 
         # Driver
         self.driver = GaitDriver(mechsolver, gait_loader, self.cfg)
@@ -223,15 +159,9 @@ class Remodeller:
             self.comm,
             self.cfg,
             self.driver,
-            self.stimsolver,
             self.densolver,
-            self.dirsolver,
             self.rho,
             self.rho_old,
-            self.L,
-            self.L_old,
-            self.S,
-            self.S_old,
         )
 
         self.solvers_initialized = False
@@ -250,7 +180,7 @@ class Remodeller:
         if hasattr(self, "driver") and self.driver is not None:
             self.driver.destroy()
 
-        for attr in ("stimsolver", "densolver", "dirsolver"):
+        for attr in ("densolver",):
             solver = getattr(self, attr, None)
             if solver is not None:
                 solver.destroy()
@@ -299,7 +229,6 @@ class Remodeller:
     def _collect_field_stats(self) -> Dict[str, float]:
         """Gather field min/max/mean and energy for reporting."""
         rho_min, rho_max, rho_mean, rho_median = self._field_stats(self.rho)
-        S_min, S_max, S_mean, S_median = self._field_stats(self.S)
 
         psi_avg = 0.0
         psi_min = 0.0
@@ -315,7 +244,6 @@ class Remodeller:
 
         return dict(
             rho_min=rho_min, rho_max=rho_max, rho_mean=rho_mean, rho_median=rho_median,
-            S_min=S_min, S_max=S_max, S_mean=S_mean, S_median=S_median,
             psi_avg=psi_avg, psi_min=psi_min, psi_max=psi_max, psi_median=psi_median
         )
 
@@ -346,7 +274,6 @@ class Remodeller:
             
             # Rows
             lines.append(f"{'rho':>10} | {fields['rho_min']:12.3e} | {fields['rho_max']:12.3e} | {fields['rho_mean']:12.3e} | {fields['rho_median']:12.3e} |")
-            lines.append(f"{'S':>10} | {fields['S_min']:12.3e} | {fields['S_max']:12.3e} | {fields['S_mean']:12.3e} | {fields['S_median']:12.3e} |")
             lines.append(f"{'psi':>10} | {fields['psi_min']:12.3e} | {fields['psi_max']:12.3e} | {fields['psi_avg']:12.3e} | {fields['psi_median']:12.3e} |")
             
             lines.append("-" * 96)
@@ -355,7 +282,7 @@ class Remodeller:
             
             gs_iters = max(1, coupling_stats['iters'])
             
-            for name, key in [("Mechanics", "mech"), ("Stimulus", "stim"), ("Density", "dens"), ("Direction", "dir")]:
+            for name, key in [("Mechanics", "mech"), ("Density", "dens")]:
                 st = s_stats[key]
                 
                 # Mechanics solver runs for each gait sample in every GS iteration
@@ -377,19 +304,14 @@ class Remodeller:
         self.logger.info(format_table)
 
         self.storage.write_fields("scalars", float(t))
-        self.storage.write_fields("L", float(t))
 
     def step(self, dt: float, *, step_index: Optional[int] = None, time_days: Optional[float] = None) -> None:
         """Single timestep: fixed-point iteration until coupling tolerance met."""
         assign(self.rho_old, self.rho)
-        assign(self.L_old, self.L)
-        assign(self.S_old, self.S)
 
         if not self.solvers_initialized:
             self.driver.setup()
-            self.stimsolver.setup()
             self.densolver.setup()
-            self.dirsolver.setup()
             self.solvers_initialized = True
 
         # Predictor step (Adams-Bashforth)
@@ -406,29 +328,17 @@ class Remodeller:
                 self.rho.x.array[:] = self.rho_old.x.array + dt_curr * (
                     w1 * self.rho_rate_last.x.array - w2 * self.rho_rate_last2.x.array
                 )
-                self.S.x.array[:] = self.S_old.x.array + dt_curr * (
-                    w1 * self.S_rate_last.x.array - w2 * self.S_rate_last2.x.array
-                )
-                self.L.x.array[:] = self.L_old.x.array + dt_curr * (
-                    w1 * self.L_rate_last.x.array - w2 * self.L_rate_last2.x.array
-                )
             else:
                 # AB1 (Forward Euler)
                 self.rho.x.array[:] = self.rho_old.x.array + dt_curr * self.rho_rate_last.x.array
-                self.S.x.array[:] = self.S_old.x.array + dt_curr * self.S_rate_last.x.array
-                self.L.x.array[:] = self.L_old.x.array + dt_curr * self.L_rate_last.x.array
             
             self.rho.x.scatter_forward()
-            self.S.x.scatter_forward()
-            self.L.x.scatter_forward()
 
         # Update dt [days] and reassemble LHS for time-dependent solvers if dt changed
         if self._current_dt is None or abs(float(dt) - float(self._current_dt)) > 1e-12:
             self.cfg.set_dt(float(dt))
             if self.solvers_initialized:
-                self.stimsolver.assemble_lhs()
                 self.densolver.assemble_lhs()
-                self.dirsolver.assemble_lhs()
             self._current_dt = float(dt)
         
         self.fixedsolver.run(time_days=time_days, step_index=step_index, progress=self.progress if self.rank == 0 else None)
@@ -439,9 +349,7 @@ class Remodeller:
 
         total_time = (
             float(self.fixedsolver.mech_time_total)
-            + float(self.fixedsolver.stim_time_total)
             + float(self.fixedsolver.dens_time_total)
-            + float(self.fixedsolver.dir_time_total)
         )
 
         if self.telemetry is not None:
@@ -454,16 +362,12 @@ class Remodeller:
                 "tol": float(self.cfg.coupling_tol),
                 "used_subiters": used_subiters,
                 "mech_time_s": float(self.fixedsolver.mech_time_total),
-                "stim_time_s": float(self.fixedsolver.stim_time_total),
                 "dens_time_s": float(self.fixedsolver.dens_time_total),
-                "dir_time_s": float(self.fixedsolver.dir_time_total),
                 "solve_time_s_total": total_time,
                 "num_dofs_total": self.num_dofs_total,
                 "rss_mem_mb": rss_mb_total,
                 "mech_iters": self.fixedsolver.mech_iters_total,
-                "stim_iters": 1,
                 "dens_iters": 1,
-                "dir_iters": 1,
             }
             if time_days is not None:
                 payload["time_days"] = float(time_days)
@@ -478,17 +382,11 @@ class Remodeller:
         
         # Shift history
         assign(self.rho_rate_last2, self.rho_rate_last)
-        assign(self.S_rate_last2, self.S_rate_last)
-        assign(self.L_rate_last2, self.L_rate_last)
         
         # Calculate new rates: (x_new - x_old) / dt
         self.rho_rate_last.x.array[:] = (self.rho.x.array - self.rho_old.x.array) / dt_curr
-        self.S_rate_last.x.array[:] = (self.S.x.array - self.S_old.x.array) / dt_curr
-        self.L_rate_last.x.array[:] = (self.L.x.array - self.L_old.x.array) / dt_curr
         
         self.rho_rate_last.x.scatter_forward()
-        self.S_rate_last.x.scatter_forward()
-        self.L_rate_last.x.scatter_forward()
         
         self.dt_prev = dt_curr
         self.step_count += 1
@@ -501,9 +399,7 @@ class Remodeller:
         self.cfg.set_dt(float(dt))
 
         self.driver.setup()
-        self.stimsolver.setup()
         self.densolver.setup()
-        self.dirsolver.setup()
         self.solvers_initialized = True
 
         self.comm.Barrier()
@@ -543,7 +439,7 @@ class Remodeller:
             if (step + 1) % self.cfg.saving_interval == 0:
                 coupling_stats = {
                     "iters": len(self.fixedsolver.subiter_metrics),
-                    "time": float(self.fixedsolver.mech_time_total + self.fixedsolver.stim_time_total + self.fixedsolver.dens_time_total + self.fixedsolver.dir_time_total)
+                    "time": float(self.fixedsolver.mech_time_total + self.fixedsolver.dens_time_total)
                 }
                 self._output(t, step, coupling_stats)
             

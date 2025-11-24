@@ -8,21 +8,12 @@ import ufl
 
 from simulation.config import Config
 from simulation.utils import build_dirichlet_bcs, build_facetag
-from simulation.subsolvers import MechanicsSolver, DensitySolver, DirectionSolver, unittrace_psd
+from simulation.subsolvers import MechanicsSolver, DensitySolver
 from dolfinx import mesh
 
 def make_unit_cube(comm=MPI.COMM_WORLD, n=6):
     """Create a unit cube mesh."""
     return mesh.create_unit_cube(comm, n, n, n)
-
-def iso_tensor(x):
-    """Return a 3x3 identity matrix (trace 3), flattened to (9, N)."""
-    val = 1.0
-    values = np.zeros((9, x.shape[1]), dtype=default_scalar_type)
-    values[0] = val
-    values[4] = val
-    values[8] = val
-    return values
 
 # =============================================================================
 # Thermodynamic Consistency Tests
@@ -39,11 +30,9 @@ class TestThermodynamics:
         
         P1_vec = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3,))
         P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
-        P1_ten = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3, 3))
         
         V = functionspace(unit_cube, P1_vec)
         Q = functionspace(unit_cube, P1)
-        T = functionspace(unit_cube, P1_ten)
         
         # Random displacement field
         u = Function(V, name="u")
@@ -58,39 +47,16 @@ class TestThermodynamics:
         rho.x.array[:] = 0.6
         rho.x.scatter_forward()
         
-        A = Function(T, name="A")
-        A.interpolate(iso_tensor)
-        A.x.scatter_forward()
-        
         bc_mech = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
-        mech = MechanicsSolver(u, rho, A, cfg, bc_mech, [])
+        mech = MechanicsSolver(u, rho, cfg, bc_mech, [])
         
-        psi = 0.5 * ufl.inner(mech.sigma(u, rho, A), mech.eps(u))
+        psi = 0.5 * ufl.inner(mech.sigma(u, rho), mech.eps(u))
         
         psi_local = fem.assemble_scalar(fem.form(psi * cfg.dx))
         psi_global = comm.allreduce(psi_local, op=MPI.SUM)
         
         assert psi_global >= -1e-12, f"Strain energy must be non-negative, got {psi_global}"
     
-    @pytest.mark.parametrize("unit_cube", [6], indirect=True)
-    def test_stimulus_diffusion_dissipation(self, unit_cube, facet_tags, mean_value_factory):
-        """Stimulus diffusion term should dissipate energy (κ∇S·∇S ≥ 0)."""
-        comm = MPI.COMM_WORLD
-        cfg = Config(domain=unit_cube, facet_tags=facet_tags, verbose=(comm.rank == 0))
-        
-        P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
-        Q = functionspace(unit_cube, P1)
-        
-        S = Function(Q, name="S")
-        S.interpolate(lambda x: np.sin(np.pi*x[0]) * np.cos(np.pi*x[1]) * np.sin(np.pi*x[2]))
-        S.x.scatter_forward()
-        
-        # Diffusion dissipation: κ |∇S|²
-        kappa_S = cfg.kappaS
-        dissipation = kappa_S * ufl.inner(ufl.grad(S), ufl.grad(S))
-        mean_val = mean_value_factory(dissipation)
-        assert mean_val >= -1e-14, f"Diffusion dissipation must be non-negative, got {mean_val}"
-
     @pytest.mark.parametrize("unit_cube", [6], indirect=True)
     def test_linear_elastic_energy_balance(self, unit_cube, facet_tags, traction_factory):
         """For the linear system, internal work equals external work: W_int ≈ W_ext.
@@ -103,11 +69,9 @@ class TestThermodynamics:
 
         P1_vec = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3,))
         P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
-        P1_ten = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3, 3))
 
         V = functionspace(unit_cube, P1_vec)
         Q = functionspace(unit_cube, P1)
-        T = functionspace(unit_cube, P1_ten)
 
         # Fields
         u = Function(V, name="u")
@@ -115,20 +79,16 @@ class TestThermodynamics:
         rho.x.array[:] = 0.7
         rho.x.scatter_forward()
 
-        A = Function(T, name="A")
-        A.interpolate(iso_tensor)
-        A.x.scatter_forward()
-
         # Dirichlet on x=0, traction on x=1 (axis 0)
         bc_mech = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
         t_const, t_tag = traction_factory(-0.4, facet_id=2, axis=0)
 
-        mech = MechanicsSolver(u, rho, A, cfg, bc_mech, [(t_const, t_tag)])
+        mech = MechanicsSolver(u, rho, cfg, bc_mech, [(t_const, t_tag)])
         mech.setup()
         mech.solve()
 
         # Test 1: Manual calculation - Internal work: a(u,u) = ∫ σ:ε dx
-        a_uu_local = fem.assemble_scalar(fem.form(ufl.inner(mech.sigma(u, rho, A), mech.eps(u)) * cfg.dx))
+        a_uu_local = fem.assemble_scalar(fem.form(ufl.inner(mech.sigma(u, rho), mech.eps(u)) * cfg.dx))
         a_uu = comm.allreduce(a_uu_local, op=MPI.SUM)
 
         # External work: l(u) = ∫ t·u ds on tagged facet(s)
@@ -165,24 +125,18 @@ class TestConservation:
         
         P1_vec = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3,))
         P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
-        P1_ten = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3, 3))
         
         V = functionspace(unit_cube, P1_vec)
         Q = functionspace(unit_cube, P1)
-        T = functionspace(unit_cube, P1_ten)
         
         u = Function(V, name="u")
         rho = Function(Q, name="rho")
         rho.x.array[:] = 0.5
         rho.x.scatter_forward()
         
-        A = Function(T, name="A")
-        A.interpolate(iso_tensor)
-        A.x.scatter_forward()
-        
         # Test 1: No load case - BCs: left fixed, no traction on right
         bc_mech = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
-        mech = MechanicsSolver(u, rho, A, cfg, bc_mech, [])
+        mech = MechanicsSolver(u, rho, cfg, bc_mech, [])
         
         mech.setup()
         mech.solve()
@@ -197,7 +151,7 @@ class TestConservation:
         t0 = fem.Constant(domain, np.array([1.0, 0.0, 0.0], dtype=float))
         neumanns = [(t0, 2)]
         
-        mech2 = MechanicsSolver(u, rho, A, cfg, bc_mech, neumanns)
+        mech2 = MechanicsSolver(u, rho, cfg, bc_mech, neumanns)
         mech2.setup()
         its, reason = mech2.solve()
         
@@ -217,10 +171,7 @@ class TestConservation:
         cfg = Config(domain=domain, facet_tags=facet_tags, verbose=(comm.rank == 0))
         
         P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
-        P1_ten = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3, 3))
-        
         Q = functionspace(domain, P1)
-        T = functionspace(domain, P1_ten)
         
         rho = Function(Q, name="rho")
         rho_old = Function(Q, name="rho_old")
@@ -232,15 +183,13 @@ class TestConservation:
         rho_old.x.array[:] = rho_initial
         rho_old.x.scatter_forward()
         
-        A = Function(T, name="A")
-        A.interpolate(iso_tensor)
-        A.x.scatter_forward()
+        densolver = DensitySolver(rho, rho_old, cfg)
         
-        S = Function(Q, name="S")
-        S.x.array[:] = 0.1  # Positive stimulus drives toward rho_max
-        S.x.scatter_forward()
+        # Set positive stimulus (psi > psi_ref) -> drives toward rho_max
+        psi_val = 1.5 * cfg.psi_ref
+        psi_expr = fem.Constant(domain, psi_val)
         
-        densolver = DensitySolver(rho, rho_old, A, S, cfg)
+        densolver.update_driving_force(psi_expr)
         densolver.setup()
         densolver.assemble_rhs()
         densolver.solve()
@@ -258,16 +207,15 @@ class TestConservation:
         """Positive stimulus should increase density (toward rho_max), negative should decrease (toward rho_min)."""
         comm = MPI.COMM_WORLD
         cfg = Config(domain=unit_cube, facet_tags=facet_tags, verbose=(comm.rank == 0))
-        
+    
         # Increase remodeling rate for this test to ensure measurable change in one step
         cfg.k_rho = 0.2
         cfg.set_dt(10.0)
-
+        # Disable distal damping for unit cube test
+        cfg.distal_damping_height = -100.0
+    
         P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
-        P1_ten = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3, 3))
-
         Q = functionspace(unit_cube, P1)
-        T = functionspace(unit_cube, P1_ten)
 
         rho_min = float(cfg.rho_min)
         rho_max = float(cfg.rho_max)
@@ -280,15 +228,13 @@ class TestConservation:
 
             rho = Function(Q, name="rho")
 
-            A_field = Function(T, name="A")
-            A_field.interpolate(iso_tensor)
-            A_field.x.scatter_forward()
-
-            S_field = Function(Q, name="S")
-            S_field.x.array[:] = stimulus_value
-            S_field.x.scatter_forward()
-
-            dens = DensitySolver(rho, rho_old, A_field, S_field, cfg)
+            dens = DensitySolver(rho, rho_old, cfg)
+            
+            # S = psi/psi_ref - 1.  So psi = psi_ref * (S + 1)
+            psi_val = cfg.psi_ref * (stimulus_value + 1.0)
+            psi_expr = fem.Constant(unit_cube, psi_val)
+            
+            dens.update_driving_force(psi_expr)
             dens.setup()
             dens.assemble_rhs()
             dens.solve()
@@ -318,38 +264,33 @@ class TestConservation:
         comm = MPI.COMM_WORLD
         domain = unit_cube
         cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False)
-
+        # Disable distal damping
+        cfg.distal_damping_height = -100.0
+    
         P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
-        P1_ten = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3, 3))
-
         Q = functionspace(unit_cube, P1)
-        T = functionspace(unit_cube, P1_ten)
 
         # Non-uniform initial density to exercise diffusion but preserve mass
         rho_old = Function(Q, name="rho_old")
         rho_old.interpolate(lambda x: 0.6 + 0.2 * np.sin(2*np.pi*x[0]) * np.cos(2*np.pi*x[1]))
         rho_old.x.scatter_forward()
 
-        # Isotropic direction tensor and zero stimulus
-        A_iso = Function(T, name="A")
-        A_iso.interpolate(iso_tensor)
-        A_iso.x.scatter_forward()
-
-        S = Function(Q, name="S")
-        S.x.array[:] = 0.0
-        S.x.scatter_forward()
-
-        # Assemble initial total mass
-        m_old_local = fem.assemble_scalar(fem.form(rho_old * cfg.dx))
-        m_old = comm.allreduce(m_old_local, op=MPI.SUM)
-
         # Solve one implicit diffusion step with natural BCs
         rho = Function(Q, name="rho")
-        dens = DensitySolver(rho, rho_old, A_iso, S, cfg)
+        dens = DensitySolver(rho, rho_old, cfg)
+        
+        # Zero stimulus -> psi = psi_ref
+        psi_expr = fem.Constant(domain, cfg.psi_ref)
+        dens.update_driving_force(psi_expr)
+        
         dens.setup()
         dens.assemble_rhs()
         dens.solve()
         rho.x.scatter_forward()
+
+        # Assemble initial total mass
+        m_old_local = fem.assemble_scalar(fem.form(rho_old * cfg.dx))
+        m_old = comm.allreduce(m_old_local, op=MPI.SUM)
 
         m_new_local = fem.assemble_scalar(fem.form(rho * cfg.dx))
         m_new = comm.allreduce(m_new_local, op=MPI.SUM)
@@ -373,44 +314,6 @@ class TestConservationChecks:
     """Test physical conservation/balance checks for all subsolvers."""
     
     @pytest.mark.parametrize("unit_cube", [6], indirect=True)
-    def test_stimulus_power_balance(self, unit_cube):
-        """StimulusSolver: Power balance (storage + decay ≈ source)."""
-        comm = MPI.COMM_WORLD
-        domain = unit_cube
-        facet_tags = build_facetag(domain)
-        cfg = Config(domain=domain, facet_tags=facet_tags, verbose=(comm.rank == 0))
-        cfg.set_dt(10.0)  # 10 days
-        # Disable distal damping for unit cube tests
-        cfg.distal_damping_height = 0.0
-        cfg.distal_damping_transition = 0.0
-        
-        P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
-        Q = functionspace(unit_cube, P1)
-        
-        S = Function(Q, name="S")
-        S_old = Function(Q, name="S_old")
-        S_old.x.array[:] = 0.1  # Initial positive stimulus
-        S_old.x.scatter_forward()
-        
-        from simulation.subsolvers import StimulusSolver
-        stim = StimulusSolver(S, S_old, cfg)
-        stim.setup()
-        
-        # Create a psi field (supra-homeostatic in one region) [MPa]
-        psi_expr = fem.Constant(domain, 1.2 * cfg.psi_ref)
-        
-        stim.assemble_rhs(psi_expr)
-        stim.solve()
-        
-        # Check power balance (S is already updated by solve())
-        power_abs, power_rel = stim.power_balance_residual(psi_expr)
-        
-        # Relaxed tolerance - small timestep can cause numerical errors
-        assert power_rel < 0.1, (
-            f"Stimulus power balance violated: abs={power_abs:.3e}, rel={power_rel:.3e}"
-        )
-    
-    @pytest.mark.parametrize("unit_cube", [6], indirect=True)
     def test_density_mass_balance(self, unit_cube):
         """DensitySolver: Mass conservation (dM/dt + decay ≈ source)."""
         comm = MPI.COMM_WORLD
@@ -420,26 +323,21 @@ class TestConservationChecks:
         cfg.set_dt(10.0)  # 10 days
         
         P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
-        P1_ten = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3, 3))
         Q = functionspace(unit_cube, P1)
-        T = functionspace(unit_cube, P1_ten)
         
         rho = Function(Q, name="rho")
         rho_old = Function(Q, name="rho_old")
         rho_old.x.array[:] = 0.5
         rho_old.x.scatter_forward()
         
-        A = Function(T, name="A")
-        A.interpolate(iso_tensor)
-        A.x.scatter_forward()
+        dens = DensitySolver(rho, rho_old, cfg)
         
-        S = Function(Q, name="S")
-        S.x.array[:] = 1.0  # Strong positive stimulus -> formation saturation (linear regime)
-        S.x.scatter_forward()
+        # Strong positive stimulus -> formation saturation (linear regime)
+        # S = 1.0 -> psi = 2 * psi_ref
+        psi_expr = fem.Constant(domain, 2.0 * cfg.psi_ref)
+        dens.update_driving_force(psi_expr)
         
-        dens = DensitySolver(rho, rho_old, A, S, cfg)
         dens.setup()
-        
         dens.assemble_rhs()
         dens.solve()
         
@@ -449,105 +347,3 @@ class TestConservationChecks:
         assert mass_rel < 0.05, (
             f"Density mass balance violated: abs={mass_abs:.3e}, rel={mass_rel:.3e}"
         )
-    
-    @pytest.mark.parametrize("unit_cube", [6], indirect=True)
-    def test_direction_trace_balance(self, unit_cube):
-        """DirectionSolver: Trace conservation (tr(A) → tr(M̂) = 1)."""
-        comm = MPI.COMM_WORLD
-        domain = unit_cube
-        facet_tags = build_facetag(domain)
-        cfg = Config(domain=domain, facet_tags=facet_tags, verbose=(comm.rank == 0))
-        cfg.set_dt(10.0)  # 10 days
-        
-        P1_vec = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3,))
-        P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
-        P1_ten = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3, 3))
-        
-        V = functionspace(unit_cube, P1_vec)
-        Q = functionspace(unit_cube, P1)
-        T = functionspace(unit_cube, P1_ten)
-        
-        A = Function(T, name="A")
-        A_old = Function(T, name="A_old")
-        A_old.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:, None] * np.ones((1, x.shape[1])))
-        A_old.x.scatter_forward()
-        
-        dir_solver = DirectionSolver(A, A_old, cfg)
-        dir_solver.setup()
-        
-        # Create simple displacement field
-        u = Function(V, name="u")
-        u.interpolate(lambda x: np.vstack([0.01*x[0], 0.005*x[1], 0.002*x[2]]))
-        u.x.scatter_forward()
-        
-        # Create MechanicsSolver for eps() method
-        rho = Function(Q, name="rho")
-        rho.x.array[:] = 0.6
-        rho.x.scatter_forward()
-        
-        bc_mech = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
-        mech = MechanicsSolver(u, rho, A_old, cfg, bc_mech, [])
-        
-        # Get strain tensor and assemble RHS
-        eps_ten = mech.get_strain_tensor()
-        B = ufl.dot(ufl.transpose(eps_ten), eps_ten)
-        dir_solver.assemble_rhs(B)
-        dir_solver.solve()
-        
-        # Create M̂ expression for balance check
-        Mhat_expr = unittrace_psd(B, domain.geometry.dim, eps=cfg.smooth_eps)
-        
-        # Check trace balance (uses self.A_dir, not A_new)
-        trA_avg, trMhat_avg, trace_res = dir_solver.trace_balance_residual(Mhat_expr)
-        
-        # tr(M̂) should be 1 by construction
-        assert abs(trMhat_avg - 1.0) < 0.01, f"tr(M̂) should be 1, got {trMhat_avg:.3f}"
-        
-        # tr(A) should relax toward 1 (may not be exact in one step)
-        assert abs(trA_avg - 1.0) < 0.3, (
-            f"tr(A) should approach 1, got {trA_avg:.3f} (residual={trace_res:.3e})"
-        )
-
-    def test_stimulus_power_residual_scales_with_dt(self):
-        """Power residual in stimulus solver should scale with dt (consistency check)."""
-        comm = MPI.COMM_WORLD
-        m = make_unit_cube(comm, n=4)
-        facets = build_facetag(m)
-
-        Q = fem.functionspace(m, basix.ufl.element("Lagrange", m.basix_cell(), 1))
-
-        # Config: disable diffusion for algebraic balance
-        cfg = Config(domain=m, facet_tags=facets, verbose=False)
-        cfg.kappaS = 0.0
-        # Disable distal damping for unit cube tests
-        cfg.distal_damping_height = 0.0
-        cfg.distal_damping_transition = 0.0
-
-        S_old = fem.Function(Q, name="S_old")
-        S_old.x.array[:] = 0.2
-        S_old.x.scatter_forward()
-
-        S = fem.Function(Q, name="S")
-        from simulation.subsolvers import StimulusSolver
-        stim = StimulusSolver(S, S_old, cfg)
-
-        # Constant psi > 1.0 for positive source (dimensionless)
-        psi_val = 1.5
-        psi = fem.Constant(m, default_scalar_type(psi_val))
-
-        def compute_residual(dt_scale: float) -> float:
-            cfg.dt = dt_scale
-            # Source term in solver is (psi - 1.0)
-            stor = (psi_val - 1.0) - cfg.tauS * 0.2
-            S.x.array[:] = 0.2 + dt_scale * stor / cfg.cS
-            S.x.scatter_forward()
-            R_abs, R_rel = stim.power_balance_residual(psi)
-            return abs(R_abs)
-
-        R1 = compute_residual(1.0)
-        R2 = compute_residual(0.5)
-        R3 = compute_residual(0.25)
-
-        # Expect scaling: R2 ~ R1/2, R3 ~ R1/4
-        assert R2 <= R1 * 0.7 + 1e-14, f"Residual didn't scale ~O(dt): R2={R2:.3e}, R1={R1:.3e}"
-        assert R3 <= R1 * 0.4 + 1e-14, f"Residual didn't scale ~O(dt): R3={R3:.3e}, R1={R1:.3e}"

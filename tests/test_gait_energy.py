@@ -34,7 +34,6 @@ def gait_context():
     P1_scalar = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
     V = fem.functionspace(domain, P1_vec)
     Q = fem.functionspace(domain, P1_scalar)
-    T = fem.functionspace(domain, basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3, 3)))
 
     cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False)
     
@@ -44,10 +43,6 @@ def gait_context():
     # Fields
     u = fem.Function(V, name="u")
     rho = fem.Function(Q, name="rho"); rho.x.array[:] = 1.0
-    A = fem.Function(T, name="A")
-    # Isotropic fabric
-    A.x.array[:] = 0.0
-    for i in range(3): A.x.array[i::9] = 1.0/3.0
 
     # BCs
     bcs = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
@@ -57,7 +52,7 @@ def gait_context():
         (loader.t_glmax, 2),
     ]
 
-    solver = MechanicsSolver(u, rho, A, cfg, bcs, neumann)
+    solver = MechanicsSolver(u, rho, cfg, bcs, neumann)
     solver.setup()
     
     return {
@@ -102,7 +97,7 @@ class TestGaitDriver:
 
     @pytest.mark.slow
     def test_load_scaling(self, gait_context):
-        """Doubling load should roughly quadruple energy (linear elastic)."""
+        """Doubling load should double stimulus (linear scaling)."""
         solver = gait_context["solver"]
         loader = gait_context["loader"]
         cfg = gait_context["cfg"]
@@ -121,8 +116,8 @@ class TestGaitDriver:
         E2 = comm.allreduce(fem.assemble_scalar(fem.form(driver2.stimulus_expr() * cfg.dx)), op=MPI.SUM)
         
         ratio = E2 / E1
-        # Should be exactly 4.0 for linear elasticity, but allow small numerical deviation
-        assert 3.9 < ratio < 4.1, f"Energy should scale quadratically, got ratio {ratio:.2f}"
+        # Should be exactly 2.0 for linear elasticity and stress stimulus
+        assert 1.9 < ratio < 2.1, f"Stimulus should scale linearly, got ratio {ratio:.2f}"
 
     @pytest.mark.slow
     def test_stance_vs_swing_energy(self, gait_context):

@@ -41,17 +41,17 @@ class TestConfigValidation:
         """Poisson ratio must be in physically valid range (-1, 0.5)."""
         # Test boundary values
         with pytest.raises((ValueError, RuntimeError)):
-            Config(domain=unit_cube, facet_tags=facet_tags, nu=0.6, verbose=False)  # Too high
+            Config(domain=unit_cube, facet_tags=facet_tags, nu0=0.6, verbose=False)  # Too high
 
         with pytest.raises((ValueError, RuntimeError)):
-            Config(domain=unit_cube, facet_tags=facet_tags, nu=-1.5, verbose=False)  # Too low
+            Config(domain=unit_cube, facet_tags=facet_tags, nu0=-1.5, verbose=False)  # Too low
 
         # Valid values should work
-        cfg1 = Config(domain=unit_cube, facet_tags=facet_tags, nu=0.3, verbose=False)
-        assert cfg1.nu == 0.3
+        cfg1 = Config(domain=unit_cube, facet_tags=facet_tags, nu0=0.3, verbose=False)
+        assert cfg1.nu0 == 0.3
 
-        cfg2 = Config(domain=unit_cube, facet_tags=facet_tags, nu=0.0, verbose=False)
-        assert cfg2.nu == 0.0
+        cfg2 = Config(domain=unit_cube, facet_tags=facet_tags, nu0=0.0, verbose=False)
+        assert cfg2.nu0 == 0.0
 
     def test_config_positive_modulus(self, unit_cube, facet_tags):
         """Young's modulus must be positive."""

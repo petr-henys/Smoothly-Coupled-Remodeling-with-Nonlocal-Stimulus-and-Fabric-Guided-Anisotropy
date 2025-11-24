@@ -15,16 +15,13 @@ def mech_with_dummy_gait(spaces, cfg, bc_mech, dummy_gait_loader):
     """Mechanics solver on unit cube with simple dummy gait loading."""
     u = fem.Function(spaces.V, name="u")
     rho = fem.Function(spaces.Q, name="rho"); rho.x.array[:] = 0.6; rho.x.scatter_forward()
-    A = fem.Function(spaces.T, name="A")
-    A.interpolate(lambda x: (np.eye(3) / 3.0).flatten()[:, None] * np.ones((1, x.shape[1])))
-    A.x.scatter_forward()
-
+    
     neumann_bcs = [
         (dummy_gait_loader.t_hip, dummy_gait_loader.tag),
         (dummy_gait_loader.t_glmed, dummy_gait_loader.tag),
         (dummy_gait_loader.t_glmax, dummy_gait_loader.tag),
     ]
-    mech = MechanicsSolver(u, rho, A, cfg, bc_mech, neumann_bcs)
+    mech = MechanicsSolver(u, rho, cfg, bc_mech, neumann_bcs)
     mech.setup()
     return mech, dummy_gait_loader
 
@@ -40,8 +37,10 @@ class TestGaitDriverUnitCube:
 
     def test_energy_scales_with_load(self, mech_with_dummy_gait):
         mech, gait = mech_with_dummy_gait
-        # Set n_power to 2.0 so that psi ~ stress^2 ~ load^2.
-        # Default is 4.0 which gives load^4.
+        # Set n_power to 2.0.
+        # Stimulus psi = (Sum n_i * sigma_i^m)^(1/m).
+        # Since sigma is linear in load, psi is linear in load.
+        # So doubling load should double psi.
         mech.cfg.n_power = 2.0
 
         gait.load_scale = 1.0
@@ -57,37 +56,12 @@ class TestGaitDriverUnitCube:
         psi_double = mech.comm.allreduce(psi_double_loc, op=MPI.SUM)
 
         ratio = psi_double / max(psi_base, 1e-300)
-        expected = 4.0
+        expected = 2.0
         assert 0.5 * expected < ratio < 1.5 * expected, (
-            "Energy scaling should follow load^m; "
+            "Energy scaling should be linear with load; "
             f"expected≈{expected:.2f}, ratio={ratio:.2f}"
         )
 
-    def test_structure_psd_and_scaling(self, mech_with_dummy_gait):
-        mech, gait = mech_with_dummy_gait
-        gait.load_scale = 1.0
-        drv = GaitDriver(mech, gait, mech.cfg)
-        drv.update_snapshots()
-        M1 = drv.structure_expr()
-        M1_int_loc = fem.assemble_scalar(fem.form(ufl.tr(M1) * mech.cfg.dx))
-        M1_int = mech.comm.allreduce(M1_int_loc, op=MPI.SUM)
-
-        gait.load_scale = 2.0
-        drv = GaitDriver(mech, gait, mech.cfg)
-        drv.update_snapshots()
-        M2 = drv.structure_expr()
-        M2_int_loc = fem.assemble_scalar(fem.form(ufl.tr(M2) * mech.cfg.dx))
-        M2_int = mech.comm.allreduce(M2_int_loc, op=MPI.SUM)
-
-        v = ufl.as_vector([1.0, 0.0, 0.0])
-        vtMv1 = fem.assemble_scalar(fem.form(ufl.inner(v, ufl.dot(M1, v)) * mech.cfg.dx))
-        vtMv2 = fem.assemble_scalar(fem.form(ufl.inner(v, ufl.dot(M2, v)) * mech.cfg.dx))
-        vtMv1 = mech.comm.allreduce(vtMv1, op=MPI.SUM)
-        vtMv2 = mech.comm.allreduce(vtMv2, op=MPI.SUM)
-        assert vtMv1 >= -1e-10 and vtMv2 >= -1e-10
-
-        ratio = M2_int / max(M1_int, 1e-300)
-        assert 3.0 < ratio < 5.0, f"Structure trace should scale ~4x; ratio={ratio:.2f}"
 
 
 class TestGaitDriverFemur:
@@ -98,11 +72,8 @@ class TestGaitDriverFemur:
         # Setup fields
         u = fem.Function(spaces.V, name="u")
         rho = fem.Function(spaces.Q, name="rho")
-        A = fem.Function(spaces.T, name="dir_tensor")
 
         rho.x.array[:] = cfg.rho0
-        A.interpolate(lambda x: (np.eye(3) / 3.0).flatten()[:, None] * np.ones((1, x.shape[1])))
-        A.x.scatter_forward()
 
         neumann_bcs = [
             (dummy_gait_loader.t_hip, dummy_gait_loader.tag),
@@ -110,7 +81,7 @@ class TestGaitDriverFemur:
             (dummy_gait_loader.t_glmax, dummy_gait_loader.tag),
         ]
 
-        mech = MechanicsSolver(u, rho, A, cfg, bc_mech, neumann_bcs)
+        mech = MechanicsSolver(u, rho, cfg, bc_mech, neumann_bcs)
         mech.setup()
 
         driver = GaitDriver(mech, dummy_gait_loader, cfg)

@@ -58,24 +58,12 @@ def create_solver(domain, facet_tags, V, Q, cfg, gait_loader, rho_val=1.9):
     # Use physiological density (approx 1.9 g/cm^3 for cortical bone)
     rho.x.array[:] = rho_val
     
-    # Isotropic fabric
-    P1_ten = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3, 3))
-    T = fem.functionspace(domain, P1_ten)
-    A_dir = fem.Function(T, name="A")
-    
-    # Set to isotropic (I/3)
-    # Note: A_dir is flattened 3x3. I/3 has 1/3 on diagonal.
-    # 0, 4, 8 indices are diagonal elements in row-major 3x3 flattened to 9.
-    A_dir.x.array[:] = 0.0
-    for i in range(3):
-        A_dir.x.array[i::9] = 1.0/3.0
-    
     dirichlet_bcs = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
     neumann_bcs = [(gait_loader.t_hip, 2), (gait_loader.t_glmed, 2), (gait_loader.t_glmax, 2)]
     
-    solver = MechanicsSolver(u, rho, A_dir, cfg, dirichlet_bcs, neumann_bcs)
+    solver = MechanicsSolver(u, rho, cfg, dirichlet_bcs, neumann_bcs)
     solver.setup()
-    return solver, u, rho, A_dir
+    return solver, u, rho
 
 
 @pytest.mark.slow
@@ -86,7 +74,7 @@ class TestFemurDeformationFeasibility:
         """Displacement magnitudes should be in physiological range (0.05-3 mm)."""
         domain, facet_tags, V, Q, cfg, gait_loader = femur_mechanics_setup
         
-        solver, u, _, _ = create_solver(domain, facet_tags, V, Q, cfg, gait_loader)
+        solver, u, _ = create_solver(domain, facet_tags, V, Q, cfg, gait_loader)
         
         # Solve at peak stance (max load ~50% gait)
         gait_loader.update_loads(50.0)
@@ -128,7 +116,7 @@ class TestFemurDeformationFeasibility:
         """Peak strains should be in physiological range (200-3000 microstrain)."""
         domain, facet_tags, V, Q, cfg, gait_loader = femur_mechanics_setup
         
-        solver, u, _, _ = create_solver(domain, facet_tags, V, Q, cfg, gait_loader)
+        solver, u, _ = create_solver(domain, facet_tags, V, Q, cfg, gait_loader)
         
         gait_loader.update_loads(50.0)
         solver.assemble_rhs()
@@ -165,14 +153,14 @@ class TestFemurDeformationFeasibility:
         """Peak stresses should be in physiological range (1-100 MPa)."""
         domain, facet_tags, V, Q, cfg, gait_loader = femur_mechanics_setup
         
-        solver, u, rho, A_dir = create_solver(domain, facet_tags, V, Q, cfg, gait_loader)
+        solver, u, rho = create_solver(domain, facet_tags, V, Q, cfg, gait_loader)
         
         gait_loader.update_loads(50.0)
         solver.assemble_rhs()
         solver.solve()
         
         # Compute von Mises stress using solver's sigma method
-        sigma = solver.sigma(u, rho, A_dir)
+        sigma = solver.sigma(u, rho)
         I = ufl.Identity(3)
         sigma_dev = sigma - (ufl.tr(sigma) / 3.0) * I
         sigma_vm = ufl.sqrt((3.0/2.0) * ufl.inner(sigma_dev, sigma_dev))
@@ -197,13 +185,13 @@ class TestFemurDeformationFeasibility:
         """Strain energy density should be in physiological range."""
         domain, facet_tags, V, Q, cfg, gait_loader = femur_mechanics_setup
         
-        solver, u, _, _ = create_solver(domain, facet_tags, V, Q, cfg, gait_loader)
+        solver, u, _ = create_solver(domain, facet_tags, V, Q, cfg, gait_loader)
         
         gait_loader.update_loads(50.0)
         solver.assemble_rhs()
         solver.solve()
         
-        psi_MPa = 0.5 * ufl.inner(solver.sigma(u, solver.rho, solver.A_dir), solver.eps(u))
+        psi_MPa = 0.5 * ufl.inner(solver.sigma(u, solver.rho), solver.eps(u))
         
         DG0 = fem.functionspace(domain, basix.ufl.element("DG", domain.basix_cell(), 0))
         psi_proj = fem.Function(DG0, name="psi")
@@ -231,7 +219,7 @@ class TestReactionForces:
         """Reaction forces should be non-zero and physiological at fixed boundary."""
         domain, facet_tags, V, Q, cfg, gait_loader = femur_mechanics_setup
         
-        solver, u, _, _ = create_solver(domain, facet_tags, V, Q, cfg, gait_loader, rho_val=1.0)
+        solver, u, _ = create_solver(domain, facet_tags, V, Q, cfg, gait_loader, rho_val=1.0)
         
         gait_loader.update_loads(50.0)
         solver.assemble_rhs()

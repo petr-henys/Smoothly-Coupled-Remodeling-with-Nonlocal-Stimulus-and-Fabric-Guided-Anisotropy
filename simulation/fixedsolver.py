@@ -6,7 +6,7 @@ from mpi4py import MPI
 from dolfinx import fem
 
 from simulation.config import Config
-from simulation.subsolvers import StimulusSolver, DensitySolver, DirectionSolver
+from simulation.subsolvers import DensitySolver
 from simulation.utils import assign, get_owned_size, current_memory_mb
 from simulation.logger import get_logger
 from simulation.anderson import _Anderson
@@ -18,39 +18,25 @@ class FixedPointSolver:
 
     def __init__(self, comm: MPI.Comm, cfg: Config,
                  driver: RemodelingDriver,
-                 stimsolver: StimulusSolver,
                  densolver: DensitySolver,
-                 dirsolver: DirectionSolver,
-                 rho: fem.Function, rho_old: fem.Function,
-                 L: fem.Function, L_old: fem.Function,
-                 S: fem.Function, S_old: fem.Function):
+                 rho: fem.Function, rho_old: fem.Function):
         self.comm = comm
         self.cfg = cfg
         self.driver = driver
-        self.stim = stimsolver
         self.den = densolver
-        self.dir = dirsolver
 
         self.rho = rho
         self.rho_old = rho_old
-        self.L = L
-        self.L_old = L_old
-        self.S = S
-        self.S_old = S_old
 
         self.total_gs_iters = 0
         self.subiter_metrics: List[Dict[str, Any]] = []
 
         # Performance tracking
         self.mech_time_total = 0.0
-        self.stim_time_total = 0.0
         self.dens_time_total = 0.0
-        self.dir_time_total = 0.0
 
         # Local DOF counts
         self.n_rho = get_owned_size(rho)
-        self.n_L = get_owned_size(L)
-        self.n_S = get_owned_size(S)
 
         self._build_state_slices()
         self.state_buffer = np.zeros(self.state_size, dtype=self.rho.x.array.dtype)
@@ -65,44 +51,38 @@ class FixedPointSolver:
                 [
                     "step", "iter", "time_days", "proj_res", "r_norm",
                     "aa_hist", "accepted", "backtracks", "restart",
-                    "mech_time", "stim_time", "dens_time", "dir_time",
+                    "mech_time", "dens_time",
                     "memory_mb",
                 ],
                 filename="subiterations.csv",
             )
 
     def _build_state_slices(self) -> None:
-        """Slice indices for flattened state (ρ, L, S)."""
-        n_rho, n_L, n_S = self.n_rho, self.n_L, self.n_S
-        self.state_size = n_rho + n_L + n_S
+        """Slice indices for flattened state (ρ)."""
+        n_rho = self.n_rho
+        self.state_size = n_rho
         self.state_slices = (
             slice(0, n_rho),
-            slice(n_rho, n_rho + n_L),
-            slice(n_rho + n_L, self.state_size)
         )
 
     def _flatten_state(self, copy: bool = True) -> np.ndarray:
-        """Flatten current fields (ρ, L, S) to 1D array (local DOFs)."""
-        s_rho, s_L, s_S = self.state_slices
+        """Flatten current fields (ρ) to 1D array (local DOFs)."""
+        s_rho, = self.state_slices
         buf = self.state_buffer
         buf[s_rho] = self.rho.x.array[:self.n_rho]
-        buf[s_L] = self.L.x.array[:self.n_L]
-        buf[s_S] = self.S.x.array[:self.n_S]
         return buf.copy() if copy else buf
 
     def _restore_state(self, flat: np.ndarray) -> None:
         """Unpack flattened state back to field functions."""
-        s_rho, s_L, s_S = self.state_slices
+        s_rho, = self.state_slices
         assign(self.rho, flat[s_rho])
-        assign(self.L, flat[s_L])
-        assign(self.S, flat[s_S])
 
     def _elapsed_max(self, t0: float) -> float:
         """Max wall time across ranks since t0."""
         return self.comm.allreduce(MPI.Wtime() - t0, op=MPI.MAX)
 
     def _gauss_seidel_sweep(self) -> Dict[str, Dict[str, Any]]:
-        """One GS sweep: mechanics + S → ρ → A."""
+        """One GS sweep: mechanics → ρ."""
         # Mechanics
         t0 = MPI.Wtime()
         self.driver.update_stiffness()
@@ -110,37 +90,23 @@ class FixedPointSolver:
         mech_time = self._elapsed_max(t0) + float(stats.get("total_time", 0.0))
         mech_iters = int(sum(stats.get("phase_iters", [])))
 
-        # Stimulus
-        t0 = MPI.Wtime()
-        psi_expr = self.driver.stimulus_expr()
-        self.stim.assemble_rhs(psi_expr)
-        its_s, reason_s = self.stim.solve()
-        stim_time = self._elapsed_max(t0)
-
         # Density
         t0 = MPI.Wtime()
+        psi_expr = self.driver.stimulus_expr()
+        self.den.update_driving_force(psi_expr)
         self.den.assemble_lhs()
         self.den.assemble_rhs()
         its_d, reason_d = self.den.solve()
         dens_time = self._elapsed_max(t0)
 
-        # Direction
-        t0 = MPI.Wtime()
-        L_target_expr = self.driver.log_structure_expr()
-        self.dir.assemble_rhs(L_target_expr)
-        its_dir, reason_dir = self.dir.solve()
-        dir_time = self._elapsed_max(t0)
-
         return {
             "mech": {"time": mech_time, "iters": mech_iters, "reason": 0},
-            "stim": {"time": stim_time, "iters": its_s, "reason": reason_s},
             "dens": {"time": dens_time, "iters": its_d, "reason": reason_d},
-            "dir":  {"time": dir_time,  "iters": its_dir, "reason": reason_dir},
         }
 
-    def _weighted_dist(self, x_a: np.ndarray, x_b: np.ndarray, weights: Tuple[float, float, float]) -> float:
+    def _weighted_dist(self, x_a: np.ndarray, x_b: np.ndarray, weights: Tuple[float]) -> float:
         """Robust weighted distance ||x_a - x_b||_W."""
-        local_dots = np.zeros(3, dtype=float)
+        local_dots = np.zeros(1, dtype=float)
         
         for i, s in enumerate(self.state_slices):
             diff = x_a[s] - x_b[s]
@@ -156,12 +122,8 @@ class FixedPointSolver:
         """Inner fixed-point loop: GS + Anderson acceleration until coupling_tol met."""
         # Weights for norm
         n_rho_g = self.comm.allreduce(self.n_rho, op=MPI.SUM)
-        n_L_g = self.comm.allreduce(self.n_L, op=MPI.SUM)
-        n_S_g = self.comm.allreduce(self.n_S, op=MPI.SUM)
         weights = (
             1.0 / max(int(n_rho_g), 1),
-            1.0 / max(int(n_L_g), 1),
-            1.0 / max(int(n_S_g), 1),
         )
 
         accelerator = None
@@ -184,16 +146,12 @@ class FixedPointSolver:
         
         self.mech_time_total = 0.0
         self.mech_iters_total = 0
-        self.stim_time_total = 0.0
         self.dens_time_total = 0.0
-        self.dir_time_total = 0.0
 
         # Initialize detailed stats accumulator
         self.solver_stats = {
             "mech": {"time": 0.0, "iters": 0, "reason": 0},
-            "stim": {"time": 0.0, "iters": 0, "reason": 0},
             "dens": {"time": 0.0, "iters": 0, "reason": 0},
-            "dir":  {"time": 0.0, "iters": 0, "reason": 0},
         }
 
         inner_task_id = None
@@ -204,22 +162,18 @@ class FixedPointSolver:
             sweep_stats = self._gauss_seidel_sweep()
             
             # Accumulate stats
-            for key in ["mech", "stim", "dens", "dir"]:
+            for key in ["mech", "dens"]:
                 self.solver_stats[key]["time"] += sweep_stats[key]["time"]
                 self.solver_stats[key]["iters"] += sweep_stats[key]["iters"]
                 self.solver_stats[key]["reason"] = sweep_stats[key]["reason"]
 
             tm = sweep_stats["mech"]["time"]
-            ts = sweep_stats["stim"]["time"]
             td = sweep_stats["dens"]["time"]
-            tdir = sweep_stats["dir"]["time"]
             m_iters = sweep_stats["mech"]["iters"]
 
             self.mech_time_total += tm
             self.mech_iters_total += int(m_iters)
-            self.stim_time_total += ts
             self.dens_time_total += td
-            self.dir_time_total += tdir
 
             x_raw = self._flatten_state(copy=True)
             
@@ -272,9 +226,7 @@ class FixedPointSolver:
                 "backtracks": int(info.get('backtracks', 0)),
                 "restart": str(info.get('restart_reason', '')),
                 "mech_time": tm,
-                "stim_time": ts,
                 "dens_time": td,
-                "dir_time": tdir,
                 "memory_mb": float(mem_sum),
             }
             

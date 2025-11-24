@@ -4,6 +4,7 @@ from mpi4py import MPI
 from dolfinx import fem, default_scalar_type
 from dolfinx.fem import Function, functionspace
 import ufl
+import basix
 
 from simulation.config import Config
 from simulation.utils import build_dirichlet_bcs, build_facetag, collect_dirichlet_dofs
@@ -12,13 +13,6 @@ from dolfinx import mesh
 
 def make_unit_cube(comm=MPI.COMM_WORLD, n=6):
     return mesh.create_unit_cube(comm, n, n, n)
-
-def iso_tensor(x):
-    values = np.zeros((9, x.shape[1]), dtype=default_scalar_type)
-    values[0] = 1.0
-    values[4] = 1.0
-    values[8] = 1.0
-    return values
 
 # =============================================================================
 # Boundary Condition Tests
@@ -37,26 +31,20 @@ class TestBoundaryConditions:
         
         P1_vec = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3,))
         P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
-        P1_ten = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3, 3))
         
         V = functionspace(unit_cube, P1_vec)
         Q = functionspace(unit_cube, P1)
-        T = functionspace(unit_cube, P1_ten)
         
         u = Function(V, name="u")
         rho = Function(Q, name="rho")
         rho.x.array[:] = 0.5
         rho.x.scatter_forward()
         
-        A = Function(T, name="A")
-        A.interpolate(iso_tensor)
-        A.x.scatter_forward()
-        
         # Apply traction on right face
         traction = traction_factory(-0.1, facet_id=2, axis=0)
         
         bc_mech = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
-        mech = MechanicsSolver(u, rho, A, cfg, bc_mech, [traction])
+        mech = MechanicsSolver(u, rho, cfg, bc_mech, [traction])
         
         mech.setup()
         mech.assemble_rhs()
@@ -80,26 +68,20 @@ class TestBoundaryConditions:
         
         P1_vec = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3,))
         P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
-        P1_ten = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3, 3))
         
         V = functionspace(unit_cube, P1_vec)
         Q = functionspace(unit_cube, P1)
-        T = functionspace(unit_cube, P1_ten)
         
         u = Function(V, name="u")
         rho = Function(Q, name="rho")
         rho.x.array[:] = 0.5
         rho.x.scatter_forward()
         
-        A = Function(T, name="A")
-        A.interpolate(iso_tensor)
-        A.x.scatter_forward()
-        
         # Compression in x-direction
         traction = traction_factory(-0.5, facet_id=2, axis=0)
         
         bc_mech = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
-        mech = MechanicsSolver(u, rho, A, cfg, bc_mech, [traction])
+        mech = MechanicsSolver(u, rho, cfg, bc_mech, [traction])
         
         mech.setup()
         mech.assemble_rhs()
@@ -123,16 +105,11 @@ def test_mechanics_uniform_extension():
     # Function spaces
     V = fem.functionspace(m, basix.ufl.element("Lagrange", m.basix_cell(), 1, shape=(3,)))
     Q = fem.functionspace(m, basix.ufl.element("Lagrange", m.basix_cell(), 1))
-    T = fem.functionspace(m, basix.ufl.element("Lagrange", m.basix_cell(), 1, shape=(3,3)))
 
     # Fields
     rho = fem.Function(Q, name="rho")
     rho.x.array[:] = 1.0
     rho.x.scatter_forward()
-
-    Afield = fem.Function(T, name="A")
-    Afield.interpolate(lambda x: (np.eye(3)/3.0).flatten()[:, None] * np.ones((1, x.shape[1])))
-    Afield.x.scatter_forward()
 
     # Config
     cfg = Config(domain=m, facet_tags=facets, verbose=False)
@@ -156,7 +133,7 @@ def test_mechanics_uniform_extension():
     u = fem.Function(V, name="u")
     
     # Solve
-    mech = MechanicsSolver(u, rho, Afield, cfg, bcs, [])
+    mech = MechanicsSolver(u, rho, cfg, bcs, [])
     mech.setup()
     mech.assemble_rhs()
     its, reason = mech.solve()

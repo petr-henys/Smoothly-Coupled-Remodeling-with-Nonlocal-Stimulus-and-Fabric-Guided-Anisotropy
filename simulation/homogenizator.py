@@ -12,7 +12,7 @@ from petsc4py import PETSc
 from dolfinx import fem, default_scalar_type
 
 from simulation.config import Config
-from simulation.subsolvers import smooth_max, unittrace_psd_from_any
+from simulation.subsolvers import smooth_max
 from simulation.utils import build_nullspace
 from simulation.logger import get_logger
 
@@ -30,7 +30,6 @@ class _HomogCommon:
     def __init__(
         self,
         rho: fem.Function,
-        A_dir: fem.Function,
         cfg: Config,
         degree: int = 1,
     ):
@@ -52,7 +51,6 @@ class _HomogCommon:
 
         # Fields
         self.rho = rho
-        self.A_dir = A_dir
         self.dx = cfg.dx
         self.ds = cfg.ds
 
@@ -96,19 +94,13 @@ class _HomogCommon:
         # Shear (engineering): 2*23, 2*13, 2*12
         for (i, j) in self._SHEAR_PAIRS:
             self._forms_strain.append(fem.form(2.0 * eps[i, j] * self.dx))
-            
-        # 3. Fabric forms (3x3 flattened)
-        self._forms_fabric = []
-        for i in range(3):
-            for j in range(3):
-                self._forms_fabric.append(fem.form(self.A_dir[i, j] * self.dx))
 
     def _eps(self, u):
         """Symmetric gradient ε(u)."""
         return ufl.sym(ufl.grad(u))
 
     def _sigma(self, u):
-        """Cauchy stress: smoothed density, anisotropic fabric reinforcement."""
+        """Cauchy stress: smoothed density, isotropic."""
         rho_eff = smooth_max(self.rho, self.cfg.rho_min, self.cfg.smooth_eps)
         E = self.cfg.E0 * (rho_eff ** self.cfg.n_power)
 
@@ -119,13 +111,7 @@ class _HomogCommon:
         lmbda = E * nu / ((1 + nu) * (1 - 2 * nu))
         mu = E / (2 * (1 + nu))
 
-        Asym = 0.5 * (self.A_dir + ufl.transpose(self.A_dir))
-        Ahat = unittrace_psd_from_any(Asym, 3, self.cfg.smooth_eps)
-
-        # Anisotropic projected contribution
-        sigma_aniso = (self.cfg.xi_aniso * E) * ufl.inner(Ahat, eps_ten) * Ahat
-
-        return 2 * mu * eps_ten + lmbda * ufl.tr(eps_ten) * I + sigma_aniso
+        return 2 * mu * eps_ten + lmbda * ufl.tr(eps_ten) * I
 
     def _log(self, msg: str):
         self._logger.info(msg)
@@ -208,21 +194,6 @@ class _HomogCommon:
         Minv = V @ np.diag(1.0 / w_clip) @ V.T
         return Minv, M_spd
 
-    def _average_fabric_and_rotation(self) -> Tuple[np.ndarray, np.ndarray]:
-        # Assemble all 9 components locally
-        local_vals = np.array([fem.assemble_scalar(f) for f in self._forms_fabric], dtype=float)
-        
-        # Single MPI reduction
-        global_vals = np.zeros_like(local_vals)
-        self.domain.comm.Allreduce(local_vals, global_vals, op=MPI.SUM)
-        
-        Abar = global_vals.reshape(3, 3) * self._inv_vol
-        Abar = 0.5 * (Abar + Abar.T)
-        vals, vecs = np.linalg.eigh(Abar)
-        order = np.argsort(vals)[::-1]
-        R = vecs[:, order]
-        return Abar, R
-
     @staticmethod
     def _extract_principal_props(S_f: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray, float]:
         E = 1.0 / np.array([S_f[0, 0], S_f[1, 1], S_f[2, 2]], dtype=float)
@@ -242,22 +213,16 @@ class _HomogCommon:
         else:
             S = S_in
 
-        Abar, R = self._average_fabric_and_rotation()
-        C_f = self._rotate_C_to_basis(C, R)
-        S_f, _ = self._spd_inverse(C_f)
-
-        E, G, nu, E_ratio = self._extract_principal_props(S_f)
+        # Isotropic: no fabric rotation
+        E, G, nu, E_ratio = self._extract_principal_props(S)
 
         return {
             "C_voigt": C,
             "S_voigt": S,
-            "C_voigt_fabric": C_f,
             "E_principal": E,
             "nu_principal": nu,
             "G_principal": G,
             "E_ratio": E_ratio,
-            "R_fabric": R,
-            "Abar": Abar,
         }
 
     def _create_ksp(self, prefix: str = "homog") -> PETSc.KSP:
@@ -295,11 +260,10 @@ class KUBCHomogenizer(_HomogCommon):
     def __init__(
         self,
         rho: fem.Function,
-        A_dir: fem.Function,
         cfg: Config,
         degree: int = 1,
     ):
-        super().__init__(rho, A_dir, cfg, degree)
+        super().__init__(rho, cfg, degree)
 
         self._facet_normal = ufl.FacetNormal(self.domain)
         self._cell_diam = ufl.CellDiameter(self.domain)
@@ -442,11 +406,10 @@ class SUBCHomogenizer(_HomogCommon):
     def __init__(
         self,
         rho: fem.Function,
-        A_dir: fem.Function,
         cfg: Config,
         degree: int = 1,
     ):
-        super().__init__(rho, A_dir, cfg, degree)
+        super().__init__(rho, cfg, degree)
         
         # Pre-assemble LHS matrix (constant for all cases)
         self._a_form = fem.form(self.a_base)

@@ -18,38 +18,32 @@ class TestConstitutiveLaw:
     """Test stress-strain constitutive relationships."""
     
     @pytest.mark.parametrize("unit_cube", [6], indirect=True)
-    def test_isotropic_stress_symmetry(self, unit_cube, facet_tags, iso_tensor_factory):
+    def test_isotropic_stress_symmetry(self, unit_cube, facet_tags):
         """Verify stress tensor is symmetric for isotropic material."""
         comm = MPI.COMM_WORLD
         cfg = Config(domain=unit_cube, facet_tags=facet_tags, verbose=(comm.rank == 0))
         
         P1_vec = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3,))
         P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
-        P1_ten = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3, 3))
         
         V = functionspace(unit_cube, P1_vec)
         Q = functionspace(unit_cube, P1)
-        T = functionspace(unit_cube, P1_ten)
         
         # Create test displacement with non-zero gradient
         u = Function(V, name="u")
         u.interpolate(lambda x: np.array([0.001*x[0]*x[1], 0.002*x[1]*x[2], 0.001*x[0]*x[2]]))
         u.x.scatter_forward()
         
-        # Uniform density and isotropic fabric (I/3)
+        # Uniform density
         rho = Function(Q, name="rho")
         rho.x.array[:] = 0.5
         rho.x.scatter_forward()
         
-        A = Function(T, name="A")
-        A.interpolate(iso_tensor_factory)
-        A.x.scatter_forward()
-        
         bc_mech = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
-        mech = MechanicsSolver(u, rho, A, cfg, bc_mech, [])
+        mech = MechanicsSolver(u, rho, cfg, bc_mech, [])
         
         # Compute stress tensor components
-        sigma = mech.sigma(u, rho, A)
+        sigma = mech.sigma(u, rho)
         
         # Check σ_ij = σ_ji (symmetry)
         sigma_01 = sigma[0, 1]
@@ -71,60 +65,6 @@ class TestConstitutiveLaw:
         assert diff_01_global < 1e-12, f"Stress not symmetric: σ_01 ≠ σ_10 (diff={diff_01_global})"
         assert diff_02_global < 1e-12, f"Stress not symmetric: σ_02 ≠ σ_20 (diff={diff_02_global})"
         assert diff_12_global < 1e-12, f"Stress not symmetric: σ_12 ≠ σ_21 (diff={diff_12_global})"
-    
-    @pytest.mark.parametrize("unit_cube", [6], indirect=True)
-    def test_anisotropic_stiffness_increases_energy(self, unit_cube, facet_tags, iso_tensor_factory, fiber_tensor_factory):
-        """Anisotropic fabric aligned with tension should stiffen response measurably."""
-        comm = MPI.COMM_WORLD
-        cfg = Config(domain=unit_cube, facet_tags=facet_tags, verbose=(comm.rank == 0),
-                     xi_aniso=2.0)
-
-        P1_vec = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3,))
-        P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
-        P1_ten = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3, 3))
-
-        V = functionspace(unit_cube, P1_vec)
-        Q = functionspace(unit_cube, P1)
-        T = functionspace(unit_cube, P1_ten)
-
-        u = Function(V, name="u")
-        rho = Function(Q, name="rho")
-        rho.x.array[:] = 0.6
-        rho.x.scatter_forward()
-
-        A_iso = Function(T, name="A_iso")
-        A_iso.interpolate(iso_tensor_factory)
-        A_iso.x.scatter_forward()
-
-        A_fiber = Function(T, name="A_fiber")
-        A_fiber.interpolate(fiber_tensor_factory)
-        A_fiber.x.scatter_forward()
-
-        u_test = Function(V, name="u_test")
-        u_test.interpolate(lambda x: np.vstack([0.003 * x[0], 0.0 * x[1], 0.0 * x[2]]))
-        u_test.x.scatter_forward()
-
-        # Copy u_test to u for energy computation
-        u.x.array[:] = u_test.x.array[:]
-        u.x.scatter_forward()
-
-        mech_iso = MechanicsSolver(u, rho, A_iso, cfg, [], [])
-        mech_aniso = MechanicsSolver(u, rho, A_fiber, cfg, [], [])
-
-        # Helper to compute energy
-        def get_energy(solver):
-            # Energy = 0.5 * integral(sigma : eps)
-            energy_form = 0.5 * ufl.inner(solver.sigma(u, rho, solver.A_dir), solver.eps(u)) * cfg.dx
-            local_energy = fem.assemble_scalar(fem.form(energy_form))
-            return comm.allreduce(local_energy, op=MPI.SUM)
-
-        energy_iso = get_energy(mech_iso)
-        energy_aniso = get_energy(mech_aniso)
-
-        assert energy_aniso >= energy_iso * 1.10, (
-            "Anisotropic fabric should raise energy for the same tensile strain by ≥10%; "
-            f"energy_iso={energy_iso:.3e}, energy_aniso={energy_aniso:.3e}"
-        )
 
 
 # =============================================================================
@@ -198,35 +138,31 @@ class TestAdvancedConstitutiveLaws:
         assert E_low < E_trans < E_high,             f"Transition E({rho_trans})={E_trans:.2f} not between {E_low:.2f} and {E_high:.2f}"
 
     @pytest.mark.parametrize("unit_cube", [6], indirect=True)
-    def test_linear_driver_rate(self, unit_cube, facet_tags, iso_tensor_factory):
+    def test_linear_driver_rate(self, unit_cube, facet_tags):
         """Verify density evolution rate is proportional to stimulus."""
         comm = MPI.COMM_WORLD
         cfg = Config(domain=unit_cube, facet_tags=facet_tags, verbose=(comm.rank == 0))
         
         cfg.k_rho = 1.0
         cfg.dt = 0.1
+        # Disable distal damping
+        cfg.distal_damping_height = -100.0
         
         P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
-        P1_ten = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3, 3))
         Q = functionspace(unit_cube, P1)
-        T = functionspace(unit_cube, P1_ten)
         
         rho = Function(Q, name="rho")
         rho_old = Function(Q, name="rho_old")
         rho_old.x.array[:] = 0.5
         rho_old.x.scatter_forward()
         
-        A = Function(T, name="A")
-        A.interpolate(iso_tensor_factory)
-        A.x.scatter_forward()
-        
-        S = Function(Q, name="S")
-        
         def get_rate(S_val):
-            S.x.array[:] = S_val
-            S.x.scatter_forward()
+            # S = psi/psi_ref - 1.  So psi = psi_ref * (S + 1)
+            psi_val = cfg.psi_ref * (S_val + 1.0)
+            psi_expr = fem.Constant(unit_cube, psi_val)
             
-            dens = DensitySolver(rho, rho_old, A, S, cfg)
+            dens = DensitySolver(rho, rho_old, cfg)
+            dens.update_driving_force(psi_expr)
             dens.setup()
             dens.assemble_rhs()
             dens.solve()
@@ -253,3 +189,4 @@ class TestAdvancedConstitutiveLaws:
         # Rate = k_rho * (0.1 * rho_min - 0.1 * rho) = k_rho * 0.1 * (rho_min - rho)
         expected_neg = cfg.k_rho * 0.1 * (cfg.rho_min - 0.5)
         assert abs(rate_neg - expected_neg) < 1e-3, f"Negative rate mismatch: got {rate_neg}, expected {expected_neg}"
+

@@ -15,7 +15,6 @@ from dolfinx import fem
 import ufl
 
 from simulation.logger import get_logger
-from simulation.utils import matrix_ln, unittrace_psd
 
 if TYPE_CHECKING:
     from simulation.config import Config
@@ -27,8 +26,6 @@ class RemodelingDriver(Protocol):
     """Protocol for drivers that provide mechanical fields to remodeling PDEs."""
 
     def stimulus_expr(self) -> ufl.core.expr.Expr: ...
-    def structure_expr(self) -> ufl.core.expr.Expr: ...
-    def log_structure_expr(self) -> ufl.core.expr.Expr: ...
     def invalidate(self) -> None: ...
     def update_snapshots(self) -> Optional[Dict]: ...
     def setup(self) -> None: ...
@@ -39,7 +36,7 @@ class RemodelingDriver(Protocol):
 
 class GaitDriver:
     """
-    Gait-averaged Carter-Beaupré stimulus and strain-aligned target tensor.
+    Gait-averaged Carter-Beaupré stimulus.
     
     Implements the Daily Stress Stimulus (ψ)[cite: 1]:
         ψ = ( Σ n_i * σ_eff_i^m )^(1/m)
@@ -51,8 +48,6 @@ class GaitDriver:
     
     Attributes:
         psi_expr (ufl.Expr): The symbolic expression for the daily stimulus ψ.
-        M_expr (ufl.Expr): The target structural tensor (deviatoric strain based).
-        L_target_expr (ufl.Expr): The log-Euclidean target tensor log(M).
     """
 
     def __init__(self, mech: MechanicsSolver, gait_loader: FemurRemodellerGait, config: Config):
@@ -95,8 +90,6 @@ class GaitDriver:
 
         # UFL Expressions
         self.psi_expr: Optional[ufl.core.expr.Expr] = None
-        self.M_expr: Optional[ufl.core.expr.Expr] = None
-        self.L_target_expr: Optional[ufl.core.expr.Expr] = None
         self._build_expressions()
         
         # Auxiliary function space for statistics
@@ -206,12 +199,6 @@ class GaitDriver:
     def stimulus_expr(self) -> ufl.core.expr.Expr:
         return self.psi_expr
 
-    def structure_expr(self) -> ufl.core.expr.Expr:
-        return self.M_expr
-    
-    def log_structure_expr(self) -> ufl.core.expr.Expr:
-        return self.L_target_expr
-
     def _precompute_loads(self) -> List[Tuple[np.ndarray, ...]]:
         """Pre-calculate traction vector arrays for all phases."""
         loads = []
@@ -229,7 +216,7 @@ class GaitDriver:
 
     def _build_expressions(self) -> None:
         """
-        Construct UFL expressions for daily stimulus and structure tensor.
+        Construct UFL expressions for daily stimulus.
         
         Strictly follows Beaupré et al. (1990) :
         psi = ( Sum( n_i * sigma_eff_i^m ) ) ^ (1/m)
@@ -248,24 +235,38 @@ class GaitDriver:
         # E is needed to convert SED (U) to Effective Stress dimensionally [MPa]
         # E = E_max * (rho/rho_max)^p_stiffness
         rho = self.mech.rho
-        # Note: Config values are stored, we use E0_z as E_max reference
+        # Note: Config values are stored, we use E0 as E_max reference
         rho_max = self.cfg.rho_max
-        E_max = self.cfg.E0_z 
-        p_exponent = self.cfg.k_stiff # k_stiff in config typically refers to density exponent
+        E_max = self.cfg.E0 
+        # We need to use the same variable exponent logic as in MechanicsSolver if we want consistency.
+        # But here we just need a scalar E for the stress conversion.
+        # MechanicsSolver uses E = E0 * rho^k_var.
+        # Let's replicate that logic or simplify.
+        # The original code used p_exponent = self.cfg.k_stiff.
+        # But MechanicsSolver now uses variable k.
+        # Let's use k_stiff from config as a representative exponent for stimulus calculation,
+        # or replicate the variable exponent logic.
+        # Replicating variable exponent logic is safer for consistency.
         
-        # E scalar field for stress calculation
         rho_safe = ufl.max_value(rho, self.cfg.smooth_eps)
-        E_field = E_max * (rho_safe / rho_max)**p_exponent
+        
+        # Variable exponent logic
+        def smoothstep(x, edge0, edge1):
+            t = ufl.max_value(0.0, ufl.min_value(1.0, (x - edge0) / (edge1 - edge0)))
+            return t * t * (3.0 - 2.0 * t)
+
+        w = smoothstep(rho_safe, self.cfg.rho_trab_max, self.cfg.rho_cort_min)
+        k_var = self.cfg.n_trab * (1.0 - w) + self.cfg.n_cort * w
+        
+        E_field = E_max * (rho_safe**k_var)
 
         psi_summation = 0.0
-        structure_terms = []
         total_weight = 0.0
         
         # We use the snapshots u_snap to build the expression.
         for u_i, weight in zip(self.u_snap, self.weights):
             # 1. Kinematics & Stress
-            # Note: A_dir is the anisotropy tensor if used
-            sig_i = self.mech.sigma(u_i, rho, self.mech.A_dir)
+            sig_i = self.mech.sigma(u_i, rho)
             e_i = self.mech.get_strain_tensor(u_i)
             
             # 2. Strain Energy Density (U = 1/2 * sigma : epsilon)
@@ -287,12 +288,6 @@ class GaitDriver:
             n_i = weight * self.n_cycles
             psi_summation += n_i * (sigma_tissue ** self.m_exp)
 
-            # 6. Structure Tensor (average deviatoric strain direction)
-            # M = epsilon_dev^T * epsilon_dev [cite: 4]
-            e_dev_i = ufl.dev(e_i)
-            structure_i = ufl.dot(ufl.transpose(e_dev_i), e_dev_i)
-            structure_terms.append(weight * structure_i)
-
             total_weight += weight
 
         if total_weight <= 0.0:
@@ -301,13 +296,3 @@ class GaitDriver:
         # Final Stimulus Expression: psi = (Sum)^ (1/m)
         # This is the daily stress stimulus described by Beaupré [cite: 1]
         self.psi_expr = ufl.max_value(psi_summation, 0.0) ** (1.0 / self.m_exp)
-        
-        # Average Structure Tensor
-        M_cycle = sum(structure_terms) / total_weight
-        self.M_expr = M_cycle
-        
-        # Log-Euclidean Target: log(M)
-        # Ensure M is SPD and unit trace before taking log
-        d = self.mech.u.function_space.mesh.geometry.dim
-        M_hat = unittrace_psd(M_cycle, d, eps=self.cfg.smooth_eps)
-        self.L_target_expr = matrix_ln(M_hat)

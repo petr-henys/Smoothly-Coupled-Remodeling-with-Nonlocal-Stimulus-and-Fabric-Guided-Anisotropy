@@ -39,38 +39,23 @@ class Config:
     rho_max: float = 1.00       # Max relative density
     rho0: float = 0.4           # Initial relative density (proximal femur: mostly trabecular)
     k_rho: float = 0.02        # Density remodeling rate [1/day] (half-time ~1 year)
-    S_sat: float = 1.          # Characteristic stimulus magnitude for saturation of remodeling
-
 
     # Density diffusion [mm^2/day]
-    beta_par: float = 0.01       # Parallel to fabric [mm^2/day] (proximal femur trabeculae)
-    beta_perp: float = 0.01      # Perpendicular to fabric [mm^2/day]
+    beta: float = 0.01       # Isotropic diffusion [mm^2/day]
 
     # =========================================================================
-    # Stimulus (Reaction-Diffusion)
+    # Stimulus (Local)
     # =========================================================================
     psi_ref: float = 50.     # Reference effective stress [MPa] for daily stimulus in proximal femur
-    cS: float = 1.0             # Signaling capacity
-    tauS: float = 1.0           # Relaxation time [day] of mechanostat signal
-    kappaS: float = 5.0         # Diffusion coefficient [mm^2/day] for mechanostat signal
     distal_damping_height: float = 1.0     # Height of distal damping zone [mm] (cut shaft of femur)
     distal_damping_transition: float = 0.5    # Transition width of distal damping zone [mm]
 
-    # =========================================================================
-    # Fabric Tensor Evolution
-    # =========================================================================
-    cA: float = 1.0             # Orientation capacity
-    tauA: float = 200.0         # Relaxation time [day] for fabric (slow trabecular reorientation)
-    ell: float = 2.0            # Diffusion length [mm] for fabric (trabecular packets)
-    
     # Standard Zysset parameters (approximate)
     k_stiff: float = 1.9        # Density exponent for stiffness (often close to 2)
-    p_stiff: float = 0.5        # Fabric exponent (linear or quadratic)
     
     # Base moduli [MPa]
-    E0_z: float = 15000.0       # Axial modulus
-    G0_z: float = 5000.0        # Shear modulus
-    nu0_z: float = 0.3          # Poisson ratio
+    E0: float = 15000.0       # Young's modulus
+    nu0: float = 0.3          # Poisson ratio
 
     # =========================================================================
     # Gait & Loading
@@ -163,18 +148,12 @@ class Config:
             raise ValueError("rho_trab_max and rho_cort_min must satisfy rho_min <= rho_trab_max <= rho_cort_min <= rho_max.")
         if not (self.rho_min <= self.rho0 <= self.rho_max):
             raise ValueError("rho0 must lie within [rho_min, rho_max].")
-        if self.beta_par < 0 or self.beta_perp < 0:
-            raise ValueError("beta_par/beta_perp must be non-negative.")
+        if self.beta < 0:
+            raise ValueError("beta must be non-negative.")
         
         # Stimulus
         if self.psi_ref <= 0:
             raise ValueError("Reference value psi_ref must be positive.")
-        if self.cS <= 0 or self.tauS <= 0 or self.kappaS < 0:
-            raise ValueError("cS>0, tauS>0, kappaS>=0 required.")
-        
-        # Fabric
-        if self.cA <= 0 or self.tauA < 0 or self.ell <= 0:
-            raise ValueError("cA>0, tauA>=0, ell>0 required.")
         
         # Gait
         if self.body_mass_tonnes <= 0:
@@ -189,6 +168,12 @@ class Config:
         # Solver
         if self.accel_type not in ("anderson", "picard"):
             raise ValueError(f"accel_type must be 'anderson' or 'picard', got {self.accel_type!r}")
+            
+        # Elasticity
+        if self.E0 <= 0:
+            raise ValueError("Young's modulus E0 must be positive.")
+        if not (-1.0 < self.nu0 < 0.5):
+            raise ValueError("Poisson ratio nu0 must be in (-1.0, 0.5).")
 
     def _build_measures(self):
         """Create UFL integration measures with quadrature degree."""
