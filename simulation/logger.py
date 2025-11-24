@@ -8,7 +8,7 @@ Simple, explicit design:
 - No environment variables, no fallbacks
 
 Usage:
-    logger = get_logger(comm, verbose=True, name="Solver")
+    logger = get_logger(comm, name="Solver")
     logger.info("Iteration {0}", iter_count)
     logger.debug(lambda: f"Expensive: {compute_stats()}")
 """
@@ -80,9 +80,9 @@ class Logger:
         self.log(Level.ERROR, msg, *args)
 
 
-def get_logger(comm: MPI.Comm, verbose: bool, name: str = "", log_file: str = None) -> Logger:
-    """Create logger. verbose=True → INFO console, always INFO file."""
-    console_level = Level.INFO if verbose else Level.WARNING
-    file_level = Level.INFO
+def get_logger(comm: MPI.Comm, name: str = "", log_file: str = None) -> Logger:
+    """Create logger. Console: WARNING+, File: DEBUG+."""
+    console_level = Level.WARNING
+    file_level = Level.DEBUG
     return Logger(comm, console_level, file_level, name, log_file)
 

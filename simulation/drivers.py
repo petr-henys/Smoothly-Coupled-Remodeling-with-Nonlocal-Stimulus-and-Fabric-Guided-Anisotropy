@@ -45,8 +45,7 @@ class SimplifiedGaitDriver:
         self.t_glmed = t_glmed
         self.cfg = config
         self.comm = self.mech.u.function_space.mesh.comm
-        self.logger = get_logger(self.comm, verbose=(self.cfg.verbose is True), 
-                                 name="Driver", log_file=self.cfg.log_file)
+        self.logger = get_logger(self.comm, name="Driver", log_file=self.cfg.log_file)
 
         self.stages = load_stages
         

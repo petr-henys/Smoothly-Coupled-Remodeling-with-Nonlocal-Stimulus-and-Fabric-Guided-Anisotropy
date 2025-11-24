@@ -32,13 +32,12 @@ class _Anderson:
         step_limit_factor: float = 2.0,
         safeguard_abs_floor: float = 1e-10,
         gamma_decay_p: float = 0.5,
-        verbose: bool = True,
     ):
         self.comm = comm
         self.m = m
         self.beta = beta
         self.lam = lam
-        self.logger = get_logger(comm, verbose=verbose, name="Anderson")
+        self.logger = get_logger(comm, name="Anderson")
 
         # History buffers
         self.x_hist: deque[np.ndarray] = deque(maxlen=m + 1)

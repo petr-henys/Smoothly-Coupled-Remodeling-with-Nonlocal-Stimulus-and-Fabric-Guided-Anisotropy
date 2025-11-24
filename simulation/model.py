@@ -50,14 +50,6 @@ class Remodeller:
         self.stages = stages
         self.comm = self.domain.comm
         self.rank = self.comm.rank
-
-        if self.cfg.verbose == "progressbar":
-            self.verbose = False
-        else:
-            self.verbose = bool(self.cfg.verbose)
-
-        self.comm = self.domain.comm
-        self.rank = self.comm.rank
         
         # Ensure log directory exists
         if self.rank == 0:
@@ -69,7 +61,7 @@ class Remodeller:
             except IOError:
                 pass
 
-        self.logger = get_logger(self.comm, verbose=self.verbose, name="Remodeller", log_file=self.cfg.log_file)
+        self.logger = get_logger(self.comm, name="Remodeller", log_file=self.cfg.log_file)
         self.logger.info("Initializing Remodeller...")
 
         self.storage = UnifiedStorage(cfg)
@@ -415,14 +407,14 @@ class Remodeller:
         self.comm.Barrier()
         overall_start = MPI.Wtime()
 
-        if self.rank == 0 and self.cfg.verbose == "progressbar":
+        if self.rank == 0:
             try:
                 from rich.progress import Progress, TextColumn, BarColumn, TimeRemainingColumn, TimeElapsedColumn, SpinnerColumn
                 from rich.console import Console
                 
                 # Use stderr for progress bar. 
-                # Removed force_terminal=True to avoid issues with mpirun buffering/piping causing duplicate lines.
-                console = Console(stderr=True)
+                # force_terminal=True is often needed with mpirun to ensure detection
+                console = Console(stderr=True, force_terminal=True)
                 
                 self.progress = Progress(
                     SpinnerColumn(),
@@ -441,7 +433,6 @@ class Remodeller:
                 self.progress.start()
             except ImportError:
                 self.logger.warning("rich not installed, falling back to standard logging")
-                self.logger.level = Level.INFO
 
         for step in range(n_steps):
             step_time = t + dt

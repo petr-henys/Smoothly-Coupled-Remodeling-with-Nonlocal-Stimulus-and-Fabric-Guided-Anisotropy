@@ -34,7 +34,7 @@ class SimulationLoader:
         """
         self.output_dir = Path(output_dir)
         self.comm = comm
-        self.logger = get_logger(comm, verbose=verbose, name="SimulationLoader")
+        self.logger = get_logger(comm, name="SimulationLoader")
         
         if not self.output_dir.exists():
             raise FileNotFoundError(f"Simulation directory not found: {self.output_dir}")
@@ -403,7 +403,7 @@ class SweepLoader:
         """
         self.base_dir = Path(base_dir)
         self.comm = comm
-        self.logger = get_logger(comm, verbose=verbose, name="SweepLoader")
+        self.logger = get_logger(comm, name="SweepLoader")
         
         if not self.base_dir.exists():
             raise FileNotFoundError(f"Sweep directory not found: {self.base_dir}")

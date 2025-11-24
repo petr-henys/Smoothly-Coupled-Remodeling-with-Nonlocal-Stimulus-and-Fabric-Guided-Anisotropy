@@ -27,11 +27,10 @@ class Telemetry:
         comm: MPI.Comm,
         outdir: str,
         flush_interval: Optional[int] = None,
-        verbose: bool = True,
     ):
         self.comm = comm
         self.outdir = Path(outdir)
-        self.logger = get_logger(comm, verbose=bool(verbose), name="Telemetry")
+        self.logger = get_logger(comm, name="Telemetry")
 
         if comm.rank == 0:
             self.outdir.mkdir(parents=True, exist_ok=True)

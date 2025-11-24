@@ -69,7 +69,7 @@ class Parametrizer:
         self.sweep = sweep
         self.callable_func = callable_func
         self.comm = comm
-        self.logger = get_logger(comm, verbose=verbose, name="Parametrizer")
+        self.logger = get_logger(comm, name="Parametrizer")
     
     def run(self) -> None:
         """Execute parameter sweep and save summary."""

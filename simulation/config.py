@@ -71,7 +71,6 @@ class Config:
     quadrature_degree: int = 4
     saving_interval: int = 1
     results_dir: str = ".results"
-    verbose: Union[bool, str] = True
     log_file: str = "simulation.log"
 
     # Linear Solver
@@ -190,15 +189,9 @@ class Config:
         """Initialize telemetry and persist config.json (rank-0 only)."""
         from simulation.telemetry import Telemetry
 
-        # If verbose is "progressbar", we want Telemetry to be quiet on console (verbose=False)
-        telemetry_verbose = self.verbose
-        if telemetry_verbose == "progressbar":
-            telemetry_verbose = False
-
         self.telemetry = Telemetry(
             comm=self.domain.comm,
             outdir=self.results_dir,
-            verbose=telemetry_verbose,
         )
         self.update_config_json()
 

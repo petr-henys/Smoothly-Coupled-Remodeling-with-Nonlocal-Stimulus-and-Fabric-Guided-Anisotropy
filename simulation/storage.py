@@ -25,7 +25,7 @@ class FieldStorage:
 
     def __init__(self, cfg: "Config", comm: MPI.Comm) -> None:
         self.comm = comm
-        self.logger = get_logger(comm, verbose=cfg.verbose, name="Storage.Fields")
+        self.logger = get_logger(comm, name="Storage.Fields")
         self.output_dir = Path(cfg.results_dir)
         self._writers: Dict[str, VTXWriter] = {}
         self._write_counts: Dict[str, int] = defaultdict(int)
@@ -77,7 +77,7 @@ class MetricsStorage:
 
     def __init__(self, cfg: "Config", comm: MPI.Comm, flush_interval: int = 10) -> None:
         self.comm = comm
-        self.logger = get_logger(comm, verbose=cfg.verbose, name="Storage.Metrics")
+        self.logger = get_logger(comm, name="Storage.Metrics")
         self.output_dir = Path(cfg.results_dir)
         self._flush_interval = flush_interval
         self._buffers: Dict[str, List[Dict]] = defaultdict(list)

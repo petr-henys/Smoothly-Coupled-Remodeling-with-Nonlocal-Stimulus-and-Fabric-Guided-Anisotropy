@@ -12,7 +12,7 @@ from typing import Optional
 
 
 def setup_logging(
-    level: str = "INFO",
+    level: str = "WARNING",
     log_file: Optional[str] = None,
     format_string: Optional[str] = None
 ) -> None:
@@ -21,7 +21,7 @@ def setup_logging(
     
     Parameters
     ----------
-    level : str, default "INFO"
+    level : str, default "WARNING"
         Logging level: "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
     log_file : str, optional
         Path to log file. If None, logs only to console.
@@ -128,6 +128,6 @@ def get_class_logger(cls) -> logging.Logger:
     return logging.getLogger(logger_name)
 
 
-# Default initialization with INFO level
+# Default initialization with WARNING level
 if not logging.getLogger().handlers:
-    setup_logging()
+    setup_logging(level="WARNING")
