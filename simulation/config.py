@@ -46,7 +46,7 @@ class Config:
     # =========================================================================
     # Stimulus (Local)
     # =========================================================================
-    psi_ref: float = 50.     # Reference effective stress [MPa] for daily stimulus in proximal femur
+    psi_ref: float = 20.     # Reference effective stress [MPa] for daily stimulus in proximal femur
     distal_damping_height: float = 1.0     # Height of distal damping zone [mm] (cut shaft of femur)
     distal_damping_transition: float = 0.5    # Transition width of distal damping zone [mm]
 

@@ -7,22 +7,23 @@ for a given finite-element domain and :class:`simulation.config.Config`.
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 from pathlib import Path
 
 import numpy as np
 from mpi4py import MPI
-import basix
+import basix.ufl
 from dolfinx import fem
 from dolfinx.fem import Function, functionspace
 
 from simulation.storage import UnifiedStorage
-from simulation.logger import get_logger, Level, configure_logging
+from simulation.logger import get_logger, Level
 from simulation.utils import build_dirichlet_bcs, assign, current_memory_mb
 from simulation.config import Config
 from simulation.subsolvers import MechanicsSolver, DensitySolver
 from simulation.fixedsolver import FixedPointSolver
-from simulation.drivers import GaitDriver
+from simulation.drivers import SimplifiedGaitDriver
+from simulation.traction_utils import create_traction_function, create_pressure_function
 
 
 class Remodeller:
@@ -31,19 +32,22 @@ class Remodeller:
     Owns FE fields, subsolvers, and storage. Requires fully specified Config.
     """
 
-    def __init__(self, cfg: Config):
+    def __init__(self, cfg: Config, stages: List[Dict]):
         """Initialize remodeler with configuration.
         
         Parameters
         ----------
         cfg : Config
             Complete simulation configuration with domain and facet_tags.
+        stages : List[Dict]
+            List of load stages for the simplified gait driver.
         """
         self.cfg = cfg
         self.domain = self.cfg.domain
         self.closed = False
         self.progress = None
         self.main_task_id = None
+        self.stages = stages
 
         if self.cfg.verbose == "progressbar":
             self.verbose = False
@@ -52,9 +56,6 @@ class Remodeller:
 
         self.comm = self.domain.comm
         self.rank = self.comm.rank
-        
-        # Configure global logging
-        configure_logging(self.cfg.log_file)
         
         # Initialize log file (create directory and clear file) on rank 0
         if self.rank == 0:
@@ -131,29 +132,30 @@ class Remodeller:
         # Boundary conditions
         bc_mech = build_dirichlet_bcs(self.V, self.cfg.facet_tags, id_tag=1, value=0.0)
 
-        # Create gait loader
-        from simulation.femur_gait import setup_femur_gait_loading
-        gait_loader = setup_femur_gait_loading(
-            self.V,
-            mass_tonnes=float(self.cfg.body_mass_tonnes),
-            n_samples=int(self.cfg.gait_samples),
-            load_scale=float(self.cfg.load_scale),
-            verbose=self.verbose,
-            debug_export_dir=Path(self.cfg.results_dir) / "loads"
-        )
+        # --- Setup Simplified Driver ---
+        # Create placeholder functions for tractions
+        t_hip = fem.Function(self.V, name="t_hip")
+        t_glmed = fem.Function(self.V, name="t_glmed")
         
-        neumann_bcs = [
-            (gait_loader.t_hip, 2),
-            (gait_loader.t_glmed, 2),
-            (gait_loader.t_glmax, 2),
-        ]
+        # Collect all unique tags used in stages
+        hip_tags = set()
+        gl_tags = set()
+        for s in self.stages:
+            hip_tags.add(s.get("hip_tag", 3))
+            gl_tags.add(s.get("gl_tag", 4))
+            
+        neumann_bcs = []
+        for tag in hip_tags:
+            neumann_bcs.append((t_hip, tag))
+        for tag in gl_tags:
+            neumann_bcs.append((t_glmed, tag))
 
         # Subsolvers
         mechsolver = MechanicsSolver(u, self.rho, self.cfg, bc_mech, neumann_bcs)
         self.densolver = DensitySolver(self.rho, self.rho_old, self.cfg)
 
         # Driver
-        self.driver = GaitDriver(mechsolver, gait_loader, self.cfg)
+        self.driver = SimplifiedGaitDriver(mechsolver, t_hip, t_glmed, self.stages, self.cfg)
 
         self.fixedsolver = FixedPointSolver(
             self.comm,
@@ -286,8 +288,10 @@ class Remodeller:
                 st = s_stats[key]
                 
                 # Mechanics solver runs for each gait sample in every GS iteration
+                # For SimplifiedGaitDriver, it runs for each stage
+                n_stages = len(self.stages)
                 if key == "mech":
-                    n_solves = gs_iters * self.cfg.gait_samples
+                    n_solves = gs_iters * n_stages
                 else:
                     n_solves = gs_iters
                     
@@ -303,7 +307,7 @@ class Remodeller:
 
         self.logger.info(format_table)
 
-        self.storage.write_fields("scalars", float(t))
+        self.storage.fields.write("scalars", float(t))
 
     def step(self, dt: float, *, step_index: Optional[int] = None, time_days: Optional[float] = None) -> None:
         """Single timestep: fixed-point iteration until coupling tolerance met."""

@@ -1,10 +1,9 @@
-"""Centralized path definitions for anatomy, gait data, and results."""
-
 from pathlib import Path
 import shutil
 
 PROJECT_ROOT = Path(__file__).parent.parent
 
+# Use anatomy/ directory instead of data/
 ANATOMY_DIR = PROJECT_ROOT / "anatomy"
 ANATOMY_RAW_DIR = ANATOMY_DIR / "raw"
 ANATOMY_PROCESSED_DIR = ANATOMY_DIR / "processed"

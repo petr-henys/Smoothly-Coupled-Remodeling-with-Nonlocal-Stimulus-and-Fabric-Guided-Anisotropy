@@ -1,7 +1,13 @@
 from __future__ import annotations
 
-"""Homogenization: KUBC (Dirichlet/Nitsche) and SUBC (traction-controlled) elasticity solvers."""
+"""
+Homogenization solvers (KUBC/SUBC) for linear elasticity with density- and
+fabric-modulated stiffness. Numerical behavior is preserved; this refactor
+adds structure, documentation, and removes duplication while keeping the
+public API intact.
+"""
 
+from dataclasses import dataclass
 from typing import Dict, List, Tuple, Optional
 
 import basix
@@ -12,7 +18,7 @@ from petsc4py import PETSc
 from dolfinx import fem, default_scalar_type
 
 from simulation.config import Config
-from simulation.subsolvers import smooth_max
+from simulation.subsolvers import smooth_max, unittrace_psd_from_any
 from simulation.utils import build_nullspace
 from simulation.logger import get_logger
 
@@ -22,124 +28,166 @@ Scalar = PETSc.ScalarType
 __all__ = ["KUBCHomogenizer", "SUBCHomogenizer"]
 
 
+@dataclass
+class _NDMechanics:
+    """Constitutive helper for the 3D microscopic elasticity problem.
+
+    Encapsulates the stress-strain relation and associated UFL forms that are
+    reused by both KUBC and SUBC homogenizers.
+    """
+    V: fem.FunctionSpace
+    rho: fem.Function
+    A_dir: fem.Function
+    cfg: Config
+
+    def __post_init__(self):
+        self.gdim = self.V.mesh.geometry.dim
+        self.smooth_eps = float(self.cfg.smooth_eps)
+
+        self.dx = self.cfg.dx
+        self.ds = self.cfg.ds
+
+        self.u = ufl.TrialFunction(self.V)
+        self.v = ufl.TestFunction(self.V)
+
+        self.a_base = ufl.inner(self.sigma(self.u, self.rho), self.eps(self.v)) * self.dx
+        self.L_zero = (
+            ufl.inner(
+                fem.Constant(self.V.mesh, default_scalar_type((0.0,) * self.gdim)),
+                self.v,
+            )
+            * self.ds
+        )
+
+    def eps(self, u):
+        """Return the symmetric gradient of the displacement field."""
+        return ufl.sym(ufl.grad(u))
+
+    def sigma(self, u, rho):
+        """Compute Cauchy stress with smooth density regularisation."""
+        rho_eff = smooth_max(rho, self.cfg.rho_min_nd, self.smooth_eps)
+        E_nd = self.cfg.E0_nd * (rho_eff ** self.cfg.n_power_c)
+
+        eps_ten = self.eps(u)
+        I = ufl.Identity(self.gdim)
+        nu = self.cfg.nu_c
+
+        lmbda = E_nd * nu / ((1 + nu) * (1 - 2 * nu))
+        mu = E_nd / (2 * (1 + nu))
+
+        Asym = 0.5 * (self.A_dir + ufl.transpose(self.A_dir))
+        Ahat = unittrace_psd_from_any(Asym, self.gdim, self.smooth_eps)
+
+        # Anisotropic projected contribution
+        sigma_aniso = (
+            self.cfg.xi_aniso_c * E_nd
+        ) * ufl.inner(Ahat, eps_ten) * Ahat
+
+        return 2 * mu * eps_ten + lmbda * ufl.tr(eps_ten) * I + sigma_aniso
+
+    def sigma_const_strain(self, Eps_np: np.ndarray):
+        """Stress field for a prescribed constant macroscopic strain tensor.
+
+        Constructs σ_E(x) = C(x) : Eps, avoiding kinematic affine fields.
+        """
+        rho_eff = smooth_max(self.rho, self.cfg.rho_min_nd, self.smooth_eps)
+        E_nd = self.cfg.E0_nd * (rho_eff ** self.cfg.n_power_c)
+
+        I = ufl.Identity(self.gdim)
+        nu = self.cfg.nu_c
+        lmbda = E_nd * nu / ((1 + nu) * (1 - 2 * nu))
+        mu = E_nd / (2 * (1 + nu))
+
+        Asym = 0.5 * (self.A_dir + ufl.transpose(self.A_dir))
+        Ahat = unittrace_psd_from_any(Asym, self.gdim, self.smooth_eps)
+
+        Eps = ufl.as_tensor(np.asarray(Eps_np, dtype=float).tolist())
+        sigma_aniso = (self.cfg.xi_aniso_c * E_nd) * ufl.inner(Ahat, Eps) * Ahat
+        return 2 * mu * Eps + lmbda * ufl.tr(Eps) * I + sigma_aniso
+
+
 class _HomogCommon:
-    """Shared helpers for Voigt notation, averaging, SPD inverse, KSP setup."""
+    """Shared logic for Dirichlet (KUBC) and stress-controlled (SUBC) homogenizers.
+
+    Provides helpers for averaging, Voigt/tensor conversions, SPD inverse, and
+    solver utilities common to both boundary condition types.
+    """
     _VOIGT_IDX = ((0, 0), (1, 1), (2, 2), (1, 2), (0, 2), (0, 1))
     _SHEAR_PAIRS = ((1, 2), (0, 2), (0, 1))
 
     def __init__(
         self,
         rho: fem.Function,
+        A_dir: fem.Function,
         cfg: Config,
         degree: int = 1,
     ):
         self.cfg = cfg
         self.domain = rho.function_space.mesh
-        
-        # Validation
-        if self.domain.geometry.dim != 3:
+        assert self.domain is A_dir.function_space.mesh and self.domain is cfg.domain
+
+        self.gdim = self.domain.geometry.dim
+        if self.gdim != 3:
             raise NotImplementedError("Only 3D homogenization is supported.")
 
-        # Function Space
         Pk_vec = basix.ufl.element(
             "Lagrange",
             self.domain.basix_cell(),
             degree,
-            shape=(3,),
+            shape=(self.gdim,),
         )
         self.V = fem.functionspace(self.domain, Pk_vec)
 
-        # Fields
         self.rho = rho
+        self.A_dir = A_dir
         self.dx = cfg.dx
         self.ds = cfg.ds
 
-        # Trial/Test functions
-        self.u = ufl.TrialFunction(self.V)
-        self.v = ufl.TestFunction(self.V)
+        self.mech = _NDMechanics(self.V, rho, A_dir, cfg)
         self._u = fem.Function(self.V, name="u")
-
-        # Nullspace & Logger
         self._nullspace = build_nullspace(self.V)
-        self._logger = get_logger(self.domain.comm, verbose=self.cfg.verbose, name=self.__class__.__name__)
+        # Logger honoring cfg.verbose
+        self._logger = get_logger(self.domain.comm, verbose=bool(getattr(self.cfg, "verbose", True)), name=self.__class__.__name__)
 
-        # Volume normalization
         one = fem.Constant(self.domain, Scalar(1.0))
         vol_local = fem.assemble_scalar(fem.form(one * self.dx))
         self.vol = self.domain.comm.allreduce(vol_local, op=MPI.SUM)
         self._inv_vol = 1.0 / max(self.vol, 1e-30)
 
-        # Pre-calculate base forms
-        self.a_base = ufl.inner(self._sigma(self.u), self._eps(self.v)) * self.dx
-        self.L_zero = ufl.inner(fem.Constant(self.domain, default_scalar_type((0.0, 0.0, 0.0))), self.v) * self.dx
-        
-        self._init_averaging_forms()
-
-    def _init_averaging_forms(self):
-        """Pre-compile forms for averaging to avoid JIT overhead and enable batched MPI reduction."""
-        # 1. Stress forms (3x3 flattened)
-        # Note: We use self._u (the Function) not self.u (the TrialFunction)
-        sigma = self._sigma(self._u)
-        self._forms_stress = []
-        for i in range(3):
-            for j in range(3):
-                self._forms_stress.append(fem.form(sigma[i, j] * self.dx))
-        
-        # 2. Strain forms (6 components: 3 normal + 3 engineering shear)
-        eps = self._eps(self._u)
-        self._forms_strain = []
-        # Normal: 11, 22, 33
-        for i in range(3):
-            self._forms_strain.append(fem.form(eps[i, i] * self.dx))
-        # Shear (engineering): 2*23, 2*13, 2*12
-        for (i, j) in self._SHEAR_PAIRS:
-            self._forms_strain.append(fem.form(2.0 * eps[i, j] * self.dx))
-
-    def _eps(self, u):
-        """Symmetric gradient ε(u)."""
-        return ufl.sym(ufl.grad(u))
-
-    def _sigma(self, u):
-        """Cauchy stress: smoothed density, isotropic."""
-        rho_eff = smooth_max(self.rho, self.cfg.rho_min, self.cfg.smooth_eps)
-        E = self.cfg.E0 * (rho_eff ** self.cfg.n_power)
-
-        eps_ten = self._eps(u)
-        I = ufl.Identity(3)
-        nu = self.cfg.nu
-
-        lmbda = E * nu / ((1 + nu) * (1 - 2 * nu))
-        mu = E / (2 * (1 + nu))
-
-        return 2 * mu * eps_ten + lmbda * ufl.tr(eps_ten) * I
-
     def _log(self, msg: str):
+        # INFO-level message; warning/error messages are handled inline
         self._logger.info(msg)
 
-    def _average_stress(self) -> np.ndarray:
-        """Compute volume-averaged stress tensor using pre-compiled forms and batched reduction."""
-        # Assemble all 9 components locally
-        local_vals = np.array([fem.assemble_scalar(f) for f in self._forms_stress], dtype=float)
-        
-        # Single MPI reduction
-        global_vals = np.zeros_like(local_vals)
-        self.domain.comm.Allreduce(local_vals, global_vals, op=MPI.SUM)
-        
-        # Reshape to 3x3 and normalize
-        S = global_vals.reshape(3, 3) * self._inv_vol
+    def _average_stress(self, u: fem.Function) -> np.ndarray:
+        sigma = self.mech.sigma(u, self.rho)
+        S = np.zeros((self.gdim, self.gdim), dtype=float)
+        for i in range(self.gdim):
+            for j in range(self.gdim):
+                val_loc = fem.assemble_scalar(fem.form(sigma[i, j] * self.dx))
+                S[i, j] = (
+                    self.domain.comm.allreduce(val_loc, op=MPI.SUM)
+                    * self._inv_vol
+                )
         return S
 
-    def _average_engineering_strain(self) -> np.ndarray:
-        """Compute volume-averaged engineering strain vector using pre-compiled forms and batched reduction."""
-        # Assemble all 6 components locally
-        local_vals = np.array([fem.assemble_scalar(f) for f in self._forms_strain], dtype=float)
-        
-        # Single MPI reduction
-        global_vals = np.zeros_like(local_vals)
-        self.domain.comm.Allreduce(local_vals, global_vals, op=MPI.SUM)
-        
-        # Normalize
-        return global_vals * self._inv_vol
+    def _average_engineering_strain(self, u: fem.Function) -> np.ndarray:
+        eps = ufl.sym(ufl.grad(u))
+        vals = np.zeros(6, dtype=float)
+        for i in range(3):
+            val_loc = fem.assemble_scalar(fem.form(eps[i, i] * self.dx))
+            vals[i] = (
+                self.domain.comm.allreduce(val_loc, op=MPI.SUM)
+                * self._inv_vol
+            )
+        for k, (i, j) in enumerate(self._SHEAR_PAIRS, start=3):
+            val_loc = fem.assemble_scalar(
+                fem.form((2.0 * eps[i, j]) * self.dx)
+            )
+            vals[k] = (
+                self.domain.comm.allreduce(val_loc, op=MPI.SUM)
+                * self._inv_vol
+            )
+        return vals
 
     @staticmethod
     def _stress_tensor_to_voigt(sig: np.ndarray) -> np.ndarray:
@@ -174,7 +222,11 @@ class _HomogCommon:
                 else:
                     row_val_kl = 0.5 * (C[i, j, k, l] + C[j, i, k, l])
                     row_val_lk = 0.5 * (C[i, j, l, k] + C[j, i, l, k])
-                Cv[I, J] = row_val_kl if k == l else 0.5 * (row_val_kl + row_val_lk)
+                Cv[I, J] = (
+                    row_val_kl
+                    if k == l
+                    else 0.5 * (row_val_kl + row_val_lk)
+                )
         return Cv
 
     @staticmethod
@@ -185,17 +237,44 @@ class _HomogCommon:
         return _HomogCommon._tensor_to_voigt(Cp)
 
     @staticmethod
-    def _spd_inverse(M: np.ndarray, rel_tol: float = 1e-10, abs_tol: float = 1e-12) -> Tuple[np.ndarray, np.ndarray]:
+    def _spd_inverse(
+        M: np.ndarray,
+        rel_tol: float = 1e-10,
+        abs_tol: float = 1e-12,
+    ) -> Tuple[np.ndarray, np.ndarray]:
         Ms = 0.5 * (M + M.T)
         w, V = np.linalg.eigh(Ms)
-        tol = max(abs_tol, rel_tol * float(np.max(np.abs(w)) if w.size else 0.0))
+        tol = max(
+            abs_tol,
+            rel_tol * float(np.max(np.abs(w)) if w.size else 0.0),
+        )
         w_clip = np.maximum(w, tol)
         M_spd = V @ np.diag(w_clip) @ V.T
         Minv = V @ np.diag(1.0 / w_clip) @ V.T
         return Minv, M_spd
 
+    def _average_fabric_and_rotation(self) -> Tuple[np.ndarray, np.ndarray]:
+        gdim = self.gdim
+        Abar = np.zeros((gdim, gdim), dtype=float)
+        for i in range(gdim):
+            for j in range(gdim):
+                val_local = fem.assemble_scalar(
+                    fem.form(self.A_dir[i, j] * self.dx)
+                )
+                Abar[i, j] = (
+                    self.domain.comm.allreduce(val_local, op=MPI.SUM)
+                    * self._inv_vol
+                )
+        Abar = 0.5 * (Abar + Abar.T)
+        vals, vecs = np.linalg.eigh(Abar)
+        order = np.argsort(vals)[::-1]
+        R = vecs[:, order]
+        return Abar, R
+
     @staticmethod
-    def _extract_principal_props(S_f: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray, float]:
+    def _extract_principal_props(
+        S_f: np.ndarray,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, float]:
         E = 1.0 / np.array([S_f[0, 0], S_f[1, 1], S_f[2, 2]], dtype=float)
         G = 1.0 / np.array([S_f[3, 3], S_f[4, 4], S_f[5, 5]], dtype=float)
         nu = np.zeros((3, 3), dtype=float)
@@ -207,45 +286,71 @@ class _HomogCommon:
         return E, G, nu, E_ratio
 
     def _finalize_output(self, C: np.ndarray, S_in: Optional[np.ndarray] = None) -> Dict[str, np.ndarray]:
+        """Common post-processing from stiffness matrix to output dictionary.
+
+        - Symmetrise C, compute compliance S (SPD inverse)
+        - Scale to dimensional units using `sigma_c`
+        - Rotate to fabric principal basis and extract principal properties
+        """
         C = 0.5 * (C + C.T)
         if S_in is None:
             S, _ = self._spd_inverse(C)
         else:
             S = S_in
 
-        # Isotropic: no fabric rotation
-        E, G, nu, E_ratio = self._extract_principal_props(S)
+        C_dim = C * self.cfg.sigma_c
+        S_dim = S / self.cfg.sigma_c
+
+        Abar, R = self._average_fabric_and_rotation()
+        C_f = self._rotate_C_to_basis(C, R)
+        S_f, _ = self._spd_inverse(C_f)
+
+        E, G, nu, E_ratio = self._extract_principal_props(S_f)
 
         return {
             "C_voigt": C,
             "S_voigt": S,
+            "C_voigt_dim": C_dim,
+            "S_voigt_dim": S_dim,
+            "C_voigt_fabric": C_f,
             "E_principal": E,
             "nu_principal": nu,
             "G_principal": G,
             "E_ratio": E_ratio,
+            "R_fabric": R,
+            "Abar": Abar,
         }
 
     def _create_ksp(self, prefix: str = "homog") -> PETSc.KSP:
         ksp = PETSc.KSP().create(self.domain.comm)
         ksp.setOptionsPrefix(prefix + "_")
         opts = PETSc.Options()
-        opts[f"{prefix}_ksp_type"] = self.cfg.ksp_type
-        opts[f"{prefix}_pc_type"] = self.cfg.pc_type
-        opts[f"{prefix}_ksp_rtol"] = self.cfg.ksp_rtol
-        opts[f"{prefix}_ksp_atol"] = self.cfg.ksp_atol
-        opts[f"{prefix}_ksp_max_it"] = self.cfg.ksp_max_it
+        opts[f"{prefix}_ksp_type"] = getattr(self.cfg, "ksp_type", "minres")
+        opts[f"{prefix}_pc_type"] = getattr(self.cfg, "pc_type", "gamg")
+        opts[f"{prefix}_ksp_rtol"] = getattr(self.cfg, "ksp_rtol", 1e-7)
+        opts[f"{prefix}_ksp_atol"] = getattr(self.cfg, "ksp_atol", 1e-8)
+        opts[f"{prefix}_ksp_max_it"] = getattr(self.cfg, "ksp_max_it", 200)
         ksp.setFromOptions()
         ksp.getPC().setReusePreconditioner(True)
         ksp.setInitialGuessNonzero(True)
         return ksp
 
-    def _assemble_matrix(self, a_form: fem.Form, bcs: Optional[List[fem.DirichletBC]] = None) -> PETSc.Mat:
+    def _assemble_matrix(
+        self,
+        a_form: fem.Form,
+        bcs: Optional[List[fem.DirichletBC]] = None,
+    ) -> PETSc.Mat:
         A = fem.petsc.create_matrix(a_form)
         fem.petsc.assemble_matrix(A, a_form, bcs=bcs or [])
         A.assemble()
         return A
 
-    def _assemble_vector(self, L_form: fem.Form, a_form: fem.Form, bcs: Optional[List[fem.DirichletBC]] = None) -> PETSc.Vec:
+    def _assemble_vector(
+        self,
+        L_form: fem.Form,
+        a_form: fem.Form,
+        bcs: Optional[List[fem.DirichletBC]] = None,
+    ) -> PETSc.Vec:
         b = fem.petsc.create_vector(self.V)
         fem.petsc.assemble_vector(b, L_form)
         fem.petsc.apply_lifting(b, [a_form], bcs=[bcs or []])
@@ -256,128 +361,73 @@ class _HomogCommon:
 
 
 class KUBCHomogenizer(_HomogCommon):
-    """Kinematic Uniform BC: affine displacement via Nitsche method, extract C from ⟨σ⟩."""
+    """Kinematic Uniform Boundary Conditions (Dirichlet/Nitsche) homogenizer.
+
+    Solves six canonical macroscopic strain tests via an affine displacement
+    field imposed weakly by Nitsche's method, and averages the stress response
+    to construct the 6x6 stiffness in Voigt notation.
+    """
     def __init__(
         self,
         rho: fem.Function,
+        A_dir: fem.Function,
         cfg: Config,
         degree: int = 1,
     ):
-        super().__init__(rho, cfg, degree)
+        super().__init__(rho, A_dir, cfg, degree)
 
         self._facet_normal = ufl.FacetNormal(self.domain)
         self._cell_diam = ufl.CellDiameter(self.domain)
+
         self._uD = fem.Function(self.V, name="uD")
         self._Eps_tmp = np.zeros((3, 3), dtype=float)
 
-        # Pre-assemble LHS matrix (constant for all cases)
-        self._a_form = self._build_lhs_form()
-        self._A = self._assemble_matrix(self._a_form)
-        self._A.setNearNullSpace(self._nullspace)
-        
-        # Pre-compile RHS form (depends on _uD which is updated in-place)
-        self._L_form = self._build_rhs_form()
+        def _affine(x):
+            return (self._Eps_tmp @ x).astype(default_scalar_type)
 
-        # Pre-setup KSP
-        self._ksp = self._create_ksp(prefix="kubc")
-        self._ksp.setOperators(self._A)
-        self._ksp.setUp()
+        self._affine = _affine
 
-    def _affine(self, x):
-        return (self._Eps_tmp @ x).astype(default_scalar_type)
+    def _forms_for_case(self, Eps: np.ndarray) -> Tuple[fem.Form, fem.Form]:
+        a = self.mech.a_base
+        L = self.mech.L_zero
 
-    def _build_lhs_form(self) -> fem.Form:
-        """Build the Nitsche bilinear form (independent of Dirichlet value)."""
+        self._Eps_tmp[:, :] = Eps
+        self._uD.interpolate(self._affine)
+
         n = self._facet_normal
         h = self._cell_diam
-        
-        alpha = self.cfg.nitsche_alpha
-        theta = self.cfg.nitsche_theta
 
-        # Local penalty scaling
-        rho_eff = smooth_max(self.rho, self.cfg.rho_min, self.cfg.smooth_eps)
-        E = self.cfg.E0 * (rho_eff ** self.cfg.n_power)
-        nu = self.cfg.nu
-        lmbda = E * nu / ((1 + nu) * (1 - 2 * nu))
-        mu = E / (2 * (1 + nu))
+        alpha = float(getattr(self.cfg, "nitsche_alpha", 100.0))
+        theta = float(getattr(self.cfg, "nitsche_theta", 1.0))
+        # Local penalty scaling: gamma/h ~ alpha*(2*mu+lambda)/h (robust across heterogeneity)
+        rho_eff = smooth_max(self.rho, self.cfg.rho_min_nd, self.cfg.smooth_eps)
+        E_nd = self.cfg.E0_nd * (rho_eff ** self.cfg.n_power_c)
+        nu = self.cfg.nu_c
+        lmbda = E_nd * nu / ((1 + nu) * (1 - 2 * nu))
+        mu = E_nd / (2 * (1 + nu))
         Kpen = 2 * mu + lmbda
         gamma_over_h = (alpha * Kpen) / h
 
-        u, v = self.u, self.v
-        sigma_u = self._sigma(u)
-        sigma_v = self._sigma(v)
+        u, v = self.mech.u, self.mech.v
+        sigma_u = self.mech.sigma(u, self.rho)
+        sigma_v = self.mech.sigma(v, self.rho)
 
         a_bnd = (
             - ufl.dot(ufl.dot(sigma_u, n), v) * self.ds
             - theta * ufl.dot(ufl.dot(sigma_v, n), u) * self.ds
             + gamma_over_h * ufl.dot(u, v) * self.ds
         )
-        return fem.form(self.a_base + a_bnd)
-
-    def _build_rhs_form(self) -> fem.Form:
-        """Build the Nitsche linear form (depends on _uD)."""
-        n = self._facet_normal
-        h = self._cell_diam
-        
-        alpha = self.cfg.nitsche_alpha
-        theta = self.cfg.nitsche_theta
-
-        rho_eff = smooth_max(self.rho, self.cfg.rho_min, self.cfg.smooth_eps)
-        E = self.cfg.E0 * (rho_eff ** self.cfg.n_power)
-        nu = self.cfg.nu
-        lmbda = E * nu / ((1 + nu) * (1 - 2 * nu))
-        mu = E / (2 * (1 + nu))
-        Kpen = 2 * mu + lmbda
-        gamma_over_h = (alpha * Kpen) / h
-
-        v = self.v
-        sigma_v = self._sigma(v)
-
         L_bnd = (
             - theta * ufl.dot(ufl.dot(sigma_v, n), self._uD) * self.ds
             + gamma_over_h * ufl.dot(self._uD, v) * self.ds
         )
-        return fem.form(self.L_zero + L_bnd)
 
-    def run(self, eps_mag: float = 1e-3) -> Dict[str, np.ndarray]:
-        self._log(f"[KUBC] starting homogenization (eps_mag = {eps_mag:g})")
-
-        cases = self._canonical_strains(eps_mag)
-        C = np.zeros((6, 6), dtype=float)
-
-        for j, (name, Eps, eng) in enumerate(cases):
-            self._log(f"[KUBC]   solving case {name}")
-
-            # Update Dirichlet boundary condition
-            self._Eps_tmp[:, :] = Eps
-            self._uD.interpolate(self._affine)
-
-            # Assemble RHS (reusing compiled form)
-            b = self._assemble_vector(self._L_form, self._a_form)
-
-            # Solve
-            self._ksp.solve(b, self._u.x.petsc_vec)
-            self._u.x.scatter_forward()
-
-            reason = self._ksp.getConvergedReason()
-            if reason < 0:
-                self._logger.warning(f"KUBC case {name} failed to converge (reason {reason})")
-
-            # Post-process
-            sig_bar = self._average_stress()
-            svec = self._stress_tensor_to_voigt(sig_bar)
-            sval = float(eng[np.nonzero(eng)][0])
-            C[:, j] = svec / sval
-
-            b.destroy()
-
-        out = self._finalize_output(C)
-        E = out["E_principal"]
-        self._log(f"[KUBC] done → E_principal = {E[0]:.4g}, {E[1]:.4g}, {E[2]:.4g}")
-        return out
+        return fem.form(a + a_bnd), fem.form(L + L_bnd)
 
     @staticmethod
-    def _canonical_strains(mag: float) -> List[Tuple[str, np.ndarray, np.ndarray]]:
+    def _canonical_strains(
+        mag: float,
+    ) -> List[Tuple[str, np.ndarray, np.ndarray]]:
         Z = np.zeros((3, 3), dtype=float)
         out: List[Tuple[str, np.ndarray, np.ndarray]] = []
 
@@ -390,7 +440,9 @@ class KUBCHomogenizer(_HomogCommon):
             out.append((name, E, eng))
 
         # Engineering shear strains
-        for k, (name, (i, j)) in enumerate(zip(("g23", "g13", "g12"), _HomogCommon._SHEAR_PAIRS)):
+        for k, (name, (i, j)) in enumerate(
+            zip(("g23", "g13", "g12"), _HomogCommon._SHEAR_PAIRS)
+        ):
             E = Z.copy()
             E[i, j] = 0.5 * mag
             E[j, i] = 0.5 * mag
@@ -400,74 +452,83 @@ class KUBCHomogenizer(_HomogCommon):
 
         return out
 
+    def run(self, eps_mag: float = 1e-3) -> Dict[str, np.ndarray]:
+        self._log(f"[KUBC] starting homogenization (eps_mag = {eps_mag:g})")
+
+        cases = self._canonical_strains(eps_mag)
+        C = np.zeros((6, 6), dtype=float)
+
+        for j, (name, Eps, eng) in enumerate(cases):
+            self._log(f"[KUBC]   solving case {name}")
+
+            a_form, L_form = self._forms_for_case(Eps)
+            A = self._assemble_matrix(a_form)
+            A.setNearNullSpace(self._nullspace)
+
+            b = self._assemble_vector(L_form, a_form)
+
+            ksp = self._create_ksp(prefix=f"kubc_{name}")
+            ksp.setOperators(A)
+            ksp.setUp()
+            ksp.solve(b, self._u.x.petsc_vec)
+            self._u.x.scatter_forward()
+
+            reason = ksp.getConvergedReason()
+            if reason < 0:
+                self._logger.warning(f"KUBC case {name} failed to converge (reason {reason})")
+
+            sig_bar = self._average_stress(self._u)
+            svec = self._stress_tensor_to_voigt(sig_bar)
+            sval = float(eng[np.nonzero(eng)][0])
+            C[:, j] = svec / sval
+
+            ksp.destroy()
+            A.destroy()
+            b.destroy()
+
+        out = self._finalize_output(C)
+
+        E = out["E_principal"]
+        self._log(
+            f"[KUBC] done → E_principal = {E[0]:.4g}, {E[1]:.4g}, {E[2]:.4g}"
+        )
+
+        return out
+
 
 class SUBCHomogenizer(_HomogCommon):
-    """Static Uniform BC: traction-controlled tests, extract S from ⟨ε⟩."""
+    """Static Uniform Boundary Conditions (traction-controlled) homogenizer.
+
+    Applies six canonical macroscopic stress states via surface tractions and
+    averages the engineering strains to build the compliance and stiffness in
+    Voigt notation.
+    """
     def __init__(
         self,
         rho: fem.Function,
+        A_dir: fem.Function,
         cfg: Config,
         degree: int = 1,
     ):
-        super().__init__(rho, cfg, degree)
-        
-        # Pre-assemble LHS matrix (constant for all cases)
-        self._a_form = fem.form(self.a_base)
-        self._A = self._assemble_matrix(self._a_form)
-        self._A.setNearNullSpace(self._nullspace)
-        self._A.setNullSpace(self._nullspace)
+        super().__init__(rho, A_dir, cfg, degree)
+        self._A_bulk: Optional[PETSc.Mat] = None
+        self._ksp: Optional[PETSc.KSP] = None
+        self._a_form: Optional[fem.Form] = None
 
-        # Pre-setup KSP
-        self._ksp = self._create_ksp(prefix="subc")
-        self._ksp.setOperators(self._A)
-        self._ksp.setUp()
+    def _ensure_bulk_system(self):
+        if self._A_bulk is not None:
+            return
 
-        # Pre-compile RHS form (depends on _Sig_const which is updated in-place)
-        self._Sig_const = fem.Constant(self.domain, default_scalar_type(((0,0,0),(0,0,0),(0,0,0))))
-        self._L_form = self._build_rhs_form()
+        self._a_form = fem.form(self.mech.a_base)
+        A = self._assemble_matrix(self._a_form)
+        A.setNearNullSpace(self._nullspace)
+        A.setNullSpace(self._nullspace)
+        self._A_bulk = A
 
-    def _build_rhs_form(self) -> fem.Form:
-        n = ufl.FacetNormal(self.domain)
-        t = ufl.dot(self._Sig_const, n)
-        v = self.v
-        L_bnd = ufl.dot(t, v) * self.ds
-        return fem.form(self.L_zero + L_bnd)
-
-    def run(self, sigma_mag: float = 1.0) -> Dict[str, np.ndarray]:
-        self._log(f"[SUBC] starting homogenization (sigma_mag = {sigma_mag:g})")
-
-        SIGMA = self._sigma_basis(sigma_mag)
-        Ebar = np.zeros((6, 6), dtype=float)
-
-        for j, (name, Sig) in enumerate(SIGMA):
-            self._log(f"[SUBC]   solving case {name}")
-
-            # Update traction boundary condition
-            self._Sig_const.value[:] = Sig
-
-            # Assemble RHS (reusing compiled form)
-            b = self._assemble_vector(self._L_form, self._a_form)
-
-            # Project RHS to be consistent with singular operator
-            self._nullspace.remove(b)
-
-            self._ksp.solve(b, self._u.x.petsc_vec)
-            self._u.x.scatter_forward()
-
-            reason = self._ksp.getConvergedReason()
-            if reason < 0:
-                self._logger.warning(f"SUBC case {name} failed to converge (reason {reason})")
-
-            Ebar[:, j] = self._average_engineering_strain()
-            b.destroy()
-
-        S = 0.5 * (Ebar + Ebar.T) / sigma_mag
-        C, _ = self._spd_inverse(S)
-
-        out = self._finalize_output(C, S_in=S)
-        E = out["E_principal"]
-        self._log(f"[SUBC] done → E_principal = {E[0]:.4g}, {E[1]:.4g}, {E[2]:.4g}")
-        return out
+        ksp = self._create_ksp(prefix="subc")
+        ksp.setOperators(self._A_bulk)
+        ksp.setUp()
+        self._ksp = ksp
 
     def _sigma_basis(self, mag: float) -> List[Tuple[str, np.ndarray]]:
         Z = np.zeros((3, 3), dtype=float)
@@ -485,3 +546,51 @@ class SUBCHomogenizer(_HomogCommon):
             out.append((name, S))
 
         return out
+
+    def _assemble_rhs_for_sigma(self, Sig_np: np.ndarray) -> fem.Form:
+        n = ufl.FacetNormal(self.domain)
+        Sig = ufl.as_tensor(Sig_np.tolist())
+        t = ufl.dot(Sig, n)
+        v = self.mech.v
+        L_bnd = ufl.dot(t, v) * self.ds
+        return fem.form(self.mech.L_zero + L_bnd)
+
+    def run(self, sigma_mag: float = 1.0) -> Dict[str, np.ndarray]:
+        self._log(f"[SUBC] starting homogenization (sigma_mag = {sigma_mag:g})")
+
+        self._ensure_bulk_system()
+
+        SIGMA = self._sigma_basis(sigma_mag)
+        Ebar = np.zeros((6, 6), dtype=float)
+
+        for j, (name, Sig) in enumerate(SIGMA):
+            self._log(f"[SUBC]   solving case {name}")
+
+            L_form = self._assemble_rhs_for_sigma(Sig)
+            b = self._assemble_vector(L_form, self._a_form)
+
+            # Project RHS to be consistent with singular operator
+            self._nullspace.remove(b)
+
+            self._ksp.solve(b, self._u.x.petsc_vec)
+            self._u.x.scatter_forward()
+
+            reason = self._ksp.getConvergedReason()
+            if reason < 0:
+                self._logger.warning(f"SUBC case {name} failed to converge (reason {reason})")
+
+            Ebar[:, j] = self._average_engineering_strain(self._u)
+            b.destroy()
+
+        S = 0.5 * (Ebar + Ebar.T) / sigma_mag
+        C, _ = self._spd_inverse(S)
+
+        out = self._finalize_output(C, S_in=S)
+
+        E = out["E_principal"]
+        self._log(
+            f"[SUBC] done → E_principal = {E[0]:.4g}, {E[1]:.4g}, {E[2]:.4g}"
+        )
+
+        return out
+

@@ -1,6 +1,4 @@
-"""Utility functions: nullspace, projection, Dirichlet BCs, field operations, memory tracking."""
-
-from typing import List
+from typing import List, Tuple
 import resource
 
 from dolfinx import fem, la, mesh, default_scalar_type
@@ -12,9 +10,8 @@ import ufl
 
 dtype = PETSc.ScalarType
 
-
 def build_nullspace(V: FunctionSpace):
-    """Build PETSc nullspace for 3D elasticity (3 translations + 3 rotations)."""
+    """Build PETSc nullspace for 3D elasticity."""
     bs = V.dofmap.index_map_bs
     length0 = V.dofmap.index_map.size_local
     basis = [la.vector(V.dofmap.index_map, bs=bs, dtype=dtype) for i in range(6)]
@@ -42,9 +39,60 @@ def build_nullspace(V: FunctionSpace):
     ]
     return PETSc.NullSpace().create(vectors=basis_petsc)
 
+def compute_principal_dirs_and_vals_vec(
+    A_func: fem.Function,
+    V_vec: fem.FunctionSpace,
+    Q_sca: fem.FunctionSpace,
+) -> Tuple[List[fem.Function], List[fem.Function]]:
+    """Nodewise eigen-decomposition of tensor field A via NumPy."""
+    A_func.x.scatter_forward()
+
+    T = A_func.function_space
+    msh = T.mesh
+    gdim = msh.geometry.dim
+
+    nT = T.dofmap.index_map.size_local
+    bsT = T.dofmap.index_map_bs
+    nV = V_vec.dofmap.index_map.size_local
+    bsV = V_vec.dofmap.index_map_bs
+    nQ = Q_sca.dofmap.index_map.size_local
+    bsQ = Q_sca.dofmap.index_map_bs
+
+    A_all = A_func.x.array
+    A_owned_flat = A_all[: nT * bsT]
+    A_owned = A_owned_flat.reshape(nT, gdim, gdim, order="C")
+    A_owned = 0.5 * (A_owned + np.swapaxes(A_owned, 1, 2))
+
+    w, V = np.linalg.eigh(A_owned)
+    order = np.argsort(w, axis=1)[:, ::-1]
+    w_sorted = np.take_along_axis(w, order, axis=1)
+    V_sorted = np.take_along_axis(V, order[:, np.newaxis, :], axis=2)
+
+    eigvec_funcs = [fem.Function(V_vec, name=f"A_eigvec_{k+1}") for k in range(gdim)]
+    eigval_funcs = [fem.Function(Q_sca, name=f"A_eigval_{k+1}") for k in range(gdim)]
+
+    for k in range(gdim):
+        vecs_k = V_sorted[:, :, k]
+        arr = eigvec_funcs[k].x.array
+        arr[:] = 0.0
+        arr[: nV * bsV] = vecs_k.reshape(-1)
+        eigvec_funcs[k].x.scatter_forward()
+
+        vals_k = w_sorted[:, k]
+        arr = eigval_funcs[k].x.array
+        arr[:] = 0.0
+        arr[: nQ * bsQ] = vals_k
+        eigval_funcs[k].x.scatter_forward()
+
+    for vf in eigvec_funcs:
+        vf.x.scatter_forward()
+    for lf in eigval_funcs:
+        lf.x.scatter_forward()
+
+    return eigvec_funcs, eigval_funcs
 
 def build_facetag(m: mesh.Mesh) -> mesh.MeshTags:
-    """Create boundary facet tags for unit-cube domains (MPI-safe)."""
+    """Create facet tags for unit-cube-like domains (MPI-safe)."""
     boundaries = [
         (1, lambda x: np.isclose(x[0], 0)),
         (2, lambda x: np.isclose(x[0], 1)),
@@ -68,7 +116,7 @@ def build_facetag(m: mesh.Mesh) -> mesh.MeshTags:
 def build_dirichlet_bcs(
     V: fem.FunctionSpace, facet_tags: mesh.MeshTags, id_tag: int, value: float = 0.0
 ) -> List[fem.DirichletBC]:
-    """Homogeneous Dirichlet BCs on all components of V for facets tagged id_tag."""
+    """Homogeneous Dirichlet on facets with tag id_tag."""
     fdim = V.mesh.topology.dim - 1
     facets = facet_tags.find(id_tag)
     bcs = []
@@ -79,7 +127,6 @@ def build_dirichlet_bcs(
     return bcs
 
 def assign(f: fem.Function, v) -> None:
-    """Assign scalar or array to owned DOFs and scatter forward."""
     owned = f.function_space.dofmap.index_map.size_local * f.function_space.dofmap.index_map_bs
     if isinstance(v, fem.Function):
         f.x.array[:owned] = v.x.array[:owned]
@@ -94,11 +141,11 @@ def assign(f: fem.Function, v) -> None:
     f.x.scatter_forward()
 
 def get_owned_size(field: fem.Function) -> int:
-    """Count of locally owned scalar DOFs."""
+    """Return count of locally owned scalar DOFs."""
     return int(field.function_space.dofmap.index_map.size_local * field.function_space.dofmap.index_map_bs)
 
 def collect_dirichlet_dofs(bcs, n_owned: int) -> np.ndarray:
-    """Unique owned DOF indices from list of DirichletBC objects."""
+    """Return unique owned Dirichlet DOFs."""
     chunks = []
     for bc in bcs:
         idx, first_ghost = bc.dof_indices()
@@ -110,97 +157,27 @@ def collect_dirichlet_dofs(bcs, n_owned: int) -> np.ndarray:
     return np.unique(np.concatenate(chunks))
 
 
+def _global_dot(comm: MPI.Comm, a: np.ndarray, b: np.ndarray) -> float:
+    """MPI global dot product."""
+    return comm.allreduce(float(a @ b), op=MPI.SUM)
+
+def _global_norm(comm: MPI.Comm, v: np.ndarray) -> float:
+    """MPI global norm."""
+    return _global_dot(comm, v, v) ** 0.5
+
 def current_memory_mb() -> float:
-    """Current process resident memory (RSS) in MB."""
+    """Return current process RSS memory in MB."""
     mem_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     return mem_kb / 1024.0
 
-def spectral_decomposition_3x3(A):
-    """Eigenvalues of 3x3 symmetric tensor via Cardano's formula."""
-    # Invariants
-    I1 = ufl.tr(A)
-    I2 = 0.5 * (I1**2 - ufl.tr(A*A))
-    I3 = ufl.det(A)
-    
-    # Depressed cubic coefficients
-    p = I2 - I1**2 / 3.0
-    q = -2.0 * I1**3 / 27.0 + I1 * I2 / 3.0 - I3
-    
-    # Trigonometric solution
-    # Ensure argument for acos is in [-1, 1]
-    eps = 1e-16
-    p_safe = ufl.min_value(p, -eps) 
-    
-    r = ufl.sqrt(-p_safe / 3.0)
-    phi_arg = 3.0 * q / (2.0 * p_safe) * ufl.sqrt(-3.0 / p_safe)
-    phi_arg_clamped = ufl.max_value(-1.0, ufl.min_value(1.0, phi_arg))
-    phi = ufl.acos(phi_arg_clamped) / 3.0
-    
-    eig1 = 2.0 * r * ufl.cos(phi) + I1 / 3.0
-    eig2 = 2.0 * r * ufl.cos(phi + 2.0 * ufl.pi / 3.0) + I1 / 3.0
-    eig3 = 2.0 * r * ufl.cos(phi + 4.0 * ufl.pi / 3.0) + I1 / 3.0
-    
-    return eig1, eig2, eig3
+def smooth_abs(x, eps=1e-4):
+    return ufl.sqrt(x**2 + eps**2) - eps
 
-def matrix_function_3x3(A, func):
-    """Matrix function f(A) via Sylvester's formula."""
-    l1, l2, l3 = spectral_decomposition_3x3(A)
-    f1, f2, f3 = func(l1), func(l2), func(l3)
-    
-    # Regularized denominators to handle repeated eigenvalues
-    eps = 1e-5
-    
-    def safe_denom(d):
-        # If d is small, return eps with sign of d (or 1 if d=0)
-        return ufl.conditional(ufl.lt(abs(d), eps), eps, d)
-        
-    d12 = safe_denom(l1 - l2)
-    d13 = safe_denom(l1 - l3)
-    d23 = safe_denom(l2 - l3)
-    
-    I = ufl.Identity(3)
-    
-    P1 = (A - l2*I) * (A - l3*I) / (d12 * d13)
-    P2 = (A - l1*I) * (A - l3*I) / (-d12 * d23)
-    P3 = (A - l1*I) * (A - l2*I) / (-d13 * -d23)
-    
-    return f1 * P1 + f2 * P2 + f3 * P3
+def smooth_plus(x, eps=1e-4):
+    return 0.5 * (x + smooth_abs(x, eps))
 
-def matrix_exp(A):
-    """Matrix exponential exp(A)."""
-    return matrix_function_3x3(A, ufl.exp)
+def smooth_max(x, y, eps=1e-4):
+    return 0.5 * (x + y + smooth_abs(x - y, eps))
 
-def matrix_ln(A):
-    """Matrix logarithm ln(A)."""
-    return matrix_function_3x3(A, ufl.ln)
-
-
-def unittrace_psd(B, dim: int, eps: float):
-    """Project PSD tensor B to unit-trace via B + εI."""
-    I = ufl.Identity(dim)
-    M = B + eps * I
-    return M / ufl.tr(M)
-
-
-# --- Smooth regularization helpers (C^∞ approximations) ---
-
-def smooth_abs(x, eps: float):
-    """Smooth |x| approximation."""
-    return ufl.sqrt(x * x + eps * eps)
-
-
-def smooth_plus(x, eps: float):
-    """Smooth max(x, 0) approximation."""
-    sabs = smooth_abs(x, eps)
-    return 0.5 * (x + sabs)
-
-
-def smooth_max(x, xmin, eps: float):
-    """Smooth max(x, xmin) approximation."""
-    dx = x - xmin
-    return xmin + 0.5 * (dx + ufl.sqrt(dx * dx + eps * eps))
-
-
-def smooth_heaviside(x, eps: float):
-    """Smooth Heaviside step function."""
-    return 0.5 * (1.0 + x / ufl.sqrt(x * x + eps * eps))
+def smooth_heaviside(x, eps=1e-4):
+    return 0.5 * (1 + x / smooth_abs(x, eps))

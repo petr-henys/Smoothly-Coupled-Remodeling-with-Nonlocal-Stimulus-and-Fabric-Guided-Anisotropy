@@ -1,26 +1,20 @@
 """
 Remodeling drivers: translate mechanics to stimulus ψ(u) and structure M(u).
-
-This module implements the 'Daily Stress Stimulus' theory as defined by 
-Beaupré, Orr, and Carter (1990) [cite: 1] and Jacobs et al. (1995) [cite: 4].
 """
 
-from __future__ import annotations
-
-from typing import Protocol, Dict, Tuple, List, Optional, TYPE_CHECKING
-
+from typing import Protocol, Dict, List, Optional, Tuple, Any
 import numpy as np
 from mpi4py import MPI
 from dolfinx import fem
 import ufl
+import pyvista as pv
 
+from simulation.config import Config
+from simulation.subsolvers import MechanicsSolver
+from simulation.traction_utils import create_traction_function, create_pressure_function
 from simulation.logger import get_logger
-
-if TYPE_CHECKING:
-    from simulation.config import Config
-    from simulation.subsolvers import MechanicsSolver
-    from simulation.femur_gait import FemurRemodellerGait
-
+from simulation.femur_css import FemurCSS, load_json_points
+from simulation.paths import FemurPaths
 
 class RemodelingDriver(Protocol):
     """Protocol for drivers that provide mechanical fields to remodeling PDEs."""
@@ -34,108 +28,123 @@ class RemodelingDriver(Protocol):
     def get_stimulus_stats(self) -> Dict[str, float]: ...
 
 
-class GaitDriver:
+class SimplifiedGaitDriver:
     """
-    Gait-averaged Carter-Beaupré stimulus.
+    Simplified remodeling driver that uses a fixed set of discrete load cases (stages)
+    instead of a continuous gait cycle.
     
-    Implements the Daily Stress Stimulus (ψ)[cite: 1]:
-        ψ = ( Σ n_i * σ_eff_i^m )^(1/m)
-    
-    Where σ_eff is the effective stress at the tissue level[cite: 4]:
-        σ_eff = (ρ_cortical / ρ)^k * sqrt(2 * E(ρ) * U)
-    
-    And U is the Strain Energy Density (SED).
-    
-    Attributes:
-        psi_expr (ufl.Expr): The symbolic expression for the daily stimulus ψ.
+    Implements the RemodelingDriver protocol.
     """
 
-    def __init__(self, mech: MechanicsSolver, gait_loader: FemurRemodellerGait, config: Config):
+    def __init__(
+        self, 
+        mech: MechanicsSolver, 
+        t_hip: fem.Function,
+        t_glmed: fem.Function,
+        load_stages: List[Dict],
+        config: Config
+    ):
+        """
+        Args:
+            mech: The mechanics solver instance.
+            t_hip: The fem.Function used for Hip traction in the solver's Neumann BCs.
+            t_glmed: The fem.Function used for GL Medius traction in the solver's Neumann BCs.
+            load_stages: A list of dictionaries, each defining a load stage:
+                         {
+                             "name": "Heel Strike",
+                             "weight": 1.0, # Relative frequency/duration
+                             "hip_tag": 3, # Surface tag for hip load
+                             "hip_magnitude": 1158.0, # Pressure magnitude (MPa)
+                             "gl_tag": 4, # Surface tag for gluteus load
+                             "gl_magnitude": 351.0, # Traction magnitude (MPa)
+                             "gl_vector_css": [x, y, z] # Direction vector in CSS
+                         }
+            config: Simulation configuration.
+        """
         self.mech = mech
-        self.gait = gait_loader
+        self.t_hip = t_hip
+        self.t_glmed = t_glmed
         self.cfg = config
         self.comm = self.mech.u.function_space.mesh.comm
-        self.logger = get_logger(self.comm, verbose=(self.cfg.verbose is True), name="Driver")
+        self.logger = get_logger(self.comm, verbose=(self.cfg.verbose is True), name="SimplifiedDriver")
 
-        # Cache config parameters for stimulus definition
-        # m: Weighting exponent (usually 4.0 for energy/stress) [cite: 1]
-        self.m_exp = float(config.n_power) 
+        self.stages = load_stages
         
-        # N: Number of daily cycles [cite: 1]
+        # Validate stages
+        total_weight = sum(s.get("weight", 1.0) for s in self.stages)
+        if total_weight <= 0:
+            raise ValueError("Total weight of load stages must be positive.")
+        
+        # Normalize weights
+        self.weights = [s.get("weight", 1.0) / total_weight for s in self.stages]
+        
+        # Log the configuration for verification
+        if self.comm.rank == 0:
+            self.logger.info("SimplifiedGaitDriver Configuration:")
+            for i, s in enumerate(self.stages):
+                h_tag = s.get("hip_tag", 3)
+                g_tag = s.get("gl_tag", 4)
+                self.logger.info(f"  Stage {i+1}: Hip Tag={h_tag}, Gluteus Tag={g_tag}")
+
+        # Parameters for stimulus
+        self.m_exp = float(config.n_power)
         self.n_cycles = float(config.gait_cycles_per_day)
-        
-        # k: Tissue stress concentration exponent. 
-        # Jacobs et al. (1995) use power 2 for (rho_c/rho)^2 applied to energy, 
-        # which implies k=1 for stress (sqrt of energy) or k=2 depending on formulation.
-        # Here we assume applied to stress directly.
-        self.k_stimulus = 1.0 
+        self.k_stimulus = 1.0
 
-        # Quadrature setup
-        quad = list(self.gait.get_quadrature())
-        if not quad:
-            raise ValueError("Gait quadrature must provide at least one sample.")
-
-        self.phases = [float(p) for p, _ in quad]
-        self.weights = [float(w) for _, w in quad]
-
-        # Snapshots for displacement field at each phase
+        # Snapshots for displacement field
         V = self.mech.u.function_space
-        self.u_snap = [fem.Function(V, name=f"u_snap_{i}") for i in range(len(self.phases))]
+        self.u_snap = [fem.Function(V, name=f"u_snap_{i}") for i in range(len(self.stages))]
 
-        # Tractions to update
-        self._tractions = [self.gait.t_hip, self.gait.t_glmed, self.gait.t_glmax]
-
-        # Precompute load vectors for all phases to avoid re-interpolation
-        self.loads = self._precompute_loads()
+        # Precompute load arrays (in World coordinates)
+        self.stage_loads = self._precompute_loads()
 
         # UFL Expressions
         self.psi_expr: Optional[ufl.core.expr.Expr] = None
         self._build_expressions()
         
-        # Auxiliary function space for statistics
+        # Stats
         self.V_stats = fem.functionspace(self.mech.u.function_space.mesh, ("DG", 0))
         self.psi_stats = fem.Function(self.V_stats)
 
-        self._last_stats: Optional[Dict] = None
-
     def setup(self) -> None:
-        """Initialize underlying mechanics solver."""
         self.mech.setup()
 
     def destroy(self) -> None:
-        """Clean up underlying mechanics solver."""
         self.mech.destroy()
 
     def update_stiffness(self) -> None:
-        """Reassemble mechanics stiffness matrix (LHS)."""
         self.mech.assemble_lhs()
 
     def invalidate(self) -> None:
-        """Rebuild expressions if configuration parameters change."""
         dirty = False
         if abs(self.m_exp - float(self.cfg.n_power)) > 1e-9:
             self.m_exp = float(self.cfg.n_power)
             dirty = True
-        
         if abs(self.n_cycles - float(self.cfg.gait_cycles_per_day)) > 1e-9:
             self.n_cycles = float(self.cfg.gait_cycles_per_day)
             dirty = True
-
         if dirty:
             self._build_expressions()
 
     def update_snapshots(self) -> Dict:
-        """Solve mechanics at each gait phase and refresh displacement snapshots."""
-        times: List[float] = []
-        iters: List[float] = []
+        """Solve mechanics for each stage and update snapshots."""
+        times = []
+        iters = []
 
-        for idx, (phase, weight) in enumerate(zip(self.phases, self.weights)):
+        for idx, stage_data in enumerate(self.stage_loads):
             start = MPI.Wtime()
             
-            # 1. Apply loads for this phase
-            self._apply_load(idx)
+            # 1. Apply loads
+            # stage_data is (hip_array, glmed_array)
+            self.t_hip.x.array[:] = stage_data[0]
+            self.t_glmed.x.array[:] = stage_data[1]
             
-            # 2. Solve mechanics
+            # Update ghosts (though solver usually handles this via scatter, 
+            # but we modified local values directly)
+            self.t_hip.x.scatter_forward()
+            self.t_glmed.x.scatter_forward()
+            
+            # 2. Solve
             self.mech.assemble_rhs()
             its, _ = self.mech.solve()
             
@@ -143,114 +152,116 @@ class GaitDriver:
             times.append(float(elapsed))
             iters.append(float(its))
 
-            # 3. Store displacement snapshot
-            # We copy the vector from the solver's u to our snapshot u_snap[idx]
-            # This automatically updates the UFL expressions that depend on u_snap[idx]
+            # 3. Store snapshot
             self.u_snap[idx].x.array[:] = self.mech.u.x.array
 
-        stats = {
+        return {
             "phase_iters": iters,
             "phase_times": times,
-            "total_time": float(sum(times)),
-            "median_time": float(np.median(times)) if times else 0.0,
-            "median_iters": float(np.median(iters)) if iters else 0.0,
-        }
-        return stats
-
-    def get_stimulus_stats(self) -> Dict[str, float]:
-        """Compute statistics of the daily stimulus field (min, max, mean, median)."""
-        # Interpolate the complex UFL expression into a DG0 field to query values
-        psi_expr_compiled = fem.Expression(self.psi_expr, self.V_stats.element.interpolation_points)
-        self.psi_stats.interpolate(psi_expr_compiled)
-        
-        # Domain integral average
-        psi_int = self.comm.allreduce(
-            fem.assemble_scalar(fem.form(self.psi_stats * self.cfg.dx)), op=MPI.SUM
-        )
-        vol = self.comm.allreduce(
-            fem.assemble_scalar(fem.form(1.0 * self.cfg.dx)), op=MPI.SUM
-        )
-        psi_avg = psi_int / vol if vol > 0 else 0.0
-
-        # Min/Max/Median
-        local_vals = self.psi_stats.x.array
-        local_min = np.min(local_vals) if local_vals.size > 0 else float('inf')
-        local_max = np.max(local_vals) if local_vals.size > 0 else float('-inf')
-
-        psi_min = self.comm.allreduce(local_min, op=MPI.MIN)
-        psi_max = self.comm.allreduce(local_max, op=MPI.MAX)
-
-        # Median (approximate via gather to rank 0)
-        all_vals = self.comm.gather(local_vals, root=0)
-        psi_median = 0.0
-        if self.comm.rank == 0:
-            full_data = np.concatenate(all_vals)
-            if full_data.size > 0:
-                psi_median = float(np.median(full_data))
-        psi_median = self.comm.bcast(psi_median, root=0)
-
-        return {
-            "psi_avg": psi_avg,
-            "psi_min": psi_min,
-            "psi_max": psi_max,
-            "psi_median": psi_median,
+            "total_time": sum(times)
         }
 
     def stimulus_expr(self) -> ufl.core.expr.Expr:
         return self.psi_expr
 
-    def _precompute_loads(self) -> List[Tuple[np.ndarray, ...]]:
-        """Pre-calculate traction vector arrays for all phases."""
-        loads = []
-        for phase in self.phases:
-            self.gait.update_loads(phase)
-            # Copy the arrays so they are stored independently
-            phase_loads = tuple(t.x.array.copy() for t in self._tractions)
-            loads.append(phase_loads)
-        return loads
+    def get_stimulus_stats(self) -> Dict[str, float]:
+        # Similar to GaitDriver
+        psi_expr_compiled = fem.Expression(self.psi_expr, self.V_stats.element.interpolation_points)
+        self.psi_stats.interpolate(psi_expr_compiled)
+        
+        psi_int = self.comm.allreduce(fem.assemble_scalar(fem.form(self.psi_stats * self.cfg.dx)), op=MPI.SUM)
+        vol = self.comm.allreduce(fem.assemble_scalar(fem.form(1.0 * self.cfg.dx)), op=MPI.SUM)
+        psi_avg = psi_int / vol if vol > 0 else 0.0
+        
+        local_vals = self.psi_stats.x.array
+        local_min = np.min(local_vals) if local_vals.size > 0 else float('inf')
+        local_max = np.max(local_vals) if local_vals.size > 0 else float('-inf')
+        
+        psi_min = self.comm.allreduce(local_min, op=MPI.MIN)
+        psi_max = self.comm.allreduce(local_max, op=MPI.MAX)
+        
+        return {"psi_avg": psi_avg, "psi_min": psi_min, "psi_max": psi_max, "psi_median": 0.0}
 
-    def _apply_load(self, idx: int) -> None:
-        """Apply precomputed loads for phase index `idx` to the traction functions."""
-        for traction, data in zip(self._tractions, self.loads[idx]):
-            traction.x.array[:] = data
+    def _precompute_loads(self) -> List[Tuple[np.ndarray, np.ndarray]]:
+        """
+        Generate the traction field arrays for each stage.
+        Uses create_traction_function to generate the fields (including blurring),
+        then extracts the arrays.
+        """
+        rank = self.comm.Get_rank()
+        
+        # Initialize CSS for transformation
+        css = None
+        if rank == 0:
+            try:
+                pv_mesh = pv.read(str(FemurPaths.FEMUR_MESH_VTK))
+                head_line = load_json_points(FemurPaths.HEAD_LINE_JSON)
+                le_me_line = load_json_points(FemurPaths.LE_ME_LINE_JSON)
+                css = FemurCSS(pv_mesh, head_line, le_me_line, side='left')
+            except Exception as e:
+                self.logger.warning(f"Could not initialize CSS: {e}. Assuming World coordinates.")
+        
+        # We need the meshtags to identify surfaces
+        # Assuming the domain in mech.u has meshtags attached or we can get them.
+        # The Config object usually has facet_tags.
+        meshtags = self.cfg.facet_tags
+        V = self.mech.u.function_space
+        
+        precomputed = []
+        
+        for stage in self.stages:
+            # Extract parameters
+            hip_tag = stage.get("hip_tag", 3)
+            hip_mag = stage.get("hip_magnitude", 0.0)
+            
+            gl_tag = stage.get("gl_tag", 4)
+            gl_mag = stage.get("gl_magnitude", 0.0)
+            gl_vec_css = np.array(stage.get("gl_vector_css", [0, 0, 1]), dtype=float)
+            
+            # Transform Gluteus vector
+            gl_vec_world = None
+            if rank == 0:
+                if css:
+                    gl_vec_world = css.css_to_world_vector(gl_vec_css)
+                else:
+                    gl_vec_world = gl_vec_css
+            gl_vec_world = self.comm.bcast(gl_vec_world, root=0)
+            
+            # Scale Gluteus vector by magnitude
+            # Assuming gl_vec_css is a direction (unit vector), we multiply by magnitude.
+            # If it's already a force vector, magnitude might be redundant or a scaler.
+            # The user provided "gl_magnitude" and "TRACTION_CSS".
+            # We assume TRACTION_CSS is direction.
+            # Normalize direction just in case?
+            norm = np.linalg.norm(gl_vec_world)
+            if norm > 1e-6:
+                gl_vec_world = gl_vec_world / norm * gl_mag
+            else:
+                gl_vec_world = gl_vec_world * 0.0
+            
+            # Create Hip Pressure Function
+            # Uses create_pressure_function (normal * magnitude)
+            t_hip_func = create_pressure_function(V, meshtags, hip_tag, hip_mag, blur_radius=5.0)
+            
+            # Create Gluteus Traction Function
+            t_glmed_func = create_traction_function(V, meshtags, gl_tag, gl_vec_world, blur_radius=5.0)
+            
+            # Store arrays
+            precomputed.append((
+                t_hip_func.x.array.copy(),
+                t_glmed_func.x.array.copy()
+            ))
+            
+        return precomputed
 
     def _build_expressions(self) -> None:
-        """
-        Construct UFL expressions for daily stimulus.
-        
-        Strictly follows Beaupré et al. (1990) :
-        psi = ( Sum( n_i * sigma_eff_i^m ) ) ^ (1/m)
-        
-        Where sigma_eff_i is the effective stress at tissue level.
-        1. Continuum Effective Stress: sigma_cont = sqrt(2 * E * U)
-        2. Tissue Effective Stress: sigma_tissue = (rho_max / rho)^k * sigma_cont
-        """
-        if self.m_exp <= 0.0:
-            raise ValueError(f"n_power (m) must be positive, got {self.m_exp}")
-
-        if self.n_cycles <= 0.0:
-            raise ValueError(f"gait_cycles_per_day must be positive, got {self.n_cycles}")
-
-        # Reconstruct Young's Modulus E(rho) field from config parameters
-        # E is needed to convert SED (U) to Effective Stress dimensionally [MPa]
-        # E = E_max * (rho/rho_max)^p_stiffness
+        # Same logic as GaitDriver
         rho = self.mech.rho
-        # Note: Config values are stored, we use E0 as E_max reference
         rho_max = self.cfg.rho_max
-        E_max = self.cfg.E0 
-        # We need to use the same variable exponent logic as in MechanicsSolver if we want consistency.
-        # But here we just need a scalar E for the stress conversion.
-        # MechanicsSolver uses E = E0 * rho^k_var.
-        # Let's replicate that logic or simplify.
-        # The original code used p_exponent = self.cfg.k_stiff.
-        # But MechanicsSolver now uses variable k.
-        # Let's use k_stiff from config as a representative exponent for stimulus calculation,
-        # or replicate the variable exponent logic.
-        # Replicating variable exponent logic is safer for consistency.
+        E_max = self.cfg.E0
         
         rho_safe = ufl.max_value(rho, self.cfg.smooth_eps)
         
-        # Variable exponent logic
         def smoothstep(x, edge0, edge1):
             t = ufl.max_value(0.0, ufl.min_value(1.0, (x - edge0) / (edge1 - edge0)))
             return t * t * (3.0 - 2.0 * t)
@@ -263,36 +274,18 @@ class GaitDriver:
         psi_summation = 0.0
         total_weight = 0.0
         
-        # We use the snapshots u_snap to build the expression.
         for u_i, weight in zip(self.u_snap, self.weights):
-            # 1. Kinematics & Stress
             sig_i = self.mech.sigma(u_i, rho)
             e_i = self.mech.get_strain_tensor(u_i)
-            
-            # 2. Strain Energy Density (U = 1/2 * sigma : epsilon)
             U_i = 0.5 * ufl.inner(sig_i, e_i)
             U_safe = ufl.max_value(U_i, 0.0)
             
-            # 3. Continuum Effective Stress: sigma_bar = sqrt(2 * E * U)
-            # This converts energy density back to a scalar stress equivalent 
-            # consistent with continuum elasticity[cite: 1, 17].
             sigma_continuum = ufl.sqrt(2.0 * E_field * U_safe + self.cfg.smooth_eps)
-            
-            # 4. Tissue Effective Stress: sigma_t = (rho_max / rho)^k * sigma_continuum
-            # Accounts for porous stress concentration.
             tissue_scaling = (rho_max / rho_safe)**self.k_stimulus
             sigma_tissue = tissue_scaling * sigma_continuum
             
-            # 5. Accumulate Stimulus Dose: n_i * sigma^m
-            # n_i = weight * total_daily_cycles
             n_i = weight * self.n_cycles
             psi_summation += n_i * (sigma_tissue ** self.m_exp)
-
             total_weight += weight
 
-        if total_weight <= 0.0:
-            raise ValueError("Gait quadrature weights must sum to a positive value.")
-
-        # Final Stimulus Expression: psi = (Sum)^ (1/m)
-        # This is the daily stress stimulus described by Beaupré [cite: 1]
         self.psi_expr = ufl.max_value(psi_summation, 0.0) ** (1.0 / self.m_exp)

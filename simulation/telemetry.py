@@ -1,12 +1,13 @@
-"""Experiment tracking: metadata JSON and buffered CSV streams (rank-0 only)."""
+"""Telemetry system for experiment tracking and reproducibility."""
 
 from __future__ import annotations
 
 import csv
+import gzip
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from mpi4py import MPI
 
@@ -18,21 +19,19 @@ def _iso_utc(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-FLUSH_INTERVAL: int = 20
-
-
 class Telemetry:
-    """Buffered CSV event streams and JSON metadata (rank-0 I/O)."""
+    """Experiment tracking and telemetry system."""
 
     def __init__(
         self,
         comm: MPI.Comm,
         outdir: str,
+        flush_interval: Optional[int] = None,
         verbose: bool = True,
     ):
         self.comm = comm
         self.outdir = Path(outdir)
-        self.logger = get_logger(comm, verbose=(verbose is True), name="Telemetry")
+        self.logger = get_logger(comm, verbose=bool(verbose), name="Telemetry")
 
         if comm.rank == 0:
             self.outdir.mkdir(parents=True, exist_ok=True)
@@ -41,6 +40,7 @@ class Telemetry:
         self._csv_files: Dict[str, object] = {}
         self._csv_writers: Dict[str, object] = {}
         self._buffers: Dict[str, List[Dict]] = {}
+        self._flush_interval = max(1, int(20 if flush_interval is None else flush_interval))
         self._start_time = datetime.now(timezone.utc)
 
         self.logger.info("Telemetry initialized")
@@ -53,17 +53,21 @@ class Telemetry:
         self,
         stream_name: str,
         columns: List[str],
-        filename: str | None = None,
+        gz: bool = False,
+        filename: Optional[str] = None,
     ) -> None:
-        """Register CSV stream with header (rank-0 only)."""
+        """Register a CSV event stream."""
         if self.comm.rank != 0:
             return
 
         if filename is None:
-            filename = f"{stream_name}.csv"
+            filename = f"{stream_name}.csv" + (".gz" if gz else "")
 
         path = self.outdir / filename
-        f = open(path, "w", newline="")
+        if gz:
+            f = gzip.open(path, "wt", newline="")
+        else:
+            f = open(path, "w", newline="")
 
         writer = csv.DictWriter(f, fieldnames=columns, extrasaction='ignore')
         writer.writeheader()
@@ -74,18 +78,18 @@ class Telemetry:
         self.logger.debug(lambda: f"Registered CSV stream '{stream_name}' at {path}")
 
     def record(self, stream_name: str, data: Dict[str, Any], csv_event: bool = True) -> None:
-        """Buffer event row (rank-0 only)."""
+        """Record an event to a registered stream."""
         if self.comm.rank != 0 or not csv_event:
             return
         if stream_name not in self._csv_writers:
             raise KeyError(f"Telemetry stream '{stream_name}' not registered")
 
         self._buffers[stream_name].append(dict(data))
-        if len(self._buffers[stream_name]) >= FLUSH_INTERVAL:
+        if len(self._buffers[stream_name]) >= self._flush_interval:
             self._flush(stream_name)
 
     def _flush(self, stream_name: str) -> None:
-        """Write buffered events to CSV (rank-0 only)."""
+        """Flush buffered events to disk."""
         if self.comm.rank != 0 or stream_name not in self._buffers:
             return
 
@@ -97,7 +101,7 @@ class Telemetry:
         self._csv_files[stream_name].flush()
 
     def flush_all(self) -> None:
-        """Flush all streams (rank-0 only)."""
+        """Flush all buffered events."""
         for stream_name in list(self._buffers.keys()):
             self._flush(stream_name)
 
@@ -106,16 +110,18 @@ class Telemetry:
         metadata: Dict[str, Any],
         filename: str = "metadata.json",
         overwrite: bool = True,
+        *,
+        inject_standard_fields: bool = True,
     ) -> None:
-        """Write/merge JSON metadata with standard fields (rank-0 only)."""
+        """Write run metadata to JSON file."""
         if self.comm.rank != 0:
             return
 
         path = self.outdir / filename
 
-        # Always inject standard fields
-        metadata.setdefault("start_time", _iso_utc(self._start_time))
-        metadata.setdefault("mpi_size", self.comm.size)
+        if inject_standard_fields:
+            metadata.setdefault("start_time", _iso_utc(self._start_time))
+            metadata.setdefault("mpi_size", self.comm.size)
 
         if not overwrite and path.exists():
             with open(path, "r") as f:
@@ -129,7 +135,7 @@ class Telemetry:
         self.logger.debug(lambda: f"Wrote telemetry metadata JSON to {path}")
 
     def close(self) -> None:
-        """Flush and close all streams (rank-0 only)."""
+        """Flush and close all streams."""
         self.flush_all()
 
         if self.comm.rank == 0:
