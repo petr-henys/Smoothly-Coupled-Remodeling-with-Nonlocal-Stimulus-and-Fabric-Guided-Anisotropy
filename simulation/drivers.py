@@ -217,7 +217,9 @@ class SimplifiedGaitDriver:
         w = smoothstep(rho_safe, self.cfg.rho_trab_max, self.cfg.rho_cort_min)
         k_var = self.cfg.n_trab * (1.0 - w) + self.cfg.n_cort * w
         
-        E_field = E_max * (rho_safe**k_var)
+        # Normalize density for stiffness
+        rho_rel = rho_safe / rho_max
+        E_field = E_max * (rho_rel**k_var)
 
         psi_summation = 0.0
         
@@ -228,6 +230,9 @@ class SimplifiedGaitDriver:
             U_safe = ufl.max_value(U_i, 0.0)
             
             sigma_continuum = ufl.sqrt(2.0 * E_field * U_safe + self.cfg.smooth_eps)
+            
+            # Tissue stress scaling: sigma_tissue = (rho_max / rho) * sigma_continuum
+            # This assumes rho_max is the tissue density.
             tissue_scaling = (rho_max / rho_safe)**self.k_stimulus
             sigma_tissue = tissue_scaling * sigma_continuum
             

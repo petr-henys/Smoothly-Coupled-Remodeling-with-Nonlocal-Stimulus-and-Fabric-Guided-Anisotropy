@@ -213,7 +213,7 @@ def fields(spaces) -> Fields:
     S_old = fem.Function(Q, name="S_old")
     
     # Default values
-    rho.x.array[:] = 0.5
+    rho.x.array[:] = 0.8  # Updated default density (physical)
     rho.x.scatter_forward()
     A.interpolate(lambda x: (np.eye(3) / 3.0).flatten()[:, None] * np.ones((1, x.shape[1])))
     A.x.scatter_forward()

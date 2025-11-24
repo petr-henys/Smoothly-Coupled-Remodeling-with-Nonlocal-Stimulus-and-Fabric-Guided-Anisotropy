@@ -205,7 +205,9 @@ class MechanicsSolver(_BaseLinearSolver):
         w = smoothstep(rho_eff, self.cfg.rho_trab_max, self.cfg.rho_cort_min)
         k_var = self.cfg.n_trab * (1.0 - w) + self.cfg.n_cort * w
         
-        E = self.cfg.E0 * (rho_eff**k_var)
+        # Normalize density by rho_max for stiffness calculation
+        rho_rel = rho_eff / self.cfg.rho_max
+        E = self.cfg.E0 * (rho_rel**k_var)
         nu = self.cfg.nu0
         mu = E / (2.0 * (1.0 + nu))
         lmbda = E * nu / ((1.0 + nu) * (1.0 - 2.0 * nu))
@@ -292,11 +294,11 @@ class DensitySolver(_BaseLinearSolver):
         S_plus = smooth_plus(S_driving, self.smooth_eps)
         S_minus = smooth_plus(-S_driving, self.smooth_eps)
         
-        # LHS: (rho/dt)*v + beta*grad(rho)*grad(v) + k_rho*(S_plus + S_minus)*rho*v
+        # LHS: (rho/dt)*v + D_rho*grad(rho)*grad(v) + k_rho*(S_plus + S_minus)*rho*v
         reaction_coeff = self.cfg.k_rho * (S_plus + S_minus)
         a_ufl = (
             (self.trial / dt) * self.test * self.dx
-            + self.cfg.beta * ufl.inner(ufl.grad(self.trial), ufl.grad(self.test)) * self.dx
+            + self.cfg.D_rho * ufl.inner(ufl.grad(self.trial), ufl.grad(self.test)) * self.dx
             + reaction_coeff * self.trial * self.test * self.dx
         )
         self.a_form = fem.form(a_ufl)

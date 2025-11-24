@@ -25,45 +25,39 @@ class Config:
     # =========================================================================
     # Material Properties
     # =========================================================================
-    # Density-stiffness relationship: E = E0 * rho^n(rho)
+    # Density-stiffness relationship: E = E0 * (rho/rho_max)^n(rho)
     n_power: float = 4.        # Exponent for stimulus calculation (proximal femur, fatigue-like)
     n_trab: float = 2.0         # Exponent for trabecular bone
     n_cort: float = 1.2         # Exponent for cortical bone
-    rho_trab_max: float = 0.6   # Max density for trabecular regime
-    rho_cort_min: float = 0.9   # Min density for cortical regime
+    rho_trab_max: float = 1.2   # Max density for trabecular regime [g/cm^3]
+    rho_cort_min: float = 1.7   # Min density for cortical regime [g/cm^3]
 
     # =========================================================================
     # Density Evolution (Remodeling)
     # =========================================================================
-    rho_min: float = 0.05       # Min relative density (very low trabecular)
-    rho_max: float = 1.00       # Max relative density
-    rho0: float = 0.4           # Initial relative density (proximal femur: mostly trabecular)
-    k_rho: float = 0.02        # Density remodeling rate [1/day] (half-time ~1 year)
+    rho_min: float = 0.10       # Min physical density [g/cm^3]
+    rho_max: float = 1.95       # Max physical density [g/cm^3]
+    rho0: float = 0.80          # Initial density [g/cm^3]
+    k_rho: float = 0.05        # Density remodeling rate [1/day] (half-time ~1 year)
 
     # Density diffusion [mm^2/day]
-    beta: float = 0.01       # Isotropic diffusion [mm^2/day]
+    D_rho: float = 0.1       # Isotropic diffusion [mm^2/day]
 
     # =========================================================================
     # Stimulus (Local)
     # =========================================================================
-    psi_ref: float = 20.     # Reference effective stress [MPa] for daily stimulus in proximal femur
+    psi_ref: float = 10.     # Reference effective stress [MPa] for daily stimulus in proximal femur
     distal_damping_height: float = 1.0     # Height of distal damping zone [mm] (cut shaft of femur)
     distal_damping_transition: float = 0.5    # Transition width of distal damping zone [mm]
-
-    # Standard Zysset parameters (approximate)
-    k_stiff: float = 1.9        # Density exponent for stiffness (often close to 2)
     
     # Base moduli [MPa]
-    E0: float = 15000.0       # Young's modulus
+    E0: float = 6500       # Young's modulus
     nu0: float = 0.3          # Poisson ratio
 
     # =========================================================================
     # Gait & Loading
     # =========================================================================
     gait_cycles_per_day: float = 1.   # Daily equivalent hip loading cycles (walking, stairs)
-    load_scale: float = 1.0      # Keep loads from musculoskeletal model unscaled
-    gait_samples: int = 9
-    body_mass_tonnes: float = 0.075   # 0.075 t ≈ 75 kg (proximal femur subject)
 
     # =========================================================================
     # Numerics & I/O
@@ -95,10 +89,6 @@ class Config:
     restart_on_stall: float = 1.10
     restart_on_cond: float = 1e12
     step_limit_factor: float = 2.0
-
-    # Nitsche (KUBC)
-    nitsche_alpha: float = 30.0
-    nitsche_theta: float = 1.0
 
     # Subiterations
     max_subiters: int = 50
@@ -141,28 +131,22 @@ class Config:
             raise ValueError("n_trab and n_cort must be positive.")
         
         # Density
-        if not (0.0 <= self.rho_min < self.rho_max <= 1.0):
-            raise ValueError("rho_min/max must satisfy 0 <= rho_min < rho_max <= 1.")
+        if not (0.0 < self.rho_min < self.rho_max):
+            raise ValueError("rho_min/max must satisfy 0 < rho_min < rho_max.")
         if not (self.rho_min <= self.rho_trab_max <= self.rho_cort_min <= self.rho_max):
             raise ValueError("rho_trab_max and rho_cort_min must satisfy rho_min <= rho_trab_max <= rho_cort_min <= rho_max.")
         if not (self.rho_min <= self.rho0 <= self.rho_max):
             raise ValueError("rho0 must lie within [rho_min, rho_max].")
-        if self.beta < 0:
-            raise ValueError("beta must be non-negative.")
+        if self.D_rho < 0:
+            raise ValueError("D_rho must be non-negative.")
         
         # Stimulus
         if self.psi_ref <= 0:
             raise ValueError("Reference value psi_ref must be positive.")
         
         # Gait
-        if self.body_mass_tonnes <= 0:
-            raise ValueError("body_mass_tonnes must be positive (tonnes).")
         if self.gait_cycles_per_day <= 0:
             raise ValueError("gait_cycles_per_day must be positive.")
-        if self.gait_samples < 2:
-            raise ValueError("gait_samples must be at least 2.")
-        if self.load_scale < 0:
-            raise ValueError("load_scale must be non-negative.")
         
         # Solver
         if self.accel_type not in ("anderson", "picard"):

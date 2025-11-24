@@ -116,7 +116,7 @@ def test_density_evolves_with_stimulus(tmp_path, unit_cube, facet_tags, dummy_ga
     """Density should evolve from initial rho0 in response to stimulus."""
     comm = MPI.COMM_WORLD
     cfg = Config(domain=unit_cube, facet_tags=facet_tags, results_dir=str(tmp_path), 
-                 max_subiters=8, rho0=0.5)
+                 max_subiters=8, rho0=0.8)
 
     with patch("simulation.drivers.pv.read"), \
          patch("simulation.drivers.load_json_points"), \
