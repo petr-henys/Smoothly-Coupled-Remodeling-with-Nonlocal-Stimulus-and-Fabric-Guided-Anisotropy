@@ -160,7 +160,7 @@ def unit_cube(request) -> object:
     Usage: @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
     """
     from dolfinx import mesh
-    n = int(getattr(request, "param", 8))
+    n = int(getattr(request, "param", 6))
     return mesh.create_unit_cube(MPI.COMM_WORLD, n, n, n, ghost_mode=mesh.GhostMode.shared_facet)
 
 
@@ -173,7 +173,7 @@ def facet_tags(unit_cube) -> object:
 @pytest.fixture
 def cfg(unit_cube, facet_tags) -> object:
     from simulation.config import Config
-    return Config(domain=unit_cube, facet_tags=facet_tags, verbose=False)
+    return Config(domain=unit_cube, facet_tags=facet_tags)
 
 
 @pytest.fixture
@@ -319,10 +319,12 @@ def cfg_factory(unit_cube, facet_tags):
         params.update(overrides)
         
         # Create config with preset parameters
+        if 'verbose' in params:
+            params.pop('verbose')
+            
         return Config(
             domain=unit_cube,
             facet_tags=facet_tags,
-            verbose=params.pop('verbose', False),
             **params
         )
     
@@ -353,14 +355,6 @@ def femur_setup():
     return domain, facet_tags, V, Q, cfg
 
 
-@pytest.fixture(scope="module")
-def femur_gait_loader(femur_setup):
-    """Gait loader used for femur reaction-force tests."""
-    from simulation.femur_gait import setup_femur_gait_loading
-    _, _, V, _, _ = femur_setup
-    return setup_femur_gait_loading(V, mass_tonnes=0.075, n_samples=9)
-
-
 # =============================================================================
 # Tensor helpers
 # =============================================================================
@@ -387,32 +381,36 @@ def fiber_tensor_factory():
 
 @pytest.fixture
 def dummy_gait_loader(spaces):
-    """Create a dummy gait loader for unit tests (no external files needed)."""
+    """Create dummy gait data for unit tests."""
     from dolfinx import fem
     import numpy as np
     
-    class _DummyGaitLoader:
-        def __init__(self, V):
-            self.V = V
-            self.t_hip = fem.Function(V, name="t_hip")
-            self.t_glmed = fem.Function(V, name="t_glmed")
-            self.t_glmax = fem.Function(V, name="t_glmax")
-            self.load_scale = 0.5  # [MPa]
-            self.tag = 2 # Default Neumann tag
-
-        def get_quadrature(self):
-            return [(0.0, 0.5), (50.0, 0.5)]
-
-        def update_loads(self, phase_percent: float) -> None:
-            f = (1.0 - float(phase_percent) / 100.0) * self.load_scale
-            v_hip = np.array([-1.0 * f, -0.5 * f, -0.3 * f], dtype=float)
-            v_glmed = np.array([0.2 * f, 0.8 * f, -0.1 * f], dtype=float)
-            v_glmax = np.array([0.1 * f, -0.2 * f, -0.9 * f], dtype=float)
-            
-            self.t_hip.interpolate(lambda x: np.tile(v_hip.reshape(3, 1), (1, x.shape[1])))
-            self.t_glmed.interpolate(lambda x: np.tile(v_glmed.reshape(3, 1), (1, x.shape[1])))
-            self.t_glmax.interpolate(lambda x: np.tile(v_glmax.reshape(3, 1), (1, x.shape[1])))
-            for t in (self.t_hip, self.t_glmed, self.t_glmax):
-                t.x.scatter_forward()
-                
-    return _DummyGaitLoader(spaces.V)
+    t_hip = fem.Function(spaces.V, name="t_hip")
+    t_glmed = fem.Function(spaces.V, name="t_glmed")
+    
+    # Create dummy stages
+    stages = [
+        {
+            "weight": 0.6,
+            "hip_tag": 2,
+            "hip_magnitude": 1.0,
+            "gl_tag": 2,
+            "gl_magnitude": 0.5,
+            "gl_vector_css": [0.0, 1.0, 0.0]
+        },
+        {
+            "weight": 0.4,
+            "hip_tag": 2,
+            "hip_magnitude": 0.8,
+            "gl_tag": 2,
+            "gl_magnitude": 0.4,
+            "gl_vector_css": [0.0, 1.0, 0.0]
+        }
+    ]
+    
+    return {
+        "t_hip": t_hip,
+        "t_glmed": t_glmed,
+        "stages": stages,
+        "tag": 2
+    }

@@ -26,7 +26,7 @@ class TestThermodynamics:
     def test_strain_energy_positivity(self, unit_cube, facet_tags):
         """Strain energy density ψ = 0.5*σ:ε must be non-negative."""
         comm = MPI.COMM_WORLD
-        cfg = Config(domain=unit_cube, facet_tags=facet_tags, verbose=(comm.rank == 0))
+        cfg = Config(domain=unit_cube, facet_tags=facet_tags)
         
         P1_vec = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3,))
         P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
@@ -65,7 +65,7 @@ class TestThermodynamics:
         """
         comm = MPI.COMM_WORLD
         domain = unit_cube
-        cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False)
+        cfg = Config(domain=domain, facet_tags=facet_tags)
 
         P1_vec = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3,))
         P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
@@ -121,7 +121,7 @@ class TestConservation:
         comm = MPI.COMM_WORLD
         domain = unit_cube
         facet_tags = build_facetag(domain)
-        cfg = Config(domain=domain, facet_tags=facet_tags, verbose=(comm.rank == 0))
+        cfg = Config(domain=domain, facet_tags=facet_tags)
         
         P1_vec = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3,))
         P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
@@ -168,7 +168,7 @@ class TestConservation:
         comm = MPI.COMM_WORLD
         domain = make_unit_cube(comm, 8)
         facet_tags = build_facetag(domain)
-        cfg = Config(domain=domain, facet_tags=facet_tags, verbose=(comm.rank == 0))
+        cfg = Config(domain=domain, facet_tags=facet_tags)
         
         P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
         Q = functionspace(domain, P1)
@@ -206,7 +206,7 @@ class TestConservation:
     def test_density_solver_response_to_stimulus_sign(self, unit_cube, facet_tags, mean_value_factory):
         """Positive stimulus should increase density (toward rho_max), negative should decrease (toward rho_min)."""
         comm = MPI.COMM_WORLD
-        cfg = Config(domain=unit_cube, facet_tags=facet_tags, verbose=(comm.rank == 0))
+        cfg = Config(domain=unit_cube, facet_tags=facet_tags)
     
         # Increase remodeling rate for this test to ensure measurable change in one step
         cfg.k_rho = 0.2
@@ -263,7 +263,7 @@ class TestConservation:
         """With S=0 and natural (no-flux) boundaries, ∫ρ dx is conserved by diffusion step."""
         comm = MPI.COMM_WORLD
         domain = unit_cube
-        cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False)
+        cfg = Config(domain=domain, facet_tags=facet_tags)
         # Disable distal damping
         cfg.distal_damping_height = -100.0
     
@@ -319,7 +319,7 @@ class TestConservationChecks:
         comm = MPI.COMM_WORLD
         domain = unit_cube
         facet_tags = build_facetag(domain)
-        cfg = Config(domain=domain, facet_tags=facet_tags, verbose=(comm.rank == 0))
+        cfg = Config(domain=domain, facet_tags=facet_tags)
         cfg.set_dt(10.0)  # 10 days
         
         P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)

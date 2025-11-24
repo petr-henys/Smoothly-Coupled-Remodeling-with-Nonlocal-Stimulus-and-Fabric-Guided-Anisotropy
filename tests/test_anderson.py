@@ -49,18 +49,18 @@ class TestAndersonAcceleration:
             x_old, x_raw = np.zeros(10), np.ones(10)
 
             # Proxy residual larger than reference triggers rejection
-            def prn(a, b):
+            def prn(a, b, c):
                 return 2.0
 
             # First rejection
-            x1, info1 = aa.mix(x_old, x_raw, norm_func=prn)
+            x1, info1 = aa.mix(x_old, x_raw, proj_residual_norm=prn)
             assert info1.get("accepted") is False, "First call should reject"
 
             # Second rejection triggers restart
-            x2, info2 = aa.mix(x_old, x_raw, norm_func=prn)
+            x2, info2 = aa.mix(x_old, x_raw, proj_residual_norm=prn)
             assert isinstance(info2.get("restart_reason", ""), str), "Restart reason missing"
             assert "reject_streak" in info2.get("restart_reason", ""), "Restart not scheduled on reject streak"
 
             # Third call honors pending reset
-            _ = aa.mix(x_old, x_raw, norm_func=prn)
+            _ = aa.mix(x_old, x_raw, proj_residual_norm=prn)
             assert len(aa.x_hist) <= 1, "History not cleared after scheduled reset"

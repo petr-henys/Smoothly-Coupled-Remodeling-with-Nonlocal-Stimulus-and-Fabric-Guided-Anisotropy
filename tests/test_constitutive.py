@@ -21,7 +21,7 @@ class TestConstitutiveLaw:
     def test_isotropic_stress_symmetry(self, unit_cube, facet_tags):
         """Verify stress tensor is symmetric for isotropic material."""
         comm = MPI.COMM_WORLD
-        cfg = Config(domain=unit_cube, facet_tags=facet_tags, verbose=(comm.rank == 0))
+        cfg = Config(domain=unit_cube, facet_tags=facet_tags)
         
         P1_vec = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3,))
         P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
@@ -78,7 +78,7 @@ class TestAdvancedConstitutiveLaws:
     def test_dual_power_law_stiffness(self, unit_cube, facet_tags):
         """Verify E(ρ) follows different power laws in trabecular vs cortical regimes."""
         comm = MPI.COMM_WORLD
-        cfg = Config(domain=unit_cube, facet_tags=facet_tags, verbose=(comm.rank == 0))
+        cfg = Config(domain=unit_cube, facet_tags=facet_tags)
         
         # Set distinct exponents
         cfg.n_trab = 2.0
@@ -141,7 +141,7 @@ class TestAdvancedConstitutiveLaws:
     def test_linear_driver_rate(self, unit_cube, facet_tags):
         """Verify density evolution rate is proportional to stimulus."""
         comm = MPI.COMM_WORLD
-        cfg = Config(domain=unit_cube, facet_tags=facet_tags, verbose=(comm.rank == 0))
+        cfg = Config(domain=unit_cube, facet_tags=facet_tags)
         
         cfg.k_rho = 1.0
         cfg.dt = 0.1

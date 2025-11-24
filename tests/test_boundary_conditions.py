@@ -27,7 +27,7 @@ class TestBoundaryConditions:
         comm = MPI.COMM_WORLD
         domain = unit_cube
         facet_tags = build_facetag(domain)
-        cfg = Config(domain=domain, facet_tags=facet_tags, verbose=(comm.rank == 0))
+        cfg = Config(domain=domain, facet_tags=facet_tags)
         
         P1_vec = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3,))
         P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
@@ -64,7 +64,7 @@ class TestBoundaryConditions:
         comm = MPI.COMM_WORLD
         domain = unit_cube
         facet_tags = build_facetag(domain)
-        cfg = Config(domain=domain, facet_tags=facet_tags, verbose=(comm.rank == 0))
+        cfg = Config(domain=domain, facet_tags=facet_tags)
         
         P1_vec = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3,))
         P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
@@ -112,8 +112,7 @@ def test_mechanics_uniform_extension():
     rho.x.scatter_forward()
 
     # Config
-    cfg = Config(domain=m, facet_tags=facets, verbose=False)
-    cfg.xi_aniso = 0.0
+    cfg = Config(domain=m, facet_tags=facets)
 
     # Simple extension test: clamp x=0, prescribe u_x=0.01 on x=1
     fdim = m.topology.dim - 1

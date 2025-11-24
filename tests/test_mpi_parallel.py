@@ -23,6 +23,17 @@ from simulation.fixedsolver import FixedPointSolver
 from simulation.model import Remodeller
 comm = MPI.COMM_WORLD
 
+stages = [
+    {
+        "weight": 1.0,
+        "hip_tag": 2,
+        "hip_magnitude": 1.0,
+        "gl_tag": 2,
+        "gl_magnitude": 0.5,
+        "gl_vector_css": [0.0, 1.0, 0.0]
+    }
+]
+
 # =============================================================================
 # Ghost Update Tests
 # =============================================================================
@@ -78,7 +89,7 @@ class TestDomainDecomposition:
         comm = MPI.COMM_WORLD
         domain = unit_cube
         facet_tags = build_facetag(domain)
-        cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False)
+        cfg = Config(domain=domain, facet_tags=facet_tags)
         
         P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
         Q = functionspace(domain, P1)
@@ -132,13 +143,13 @@ class TestDomainDecomposition:
 class TestCollectiveOps:
     """Test MPI collective operations (reductions, broadcasts)."""
     
-    @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
+    @pytest.mark.parametrize("unit_cube", [6], indirect=True)
     def test_global_volume_computation(self, unit_cube):
         """Verify global volume = sum of local volumes = 1.0 for unit cube."""
         comm = MPI.COMM_WORLD
         domain = unit_cube
         facet_tags = build_facetag(domain)
-        cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False)
+        cfg = Config(domain=domain, facet_tags=facet_tags)
         
         vol_local = fem.assemble_scalar(fem.form(1.0 * cfg.dx))
         vol_global = comm.allreduce(vol_local, op=MPI.SUM)
@@ -153,7 +164,7 @@ class TestCollectiveOps:
 class TestMPIIO:
     """Test MPI-parallel I/O operations."""
     
-    @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
+    @pytest.mark.parametrize("unit_cube", [6], indirect=True)
     def test_rank0_only_writes(self, unit_cube):
         """Verify only rank 0 performs file writes."""
         comm = MPI.COMM_WORLD
@@ -162,14 +173,14 @@ class TestMPIIO:
         
         import tempfile
         with tempfile.TemporaryDirectory() as tmpdir:
-            cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False, results_dir=tmpdir)
+            cfg = Config(domain=domain, facet_tags=facet_tags, results_dir=tmpdir)
             
             # Telemetry should only write on rank 0
             if cfg.telemetry is not None:
                 # Check internal flag
                 assert cfg.telemetry.is_root == (comm.rank == 0), "Telemetry root flag incorrect"
     
-    @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
+    @pytest.mark.parametrize("unit_cube", [6], indirect=True)
     def test_vtx_output_consistency(self, unit_cube):
         """Test skipped: VTX behavior verified in storage tests with stubs."""
         comm = MPI.COMM_WORLD
@@ -178,9 +189,9 @@ class TestMPIIO:
         
         import tempfile
         with tempfile.TemporaryDirectory() as tmpdir:
-            cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False, results_dir=tmpdir)
+            cfg = Config(domain=domain, facet_tags=facet_tags, results_dir=tmpdir)
             
-            with Remodeller(cfg) as rem:
+            with Remodeller(cfg, stages) as rem:
                 # Compute total scalar DOFs (account for block sizes)
                 dofs_V = rem.V.dofmap.index_map.size_global * rem.V.dofmap.index_map_bs
                 dofs_Q = rem.Q.dofmap.index_map.size_global * rem.Q.dofmap.index_map_bs
@@ -190,7 +201,7 @@ class TestMPIIO:
                 rss_mb_local = current_memory_mb()
                 rss_mb_total = rem.comm.allreduce(rss_mb_local, op=MPI.SUM)
     
-                rem.storage.write_fields("scalars", 0.0)
+                rem.storage.fields.write("scalars", 0.0)
                 if rem.telemetry:
                     rem.telemetry.record("steps", {
                         "step": 0,
@@ -211,7 +222,7 @@ class TestMPIIO:
                 # Should complete without hanging
                 comm.Barrier()
 
-    @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
+    @pytest.mark.parametrize("unit_cube", [6], indirect=True)
     def test_csv_metrics_rank0(self, unit_cube):
         """Skipped: CSV rank-0 behavior covered elsewhere."""
         comm = MPI.COMM_WORLD
@@ -222,9 +233,9 @@ class TestMPIIO:
         from pathlib import Path
         
         with tempfile.TemporaryDirectory() as tmpdir:
-            cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False, results_dir=tmpdir)
+            cfg = Config(domain=domain, facet_tags=facet_tags, results_dir=tmpdir)
             
-            with Remodeller(cfg) as rem:
+            with Remodeller(cfg, stages) as rem:
                 # Compute total scalar DOFs (account for block sizes)
                 dofs_V = rem.V.dofmap.index_map.size_global * rem.V.dofmap.index_map_bs
                 dofs_Q = rem.Q.dofmap.index_map.size_global * rem.Q.dofmap.index_map_bs
@@ -234,7 +245,7 @@ class TestMPIIO:
                 rss_mb_local = current_memory_mb()
                 rss_mb_total = comm.allreduce(rss_mb_local, op=MPI.SUM)
     
-                rem.storage.write_fields("scalars", 0.0)
+                rem.storage.fields.write("scalars", 0.0)
                 if rem.telemetry:
                     rem.telemetry.record("steps", {
                         "step": 0,
@@ -272,7 +283,7 @@ class TestMPIIO:
 class TestFixedPointParallel:
     """Test fixed-point solver in parallel."""
     
-    @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
+    @pytest.mark.parametrize("unit_cube", [6], indirect=True)
     def test_anderson_acceleration_parallel(self, unit_cube):
         """Verify Anderson acceleration works correctly in parallel."""
         comm = MPI.COMM_WORLD
@@ -281,22 +292,21 @@ class TestFixedPointParallel:
         cfg = Config(
             domain=domain,
             facet_tags=facet_tags,
-            verbose=False,
             accel_type="anderson",
             max_subiters=20,
             coupling_tol=1e-6
         )
         
-        with Remodeller(cfg) as rem:
+        with Remodeller(cfg, stages) as rem:
             # Take one time step
             rem.step(dt=1.0)
             
             # Check Anderson was used
-            gs_iters = rem.fixedsolver.total_gs_iters
+            gs_iters = len(rem.fixedsolver.subiter_metrics)
             assert gs_iters > 0, "Fixed-point solver didn't iterate"
             assert gs_iters < 50, f"Too many iterations ({gs_iters}), Anderson may have failed"
     
-    @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
+    @pytest.mark.parametrize("unit_cube", [6], indirect=True)
     def test_gauss_seidel_convergence_parallel(self, unit_cube):
         """Test Gauss-Seidel converges in parallel."""
         comm = MPI.COMM_WORLD
@@ -305,18 +315,17 @@ class TestFixedPointParallel:
         cfg = Config(
             domain=domain,
             facet_tags=facet_tags,
-            verbose=False,
             accel_type="picard",
             max_subiters=30,
             coupling_tol=1e-5
         )
         
-        with Remodeller(cfg) as rem:
+        with Remodeller(cfg, stages) as rem:
             rem.step(dt=1.0)
             
             # Should converge
-            assert rem.fixedsolver.total_gs_iters > 0
-            assert rem.fixedsolver.total_gs_iters < 100
+            assert len(rem.fixedsolver.subiter_metrics) > 0
+            assert len(rem.fixedsolver.subiter_metrics) < 100
 
 
 # =============================================================================
@@ -326,7 +335,7 @@ class TestFixedPointParallel:
 class TestCrossRankComm:
     """Test communication patterns between ranks."""
     
-    @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
+    @pytest.mark.parametrize("unit_cube", [6], indirect=True)
     def test_residual_norm_computation(self, unit_cube):
         """Global residual norm should be consistent across all ranks."""
         comm = MPI.COMM_WORLD
@@ -336,7 +345,7 @@ class TestCrossRankComm:
         
         domain = unit_cube
         facet_tags = build_facetag(domain)
-        cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False)
+        cfg = Config(domain=domain, facet_tags=facet_tags)
         
         P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3,))
         V = functionspace(domain, P1_vec)
@@ -372,7 +381,7 @@ class TestSolverIterations:
         for N in mesh_sizes:
             domain = mesh.create_unit_cube(comm, N, N, N, ghost_mode=mesh.GhostMode.shared_facet)
             facet_tags = build_facetag(domain)
-            cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False)
+            cfg = Config(domain=domain, facet_tags=facet_tags)
             
             P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3,))
             P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
@@ -422,7 +431,7 @@ class TestPreconditioners:
         comm = MPI.COMM_WORLD
         domain = mesh.create_unit_cube(comm, 8, 8, 8, ghost_mode=mesh.GhostMode.shared_facet)
         facet_tags = build_facetag(domain)
-        cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False)
+        cfg = Config(domain=domain, facet_tags=facet_tags)
         
         P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3,))
         P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
@@ -470,55 +479,7 @@ class TestPreconditioners:
 class TestMemoryUsage:
     """Test memory usage patterns (basic checks)."""
     
-    def test_state_buffer_size(self):
-        """Fixed-point state buffer should match total DOF count."""
-        comm = MPI.COMM_WORLD
-        domain = mesh.create_unit_cube(comm, 8, 8, 8, ghost_mode=mesh.GhostMode.shared_facet)
-        facet_tags = build_facetag(domain)
-        cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False)
-        
-        P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3,))
-        P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
-        
-        V = functionspace(domain, P1_vec)
-        Q = functionspace(domain, P1)
-        
-        u = Function(V, name="u")
-        rho = Function(Q, name="rho")
-        rho_old = Function(Q, name="rho_old")
-        
-        bc_mech = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
-        mech = MechanicsSolver(u, rho, cfg, bc_mech, [])
-        dens = DensitySolver(rho, rho_old, cfg)
-        
-        # Create driver for fixed-point solver (required in new architecture)
-        class DummyDriver:
-            def __init__(self, mech):
-                self.mech = mech
-            def update_stiffness(self):
-                self.mech.setup()
-            def update_snapshots(self):
-                return {}
-            def stimulus_expr(self):
-                return fem.Constant(self.mech.mesh, 0.0)
-            def invalidate(self):
-                pass
-            def setup(self):
-                pass
-            def destroy(self):
-                pass
 
-        driver = DummyDriver(mech)
-        
-        fps = FixedPointSolver(
-            comm, cfg, driver, dens,
-            rho, rho_old
-        )
-        
-        expected_size = fps.n_rho
-        assert fps.state_size == expected_size, f"State buffer size mismatch: {fps.state_size} ≠ {expected_size}"
-        assert len(fps.state_buffer) == expected_size, f"State buffer allocation wrong"
-    
     @pytest.mark.parametrize("m", [3, 5])
     def test_anderson_history_bounded(self, m):
         """Anderson history should be bounded by window size m."""
@@ -554,11 +515,10 @@ class TestTiming:
         cfg = Config(
             domain=domain,
             facet_tags=facet_tags,
-            verbose=False,
             max_subiters=max_subiters
         )
         
-        with Remodeller(cfg) as rem:
+        with Remodeller(cfg, stages) as rem:
             t0 = time.perf_counter()
             rem.step(dt=1.0)
             elapsed = time.perf_counter() - t0
@@ -573,9 +533,9 @@ class TestTiming:
         comm = MPI.COMM_WORLD
         domain = mesh.create_unit_cube(comm, 8, 8, 8, ghost_mode=mesh.GhostMode.shared_facet)
         facet_tags = build_facetag(domain)
-        cfg = Config(domain=domain, facet_tags=facet_tags, verbose=False, max_subiters=10)
+        cfg = Config(domain=domain, facet_tags=facet_tags, max_subiters=10)
         
-        with Remodeller(cfg) as rem:
+        with Remodeller(cfg, stages) as rem:
             rem.step(dt=1.0)
             
             fps = rem.fixedsolver

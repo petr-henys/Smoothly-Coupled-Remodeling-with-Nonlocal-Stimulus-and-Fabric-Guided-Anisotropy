@@ -12,6 +12,7 @@ Tests:
 import pytest
 import logging
 import numpy as np
+import csv as csv_module
 from mpi4py import MPI
 from dolfinx import mesh, fem
 from dolfinx.fem import Function
@@ -35,24 +36,15 @@ class TestLogger:
     
     def test_logger_rank0_output(self):
         """Logger should only output on rank 0."""
-        log = get_logger(comm, verbose=True, name="TestLogger")
+        log = get_logger(comm, name="TestLogger")
         # Capture doesn't work well with PETSc.Sys.Print, so just verify no crash
         log.info("This is an info message")
         log.warning("This is a warning")
         log.debug("This is debug")
     
-    def test_logger_verbose_flag(self):
-        """verbose=False should suppress INFO/DEBUG."""
-        log_quiet = get_logger(comm, verbose=False, name="QuietLogger")
-        log_verbose = get_logger(comm, verbose=True, name="VerboseLogger")
-        
-        # Both should work without errors
-        log_quiet.info("Should be suppressed")
-        log_verbose.info("Should be shown")
-    
     def test_logger_levels(self):
         """Logger should support DEBUG/INFO/WARNING/ERROR levels."""
-        log = get_logger(comm, verbose=True, name="LevelTest")
+        log = get_logger(comm, name="LevelTest")
         log.debug("Debug message")
         log.info("Info message")
         log.warning("Warning message")
@@ -60,7 +52,7 @@ class TestLogger:
 
     def test_lazy_evaluation_support(self):
         """Logger should support lazy evaluation (lambda messages)."""
-        logger = get_logger(comm, verbose=True, name="lazy_eval")
+        logger = get_logger(comm, name="lazy_eval")
         logger.debug(lambda: f"Expensive computation: {sum(range(1000))}")
 
 
@@ -71,11 +63,10 @@ class TestLogger:
 class TestTelemetry:
     """Test telemetry and experiment tracking."""
     
-    @pytest.mark.parametrize("verbose_flag", [False, True])
-    def test_telemetry_initialization(self, verbose_flag):
+    def test_telemetry_initialization(self):
         """Telemetry should initialize output directory and metadata."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            tel = Telemetry(comm, outdir=tmpdir, verbose=verbose_flag)
+            tel = Telemetry(comm, outdir=tmpdir)
             
             telemetry_dir = Path(tmpdir)
             assert telemetry_dir.exists(), "Telemetry directory not created"
@@ -84,7 +75,7 @@ class TestTelemetry:
     def test_csv_registration_rank0_only(self):
         """CSV registration should only create files on rank 0."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            tel = Telemetry(comm, outdir=tmpdir, verbose=False)
+            tel = Telemetry(comm, outdir=tmpdir)
             tel.register_csv("test_stream", ["col1", "col2", "col3"])
             
             csv_path = Path(tmpdir) / "test_stream.csv"
@@ -96,7 +87,7 @@ class TestTelemetry:
     def test_event_logging_buffering(self):
         """Events should be buffered and flushed periodically."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            tel = Telemetry(comm, outdir=tmpdir, verbose=False)
+            tel = Telemetry(comm, outdir=tmpdir)
             tel.register_csv("events", ["step", "value"])
             
             # Log events
@@ -119,7 +110,7 @@ class TestTelemetry:
     def test_write_metadata_injects_standard_fields(self):
         """Telemetry.write_metadata injects start_time and mpi_size by default."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            tel = Telemetry(comm, outdir=tmpdir, verbose=False)
+            tel = Telemetry(comm, outdir=tmpdir)
             tel.write_metadata({"foo": 1}, filename="meta.json", overwrite=True)
             comm.Barrier()
             if comm.rank == 0:
@@ -201,13 +192,21 @@ class TestMonitoringIntegration:
             cfg = Config(
                 domain=domain,
                 facet_tags=facet_tags,
-                verbose=False,
                 results_dir=tmpdir,
                 max_subiters=10,
                 coupling_tol=1e-5
             )
             
-            with Remodeller(cfg) as rem:
+            dummy_stage = {
+                "weight": 1.0, 
+                "angle": 0.0, 
+                "hip_tag": 1, 
+                "gl_tag": 2,
+                "hip_magnitude": 100.0,
+                "gl_magnitude": 50.0,
+                "gl_vector_css": [0.0, 0.0, 1.0]
+            }
+            with Remodeller(cfg, stages=[dummy_stage]) as rem:
                 # Run 2 steps
                 rem.step(dt=1.0)
                 rem.step(dt=1.0)
@@ -230,12 +229,20 @@ class TestMonitoringIntegration:
             cfg = Config(
                 domain=domain,
                 facet_tags=facet_tags,
-                verbose=False,
                 results_dir=tmpdir,
                 max_subiters=10
             )
             
-            with Remodeller(cfg) as rem:
+            dummy_stage = {
+                "weight": 1.0, 
+                "angle": 0.0, 
+                "hip_tag": 1, 
+                "gl_tag": 2,
+                "hip_magnitude": 100.0,
+                "gl_magnitude": 50.0,
+                "gl_vector_css": [0.0, 0.0, 1.0]
+            }
+            with Remodeller(cfg, stages=[dummy_stage]) as rem:
                 rem.step(dt=1.0)
                 
                 # Check solver stats were accumulated
@@ -250,11 +257,19 @@ class TestMonitoringIntegration:
             cfg = Config(
                 domain=domain,
                 facet_tags=facet_tags,
-                verbose=False,
                 results_dir=tmpdir,
                 max_subiters=5,
             )
-            with Remodeller(cfg) as rem:
+            dummy_stage = {
+                "weight": 1.0, 
+                "angle": 0.0, 
+                "hip_tag": 1, 
+                "gl_tag": 2,
+                "hip_magnitude": 100.0,
+                "gl_magnitude": 50.0,
+                "gl_vector_css": [0.0, 0.0, 1.0]
+            }
+            with Remodeller(cfg, stages=[dummy_stage]) as rem:
                 rem.simulate(dt=1.0, total_time=1.0)
             comm.Barrier()
             if comm.rank == 0:

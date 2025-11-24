@@ -11,6 +11,7 @@ Tests cover:
 """
 
 import pytest
+import shutil
 from pathlib import Path
 
 # Import after sys.path manipulation in conftest

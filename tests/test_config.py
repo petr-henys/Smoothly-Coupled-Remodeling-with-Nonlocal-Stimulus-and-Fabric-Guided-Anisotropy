@@ -21,13 +21,13 @@ class TestConfigValidation:
 
     def test_config_accepts_valid_domain(self, unit_cube, facet_tags):
         """Config should accept valid mesh."""
-        cfg = Config(domain=unit_cube, facet_tags=facet_tags, verbose=False)
+        cfg = Config(domain=unit_cube, facet_tags=facet_tags)
         assert cfg.domain is not None
         assert cfg.domain == unit_cube
 
     def test_config_rejects_negative_timestep(self, unit_cube, facet_tags):
         """set_dt should reject non-positive timestep."""
-        cfg = Config(domain=unit_cube, facet_tags=facet_tags, verbose=False)
+        cfg = Config(domain=unit_cube, facet_tags=facet_tags)
 
         # Zero timestep
         with pytest.raises((ValueError, ZeroDivisionError)):
@@ -41,53 +41,53 @@ class TestConfigValidation:
         """Poisson ratio must be in physically valid range (-1, 0.5)."""
         # Test boundary values
         with pytest.raises((ValueError, RuntimeError)):
-            Config(domain=unit_cube, facet_tags=facet_tags, nu0=0.6, verbose=False)  # Too high
+            Config(domain=unit_cube, facet_tags=facet_tags, nu0=0.6)  # Too high
 
         with pytest.raises((ValueError, RuntimeError)):
-            Config(domain=unit_cube, facet_tags=facet_tags, nu0=-1.5, verbose=False)  # Too low
+            Config(domain=unit_cube, facet_tags=facet_tags, nu0=-1.5)  # Too low
 
         # Valid values should work
-        cfg1 = Config(domain=unit_cube, facet_tags=facet_tags, nu0=0.3, verbose=False)
+        cfg1 = Config(domain=unit_cube, facet_tags=facet_tags, nu0=0.3)
         assert cfg1.nu0 == 0.3
 
-        cfg2 = Config(domain=unit_cube, facet_tags=facet_tags, nu0=0.0, verbose=False)
+        cfg2 = Config(domain=unit_cube, facet_tags=facet_tags, nu0=0.0)
         assert cfg2.nu0 == 0.0
 
     def test_config_positive_modulus(self, unit_cube, facet_tags):
         """Young's modulus must be positive."""
         with pytest.raises(ValueError):
             cfg = Config(domain=unit_cube, facet_tags=facet_tags,
-                        E0=-1000.0, verbose=False)
+                        E0=-1000.0)
         
         # Positive value should work
         cfg = Config(domain=unit_cube, facet_tags=facet_tags,
-                    E0=1000.0, verbose=False)
+                    E0=1000.0)
         assert cfg.E0 == 1000.0
 
     def test_config_solver_type_validation(self, unit_cube, facet_tags):
         """KSP and PC types should be valid."""
         # Valid solvers
         cfg1 = Config(domain=unit_cube, facet_tags=facet_tags,
-                     ksp_type="cg", pc_type="jacobi", verbose=False)
+                     ksp_type="cg", pc_type="jacobi")
         assert cfg1.ksp_type == "cg"
 
         cfg2 = Config(domain=unit_cube, facet_tags=facet_tags,
-                     ksp_type="gmres", pc_type="ilu", verbose=False)
+                     ksp_type="gmres", pc_type="ilu")
         assert cfg2.ksp_type == "gmres"
 
     def test_config_accel_type_validation(self, unit_cube, facet_tags):
         """Acceleration type must be valid choice ('anderson' or 'picard')."""
         for accel in ["anderson", "picard"]:
             cfg = Config(domain=unit_cube, facet_tags=facet_tags,
-                        accel_type=accel, verbose=False)
+                        accel_type=accel)
             assert cfg.accel_type == accel
         # 'none' is not accepted at config time
         with pytest.raises((ValueError, RuntimeError)):
-            Config(domain=unit_cube, facet_tags=facet_tags, accel_type="none", verbose=False)
+            Config(domain=unit_cube, facet_tags=facet_tags, accel_type="none")
 
     def test_config_tolerance_values_positive(self, unit_cube, facet_tags):
         """Solver tolerances must be positive."""
-        cfg = Config(domain=unit_cube, facet_tags=facet_tags, verbose=False)
+        cfg = Config(domain=unit_cube, facet_tags=facet_tags)
 
         assert cfg.ksp_rtol > 0
         assert cfg.ksp_atol > 0
@@ -98,7 +98,7 @@ class TestConfigValidation:
         """Iteration limits should be positive integers."""
         cfg = Config(domain=unit_cube, facet_tags=facet_tags,
                     max_subiters=100, min_subiters=1,
-                    ksp_max_it=500, verbose=False)
+                    ksp_max_it=500)
 
         assert cfg.max_subiters > 0
         assert cfg.min_subiters > 0

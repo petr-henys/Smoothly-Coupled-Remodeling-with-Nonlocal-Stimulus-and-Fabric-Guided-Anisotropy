@@ -26,11 +26,11 @@ class TestSetupLogging:
         root_logger.setLevel(logging.WARNING)
     
     def test_default_setup(self):
-        """Test default logging setup (INFO level, console only)."""
+        """Test default logging setup (WARNING level, console only)."""
         setup_logging()
-        
+    
         root_logger = logging.getLogger()
-        assert root_logger.level == logging.INFO
+        assert root_logger.level == logging.WARNING
         assert len(root_logger.handlers) >= 1
         
         # Check console handler exists

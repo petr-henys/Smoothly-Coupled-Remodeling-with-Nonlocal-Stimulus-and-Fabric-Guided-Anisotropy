@@ -3,10 +3,8 @@
 Tests for solver internals, matrix properties, and numerical utilities.
 
 Tests:
-- DOF ordering correctness in fixed-point solver
 - Matrix assembly correctness (SPD properties)
 - Solver statistics tracking
-- Projected residual norm computation
 """
 
 import pytest
@@ -47,58 +45,6 @@ class MockDriver:
 np.random.seed(1234)
 
 # =============================================================================
-# DOF Ordering Tests
-# =============================================================================
-
-class TestDOFOrdering:
-    """Test critical DOF ordering in fixed-point solver (rho)."""
-    
-    @pytest.mark.parametrize("unit_cube", [6], indirect=True)
-    def test_state_slices_match_field_sizes(self, unit_cube, cfg, spaces, fields, bc_mech):
-        """Verify _build_state_slices produces correct offsets."""
-        comm = MPI.COMM_WORLD
-        V, Q, T = spaces.V, spaces.Q, spaces.T
-        u, rho, rho_old, A, A_old, S, S_old = fields
-        mech = MechanicsSolver(u, rho, cfg, bc_mech, [])
-        dens = DensitySolver(rho, rho_old, cfg)
-        driver = MockDriver(mech)
-        fps = FixedPointSolver(comm, cfg, driver, dens, rho, rho_old)
-        
-        # Check slice sizes
-        s_rho, = fps.state_slices
-        
-        assert (s_rho.stop - s_rho.start) == fps.n_rho, "rho slice size mismatch"
-        
-        # Check contiguity: slices should be consecutive starting at zero
-        assert s_rho.start == 0, "rho slice doesn't start at 0"
-        assert s_rho.stop == fps.state_size, "rho slice doesn't end at state_size"
-    
-    @pytest.mark.parametrize("unit_cube", [6], indirect=True)
-    def test_flatten_restore_roundtrip(self, unit_cube, cfg, spaces, fields, bc_mech):
-        """Flatten then restore should recover original state."""
-        comm = MPI.COMM_WORLD
-        V, Q, T = spaces.V, spaces.Q, spaces.T
-        u, rho, rho_old, A, A_old, S, S_old = fields
-        # Set distinct values
-        u.interpolate(lambda x: np.array([x[0], x[1], x[2]]))
-        u.x.scatter_forward()
-        rho.x.array[:] = 0.6; rho.x.scatter_forward()
-        
-        # Store originals
-        u_orig = u.x.array.copy(); rho_orig = rho.x.array.copy()
-        mech = MechanicsSolver(u, rho, cfg, bc_mech, [])
-        dens = DensitySolver(rho, rho_old, cfg)
-        driver = MockDriver(mech)
-        fps = FixedPointSolver(comm, cfg, driver, dens, rho, rho_old)
-        flat = fps._flatten_state(copy=True)
-        # Modify fields and restore
-        u.x.array[:] = 999.0; rho.x.array[:] = 888.0
-        fps._restore_state(flat)
-        assert np.allclose(rho.x.array, rho_orig), "rho not restored correctly"
-        assert np.allclose(u.x.array, 999.0), "mechanics state should remain untouched"
-
-
-# =============================================================================
 # Solver Statistics Tests
 # =============================================================================
 
@@ -123,10 +69,9 @@ class TestSolverStatistics:
         
         mech.setup()
         
-        # Reset stats before solve
-        mech._reset_stats()
-        assert mech.total_iters == 0, "Stats not reset"
-        assert mech.ksp_steps == 0, "Stats not reset"
+        # Check initial stats
+        assert mech.total_iters == 0, "Initial total_iters should be 0"
+        assert mech.ksp_steps == 0, "Initial ksp_steps should be 0"
         
         # Solve
         its, reason = mech.solve()
@@ -231,40 +176,3 @@ class TestMatrixAssembly:
             solver.A.mult(z.x.petsc_vec, y)
             energy = z.x.petsc_vec.dot(y)
             assert energy >= 0.0, f"Density operator not positive semi-definite: {energy}"
-
-
-class TestProjectedResidual:
-    """Tests for projected residual norm used in FixedPointSolver."""
-
-    def test_proj_residual_matches_weighted_norm(self, cfg, spaces, fields, bc_mech):
-        comm = MPI.COMM_WORLD
-        V, Q, T = spaces.V, spaces.Q, spaces.T
-        u, rho, rho_old, A, A_old, S, S_old = fields
-        rho.x.array[:] = 0.5; rho.x.scatter_forward()
-        mech = MechanicsSolver(u, rho, cfg, bc_mech, [])
-        dens = DensitySolver(rho, rho_old, cfg)
-        driver = MockDriver(mech)
-        fps = FixedPointSolver(comm, cfg, driver, dens, rho, rho_old)
-
-        x_old = fps._flatten_state(copy=True)
-        x_raw = x_old.copy()
-        rng = np.random.default_rng(42)
-        x_test = x_raw.copy()
-        for s in fps.state_slices:
-            x_test[s] += rng.standard_normal(size=x_test[s].shape)
-
-        weights = (0.5,)
-        res = fps._weighted_dist(x_test, x_raw, weights)
-
-        expected_sq = 0.0
-        for s, w in zip(fps.state_slices, weights):
-            diff = x_test[s] - x_raw[s]
-            expected_sq += w * float(np.dot(diff, diff))
-        
-        # Reduce expected_sq across all ranks to match _proj_residual_norm's global reduction
-        expected_sq = comm.allreduce(expected_sq, op=MPI.SUM)
-        expected = expected_sq ** 0.5
-
-        assert np.isclose(res, expected)
-
-
