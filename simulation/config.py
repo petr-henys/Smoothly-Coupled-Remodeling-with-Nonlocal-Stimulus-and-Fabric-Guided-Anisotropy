@@ -190,10 +190,15 @@ class Config:
         """Initialize telemetry and persist config.json (rank-0 only)."""
         from simulation.telemetry import Telemetry
 
+        # If verbose is "progressbar", we want Telemetry to be quiet on console (verbose=False)
+        telemetry_verbose = self.verbose
+        if telemetry_verbose == "progressbar":
+            telemetry_verbose = False
+
         self.telemetry = Telemetry(
             comm=self.domain.comm,
             outdir=self.results_dir,
-            verbose=self.verbose,
+            verbose=telemetry_verbose,
         )
         self.update_config_json()
 

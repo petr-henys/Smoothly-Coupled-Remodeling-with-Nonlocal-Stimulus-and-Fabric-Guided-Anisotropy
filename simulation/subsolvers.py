@@ -97,7 +97,10 @@ class _BaseLinearSolver:
         """Initialize forms, matrices, vectors, and KSP."""
         self._compile_forms()
         self.A = create_matrix(self.a_form)
-        self.b = create_vector(self.L_form)
+        self.b = create_vector(self.function_space)
+        
+        # Assemble matrix so it has values for KSP setup (needed for GAMG etc)
+        self.assemble_lhs()
         
         # Subclass specific KSP setup
         self._setup_ksp()

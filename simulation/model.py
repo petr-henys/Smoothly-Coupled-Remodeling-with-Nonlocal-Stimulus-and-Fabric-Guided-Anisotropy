@@ -48,6 +48,8 @@ class Remodeller:
         self.progress = None
         self.main_task_id = None
         self.stages = stages
+        self.comm = self.domain.comm
+        self.rank = self.comm.rank
 
         if self.cfg.verbose == "progressbar":
             self.verbose = False
@@ -57,14 +59,13 @@ class Remodeller:
         self.comm = self.domain.comm
         self.rank = self.comm.rank
         
-        # Initialize log file (create directory and clear file) on rank 0
+        # Ensure log directory exists
         if self.rank == 0:
             try:
                 log_path = Path(self.cfg.log_file)
                 if log_path.parent:
                     log_path.parent.mkdir(parents=True, exist_ok=True)
-                with open(self.cfg.log_file, "w", encoding="utf-8") as f:
-                    pass
+                # Do not wipe file here, assuming caller handles it or we append
             except IOError:
                 pass
 
@@ -419,8 +420,9 @@ class Remodeller:
                 from rich.progress import Progress, TextColumn, BarColumn, TimeRemainingColumn, TimeElapsedColumn, SpinnerColumn
                 from rich.console import Console
                 
-                # Force terminal output to stderr to ensure visibility even if stdout is buffered/redirected
-                console = Console(stderr=True, force_terminal=True)
+                # Use stderr for progress bar. 
+                # Removed force_terminal=True to avoid issues with mpirun buffering/piping causing duplicate lines.
+                console = Console(stderr=True)
                 
                 self.progress = Progress(
                     SpinnerColumn(),

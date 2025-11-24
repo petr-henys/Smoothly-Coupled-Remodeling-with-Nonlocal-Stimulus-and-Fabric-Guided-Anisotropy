@@ -23,17 +23,28 @@ class FEBio2Dolfinx:
         """Parse FEBio file and create DOLFINx mesh with surface tags."""
         self.logger = logging.getLogger(__name__)
         self.feb_file = feb_file
-        self.logger.info("Parsing FEBio file: %s", feb_file)
-        tree = ET.parse(feb_file)
-        root = tree.getroot()
-        self.mesh_xml = root.find("Mesh")
+        
+        comm = MPI.COMM_WORLD
+        rank = comm.Get_rank()
 
-        self._reindex_nodes()
-        self._extract_geometry()
+        if rank == 0:
+            self.logger.info("Parsing FEBio file: %s", feb_file)
+            tree = ET.parse(feb_file)
+            root = tree.getroot()
+            self.mesh_xml = root.find("Mesh")
+
+            self._reindex_nodes()
+            self._extract_geometry()
+        else:
+            self.nodes = None
+            self.elements = None
+            self.surfaces = None
+
         self.mesh_dolfinx = self._create_dolfinx_mesh()
         self.meshtags = self._create_surface_tags(self.mesh_dolfinx)
 
-        self.logger.info("FEBio parsing complete: %d surfaces", len(self.surfaces))
+        if rank == 0:
+            self.logger.info("FEBio parsing complete: %d surfaces", len(self.surfaces))
 
     def _reindex_nodes(self) -> None:
         """Re-index node IDs to be contiguous starting from 1."""
@@ -98,46 +109,103 @@ class FEBio2Dolfinx:
     def _create_dolfinx_mesh(self) -> mesh.Mesh:
         """Create DOLFINx mesh from FEBio tet4 elements."""
         self.logger.debug("Creating DOLFINx mesh from FEBio elements")
+        
+        comm = MPI.COMM_WORLD
+        rank = comm.Get_rank()
 
-        # Collect all elements (tet4 only)
-        conns = []
-        for conn, etype in self.elements:
-            if etype != "tet4":
-                raise ValueError(f"Only tet4 elements supported, found: {etype}")
-            conns.append(conn.astype(np.int64))
+        if rank == 0:
+            # Collect all elements (tet4 only)
+            conns = []
+            for conn, etype in self.elements:
+                if etype != "tet4":
+                    raise ValueError(f"Only tet4 elements supported, found: {etype}")
+                conns.append(conn.astype(np.int64))
 
-        conn_all = np.vstack(conns)
-        self.logger.debug("Total tet4 elements: %d", conn_all.shape[0])
+            conn_all = np.vstack(conns)
+            self.logger.debug("Total tet4 elements: %d", conn_all.shape[0])
+            
+            nodes = self.nodes
+            num_nodes = nodes.shape[0]
+        else:
+            conn_all = np.zeros((0, 4), dtype=np.int64)
+            nodes = np.zeros((0, 3), dtype=float)
+            num_nodes = 0
+
+        # Broadcast number of nodes to define element shape correctly on all ranks
+        num_nodes = comm.bcast(num_nodes, root=0)
 
         # Create DOLFINx mesh
-        cell_el = basix_element("Lagrange", "tetrahedron", 1, shape=(self.nodes.shape[1],))
-        dom = mesh.create_mesh(MPI.COMM_WORLD, conn_all, cell_el, self.nodes)
+        # Note: create_mesh distributes the mesh from the provided data.
+        # We provide full data on rank 0 and empty on others.
+        cell_el = basix_element("Lagrange", "tetrahedron", 1, shape=(3,))
+        dom = mesh.create_mesh(MPI.COMM_WORLD, conn_all, cell_el, nodes)
         
         self.logger.debug("Created DOLFINx mesh")
         return dom
 
     def _create_surface_tags(self, domain: mesh.Mesh) -> mesh.MeshTags:
         """Map FEBio surfaces to DOLFINx boundary facet meshtags."""
-        self.logger.debug("Creating surface tags for %d surfaces", len(self.surfaces))
+        comm = MPI.COMM_WORLD
+        rank = comm.Get_rank()
+        
+        # Prepare surface geometry on Rank 0 for broadcast
+        if rank == 0:
+            surface_data = []
+            for sname, fconn in self.surfaces.items():
+                # Extract coordinates for this surface's triangles
+                # fconn is (N_tri, 3) indices into self.nodes
+                coords = self.nodes[fconn] # (N_tri, 3, 3)
+                surface_data.append((sname, coords))
+        else:
+            surface_data = None
+            
+        # Broadcast surface definitions (much smaller than full mesh)
+        surface_data = comm.bcast(surface_data, root=0)
+        
+        # Reconstruct self.surfaces on other ranks just for the keys/names if needed,
+        # but we mainly need the geometry to match.
+        # We'll populate self.surfaces keys for consistency in __repr__
+        if rank != 0:
+            self.surfaces = {sname: None for sname, _ in surface_data}
+
+        self.logger.debug("Creating surface tags for %d surfaces", len(surface_data))
         fdim = domain.topology.dim - 1
         domain.topology.create_entities(fdim)
         domain.topology.create_connectivity(fdim, domain.topology.dim)
 
         boundary_facets = mesh.exterior_facet_indices(domain.topology)
         mids_dom = mesh.compute_midpoints(domain, fdim, boundary_facets)
-        tree = KDTree(mids_dom)
+        
+        if len(mids_dom) > 0:
+            tree = KDTree(mids_dom)
+        else:
+            tree = None
 
         facet_indices = []
         facet_markers = []
         self.surface_tags = {}
+        
+        # Tolerance for matching surface midpoints (e.g. 0.001 mm)
+        tol = 1e-3
 
-        for marker, (sname, fconn) in enumerate(self.surfaces.items(), start=1):
+        for marker, (sname, coords) in enumerate(surface_data, start=1):
             self.surface_tags[sname] = marker
-            mids_src = self.nodes[fconn].mean(axis=1)
+            
+            if tree is None:
+                continue
+
+            # coords is (N_tri, 3, 3), mean over axis 1 gives (N_tri, 3) midpoints
+            mids_src = coords.mean(axis=1)
             dist, i = tree.query(mids_src, k=1)
-            facets = boundary_facets[i]
-            facet_indices.append(facets)
-            facet_markers.append(np.full_like(facets, marker, dtype=np.int32))
+            
+            # Filter by distance to ensure we only tag facets that actually match
+            mask = dist < tol
+            valid_indices = i[mask]
+            
+            if len(valid_indices) > 0:
+                facets = boundary_facets[valid_indices]
+                facet_indices.append(facets)
+                facet_markers.append(np.full_like(facets, marker, dtype=np.int32))
 
         if not facet_indices:
             return mesh.meshtags(
