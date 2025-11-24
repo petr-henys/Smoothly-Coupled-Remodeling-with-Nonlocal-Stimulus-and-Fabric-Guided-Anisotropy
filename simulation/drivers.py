@@ -67,6 +67,7 @@ class SimplifiedGaitDriver:
         self.u_snap = [fem.Function(V, name=f"u_snap_{i}") for i in range(len(self.stages))]
 
         self.stage_loads = self._precompute_loads()
+        self._save_load_stages()
 
         self.psi_expr: Optional[ufl.core.expr.Expr] = None
         self._build_expressions()
@@ -234,3 +235,39 @@ class SimplifiedGaitDriver:
             psi_summation += n_i * (sigma_tissue ** self.m_exp)
 
         self.psi_expr = ufl.max_value(psi_summation, 0.0) ** (1.0 / self.m_exp)
+
+    def _save_load_stages(self) -> None:
+        """Save precomputed load stages to VTX for visualization."""
+        from dolfinx.io import VTXWriter
+        from pathlib import Path
+        
+        output_dir = Path(self.cfg.results_dir)
+        if self.comm.rank == 0:
+            output_dir.mkdir(parents=True, exist_ok=True)
+        self.comm.Barrier()
+        
+        file_path = output_dir / "load_stages.bp"
+        
+        # Create writer for t_hip and t_glmed
+        writer = VTXWriter(self.comm, str(file_path), [self.t_hip, self.t_glmed], engine="bp4")
+        
+        for i, (hip_vals, gl_vals) in enumerate(self.stage_loads):
+            # Update functions
+            self.t_hip.x.array[:] = hip_vals
+            self.t_glmed.x.array[:] = gl_vals
+            self.t_hip.x.scatter_forward()
+            self.t_glmed.x.scatter_forward()
+            
+            # Write with time = stage index
+            writer.write(float(i))
+            
+        writer.close()
+        
+        # Reset functions to zero to be safe
+        self.t_hip.x.array[:] = 0.0
+        self.t_glmed.x.array[:] = 0.0
+        self.t_hip.x.scatter_forward()
+        self.t_glmed.x.scatter_forward()
+        
+        if self.comm.rank == 0:
+            self.logger.info(f"Saved {len(self.stage_loads)} load stages to {file_path}")
