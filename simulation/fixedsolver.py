@@ -173,7 +173,9 @@ class FixedPointSolver:
                 hist = aa_info.get('aa_hist', 0)
                 acc = "acc" if aa_info.get('accepted', True) else "rej"
                 bt = aa_info.get('backtracks', 0)
-                log_msg += f" | AA({hist}) {acc} bt={bt}"
+                log_msg += f" | AA({hist}) {acc}"
+                if bt > 0:
+                    log_msg += f" bt={bt}"
                 if aa_info.get('restart_reason'):
                     log_msg += f" | Rst: {aa_info['restart_reason']}"
             

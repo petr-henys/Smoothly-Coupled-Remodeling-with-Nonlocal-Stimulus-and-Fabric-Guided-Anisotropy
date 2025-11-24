@@ -138,7 +138,16 @@ class SimplifiedGaitDriver:
         psi_min = self.comm.allreduce(local_min, op=MPI.MIN)
         psi_max = self.comm.allreduce(local_max, op=MPI.MAX)
         
-        return {"psi_avg": psi_avg, "psi_min": psi_min, "psi_max": psi_max, "psi_median": 0.0}
+        # Median (approximate via gather to rank 0)
+        all_data = self.comm.gather(local_vals, root=0)
+        psi_median = 0.0
+        if self.comm.rank == 0:
+            full_data = np.concatenate(all_data)
+            if full_data.size > 0:
+                psi_median = float(np.median(full_data))
+        psi_median = self.comm.bcast(psi_median, root=0)
+        
+        return {"psi_avg": psi_avg, "psi_min": psi_min, "psi_max": psi_max, "psi_median": psi_median}
 
     def _precompute_loads(self) -> List[Tuple[np.ndarray, np.ndarray]]:
         """Generate traction field arrays for each stage."""
