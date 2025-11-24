@@ -1,4 +1,9 @@
-"""Remodeling drivers: translate mechanics to stimulus ψ(u) and structure M(u)."""
+"""
+Remodeling drivers: translate mechanics to stimulus ψ(u) and structure M(u).
+
+This module implements the 'Daily Stress Stimulus' theory as defined by 
+Beaupré, Orr, and Carter (1990) [cite: 1] and Jacobs et al. (1995) [cite: 4].
+"""
 
 from __future__ import annotations
 
@@ -10,6 +15,7 @@ from dolfinx import fem
 import ufl
 
 from simulation.logger import get_logger
+from simulation.utils import matrix_ln, unittrace_psd
 
 if TYPE_CHECKING:
     from simulation.config import Config
@@ -22,6 +28,7 @@ class RemodelingDriver(Protocol):
 
     def stimulus_expr(self) -> ufl.core.expr.Expr: ...
     def structure_expr(self) -> ufl.core.expr.Expr: ...
+    def log_structure_expr(self) -> ufl.core.expr.Expr: ...
     def invalidate(self) -> None: ...
     def update_snapshots(self) -> Optional[Dict]: ...
     def setup(self) -> None: ...
@@ -30,12 +37,22 @@ class RemodelingDriver(Protocol):
     def get_stimulus_stats(self) -> Dict[str, float]: ...
 
 
-from simulation.utils import matrix_ln
-
 class GaitDriver:
-    """Gait-averaged Carter-Beaupré stimulus and strain-aligned target tensor.
+    """
+    Gait-averaged Carter-Beaupré stimulus and strain-aligned target tensor.
     
-    ψ = N_cyc * ⟨(σ/ψ_ref)^m⟩, M = ⟨ε_dev^T ε_dev⟩, L_target = log(M).
+    Implements the Daily Stress Stimulus (ψ)[cite: 1]:
+        ψ = ( Σ n_i * σ_eff_i^m )^(1/m)
+    
+    Where σ_eff is the effective stress at the tissue level[cite: 4]:
+        σ_eff = (ρ_cortical / ρ)^k * sqrt(2 * E(ρ) * U)
+    
+    And U is the Strain Energy Density (SED).
+    
+    Attributes:
+        psi_expr (ufl.Expr): The symbolic expression for the daily stimulus ψ.
+        M_expr (ufl.Expr): The target structural tensor (deviatoric strain based).
+        L_target_expr (ufl.Expr): The log-Euclidean target tensor log(M).
     """
 
     def __init__(self, mech: MechanicsSolver, gait_loader: FemurRemodellerGait, config: Config):
@@ -45,9 +62,18 @@ class GaitDriver:
         self.comm = self.mech.u.function_space.mesh.comm
         self.logger = get_logger(self.comm, verbose=(self.cfg.verbose is True), name="Driver")
 
-        # Cache config parameters
-        self.psi_ref = float(config.psi_ref)
-        self.exponent = float(config.n_power)
+        # Cache config parameters for stimulus definition
+        # m: Weighting exponent (usually 4.0 for energy/stress) [cite: 1]
+        self.m_exp = float(config.n_power) 
+        
+        # N: Number of daily cycles [cite: 1]
+        self.n_cycles = float(config.gait_cycles_per_day)
+        
+        # k: Tissue stress concentration exponent. 
+        # Jacobs et al. (1995) use power 2 for (rho_c/rho)^2 applied to energy, 
+        # which implies k=1 for stress (sqrt of energy) or k=2 depending on formulation.
+        # Here we assume applied to stress directly.
+        self.k_stimulus = 1.0 
 
         # Quadrature setup
         quad = list(self.gait.get_quadrature())
@@ -63,7 +89,7 @@ class GaitDriver:
 
         # Tractions to update
         self._tractions = [self.gait.t_hip, self.gait.t_glmed, self.gait.t_glmax]
-        #self._tractions = [self.gait.t_hip]
+
         # Precompute load vectors for all phases to avoid re-interpolation
         self.loads = self._precompute_loads()
 
@@ -92,14 +118,14 @@ class GaitDriver:
         self.mech.assemble_lhs()
 
     def invalidate(self) -> None:
-        """Rebuild expressions if psi_ref or exponent change in Config."""
+        """Rebuild expressions if configuration parameters change."""
         dirty = False
-        if abs(self.psi_ref - float(self.cfg.psi_ref)) > 1e-9:
-            self.psi_ref = float(self.cfg.psi_ref)
+        if abs(self.m_exp - float(self.cfg.n_power)) > 1e-9:
+            self.m_exp = float(self.cfg.n_power)
             dirty = True
-
-        if abs(self.exponent - float(self.cfg.n_power)) > 1e-9:
-            self.exponent = float(self.cfg.n_power)
+        
+        if abs(self.n_cycles - float(self.cfg.gait_cycles_per_day)) > 1e-9:
+            self.n_cycles = float(self.cfg.gait_cycles_per_day)
             dirty = True
 
         if dirty:
@@ -109,9 +135,6 @@ class GaitDriver:
         """Solve mechanics at each gait phase and refresh displacement snapshots."""
         times: List[float] = []
         iters: List[float] = []
-
-        # Reset stats
-        total_weight = 0.0
 
         for idx, (phase, weight) in enumerate(zip(self.phases, self.weights)):
             start = MPI.Wtime()
@@ -131,8 +154,6 @@ class GaitDriver:
             # We copy the vector from the solver's u to our snapshot u_snap[idx]
             # This automatically updates the UFL expressions that depend on u_snap[idx]
             self.u_snap[idx].x.array[:] = self.mech.u.x.array
-            
-            total_weight += weight
 
         stats = {
             "phase_iters": iters,
@@ -145,21 +166,21 @@ class GaitDriver:
 
     def get_stimulus_stats(self) -> Dict[str, float]:
         """Compute statistics of the daily stimulus field (min, max, mean, median)."""
-        # Compute domain-average of the daily stress for reporting
-        # This uses the updated u_snap fields via psi_expr
+        # Interpolate the complex UFL expression into a DG0 field to query values
+        psi_expr_compiled = fem.Expression(self.psi_expr, self.V_stats.element.interpolation_points)
+        self.psi_stats.interpolate(psi_expr_compiled)
+        
+        # Domain integral average
         psi_int = self.comm.allreduce(
-            fem.assemble_scalar(fem.form(self.psi_expr * self.cfg.dx)), op=MPI.SUM
+            fem.assemble_scalar(fem.form(self.psi_stats * self.cfg.dx)), op=MPI.SUM
         )
         vol = self.comm.allreduce(
             fem.assemble_scalar(fem.form(1.0 * self.cfg.dx)), op=MPI.SUM
         )
         psi_avg = psi_int / vol if vol > 0 else 0.0
 
-        # Compute min, max, median
-        psi_expr_compiled = fem.Expression(self.psi_expr, self.V_stats.element.interpolation_points)
-        self.psi_stats.interpolate(psi_expr_compiled)
+        # Min/Max/Median
         local_vals = self.psi_stats.x.array
-
         local_min = np.min(local_vals) if local_vals.size > 0 else float('inf')
         local_max = np.max(local_vals) if local_vals.size > 0 else float('-inf')
 
@@ -207,43 +228,69 @@ class GaitDriver:
             traction.x.array[:] = data
 
     def _build_expressions(self) -> None:
-        """Construct UFL expressions for daily stimulus and structure tensor."""
-        if self.exponent <= 0.0:
-            raise ValueError(f"n_power must be positive, got {self.exponent}")
+        """
+        Construct UFL expressions for daily stimulus and structure tensor.
+        
+        Strictly follows Beaupré et al. (1990) :
+        psi = ( Sum( n_i * sigma_eff_i^m ) ) ^ (1/m)
+        
+        Where sigma_eff_i is the effective stress at tissue level.
+        1. Continuum Effective Stress: sigma_cont = sqrt(2 * E * U)
+        2. Tissue Effective Stress: sigma_tissue = (rho_max / rho)^k * sigma_cont
+        """
+        if self.m_exp <= 0.0:
+            raise ValueError(f"n_power (m) must be positive, got {self.m_exp}")
 
-        N_cyc = float(self.cfg.gait_cycles_per_day)
-        if N_cyc <= 0.0:
-            raise ValueError(f"gait_cycles_per_day must be positive, got {N_cyc}")
+        if self.n_cycles <= 0.0:
+            raise ValueError(f"gait_cycles_per_day must be positive, got {self.n_cycles}")
 
-        psi_p_terms = []
+        # Reconstruct Young's Modulus E(rho) field from config parameters
+        # E is needed to convert SED (U) to Effective Stress dimensionally [MPa]
+        # E = E_max * (rho/rho_max)^p_stiffness
+        rho = self.mech.rho
+        # Note: Config values are stored, we use E0_z as E_max reference
+        rho_max = self.cfg.rho_max
+        E_max = self.cfg.E0_z 
+        p_exponent = self.cfg.k_stiff # k_stiff in config typically refers to density exponent
+        
+        # E scalar field for stress calculation
+        rho_safe = ufl.max_value(rho, self.cfg.smooth_eps)
+        E_field = E_max * (rho_safe / rho_max)**p_exponent
+
+        psi_summation = 0.0
         structure_terms = []
         total_weight = 0.0
         
         # We use the snapshots u_snap to build the expression.
-        # When u_snap values change, these expressions evaluate to new values.
         for u_i, weight in zip(self.u_snap, self.weights):
-            # Stress and Strain from snapshot u_i
-            # Note: rho and A_dir are shared (current state of remodeling)
-            sig_i = self.mech.sigma(u_i, self.mech.rho, self.mech.A_dir)
+            # 1. Kinematics & Stress
+            # Note: A_dir is the anisotropy tensor if used
+            sig_i = self.mech.sigma(u_i, rho, self.mech.A_dir)
             e_i = self.mech.get_strain_tensor(u_i)
-            e_dev_i = ufl.dev(e_i)
-            structure_i = ufl.dot(ufl.transpose(e_dev_i), e_dev_i)
-
-            # Carter–Beaupré / Jacobs-style stimulus:
-            # use an effective stress derived from the strain energy density,
-            # without dividing by density (no specific-SED scaling).
-            # U = 0.5 * σ : ε  (strain energy density)
+            
+            # 2. Strain Energy Density (U = 1/2 * sigma : epsilon)
             U_i = 0.5 * ufl.inner(sig_i, e_i)
             U_safe = ufl.max_value(U_i, 0.0)
-            # Effective scalar stress measure σ_eff = sqrt(2 U)
-            sigma_eff = ufl.sqrt(2.0 * U_safe + self.cfg.smooth_eps)
+            
+            # 3. Continuum Effective Stress: sigma_bar = sqrt(2 * E * U)
+            # This converts energy density back to a scalar stress equivalent 
+            # consistent with continuum elasticity[cite: 1, 17].
+            sigma_continuum = ufl.sqrt(2.0 * E_field * U_safe + self.cfg.smooth_eps)
+            
+            # 4. Tissue Effective Stress: sigma_t = (rho_max / rho)^k * sigma_continuum
+            # Accounts for porous stress concentration.
+            tissue_scaling = (rho_max / rho_safe)**self.k_stimulus
+            sigma_tissue = tissue_scaling * sigma_continuum
+            
+            # 5. Accumulate Stimulus Dose: n_i * sigma^m
+            # n_i = weight * total_daily_cycles
+            n_i = weight * self.n_cycles
+            psi_summation += n_i * (sigma_tissue ** self.m_exp)
 
-            term = (sigma_eff / self.psi_ref) ** self.exponent
-
-            # Accumulate weighted terms
-            psi_p_terms.append(weight * term)
-
-            # M_term = w * (ε_devᵀ ε_dev)
+            # 6. Structure Tensor (average deviatoric strain direction)
+            # M = epsilon_dev^T * epsilon_dev [cite: 4]
+            e_dev_i = ufl.dev(e_i)
+            structure_i = ufl.dot(ufl.transpose(e_dev_i), e_dev_i)
             structure_terms.append(weight * structure_i)
 
             total_weight += weight
@@ -251,21 +298,16 @@ class GaitDriver:
         if total_weight <= 0.0:
             raise ValueError("Gait quadrature weights must sum to a positive value.")
 
-        # Average over cycle
-        J_cycle = sum(psi_p_terms) / total_weight
+        # Final Stimulus Expression: psi = (Sum)^ (1/m)
+        # This is the daily stress stimulus described by Beaupré [cite: 1]
+        self.psi_expr = ufl.max_value(psi_summation, 0.0) ** (1.0 / self.m_exp)
+        
+        # Average Structure Tensor
         M_cycle = sum(structure_terms) / total_weight
-
-        # Final expressions
-        self.psi_expr = N_cyc * J_cycle
         self.M_expr = M_cycle
         
-        # Log-Euclidean Target
+        # Log-Euclidean Target: log(M)
         # Ensure M is SPD and unit trace before taking log
-        # M_cycle is already PSD (sum of outer products), so we use unittrace_psd
-        
         d = self.mech.u.function_space.mesh.geometry.dim
-        from simulation.utils import unittrace_psd
         M_hat = unittrace_psd(M_cycle, d, eps=self.cfg.smooth_eps)
         self.L_target_expr = matrix_ln(M_hat)
-
-

@@ -39,17 +39,17 @@ class Config:
     rho_max: float = 1.00       # Max relative density
     rho0: float = 0.4           # Initial relative density (proximal femur: mostly trabecular)
     k_rho: float = 0.02        # Density remodeling rate [1/day] (half-time ~1 year)
-    S_sat: float = 5.          # Characteristic stimulus magnitude for saturation of remodeling
+    S_sat: float = 1.          # Characteristic stimulus magnitude for saturation of remodeling
 
 
     # Density diffusion [mm^2/day]
-    beta_par: float = 0.1       # Parallel to fabric [mm^2/day] (proximal femur trabeculae)
-    beta_perp: float = 0.05      # Perpendicular to fabric [mm^2/day]
+    beta_par: float = 0.01       # Parallel to fabric [mm^2/day] (proximal femur trabeculae)
+    beta_perp: float = 0.01      # Perpendicular to fabric [mm^2/day]
 
     # =========================================================================
     # Stimulus (Reaction-Diffusion)
     # =========================================================================
-    psi_ref: float = 0.5     # Reference effective stress [MPa] for daily stimulus in proximal femur
+    psi_ref: float = 50.     # Reference effective stress [MPa] for daily stimulus in proximal femur
     cS: float = 1.0             # Signaling capacity
     tauS: float = 1.0           # Relaxation time [day] of mechanostat signal
     kappaS: float = 5.0         # Diffusion coefficient [mm^2/day] for mechanostat signal
