@@ -35,7 +35,10 @@ class FixedPointSolver:
         self.rho = rho
         self.rho_old = rho_old
         
-        self.logger = get_logger(self.comm, verbose=bool(getattr(self.cfg, "verbose", True)), name="FixedPoint")
+        # Fix verbose logic: if "progressbar", we want clean console (WARNING level)
+        verbose = self.cfg.verbose
+        is_verbose = False if verbose == "progressbar" else bool(verbose)
+        self.logger = get_logger(self.comm, verbose=is_verbose, name="FixedPoint", log_file=self.cfg.log_file)
         
         # Stats
         self.mech_time_total = 0.0
@@ -48,7 +51,7 @@ class FixedPointSolver:
             "dens": {"time": 0.0, "iters": 0, "reason": 0}
         }
 
-    def run(self, *, time_days: Optional[float] = None, step_index: Optional[int] = None, progress=None) -> None:
+    def run(self, *, progress=None, task_id=None) -> None:
         """Execute fixed-point loop."""
         tol = float(self.cfg.coupling_tol)
         max_subiters = int(self.cfg.max_subiters)
@@ -65,6 +68,10 @@ class FixedPointSolver:
 
         rho_prev_iter = fem.Function(self.rho.function_space)
         
+        if progress is not None and task_id is not None:
+            progress.reset(task_id, total=max_subiters)
+            progress.start_task(task_id)
+
         for itr in range(1, max_subiters + 1):
             assign(rho_prev_iter, self.rho)
             
@@ -87,7 +94,9 @@ class FixedPointSolver:
             # Update driving force in density solver
             t0 = MPI.Wtime()
             self.densolver.update_driving_force(psi_expr)
-            self.densolver.assemble_lhs() # Re-assemble if needed (though LHS is mostly constant except for dt)
+            # Re-assemble LHS because reaction_coeff depends on S_driving, which changed.
+            # Note: dt is constant within this loop, but S changes.
+            self.densolver.assemble_lhs()
             self.densolver.assemble_rhs()
             dens_iters, dens_reason = self.densolver.solve()
             
@@ -110,6 +119,9 @@ class FixedPointSolver:
             if self.comm.rank == 0 and self.cfg.verbose:
                 self.logger.info(f"   Substep {itr}: rel_err={rel_error:.3e}")
             
+            if progress is not None and task_id is not None:
+                progress.update(task_id, advance=1, info=f"rel_err={rel_error:.3e}")
+
             # Record metrics
             rec = {
                 "iter": itr,

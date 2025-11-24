@@ -7,57 +7,72 @@ import numpy as np
 from mpi4py import MPI
 from dolfinx.fem.petsc import LinearProblem
 
-def create_traction_function(V, meshtags, tag, value, blur_radius=5.0):
+def create_traction_function(V, ds, value, blur_radius):
     """Create a vector-valued function for traction boundary conditions.
     
     Args:
         V: Vector function space
-        meshtags: MeshTags for boundaries
-        tag: Surface tag ID
+        ds: UFL Measure for the boundary (ds(tag))
         value: Vector value [x, y, z]
-        blur_radius: Ignored in this simplified implementation
+        blur_radius: Radius for diffusive smoothing of the boundary condition.
     """
-    f = fem.Function(V, name=f"traction_{tag}")
-    val = np.array(value, dtype=np.float64)
+    mesh = V.mesh
+    u = ufl.TrialFunction(V)
+    v = ufl.TestFunction(V)
     
-    # Set constant value everywhere (masked by ds(tag) in solver)
-    # This is efficient and correct for the solver integration
-    f.x.array[:] = np.tile(val, len(f.x.array)//3)
+    dx = ufl.Measure("dx", domain=mesh)
+    
+    # Regularization parameter (diffusion coefficient)
+    alpha = blur_radius**2
+    
+    val = fem.Constant(mesh, np.array(value, dtype=np.float64))
+    
+    # Screened Poisson equation: -alpha*div(grad(u)) + u = 0
+    # This ensures the solution decays into the volume (boundary layer).
+    # Boundary condition: u ~ val on ds
+    # Variational form: alpha*(grad(u), grad(v))_dx + (u, v)_dx + penalty*(u - val, v)_ds = 0
+    
+    penalty = 1.0e6
+    
+    a = alpha * ufl.inner(ufl.grad(u), ufl.grad(v)) * dx + ufl.inner(u, v) * dx + penalty * ufl.inner(u, v) * ds
+    L = penalty * ufl.inner(val, v) * ds
+    
+    # Use a unique prefix based on memory address or random to avoid collision if called multiple times
+    # But we don't have tag ID here easily. Use a generic prefix.
+    problem = LinearProblem(a, L, bcs=[], petsc_options={"ksp_type": "cg", "pc_type": "gamg"}, petsc_options_prefix="traction_proj")
+    f = problem.solve()
+    f.name = "traction"
     
     return f
 
-def create_pressure_function(V, meshtags, tag, value, blur_radius=5.0):
+def create_pressure_function(V, ds, value, blur_radius):
     """Create a vector-valued function for pressure boundary conditions (Normal * value).
     
     Args:
         V: Vector function space
-        meshtags: MeshTags for boundaries
-        tag: Surface tag ID
-        value: Scalar pressure magnitude (positive = compression/inward?)
-               Usually Pressure P means traction t = -P * n.
-               If value is magnitude of pressure, then t = -value * n.
-        blur_radius: Ignored
+        ds: UFL Measure for the boundary (ds(tag))
+        value: Scalar pressure magnitude.
+        blur_radius: Radius for diffusive smoothing.
     """
     mesh = V.mesh
     n = ufl.FacetNormal(mesh)
     
-    # We want t = -value * n
-    # If value is positive pressure (compression), t points inwards (-n).
-    
     u = ufl.TrialFunction(V)
     v = ufl.TestFunction(V)
     
-    ds = ufl.Measure("ds", domain=mesh, subdomain_data=meshtags, subdomain_id=tag)
     dx = ufl.Measure("dx", domain=mesh)
     
-    # Regularization parameter to extend smoothly into domain
-    alpha = 0.1 
+    alpha = blur_radius**2
+    penalty = 1.0e6
     
-    a = alpha * ufl.inner(ufl.grad(u), ufl.grad(v)) * dx + ufl.inner(u, v) * ds
-    L = ufl.inner(-value * n, v) * ds
+    # Minimizing: alpha*||grad(u)||^2_dx + ||u||^2_dx + penalty*||u - (-value*n)||^2_ds
+    a = alpha * ufl.inner(ufl.grad(u), ufl.grad(v)) * dx + ufl.inner(u, v) * dx + penalty * ufl.inner(u, v) * ds
+    L = penalty * ufl.inner(-value * n, v) * ds
     
-    problem = LinearProblem(a, L, bcs=[], petsc_options={"ksp_type": "cg", "pc_type": "gamg"}, petsc_options_prefix=f"pressure_proj_{tag}")
+    problem = LinearProblem(a, L, bcs=[], petsc_options={"ksp_type": "cg", "pc_type": "gamg"}, petsc_options_prefix="pressure_proj")
     f = problem.solve()
-    f.name = f"pressure_{tag}"
+    f.name = "pressure"
     
     return f
+
+

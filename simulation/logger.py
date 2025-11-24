@@ -28,19 +28,21 @@ class Level(IntEnum):
 
 
 class Logger:
-    """Rank-0 only logger with lazy evaluation."""
+    """Rank-0 only logger with lazy evaluation and file output."""
 
-    __slots__ = ("comm", "level", "name", "prefix")
+    __slots__ = ("comm", "console_level", "file_level", "name", "prefix", "log_file")
 
-    def __init__(self, comm: MPI.Comm, level: Level, name: str):
+    def __init__(self, comm: MPI.Comm, console_level: Level, file_level: Level, name: str, log_file: str = None):
         self.comm = comm
-        self.level = level
+        self.console_level = console_level
+        self.file_level = file_level
         self.name = name
         self.prefix = f"[{name}] " if name else ""
+        self.log_file = log_file
 
     def is_enabled_for(self, lvl: Level) -> bool:
-        """Check if level is enabled."""
-        return lvl >= self.level
+        """Check if level is enabled for console or file."""
+        return lvl >= self.console_level or (self.log_file is not None and lvl >= self.file_level)
 
     def _format(self, msg: Union[str, Callable[[], str]], args: tuple) -> str:
         """Evaluate message (lazy if callable) and format with args."""
@@ -49,8 +51,21 @@ class Logger:
 
     def log(self, lvl: Level, msg: Union[str, Callable[[], str]], *args: Any) -> None:
         """Log message if level enabled. Rank-0 only output."""
-        if self.is_enabled_for(lvl):
-            PETSc.Sys.Print(self._format(msg, args), comm=self.comm)
+        formatted = None
+        
+        # Console output
+        if lvl >= self.console_level:
+            if formatted is None: formatted = self._format(msg, args)
+            PETSc.Sys.Print(formatted, comm=self.comm)
+            
+        # File output (Rank 0 only)
+        if self.comm.rank == 0 and self.log_file and lvl >= self.file_level:
+            if formatted is None: formatted = self._format(msg, args)
+            try:
+                with open(self.log_file, "a", encoding="utf-8") as f:
+                    f.write(formatted + "\n")
+            except IOError:
+                pass # Ignore file write errors to avoid crashing
 
     def debug(self, msg: Union[str, Callable[[], str]], *args: Any) -> None:
         self.log(Level.DEBUG, msg, *args)
@@ -65,8 +80,9 @@ class Logger:
         self.log(Level.ERROR, msg, *args)
 
 
-def get_logger(comm: MPI.Comm, verbose: bool, name: str = "") -> Logger:
-    """Create logger. verbose=True → INFO, verbose=False → WARNING."""
-    level = Level.INFO if verbose else Level.WARNING
-    return Logger(comm, level, name)
+def get_logger(comm: MPI.Comm, verbose: bool, name: str = "", log_file: str = None) -> Logger:
+    """Create logger. verbose=True → INFO console, always INFO file."""
+    console_level = Level.INFO if verbose else Level.WARNING
+    file_level = Level.INFO
+    return Logger(comm, console_level, file_level, name, log_file)
 

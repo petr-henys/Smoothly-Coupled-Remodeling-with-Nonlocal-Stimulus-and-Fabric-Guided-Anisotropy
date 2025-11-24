@@ -68,7 +68,7 @@ class Remodeller:
             except IOError:
                 pass
 
-        self.logger = get_logger(self.comm, verbose=self.verbose, name="Remodeller")
+        self.logger = get_logger(self.comm, verbose=self.verbose, name="Remodeller", log_file=self.cfg.log_file)
         self.logger.info("Initializing Remodeller...")
 
         self.storage = UnifiedStorage(cfg)
@@ -341,11 +341,16 @@ class Remodeller:
         # Update dt [days] and reassemble LHS for time-dependent solvers if dt changed
         if self._current_dt is None or abs(float(dt) - float(self._current_dt)) > 1e-12:
             self.cfg.set_dt(float(dt))
-            if self.solvers_initialized:
-                self.densolver.assemble_lhs()
+            # Note: densolver.assemble_lhs() is called inside fixedsolver.run() loop
+            # because the matrix depends on the non-linear driving force S.
+            # We don't need to call it here unless we want to ensure it's ready for the first iteration,
+            # but fixedsolver handles that.
             self._current_dt = float(dt)
         
-        self.fixedsolver.run(time_days=time_days, step_index=step_index, progress=self.progress if self.rank == 0 else None)
+        self.fixedsolver.run(
+            progress=self.progress if self.rank == 0 else None,
+            task_id=getattr(self, 'sub_task_id', None) if self.rank == 0 else None
+        )
 
         metrics = list(self.fixedsolver.subiter_metrics)
         used_subiters = len(metrics)
@@ -430,6 +435,7 @@ class Remodeller:
                 )
                 # Initialize with spaces to reserve width and prevent resizing
                 self.main_task_id = self.progress.add_task("Remodeling", total=n_steps, info=" " * 35)
+                self.sub_task_id = self.progress.add_task("  Coupling", total=self.cfg.max_subiters, info=" " * 35)
                 self.progress.start()
             except ImportError:
                 self.logger.warning("rich not installed, falling back to standard logging")
@@ -454,6 +460,7 @@ class Remodeller:
             self.progress.stop()
             self.progress = None
             self.main_task_id = None
+            self.sub_task_id = None
 
         self.comm.Barrier()
         overall_elapsed = MPI.Wtime() - overall_start
