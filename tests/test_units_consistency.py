@@ -7,27 +7,37 @@ from mpi4py import MPI
 
 from simulation.config import Config
 from simulation.femur_gait import FemurRemodellerGait
+from simulation.drivers import GaitDriver
 
 class MockMechanicsSolver:
     """Mock mechanics solver that returns stress dependent on u."""
-    def __init__(self, u):
+    def __init__(self, u, cfg):
         self.u = u
-        self.rho = u # dummy
-        self.A_dir = u # dummy
+        self.cfg = cfg
+        # Create a scalar function space for rho
+        V_rho = fem.functionspace(u.function_space.mesh, ("Lagrange", 1))
+        self.rho = fem.Function(V_rho)
+        self.rho.x.array[:] = 1.0 # Initialize to 1.0
         self.gdim = 3
         self.comm = u.function_space.mesh.comm
 
-    def sigma(self, u, rho, A_dir):
+    def sigma(self, u, rho):
         # Return uniaxial stress tensor with magnitude u[0]
         # sigma = [[u[0], 0, 0], [0, 0, 0], [0, 0, 0]]
         # Von Mises of this is |u[0]|
-        S = u[0]
+        val = u[0]
         zero = ufl.as_ufl(0.0)
-        return ufl.as_tensor([[S, zero, zero], [zero, zero, zero], [zero, zero, zero]])
+        return ufl.as_tensor([[val, zero, zero], [zero, zero, zero], [zero, zero, zero]])
 
     def get_strain_tensor(self, u=None):
-        # Return identity for structure tensor testing
-        return ufl.Identity(3)
+        # Return strain consistent with uniaxial stress S=u[0] and E=E0
+        # epsilon = [[S/E0, 0, 0], ...]
+        # This ensures U = S^2 / (2*E0) and sigma_continuum = S
+        S = self.u[0]
+        E0 = self.cfg.E0
+        e11 = S / E0
+        zero = ufl.as_ufl(0.0)
+        return ufl.as_tensor([[e11, zero, zero], [zero, zero, zero], [zero, zero, zero]])
 
     def assemble_rhs(self):
         pass
@@ -69,6 +79,7 @@ def test_gait_driver_daily_dose_scaling():
     cfg.psi_ref = psi_ref
     cfg.gait_cycles_per_day = N_cyc
     cfg.n_power = n_power
+    cfg.smooth_eps = 1e-12 # Minimize smoothing error for exact check
     
     # 1. Test Equilibrium Case
     # J_day = psi_ref * N_cyc * (sigma_vm / psi_ref)^n
@@ -81,7 +92,7 @@ def test_gait_driver_daily_dose_scaling():
     sigma_vm_eq = psi_ref * (1.0 / N_cyc)**(1.0 / n_power)
     
     u = fem.Function(V)
-    mech = MockMechanicsSolver(u)
+    mech = MockMechanicsSolver(u, cfg)
     loader = MockGaitLoader(V)
     
     def solve_side_effect():
@@ -107,8 +118,8 @@ def test_gait_driver_daily_dose_scaling():
     vol = fem.assemble_scalar(fem.form(1.0 * cfg.dx))
     psi_avg = comm.allreduce(psi_val, op=MPI.SUM) / comm.allreduce(vol, op=MPI.SUM)
     
-    # Driver output is dimensionless ratio relative to equilibrium (1.0)
-    assert abs(psi_avg - 1.0) < 1e-9, f"Equilibrium scaling failed: got {psi_avg}, expected 1.0"
+    # Driver output is stimulus value [MPa]. Equilibrium should match psi_ref.
+    assert abs(psi_avg - psi_ref) < 1e-6, f"Equilibrium scaling failed: got {psi_avg}, expected {psi_ref}"
 
     # 2. Test General Scaling
     # If sigma_vm = 2 * sigma_vm_eq
@@ -119,8 +130,8 @@ def test_gait_driver_daily_dose_scaling():
     psi_val = fem.assemble_scalar(fem.form(driver.stimulus_expr() * cfg.dx))
     psi_avg = comm.allreduce(psi_val, op=MPI.SUM) / comm.allreduce(vol, op=MPI.SUM)
     
-    # With n=1, doubling stress doubles the stimulus ratio
-    assert abs(psi_avg - 2.0) < 1e-9, f"Linear scaling failed: got {psi_avg}, expected 2.0"
+    # With n=1, doubling stress doubles the stimulus
+    assert abs(psi_avg - 2.0 * psi_ref) < 1e-6, f"Linear scaling failed: got {psi_avg}, expected {2.0 * psi_ref}"
 
 def test_gait_driver_exponent_scaling():
     """Verify GaitDriver handles power law exponent n correctly."""
@@ -136,12 +147,13 @@ def test_gait_driver_exponent_scaling():
     cfg.psi_ref = psi_ref
     cfg.gait_cycles_per_day = N_cyc
     cfg.n_power = n_power
+    cfg.smooth_eps = 1e-12 # Minimize smoothing error for exact check
     
     # Equilibrium condition for n=2:
     sigma_vm_eq = psi_ref * (1.0 / N_cyc)**(1.0 / n_power)
     
     u = fem.Function(V)
-    mech = MockMechanicsSolver(u)
+    mech = MockMechanicsSolver(u, cfg)
     loader = MockGaitLoader(V)
     
     def solve_side_effect():
@@ -163,8 +175,8 @@ def test_gait_driver_exponent_scaling():
     vol = fem.assemble_scalar(fem.form(1.0 * cfg.dx))
     psi_avg = comm.allreduce(psi_val, op=MPI.SUM) / comm.allreduce(vol, op=MPI.SUM)
     
-    # Driver output is dimensionless ratio relative to equilibrium (1.0)
-    assert abs(psi_avg - 1.0) < 1e-9, f"Power law equilibrium failed: got {psi_avg}, expected 1.0"
+    # Driver output is stimulus value [MPa]. Equilibrium should match psi_ref.
+    assert abs(psi_avg - psi_ref) < 1e-9, f"Power law equilibrium failed: got {psi_avg}, expected {psi_ref}"
 
 
 def test_traction_units_conversion():

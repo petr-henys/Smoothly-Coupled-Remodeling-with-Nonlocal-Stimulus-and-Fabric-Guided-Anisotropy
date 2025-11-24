@@ -18,7 +18,7 @@ from dolfinx.fem.petsc import (
 import ufl
 
 from simulation.utils import (
-    build_nullspace, unittrace_psd, spectral_decomposition_3x3, matrix_exp,
+    build_nullspace,
     smooth_abs, smooth_plus, smooth_max, smooth_heaviside
 )
 from simulation.logger import get_logger
