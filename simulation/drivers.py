@@ -133,14 +133,16 @@ class SimplifiedGaitDriver:
         vol = self.comm.allreduce(fem.assemble_scalar(fem.form(1.0 * self.cfg.dx)), op=MPI.SUM)
         psi_avg = psi_int / vol if vol > 0 else 0.0
         
-        local_vals = self.psi_stats.x.array
+        # Use only owned DOFs to avoid ghost double-counting
+        n_owned = self.V_stats.dofmap.index_map.size_local * self.V_stats.dofmap.index_map_bs
+        local_vals = self.psi_stats.x.array[:n_owned]
         local_min = np.min(local_vals) if local_vals.size > 0 else float('inf')
         local_max = np.max(local_vals) if local_vals.size > 0 else float('-inf')
         
         psi_min = self.comm.allreduce(local_min, op=MPI.MIN)
         psi_max = self.comm.allreduce(local_max, op=MPI.MAX)
         
-        # Median (approximate via gather to rank 0)
+        # Median (approximate via gather to rank 0) - only owned DOFs
         all_data = self.comm.gather(local_vals, root=0)
         psi_median = 0.0
         if self.comm.rank == 0:

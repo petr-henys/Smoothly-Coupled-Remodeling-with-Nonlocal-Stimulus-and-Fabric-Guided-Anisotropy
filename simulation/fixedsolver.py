@@ -8,7 +8,7 @@ from mpi4py import MPI
 from dolfinx import fem
 
 from simulation.config import Config
-from simulation.utils import assign, current_memory_mb, get_owned_size
+from simulation.utils import assign, get_owned_size
 from simulation.logger import get_logger
 from simulation.anderson import _Anderson
 

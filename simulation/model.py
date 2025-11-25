@@ -191,18 +191,20 @@ class Remodeller:
 
     def _field_stats(self, field: fem.Function) -> Tuple[float, float, float, float]:
         """MPI global min/max/mean/median."""
-        if len(field.x.array) > 0:
-            field_min_local = field.x.array.min()
-            field_max_local = field.x.array.max()
+        bs = field.function_space.dofmap.index_map_bs
+        local_size = field.x.index_map.size_local * bs
+        local_data = field.x.array[:local_size]
+        
+        # Use only owned DOFs for all statistics to avoid ghost double-counting
+        if local_data.size > 0:
+            field_min_local = local_data.min()
+            field_max_local = local_data.max()
         else:
             field_min_local = float("inf")
             field_max_local = float("-inf")
         field_min = self.comm.allreduce(field_min_local, op=MPI.MIN)
         field_max = self.comm.allreduce(field_max_local, op=MPI.MAX)
 
-        bs = field.function_space.dofmap.index_map_bs
-        local_size = field.x.index_map.size_local * bs
-        local_data = field.x.array[:local_size]
         local_sum = np.sum(local_data)
         local_count = local_size
 
