@@ -126,9 +126,8 @@ class _Anderson:
             "restart_reason": "",
         }
 
-        # --- ZMĚNA ZDE ---
-        # Pokud je historie malá (p=1), VYPNEME safeguard (use_safeguard=False).
-        # Tím vynutíme přijetí prvního kroku, aby se Anderson mohl "rozjet".
+        # --- SAFEGUARD BYPASS FOR FIRST STEP ---
+        # If history is small (p=1), disable safeguard to allow first step.
         if p == 1:
             return self._picard_step(x_old, x_raw, r, mask_fixed, proj_residual_norm, 
                                      gamma, False, info) # <--- Hardcoded False

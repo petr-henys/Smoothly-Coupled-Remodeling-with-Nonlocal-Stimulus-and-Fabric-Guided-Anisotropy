@@ -270,7 +270,7 @@ class TestMonitoringIntegration:
                 "gl_vector_css": [0.0, 0.0, 1.0]
             }
             with Remodeller(cfg, stages=[dummy_stage]) as rem:
-                rem.simulate(dt=1.0, total_time=1.0)
+                rem.simulate(dt_initial=1.0, total_time=1.0)
             comm.Barrier()
             if comm.rank == 0:
                 from pathlib import Path

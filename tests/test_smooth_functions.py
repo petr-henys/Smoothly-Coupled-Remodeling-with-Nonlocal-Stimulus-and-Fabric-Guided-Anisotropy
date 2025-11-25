@@ -7,7 +7,7 @@ import ufl
 
 from simulation.config import Config
 from simulation.utils import build_facetag
-from simulation.utils import smooth_abs, smooth_plus, smooth_max, smooth_heaviside
+from simulation.utils import smooth_abs, smooth_plus, smooth_max
 from dolfinx import mesh
 
 def make_unit_cube(comm=MPI.COMM_WORLD, n=6):
@@ -55,48 +55,6 @@ class TestSmoothFunctions:
         # Check monotonicity
         for i in range(len(smooth_vals) - 1):
             assert smooth_vals[i+1] >= smooth_vals[i], f"smooth_max not monotone: {smooth_vals[i]} > {smooth_vals[i+1]}"
-    
-    def test_smooth_heaviside_limits(self):
-        """Verify smooth_heaviside(x, eps) → H(x) as |x|→∞."""
-        eps = 1e-3
-        
-        # smooth_heaviside(x) = 0.5 * (1 + x / smooth_abs(x))
-        # smooth_abs(x) = sqrt(x^2 + eps^2) - eps
-        
-        def s_heaviside(x, eps):
-            s_abs = np.sqrt(x**2 + eps**2) - eps
-            # Avoid division by zero if s_abs is 0 (only at x=0, eps=0)
-            if s_abs == 0: return 0.5
-            return 0.5 * (1.0 + x / s_abs)
-
-        # Far negative: should be near 0
-        x_neg = -10.0
-        H_neg = s_heaviside(x_neg, eps)
-        # Note: x / (sqrt(x^2+e^2)-e) -> -1 as x->-inf?
-        # Let's check limits.
-        # x / (|x| - eps) -> -1 if x < 0.
-        # So 0.5 * (1 - 1) = 0. Correct.
-        
-        assert abs(H_neg - 0.0) < 0.01, f"smooth_heaviside({x_neg}) should be ~0, got {H_neg}"
-        
-        # Far positive: should be near 1
-        x_pos = 10.0
-        H_pos = s_heaviside(x_pos, eps)
-        assert abs(H_pos - 1.0) < 0.01, f"smooth_heaviside({x_pos}) should be ~1, got {H_pos}"
-        
-        # At zero: should be 0.5?
-        # x=0 -> s_abs = 0. Division by zero?
-        # smooth_heaviside implementation: 0.5 * (1 + x / smooth_abs(x, eps))
-        # If x=0, smooth_abs(0) = 0.
-        # This implementation seems dangerous at x=0 if smooth_abs(0)=0.
-        
-        # Let's check implementation in utils.py
-        # return 0.5 * (1 + x / smooth_abs(x, eps))
-        
-        # If smooth_abs(0) = 0, then we have 0/0.
-        # Maybe smooth_heaviside should use sqrt(x^2+eps^2) instead of smooth_abs?
-        
-        pass # Skip zero check for now or fix implementation if needed.
 
     def test_smooth_functions_match_ufl_on_mesh(self):
         """Validate UFL implementations of smooth_* against their analytical forms by integration."""
@@ -118,13 +76,11 @@ class TestSmoothFunctions:
         # Expected analytical forms (matching utils.py implementation)
         s_abs_form = ufl.sqrt(S*S + eps*eps) - eps
         s_plus_form = 0.5*(S + s_abs_form)
-        h_form = 0.5*(1.0 + S/s_abs_form) # This might be unstable at S=0
         s_max_form = 0.5*((S + xmin) + (ufl.sqrt((S - xmin)*(S - xmin) + eps*eps) - eps))
 
         # Implementations under test
         s_abs_impl = smooth_abs(S, eps)
         s_plus_impl = smooth_plus(S, eps)
-        h_impl = smooth_heaviside(S, eps)
         s_max_impl = smooth_max(S, xmin, eps)
 
         # Integrate squared differences over the domain and require they are tiny
@@ -138,5 +94,4 @@ class TestSmoothFunctions:
         tol = 1e-12
         assert _mean_sq(s_abs_impl - s_abs_form) < tol
         assert _mean_sq(s_plus_impl - s_plus_form) < tol
-        # assert _mean_sq(h_impl - h_form) < tol # Skip heaviside as it might be singular
         assert _mean_sq(s_max_impl - s_max_form) < tol

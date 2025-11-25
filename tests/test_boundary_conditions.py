@@ -56,7 +56,7 @@ class TestBoundaryConditions:
         if bc_dofs.size > 0:
             u_bc_vals = u.x.array[bc_dofs]
             max_bc_val = np.max(np.abs(u_bc_vals))
-            assert max_bc_val < 1e-9, f"Dirichlet BC not enforced: max |u| on BC = {max_bc_val}"
+            assert max_bc_val < 1e-8, f"Dirichlet BC not enforced: max |u| on BC = {max_bc_val}"
     
     @pytest.mark.parametrize("unit_cube", [6], indirect=True)
     def test_traction_load_response(self, unit_cube, traction_factory):

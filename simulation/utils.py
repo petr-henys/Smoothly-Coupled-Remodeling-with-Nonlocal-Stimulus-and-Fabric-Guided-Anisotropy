@@ -179,5 +179,4 @@ def smooth_plus(x, eps=1e-4):
 def smooth_max(x, y, eps=1e-4):
     return 0.5 * (x + y + smooth_abs(x - y, eps))
 
-def smooth_heaviside(x, eps=1e-4):
-    return 0.5 * (1 + x / smooth_abs(x, eps))
+

@@ -2,16 +2,16 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal, Tuple
 import json
+import logging
 
 import numpy as np
 import pyvista as pv
 from scipy.optimize import least_squares
 from scipy.spatial import KDTree
 
-from .logging_config import get_logger, get_class_logger
 from .paths import FemurPaths
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 NDArrayF = np.ndarray
 
@@ -66,7 +66,7 @@ class FemurCSS:
         if self.side not in {"left", "right"}:
             raise ValueError("side must be 'left' or 'right'")
 
-        self.logger = get_class_logger(self)
+        self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
 
         self.fhc, self.head_radius = _fit_femoral_head(femur, head_line, save_head_sphere)
         self._build_axes(le_me)

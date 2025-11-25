@@ -52,15 +52,18 @@ class TestAndersonAcceleration:
             def prn(a, b, c):
                 return 2.0
 
-            # First rejection
+            # First step bypasses safeguard (p=1), so accepted=True
             x1, info1 = aa.mix(x_old, x_raw, proj_residual_norm=prn)
-            assert info1.get("accepted") is False, "First call should reject"
+            assert info1.get("accepted") is True, "First call should accept (safeguard bypassed for p=1)"
+            assert len(aa.x_hist) == 1
 
-            # Second rejection triggers restart
+            # Second call (p=2): safeguard enabled, rejects, triggers restart (reject_streak=1 >= restart_on_reject_k=1)
             x2, info2 = aa.mix(x_old, x_raw, proj_residual_norm=prn)
-            assert isinstance(info2.get("restart_reason", ""), str), "Restart reason missing"
-            assert "reject_streak" in info2.get("restart_reason", ""), "Restart not scheduled on reject streak"
+            assert info2.get("accepted") is False, "Second call should reject"
+            assert "reject_streak" in info2.get("restart_reason", ""), "Restart should be scheduled on rejection"
+            assert aa.pending_reset is True
 
-            # Third call honors pending reset
-            _ = aa.mix(x_old, x_raw, proj_residual_norm=prn)
-            assert len(aa.x_hist) <= 1, "History not cleared after scheduled reset"
+            # Third call: pending_reset triggers history clear, then p=1 again (bypassed)
+            x3, info3 = aa.mix(x_old, x_raw, proj_residual_norm=prn)
+            assert len(aa.x_hist) == 1, "History should be cleared after scheduled reset"
+            assert info3.get("accepted") is True, "After reset, first step bypasses safeguard"

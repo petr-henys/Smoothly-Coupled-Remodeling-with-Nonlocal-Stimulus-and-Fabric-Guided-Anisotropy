@@ -1,9 +1,14 @@
-"""PDE subsolvers: mechanics (u) and density (ρ)."""
+"""Linear PDE subsolvers for coupled bone remodeling.
+
+Mechanics: elastic equilibrium with density-dependent stiffness.
+Density: reaction-diffusion evolution driven by mechanical stimulus.
+"""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, List, Tuple, Optional
 
+import numpy as np
 from mpi4py import MPI
 from petsc4py import PETSc
 from dolfinx import fem
@@ -252,7 +257,6 @@ class DensitySolver(_BaseLinearSolver):
         super().__init__(config, rho, [], [])
         self.rho = self.state
         self.rho_old = rho_old
-        self.z_min = None
         self.S_driving = fem.Function(self.function_space, name="S_driving")
         self.dt_c = fem.Constant(self.mesh, float(self.cfg.dt))
 
@@ -304,7 +308,18 @@ class DensitySolver(_BaseLinearSolver):
     def solve(self):
         its, reason = self._solve()
         self._maybe_warn(reason, "Density")
+        
+        # Enforce bounds [rho_min, rho_max] via pointwise projection
+        self._enforce_bounds()
+        
         return its, reason
+
+    def _enforce_bounds(self):
+        """Project density to [rho_min, rho_max] on owned DOFs."""
+        n_owned = self.function_space.dofmap.index_map.size_local * self.function_space.dofmap.index_map_bs
+        arr = self.rho.x.array[:n_owned]
+        arr[:] = np.clip(arr, self.cfg.rho_min, self.cfg.rho_max)
+        self.rho.x.scatter_forward()
 
     def mass_balance_residual(self):
         dt = self.dt_c

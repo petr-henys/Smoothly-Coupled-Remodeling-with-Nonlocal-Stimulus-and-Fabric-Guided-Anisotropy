@@ -1,8 +1,6 @@
-"""
-Remodeling drivers: translate mechanics to stimulus ψ(u) and structure M(u).
-"""
+"""Gait drivers: solve mechanics for load stages and compute daily stimulus."""
 
-from typing import Protocol, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 import numpy as np
 from mpi4py import MPI
 from dolfinx import fem
@@ -15,17 +13,6 @@ from simulation.traction_utils import create_traction_function, create_pressure_
 from simulation.logger import get_logger
 from simulation.femur_css import FemurCSS, load_json_points
 from simulation.paths import FemurPaths
-
-class RemodelingDriver(Protocol):
-    """Protocol for drivers that provide mechanical fields to remodeling PDEs."""
-
-    def stimulus_expr(self) -> ufl.core.expr.Expr: ...
-    def update_snapshots(self) -> Optional[Dict]: ...
-    def setup(self) -> None: ...
-    def destroy(self) -> None: ...
-    def update_stiffness(self) -> None: ...
-    def get_stimulus_stats(self) -> Dict[str, float]: ...
-
 
 class SimplifiedGaitDriver:
     """
@@ -61,7 +48,7 @@ class SimplifiedGaitDriver:
 
         self.m_exp = float(config.n_power)
         self.n_cycles = float(config.gait_cycles_per_day)
-        self.k_stimulus = 1.0
+        self.k_stimulus = float(config.k_stimulus)
 
         V = self.mech.u.function_space
         self.u_snap = [fem.Function(V, name=f"u_snap_{i}") for i in range(len(self.stages))]

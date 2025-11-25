@@ -71,7 +71,7 @@ class FixedPointSolver:
         - r_norm  = proj_residual_norm(x_old, x_raw, x_raw)
         - rp_norm = proj_residual_norm(x_old, x_cand, x_raw)
         
-        Pokud je ||x_ref|| ~ 0, vrátí se absolutní norma kroku.
+        Returns absolute step norm if ||x_ref|| ~ 0.
         """
         diff = x_trial_vec - x_old_vec
 
@@ -87,8 +87,7 @@ class FixedPointSolver:
             # Když je referenční vektor prakticky nulový,
             # použij absolutní normu kroku (aby se něco aspoň měřilo).
             return np.sqrt(diff_glob)
-
-        # Relativní norma (bez jednotek): ||delta|| / ||x_ref||
+        # Relative step norm: ||x_trial - x_old|| / ||x_ref|| in global 2-norm.
         return np.sqrt(diff_glob / ref_glob)
 
     def run(self, *, progress=None, task_id=None) -> bool:

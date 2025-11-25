@@ -16,10 +16,9 @@ class Config:
 
     Units (model-wide):
     - Length: millimetres [mm]
-    - Mass: tonnes [t] (1 t = 1000 kg)
     - Time: days [day]
-    - Stress/Energy: megapascals [MPa] (1 MPa = 1 N/mm²)
-    - Density: relative [-] in [0, 1]
+    - Stress/Modulus: megapascals [MPa]
+    - Density: apparent density [g/cm³]
     """
 
     # =========================================================================
@@ -38,7 +37,7 @@ class Config:
     rho_min: float = 0.10       # Min physical density [g/cm^3]
     rho_max: float = 1.95       # Max physical density [g/cm^3]
     rho0: float = 0.80          # Initial density [g/cm^3]
-    k_rho: float = 0.05        # Density remodeling rate [1/day] (half-time ~1 year)
+    k_rho: float = 0.1        # Density remodeling rate [1/day] (half-time ~1 year)
 
     # Density diffusion [mm^2/day]
     D_rho: float = 0.1       # Isotropic diffusion [mm^2/day]
@@ -46,7 +45,8 @@ class Config:
     # =========================================================================
     # Stimulus (Local)
     # =========================================================================
-    psi_ref: float = 50.     # Reference effective stress [MPa] for daily stimulus in proximal femur
+    psi_ref: float = 50.        # Reference effective stress [MPa] for daily stimulus
+    k_stimulus: float = 1.0     # Tissue-level stress scaling exponent (rho_max/rho)^k
     
     # Base moduli [MPa]
     E0: float = 6500       # Young's modulus
@@ -60,8 +60,8 @@ class Config:
     # =========================================================================
     # Adaptive Time Stepping
     # =========================================================================
-    adaptive_rtol: float = 1e-3
-    adaptive_atol: float = 1e-4
+    adaptive_rtol: float = 1e-2
+    adaptive_atol: float = 1e-3
     dt_min: float = 1e-4
     dt_max: float = 100.
 
@@ -74,7 +74,7 @@ class Config:
     log_file: str = "simulation.log"
 
     # Linear Solver
-    ksp_type: str = "minres"        # Changed from minres to cg for SPD elasticity
+    ksp_type: str = "minres"
     pc_type: str = "gamg"
     ksp_rtol: float = 1e-6
     ksp_atol: float = 1e-7
@@ -97,7 +97,7 @@ class Config:
     step_limit_factor: float = 2.0
 
     # Subiterations
-    max_subiters: int = 50
+    max_subiters: int = 20
     min_subiters: int = 1
 
     # Diagnostics
