@@ -1,11 +1,5 @@
 """
 Type-I Anderson (Pulay) acceleration with equality-constrained least squares.
-
-Key features:
-- Global Gram matrix construction (MPI collective)
-- Tikhonov regularization scaled by residual energy
-- Restart heuristics (rejection, stalling, conditioning)
-- Backtracking safeguard with weighted projected residual
 """
 
 from collections import deque
@@ -13,7 +7,6 @@ from typing import Callable, Dict, Optional, Sequence, Tuple
 import numpy as np
 from mpi4py import MPI
 
-from simulation.utils import _global_norm
 from simulation.logger import get_logger
 
 
@@ -70,16 +63,12 @@ class _Anderson:
         """Global Gram matrix H = R R^T (MPI collective)."""
         if len(r_list) == 0:
             return np.zeros((0, 0), dtype=float)
-        R_loc = np.vstack(r_list)  # (p, n_loc)
-        H_loc = R_loc @ R_loc.T     # (p, p)
+        R_loc = np.vstack(r_list)
+        H_loc = R_loc @ R_loc.T
         return self.comm.allreduce(H_loc, op=MPI.SUM)
 
-    
     def _solve_kkt(self, H: np.ndarray, lam_eff: float) -> np.ndarray:
-        """Solve min ||alpha||_{H+lam I} s.t. 1^T alpha = 1 using closed-form.
-        
-        alpha = (H+lam I)^{-1} 1 / (1^T (H+lam I)^{-1} 1)
-        """
+        """Solve min ||alpha||_{H+lam I} s.t. 1^T alpha = 1."""
         p = H.shape[0]
         if p == 0:
             return np.zeros(0, dtype=float)
@@ -95,7 +84,6 @@ class _Anderson:
         if abs(denom) < 1e-30:
             return np.full(p, 1.0 / p, dtype=float)
         return y / denom
-
 
     def _condition_number(self, H: np.ndarray, lam_eff: float) -> float:
         """Estimate condition number of H + lam*I."""
@@ -116,32 +104,15 @@ class _Anderson:
         use_safeguard: bool = True,
         backtrack_max: int = 6,
     ) -> Tuple[np.ndarray, Dict]:
-        """
-        Mix iterate using Anderson acceleration.
         
-        Args:
-            x_old: Previous iterate
-            x_raw: Raw Picard/GS output
-            mask_fixed: Boolean mask for Dirichlet DOFs
-            proj_residual_norm: Callable for weighted projected residual
-            gamma: Safeguard threshold
-            use_safeguard: Enable backtracking
-            backtrack_max: Max backtracking iterations
-            
-        Returns:
-            (x_new, info_dict)
-        """
-        # Execute pending reset
         if self.pending_reset:
             self.reset()
 
-        # Fixed-point residual (mask Dirichlet DOFs)
         r = x_raw - x_old
         if mask_fixed is not None:
             r = r.copy()
             r[mask_fixed] = 0.0
 
-        # Update history
         self.x_hist.append(x_old.copy())
         self.r_hist.append(r)
         p = len(self.r_hist)
@@ -155,23 +126,23 @@ class _Anderson:
             "restart_reason": "",
         }
 
-        # Insufficient history → damped Picard
+        # --- ZMĚNA ZDE ---
+        # Pokud je historie malá (p=1), VYPNEME safeguard (use_safeguard=False).
+        # Tím vynutíme přijetí prvního kroku, aby se Anderson mohl "rozjet".
         if p == 1:
             return self._picard_step(x_old, x_raw, r, mask_fixed, proj_residual_norm, 
-                                     gamma, use_safeguard, info)
+                                     gamma, False, info) # <--- Hardcoded False
 
         # Anderson acceleration
         H = self._build_gram(list(self.r_hist))
         lam_eff = self.lam * max(float(np.trace(H)) / p, 1.0)
         alpha = self._solve_kkt(H, lam_eff)
 
-        # Build candidate: x = sum(alpha_i * (x_i + beta*r_i))
         y = np.zeros_like(x_old)
         for a_i, xi, ri in zip(alpha, self.x_hist, self.r_hist):
             y += a_i * (xi + self.beta * ri)
         s = y - x_old
 
-        # Limit step size using the same metric as safeguarding (explicit, no fallbacks)
         if proj_residual_norm is not None:
             s_proxy = proj_residual_norm(x_old, x_old + s, x_raw)
             r_proxy = proj_residual_norm(x_old, x_raw, x_raw) + 1e-300
@@ -180,7 +151,6 @@ class _Anderson:
 
         x_cand = x_old + s
 
-        # Safeguard with backtracking
         if proj_residual_norm is not None:
             r_norm = proj_residual_norm(x_old, x_raw, x_raw)
             rp_norm = proj_residual_norm(x_old, x_cand, x_raw)
@@ -190,11 +160,9 @@ class _Anderson:
 
             self.best_picard_res = min(self.best_picard_res, r_norm)
 
-            # Adaptive gamma near convergence
             gamma_eff = gamma * (r_norm / (r_norm + self.safeguard_abs_floor)) ** self.gamma_decay_p
             
             if use_safeguard and r_norm > self.safeguard_abs_floor and rp_norm > (1.0 - gamma_eff) * r_norm:
-                # Backtrack along s
                 x_cand, accepted, bt = self._backtrack(
                     x_old, s, x_raw, r_norm, gamma_eff, proj_residual_norm, backtrack_max
                 )
@@ -207,10 +175,8 @@ class _Anderson:
             else:
                 self.reject_streak = 0
 
-            # Check restart conditions
             self._check_restart(r_norm, info["condH"], info)
 
-        # Enforce Dirichlet DOFs
         if mask_fixed is not None and mask_fixed.any():
             x_cand[mask_fixed] = x_raw[mask_fixed]
 
@@ -227,8 +193,9 @@ class _Anderson:
         use_safeguard: bool,
         info: Dict,
     ) -> Tuple[np.ndarray, Dict]:
-        """Damped Picard step (used when history insufficient)."""
+        """Damped Picard step."""
         x_new = x_old + self.beta * r
+        
         if mask_fixed is not None and mask_fixed.any():
             x_new[mask_fixed] = x_raw[mask_fixed]
 
@@ -241,7 +208,6 @@ class _Anderson:
 
             gamma_eff = gamma * (r_norm / (r_norm + self.safeguard_abs_floor)) ** self.gamma_decay_p
             if use_safeguard and r_norm > self.safeguard_abs_floor and rp_norm > (1.0 - gamma_eff) * r_norm:
-                # Reject, fallback to pure Picard
                 x_new = x_raw.copy()
                 info["accepted"] = False
                 self.reject_streak += 1
@@ -260,7 +226,6 @@ class _Anderson:
         proj_residual_norm: Callable,
         backtrack_max: int,
     ) -> Tuple[np.ndarray, bool, int]:
-        """Backtrack along step direction."""
         theta = 0.5
         for bt in range(backtrack_max):
             x_try = x_old + theta * s
@@ -268,11 +233,9 @@ class _Anderson:
             if rp_try <= (1.0 - gamma_eff) * r_norm:
                 return x_try, True, bt
             theta *= 0.5
-        # Backtracking failed → fallback to Picard
         return x_raw.copy(), False, backtrack_max
 
     def _check_restart(self, r_norm: float, condH: float, info: Dict) -> None:
-        """Check restart conditions and schedule reset."""
         if self.reject_streak >= self.restart_on_reject_k:
             self.pending_reset = True
             info["restart_reason"] = f"reject_streak>={self.restart_on_reject_k}"

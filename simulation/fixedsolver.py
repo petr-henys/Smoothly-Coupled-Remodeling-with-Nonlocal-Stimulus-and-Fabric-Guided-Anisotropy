@@ -91,8 +91,14 @@ class FixedPointSolver:
         # Relativní norma (bez jednotek): ||delta|| / ||x_ref||
         return np.sqrt(diff_glob / ref_glob)
 
-    def run(self, *, progress=None, task_id=None) -> None:
-        """Execute fixed-point loop."""
+    def run(self, *, progress=None, task_id=None) -> bool:
+        """Execute fixed-point loop.
+        
+        Returns
+        -------
+        bool
+            True if converged, False otherwise.
+        """
         tol = float(self.cfg.coupling_tol)
         max_subiters = int(self.cfg.max_subiters)
         min_subiters = int(self.cfg.min_subiters)
@@ -213,4 +219,6 @@ class FixedPointSolver:
             self.subiter_metrics.append(rec)
             
             if rel_error < tol and itr >= min_subiters:
-                break
+                return True
+        
+        return False

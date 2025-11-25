@@ -58,6 +58,14 @@ class Config:
     gait_cycles_per_day: float = 1.   # Daily equivalent hip loading cycles (walking, stairs)
 
     # =========================================================================
+    # Adaptive Time Stepping
+    # =========================================================================
+    adaptive_rtol: float = 1e-3
+    adaptive_atol: float = 1e-4
+    dt_min: float = 1e-4
+    dt_max: float = 100.
+
+    # =========================================================================
     # Numerics & I/O
     # =========================================================================
     quadrature_degree: int = 4

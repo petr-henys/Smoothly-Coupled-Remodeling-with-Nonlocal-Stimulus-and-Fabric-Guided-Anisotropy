@@ -24,6 +24,7 @@ from simulation.subsolvers import MechanicsSolver, DensitySolver
 from simulation.fixedsolver import FixedPointSolver
 from simulation.drivers import SimplifiedGaitDriver
 from simulation.traction_utils import create_traction_function, create_pressure_function
+from simulation.timeintegrator import TimeIntegrator
 
 
 class Remodeller:
@@ -107,15 +108,8 @@ class Remodeller:
         self.rho = Function(self.Q, name="rho")
         self.rho_old = Function(self.Q, name="rho_old")
 
-        # Predictor state (Adams-Bashforth)
-        self.step_count = 0
-        self.dt_prev: Optional[float] = None
-        
-        self.rho_rate_last = Function(self.Q, name="rho_rate_last")
-        self.rho_rate_last2 = Function(self.Q, name="rho_rate_last2")
-        
-        assign(self.rho_rate_last, 0.0)
-        assign(self.rho_rate_last2, 0.0)
+        # Time Integrator
+        self.integrator = TimeIntegrator(self.comm, self.cfg, self.Q)
 
         assign(self.rho, self.cfg.rho0)
 
@@ -244,7 +238,8 @@ class Remodeller:
             psi_avg=psi_avg, psi_min=psi_min, psi_max=psi_max, psi_median=psi_median
         )
 
-    def _output(self, t: float, step: int, coupling_stats: Dict[str, float]):
+    def _output(self, t: float, step: int, coupling_stats: Dict[str, float], 
+                 dt: float = 0.0, wrms_error: float = 0.0, next_dt: float = 0.0):
         """Scatter, stats, log, write."""
         fields = self._collect_field_stats()
         
@@ -256,26 +251,28 @@ class Remodeller:
 
         if self.progress is not None and self.main_task_id is not None:
             # Fixed width formatting to prevent progress bar resizing
-            info_str = f"t={t:6.1f}d rho={fields['rho_mean']:4.2f} GS={coupling_stats['iters']:2d}"
+            info_str = f"t={t:5.1f}d dt={dt:5.1f} err={wrms_error:.1e}"
             self.progress.update(self.main_task_id, info=f"{info_str:<35}")
 
         # Concise summary line
-        self.logger.info(f"Step {step:2d} | t={t:6.1f}d | GS={coupling_stats['iters']}")
+        self.logger.info(f"Step {step:3d} | t={t:7.2f}d | dt={dt:7.2f}d | WRMS={wrms_error:.2e} | GS={coupling_stats['iters']:2d}")
 
         # Detailed table
         def format_table():
             lines = []
-            lines.append("-" * 96)
+            lines.append("=" * 100)
+            lines.append(f"  TIME STEPPING: dt={dt:8.3f}d | next_dt={next_dt:8.3f}d | WRMS error={wrms_error:.3e}")
+            lines.append("-" * 100)
             lines.append(f"{'Field':>10} | {'Min':>12} | {'Max':>12} | {'Mean':>12} | {'Median':>12} |")
-            lines.append("-" * 96)
+            lines.append("-" * 100)
             
             # Rows
-            lines.append(f"{'rho':>10} | {fields['rho_min']:12.3e} | {fields['rho_max']:12.3e} | {fields['rho_mean']:12.3e} | {fields['rho_median']:12.3e} |")
+            lines.append(f"{'rho':>10} | {fields['rho_min']:12.4f} | {fields['rho_max']:12.4f} | {fields['rho_mean']:12.4f} | {fields['rho_median']:12.4f} |")
             lines.append(f"{'psi':>10} | {fields['psi_min']:12.3e} | {fields['psi_max']:12.3e} | {fields['psi_avg']:12.3e} | {fields['psi_median']:12.3e} |")
             
-            lines.append("-" * 96)
+            lines.append("-" * 100)
             lines.append(f"{'Solver':>10} | {'Tot Time':>12} | {'Avg Time':>12} | {'Tot Iters':>12} | {'Avg Iters':>12} | {'Reason':>12} |")
-            lines.append("-" * 96)
+            lines.append("-" * 100)
             
             gs_iters = max(1, coupling_stats['iters'])
             
@@ -294,9 +291,9 @@ class Remodeller:
                 avg_time = st['time'] / max(1, n_solves)
                 lines.append(f"{name:>10} | {st['time']:12.2f} | {avg_time:12.4f} | {st['iters']:12d} | {avg_its:12.1f} | {st['reason']:12d} |")
             
-            lines.append("-" * 96)
-            lines.append(f"Memory (RSS): {mem_mb:.1f} MB")
-            lines.append("-" * 96)
+            lines.append("-" * 100)
+            lines.append(f"  Memory (RSS): {mem_mb:.1f} MB | Coupling iters: {coupling_stats['iters']} | Solve time: {coupling_stats['time']:.2f}s")
+            lines.append("=" * 100)
             
             return "\n" + "\n".join(lines)
 
@@ -304,8 +301,16 @@ class Remodeller:
 
         self.storage.fields.write("scalars", float(t))
 
-    def step(self, dt: float, *, step_index: Optional[int] = None, time_days: Optional[float] = None) -> None:
-        """Single timestep: fixed-point iteration until coupling tolerance met."""
+    def step(self, dt: float, *, step_index: Optional[int] = None, time_days: Optional[float] = None) -> Tuple[float, Dict]:
+        """Single timestep attempt: predictor + fixed-point iteration.
+        
+        Returns
+        -------
+        error_norm : float
+            WRMS error of the step.
+        metrics : Dict
+            Solver metrics.
+        """
         assign(self.rho_old, self.rho)
 
         if not self.solvers_initialized:
@@ -314,41 +319,25 @@ class Remodeller:
             self.solvers_initialized = True
 
         # Predictor step (Adams-Bashforth)
-        if self.step_count > 0:
-            dt_curr = float(dt)
-            dt_prev = self.dt_prev if self.dt_prev is not None else dt_curr
-            
-            # Get owned DOF count to avoid ghost issues
-            n_owned = self.rho.function_space.dofmap.index_map.size_local * self.rho.function_space.dofmap.index_map_bs
-            
-            # Coefficients
-            if self.step_count >= 2:
-                # AB2
-                w1 = 1.0 + dt_curr / (2.0 * dt_prev)
-                w2 = dt_curr / (2.0 * dt_prev)
-                
-                self.rho.x.array[:n_owned] = self.rho_old.x.array[:n_owned] + dt_curr * (
-                    w1 * self.rho_rate_last.x.array[:n_owned] - w2 * self.rho_rate_last2.x.array[:n_owned]
-                )
-            else:
-                # AB1 (Forward Euler)
-                self.rho.x.array[:n_owned] = self.rho_old.x.array[:n_owned] + dt_curr * self.rho_rate_last.x.array[:n_owned]
-            
-            self.rho.x.scatter_forward()
+        x_pred = self.integrator.predict(dt, self.rho)
+        
+        # Apply predictor to rho (owned DOFs)
+        n_owned = self.rho.function_space.dofmap.index_map.size_local * self.rho.function_space.dofmap.index_map_bs
+        self.rho.x.array[:n_owned] = x_pred
+        self.rho.x.scatter_forward()
 
         # Update dt [days] and reassemble LHS for time-dependent solvers if dt changed
         if self._current_dt is None or abs(float(dt) - float(self._current_dt)) > 1e-12:
             self.cfg.set_dt(float(dt))
-            # Note: densolver.assemble_lhs() is called inside fixedsolver.run() loop
-            # because the matrix depends on the non-linear driving force S.
-            # We don't need to call it here unless we want to ensure it's ready for the first iteration,
-            # but fixedsolver handles that.
             self._current_dt = float(dt)
         
-        self.fixedsolver.run(
+        converged = self.fixedsolver.run(
             progress=self.progress if self.rank == 0 else None,
             task_id=getattr(self, 'sub_task_id', None) if self.rank == 0 else None
         )
+
+        # Compute error
+        error_norm = self.integrator.compute_wrms_error(x_pred, self.rho)
 
         metrics = list(self.fixedsolver.subiter_metrics)
         used_subiters = len(metrics)
@@ -375,6 +364,8 @@ class Remodeller:
                 "rss_mem_mb": rss_mb_total,
                 "mech_iters": self.fixedsolver.mech_iters_total,
                 "dens_iters": self.fixedsolver.solver_stats["dens"]["iters"],
+                "wrms_error": float(error_norm),
+                "converged": converged
             }
             if time_days is not None:
                 payload["time_days"] = float(time_days)
@@ -384,25 +375,13 @@ class Remodeller:
                     payload["proj_res_last"] = float(proj_val)
             self.telemetry.record("steps", payload, csv_event=True)
 
-        # Update rates for next step (Adams-Bashforth history)
-        dt_curr = float(dt)
-        
-        # Shift history
-        assign(self.rho_rate_last2, self.rho_rate_last)
-        
-        # Calculate new rates: (x_new - x_old) / dt (on owned DOFs only)
-        n_owned = self.rho.function_space.dofmap.index_map.size_local * self.rho.function_space.dofmap.index_map_bs
-        self.rho_rate_last.x.array[:n_owned] = (self.rho.x.array[:n_owned] - self.rho_old.x.array[:n_owned]) / dt_curr
-        
-        self.rho_rate_last.x.scatter_forward()
-        
-        self.dt_prev = dt_curr
-        self.step_count += 1
+        return error_norm, {"converged": converged, "iters": used_subiters}
 
-    def simulate(self, dt: float, total_time: float) -> None:
-        """Run remodeling loop for ``total_time`` [days] with fixed ``dt`` [days]."""
+    def simulate(self, dt_initial: float, total_time: float) -> None:
+        """Run remodeling loop for ``total_time`` [days] with adaptive time stepping."""
         t = 0.0
-        n_steps = int(np.ceil(total_time / dt))
+        dt = dt_initial
+        step_idx = 0
 
         self.cfg.set_dt(float(dt))
 
@@ -434,26 +413,51 @@ class Remodeller:
                     transient=False, # Keep the main progress bar visible
                 )
                 # Initialize with spaces to reserve width and prevent resizing
-                self.main_task_id = self.progress.add_task("Remodeling", total=n_steps, info=" " * 35)
+                self.main_task_id = self.progress.add_task("Remodeling", total=total_time, info=" " * 35)
                 self.sub_task_id = self.progress.add_task("  Coupling", total=self.cfg.max_subiters, info=" " * 35)
                 self.progress.start()
             except ImportError:
                 self.logger.warning("rich not installed, falling back to standard logging")
 
-        for step in range(n_steps):
-            step_time = t + dt
-            self.step(dt, step_index=step, time_days=step_time)
+        while t < total_time:
+            # Clamp dt to hit total_time exactly
+            if t + dt > total_time:
+                dt = total_time - t
             
-            t = step_time
-            if (step + 1) % self.cfg.saving_interval == 0:
-                coupling_stats = {
-                    "iters": len(self.fixedsolver.subiter_metrics),
-                    "time": float(self.fixedsolver.mech_time_total + self.fixedsolver.dens_time_total)
-                }
-                self._output(t, step, coupling_stats)
+            # Attempt step
+            error, metrics = self.step(dt, step_index=step_idx, time_days=t+dt)
             
-            if self.progress is not None and self.main_task_id is not None:
-                self.progress.update(self.main_task_id, advance=1)
+            accepted, next_dt, reason = self.integrator.suggest_dt(dt, metrics["converged"], error)
+            
+            if accepted:
+                self.integrator.commit_step(dt, self.rho, self.rho_old)
+                t += dt
+                step_idx += 1
+                
+                if (step_idx) % self.cfg.saving_interval == 0:
+                    coupling_stats = {
+                        "iters": metrics["iters"],
+                        "time": float(self.fixedsolver.mech_time_total + self.fixedsolver.dens_time_total)
+                    }
+                    self._output(t, step_idx, coupling_stats, dt=dt, wrms_error=error, next_dt=next_dt)
+                
+                if self.progress is not None and self.main_task_id is not None:
+                    info_str = f"t={t:5.1f}d dt={next_dt:5.1f} err={error:.1e}"
+                    self.progress.update(self.main_task_id, completed=t, info=f"{info_str:<35}")
+                
+                dt = next_dt
+            else:
+                # Reject
+                self.logger.info(f"Step {step_idx} rejected (t={t:.4f}, dt={dt:.4e}): {reason}")
+                
+                # Restore rho
+                assign(self.rho, self.rho_old)
+                
+                # If diverged, maybe reset history?
+                if not metrics["converged"]:
+                     self.integrator.reset_history()
+                
+                dt = next_dt
 
         if self.progress is not None:
             self.progress.stop()
@@ -470,7 +474,7 @@ class Remodeller:
                 "status": "completed",
                 "total_time_days": float(t),
                 "wall_time_seconds": overall_elapsed,
-                "steps_completed": n_steps,
+                "steps_completed": step_idx,
             }
             self.telemetry.write_metadata(summary, filename="run_summary.json")
 
