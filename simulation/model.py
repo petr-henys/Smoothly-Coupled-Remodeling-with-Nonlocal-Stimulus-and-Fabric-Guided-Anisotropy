@@ -23,7 +23,6 @@ from simulation.config import Config
 from simulation.subsolvers import MechanicsSolver, DensitySolver
 from simulation.fixedsolver import FixedPointSolver
 from simulation.drivers import SimplifiedGaitDriver
-from simulation.traction_utils import create_traction_function, create_pressure_function
 from simulation.timeintegrator import TimeIntegrator
 
 

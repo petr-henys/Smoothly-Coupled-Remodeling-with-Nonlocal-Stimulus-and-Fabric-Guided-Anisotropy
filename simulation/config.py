@@ -40,7 +40,7 @@ class Config:
     k_rho: float = 0.1        # Density remodeling rate [1/day] (half-time ~1 year)
 
     # Density diffusion [mm^2/day]
-    D_rho: float = 0.1       # Isotropic diffusion [mm^2/day]
+    D_rho: float = 0.5       # Isotropic diffusion [mm^2/day]
 
     # =========================================================================
     # Stimulus (Local)

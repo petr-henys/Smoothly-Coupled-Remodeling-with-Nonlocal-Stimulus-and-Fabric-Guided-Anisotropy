@@ -176,10 +176,10 @@ class SimplifiedGaitDriver:
                 gl_vec_world = gl_vec_world * 0.0
             
             ds_hip = ufl.Measure("ds", domain=V.mesh, subdomain_data=meshtags, subdomain_id=hip_tag)
-            t_hip_func = create_pressure_function(V, ds_hip, hip_mag, blur_radius=5.0)
+            t_hip_func = create_pressure_function(V, ds_hip, hip_mag, blur_radius=10.0)
             
             ds_gl = ufl.Measure("ds", domain=V.mesh, subdomain_data=meshtags, subdomain_id=gl_tag)
-            t_glmed_func = create_traction_function(V, ds_gl, gl_vec_world, blur_radius=5.0)
+            t_glmed_func = create_traction_function(V, ds_gl, gl_vec_world, blur_radius=10.0)
             
             precomputed.append((
                 t_hip_func.x.array.copy(),

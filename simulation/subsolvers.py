@@ -307,19 +307,9 @@ class DensitySolver(_BaseLinearSolver):
 
     def solve(self):
         its, reason = self._solve()
-        self._maybe_warn(reason, "Density")
-        
-        # Enforce bounds [rho_min, rho_max] via pointwise projection
-        self._enforce_bounds()
-        
+        self._maybe_warn(reason, "Density")        
         return its, reason
 
-    def _enforce_bounds(self):
-        """Project density to [rho_min, rho_max] on owned DOFs."""
-        n_owned = self.function_space.dofmap.index_map.size_local * self.function_space.dofmap.index_map_bs
-        arr = self.rho.x.array[:n_owned]
-        arr[:] = np.clip(arr, self.cfg.rho_min, self.cfg.rho_max)
-        self.rho.x.scatter_forward()
 
     def mass_balance_residual(self):
         dt = self.dt_c
