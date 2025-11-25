@@ -162,12 +162,13 @@ def load_npz_field(comm: MPI.Comm, npz_file: Path, target: fem.Function) -> None
     distances, indices = kdtree.query(local_coords)
     
     # Validate matching (should be exact up to floating-point tolerance)
-    max_dist = np.max(distances)
-    if max_dist > 1e-10:
-        raise RuntimeError(
-            f"DOF coordinate matching failed: max distance = {max_dist:.2e} > 1e-10\n"
-            f"Stored and target meshes may be incompatible."
-        )
+    if len(distances) > 0:
+        max_dist = np.max(distances)
+        if max_dist > 1e-10:
+            raise RuntimeError(
+                f"DOF coordinate matching failed: max distance = {max_dist:.2e} > 1e-10\n"
+                f"Stored and target meshes may be incompatible."
+            )
     
     # Map values using matched indices
     for local_dof_idx in range(owned_dofs):
