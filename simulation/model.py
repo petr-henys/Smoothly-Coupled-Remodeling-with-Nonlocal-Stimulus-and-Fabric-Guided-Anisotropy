@@ -316,18 +316,21 @@ class Remodeller:
             dt_curr = float(dt)
             dt_prev = self.dt_prev if self.dt_prev is not None else dt_curr
             
+            # Get owned DOF count to avoid ghost issues
+            n_owned = self.rho.function_space.dofmap.index_map.size_local * self.rho.function_space.dofmap.index_map_bs
+            
             # Coefficients
             if self.step_count >= 2:
                 # AB2
                 w1 = 1.0 + dt_curr / (2.0 * dt_prev)
                 w2 = dt_curr / (2.0 * dt_prev)
                 
-                self.rho.x.array[:] = self.rho_old.x.array + dt_curr * (
-                    w1 * self.rho_rate_last.x.array - w2 * self.rho_rate_last2.x.array
+                self.rho.x.array[:n_owned] = self.rho_old.x.array[:n_owned] + dt_curr * (
+                    w1 * self.rho_rate_last.x.array[:n_owned] - w2 * self.rho_rate_last2.x.array[:n_owned]
                 )
             else:
                 # AB1 (Forward Euler)
-                self.rho.x.array[:] = self.rho_old.x.array + dt_curr * self.rho_rate_last.x.array
+                self.rho.x.array[:n_owned] = self.rho_old.x.array[:n_owned] + dt_curr * self.rho_rate_last.x.array[:n_owned]
             
             self.rho.x.scatter_forward()
 
@@ -369,7 +372,7 @@ class Remodeller:
                 "num_dofs_total": self.num_dofs_total,
                 "rss_mem_mb": rss_mb_total,
                 "mech_iters": self.fixedsolver.mech_iters_total,
-                "dens_iters": 1,
+                "dens_iters": self.fixedsolver.solver_stats["dens"]["iters"],
             }
             if time_days is not None:
                 payload["time_days"] = float(time_days)
@@ -385,8 +388,9 @@ class Remodeller:
         # Shift history
         assign(self.rho_rate_last2, self.rho_rate_last)
         
-        # Calculate new rates: (x_new - x_old) / dt
-        self.rho_rate_last.x.array[:] = (self.rho.x.array - self.rho_old.x.array) / dt_curr
+        # Calculate new rates: (x_new - x_old) / dt (on owned DOFs only)
+        n_owned = self.rho.function_space.dofmap.index_map.size_local * self.rho.function_space.dofmap.index_map_bs
+        self.rho_rate_last.x.array[:n_owned] = (self.rho.x.array[:n_owned] - self.rho_old.x.array[:n_owned]) / dt_curr
         
         self.rho_rate_last.x.scatter_forward()
         

@@ -23,20 +23,6 @@ from simulation.logger import get_logger
 if TYPE_CHECKING:
     from simulation.config import Config
 
-
-def get_distal_damping_mask(mesh, z_min: float, height: float = 15.0, transition: float = 5.0):
-    """Spatial mask dampening distal boundary: 0 below z_min+height, smooth transition, 1 above."""
-    x = ufl.SpatialCoordinate(mesh)
-    z = x[2]
-    z_start = z_min + height
-    
-    if transition <= 1e-14:
-        return ufl.conditional(ufl.ge(z, z_start), 1.0, 0.0)
-    
-    t = (z - z_start) / transition
-    return ufl.max_value(0.0, ufl.min_value(1.0, t))
-
-
 class _BaseLinearSolver:
     """Base linear solver with assembly, KSP solve, and iteration tracking."""
 
@@ -270,19 +256,9 @@ class DensitySolver(_BaseLinearSolver):
         self.S_driving = fem.Function(self.function_space, name="S_driving")
         self.dt_c = fem.Constant(self.mesh, float(self.cfg.dt))
 
-    def _compute_z_min(self):
-        if self.z_min is None:
-            z_coords = self.mesh.geometry.x[:, 2]
-            local_min = z_coords.min() if z_coords.size > 0 else 1e30
-            self.z_min = self.comm.allreduce(local_min, op=MPI.MIN)
-        return self.z_min
     
     def update_driving_force(self, psi_expr):
-        z_min = self._compute_z_min()
-        mask = get_distal_damping_mask(self.mesh, z_min, height=self.cfg.distal_damping_height, 
-                                       transition=self.cfg.distal_damping_transition)
-        psi_effective = psi_expr * mask
-        driving_force_expr = (psi_effective / self.cfg.psi_ref) - 1.0
+        driving_force_expr = (psi_expr / self.cfg.psi_ref) - 1.0
         
         expr = fem.Expression(driving_force_expr, self.function_space.element.interpolation_points)
         self.S_driving.interpolate(expr)

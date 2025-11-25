@@ -6,10 +6,9 @@ from typing import Optional, Dict, List
 import numpy as np
 from mpi4py import MPI
 from dolfinx import fem
-import ufl
 
 from simulation.config import Config
-from simulation.utils import assign, current_memory_mb
+from simulation.utils import assign, current_memory_mb, get_owned_size
 from simulation.logger import get_logger
 from simulation.anderson import _Anderson
 
@@ -121,51 +120,36 @@ class FixedPointSolver:
             self.solver_stats["dens"]["iters"] += dens_iters
             self.solver_stats["dens"]["reason"] = dens_reason
 
-            # 4. Convergence Check
-            # Norm of (rho - rho_prev_iter)
-            diff_local = self.rho.x.array - rho_prev_iter.x.array
-            diff_norm_sq = self.comm.allreduce(np.dot(diff_local, diff_local), op=MPI.SUM)
-            rho_norm_sq = self.comm.allreduce(np.dot(self.rho.x.array, self.rho.x.array), op=MPI.SUM)
+            # 4. Anderson Acceleration (before convergence check)
+            # Use only owned DOFs to avoid ghost double-counting in MPI reductions
+            n_owned = get_owned_size(self.rho)
             
-            rel_error = np.sqrt(diff_norm_sq) / max(np.sqrt(rho_norm_sq), 1e-10)
-            
-            # Anderson Acceleration
             aa_info = {}
             if self.anderson:
                 # x_old = rho_prev_iter (input to this step)
-                # x_raw = self.rho (output of this step)
-                # We want to mix x_raw and x_old to get x_new
-                
-                # Note: Anderson expects numpy arrays.
-                # We need to be careful with ghost values if we were doing this distributed,
-                # but here we operate on local arrays and Anderson handles global reduction for Gram matrix.
-                # However, dolfinx functions have ghost values.
-                # Ideally we should work with owned dofs only, but for simplicity we use the full local array
-                # and rely on the fact that Anderson uses global reductions which might double count ghosts
-                # if not careful. But _Anderson._build_gram uses allreduce(SUM).
-                # If we include ghosts, we double count.
-                # Let's assume for now we just use the local array as is, or we should mask ghosts.
-                # Given the complexity, let's just pass the array.
-                
-                x_new_array, aa_info = self.anderson.mix(
-                    x_old=rho_prev_iter.x.array,
-                    x_raw=self.rho.x.array,
-                    # We don't have a fixed mask here easily available without more context, 
-                    # but density usually doesn't have Dirichlet BCs in this formulation (Neumann/Robin).
-                    mask_fixed=None, 
-                    # We can provide a residual norm function if we want safeguarding
-                    proj_residual_norm=None, 
+                # x_raw = self.rho (output of this step, unaccelerated)
+                # Operate only on owned DOFs to avoid ghost double-counting in Gram matrix
+                x_new_owned, aa_info = self.anderson.mix(
+                    x_old=rho_prev_iter.x.array[:n_owned],
+                    x_raw=self.rho.x.array[:n_owned],
+                    mask_fixed=None,
+                    proj_residual_norm=None,
                     gamma=self.cfg.gamma,
                     use_safeguard=self.cfg.safeguard,
                     backtrack_max=self.cfg.backtrack_max
                 )
                 
-                self.rho.x.array[:] = x_new_array
+                self.rho.x.array[:n_owned] = x_new_owned
                 self.rho.x.scatter_forward()
-                
-                # Re-evaluate error after mixing? 
-                # Usually convergence is checked on the unaccelerated step (x_raw - x_old),
-                # which we already did above (rel_error).
+            
+            # 5. Convergence Check (after acceleration, on owned DOFs only)
+            # Norm of (rho - rho_prev_iter)
+            diff_owned = self.rho.x.array[:n_owned] - rho_prev_iter.x.array[:n_owned]
+            diff_norm_sq = self.comm.allreduce(np.dot(diff_owned, diff_owned), op=MPI.SUM)
+            rho_owned = self.rho.x.array[:n_owned]
+            rho_norm_sq = self.comm.allreduce(np.dot(rho_owned, rho_owned), op=MPI.SUM)
+            
+            rel_error = np.sqrt(diff_norm_sq) / max(np.sqrt(rho_norm_sq), 1e-10)
             
             # Log
             log_msg = f"   Substep {itr}: rel_err={rel_error:.3e}"

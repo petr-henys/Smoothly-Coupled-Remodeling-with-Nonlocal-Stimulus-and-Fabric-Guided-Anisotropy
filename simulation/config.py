@@ -26,7 +26,7 @@ class Config:
     # Material Properties
     # =========================================================================
     # Density-stiffness relationship: E = E0 * (rho/rho_max)^n(rho)
-    n_power: float = 4.        # Exponent for stimulus calculation (proximal femur, fatigue-like)
+    n_power: float = 4.         # Exponent for stimulus calculation (proximal femur, fatigue-like)
     n_trab: float = 2.0         # Exponent for trabecular bone
     n_cort: float = 1.2         # Exponent for cortical bone
     rho_trab_max: float = 1.2   # Max density for trabecular regime [g/cm^3]
@@ -46,9 +46,7 @@ class Config:
     # =========================================================================
     # Stimulus (Local)
     # =========================================================================
-    psi_ref: float = 10.     # Reference effective stress [MPa] for daily stimulus in proximal femur
-    distal_damping_height: float = 1.0     # Height of distal damping zone [mm] (cut shaft of femur)
-    distal_damping_transition: float = 0.5    # Transition width of distal damping zone [mm]
+    psi_ref: float = 50.     # Reference effective stress [MPa] for daily stimulus in proximal femur
     
     # Base moduli [MPa]
     E0: float = 6500       # Young's modulus

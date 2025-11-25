@@ -114,6 +114,7 @@ class SimplifiedGaitDriver:
 
             # Update snapshot coefficient (used in psi_expr)
             self.u_snap[idx].x.array[:] = self.mech.u.x.array
+            self.u_snap[idx].x.scatter_forward()
 
         return {
             "phase_iters": iters,
