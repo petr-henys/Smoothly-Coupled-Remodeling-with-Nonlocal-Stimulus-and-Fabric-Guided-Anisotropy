@@ -61,6 +61,36 @@ class FixedPointSolver:
                 step_limit_factor=self.cfg.step_limit_factor,
             )
 
+        
+    # --- NEW: relative projected "residual" norm for Anderson ---
+    def proj_residual_norm(self, x_old_vec: np.ndarray,
+                            x_trial_vec: np.ndarray,
+                            x_ref_vec: np.ndarray) -> float:
+        """
+        Relative step size: ||x_trial - x_old|| / ||x_ref|| in global (MPI) 2-norm.
+        - r_norm  = proj_residual_norm(x_old, x_raw, x_raw)
+        - rp_norm = proj_residual_norm(x_old, x_cand, x_raw)
+        
+        Pokud je ||x_ref|| ~ 0, vrátí se absolutní norma kroku.
+        """
+        diff = x_trial_vec - x_old_vec
+
+        # Lokální součet
+        diff_loc = float(np.dot(diff, diff))
+        ref_loc  = float(np.dot(x_ref_vec, x_ref_vec))
+
+        # Globální součet přes všechny MPI ranky
+        diff_glob = self.comm.allreduce(diff_loc, op=MPI.SUM)
+        ref_glob  = self.comm.allreduce(ref_loc,  op=MPI.SUM)
+
+        if ref_glob <= 1e-30:
+            # Když je referenční vektor prakticky nulový,
+            # použij absolutní normu kroku (aby se něco aspoň měřilo).
+            return np.sqrt(diff_glob)
+
+        # Relativní norma (bez jednotek): ||delta|| / ||x_ref||
+        return np.sqrt(diff_glob / ref_glob)
+
     def run(self, *, progress=None, task_id=None) -> None:
         """Execute fixed-point loop."""
         tol = float(self.cfg.coupling_tol)
@@ -133,7 +163,7 @@ class FixedPointSolver:
                     x_old=rho_prev_iter.x.array[:n_owned],
                     x_raw=self.rho.x.array[:n_owned],
                     mask_fixed=None,
-                    proj_residual_norm=None,
+                    proj_residual_norm=self.proj_residual_norm,
                     gamma=self.cfg.gamma,
                     use_safeguard=self.cfg.safeguard,
                     backtrack_max=self.cfg.backtrack_max
