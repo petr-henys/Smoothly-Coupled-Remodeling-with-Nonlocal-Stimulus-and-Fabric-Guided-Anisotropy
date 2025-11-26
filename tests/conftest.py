@@ -380,13 +380,13 @@ def fiber_tensor_factory():
 
 
 @pytest.fixture
-def dummy_gait_loader(spaces):
+def dummy_gait_loader(spaces, cfg):
     """Create dummy gait data for unit tests."""
     from dolfinx import fem
     import numpy as np
     
-    t_hip = fem.Function(spaces.V, name="t_hip")
-    t_glmed = fem.Function(spaces.V, name="t_glmed")
+    t_hip = fem.Constant(cfg.domain, 0.0)
+    t_glmed = fem.Constant(cfg.domain, np.zeros(3, dtype=np.float64))
     
     # Create dummy stages
     stages = [

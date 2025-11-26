@@ -1,268 +1,240 @@
-"""Gait drivers: solve mechanics for load stages and compute daily stimulus."""
+"""Gait driver: solve mechanics for load stages and compute daily stimulus."""
 
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List
 import numpy as np
 from mpi4py import MPI
 from dolfinx import fem
 import ufl
-import pyvista as pv
 
 from simulation.config import Config
 from simulation.subsolvers import MechanicsSolver
-from simulation.traction_utils import create_traction_function, create_pressure_function
 from simulation.logger import get_logger
-from simulation.femur_css import FemurCSS, load_json_points
-from simulation.paths import FemurPaths
 
-class SimplifiedGaitDriver:
-    """
-    Simplified remodeling driver using discrete load cases (stages).
+
+class GaitDriver:
+    """Remodeling driver using discrete load cases (stages).
+    
+    Solves mechanics for each stage, accumulates weighted stimulus.
     """
 
     def __init__(
-        self, 
-        mech: MechanicsSolver, 
-        t_hip: fem.Function,
-        t_glmed: fem.Function,
+        self,
+        mech: MechanicsSolver,
+        mag_hip: fem.Constant,
+        vec_glmed: fem.Constant,
         load_stages: List[Dict],
-        config: Config
+        config: Config,
+        css_transformer: object,
     ):
+        """Initialize gait driver.
+        
+        Parameters
+        ----------
+        mech : MechanicsSolver
+            Mechanics solver instance.
+        mag_hip : fem.Constant
+            Hip load magnitude constant (scalar pressure).
+        vec_glmed : fem.Constant
+            Gluteus medius traction vector constant.
+        load_stages : List[Dict]
+            Stage defs with: hip_magnitude, gl_magnitude, gl_vector_css, weight.
+        config : Config
+            Simulation configuration.
+        css_transformer : object
+            Object with css_to_world_vector(v) method, or None for identity transform.
+        """
         self.mech = mech
-        self.t_hip = t_hip
-        self.t_glmed = t_glmed
+        self.mag_hip = mag_hip
+        self.vec_glmed = vec_glmed
         self.cfg = config
-        self.comm = self.mech.u.function_space.mesh.comm
+        self.stages = load_stages
+        self.css = css_transformer
+
+        mesh = self.mech.u.function_space.mesh
+        self.comm = mesh.comm
+        self.rank = self.comm.rank
         self.logger = get_logger(self.comm, name="Driver", log_file=self.cfg.log_file)
 
-        self.stages = load_stages
-        
+        # Normalize weights
         total_weight = sum(s["weight"] for s in self.stages)
         if total_weight <= 0:
             raise ValueError("Total weight of load stages must be positive.")
-        self.weights = [s["weight"] / total_weight for s in self.stages]
-        
-        if self.comm.rank == 0:
-            self.logger.info("SimplifiedGaitDriver Configuration:")
-            for i, s in enumerate(self.stages):
-                self.logger.info(f"  Stage {i+1}: Hip Tag={s['hip_tag']}, Gluteus Tag={s['gl_tag']}")
+        self.weights = np.array([s["weight"] / total_weight for s in self.stages])
 
+        # Physical parameters
         self.m_exp = float(config.n_power)
         self.n_cycles = float(config.gait_cycles_per_day)
         self.k_stimulus = float(config.k_stimulus)
 
-        V = self.mech.u.function_space
-        self.u_snap = [fem.Function(V, name=f"u_snap_{i}") for i in range(len(self.stages))]
+        # Stimulus field (DG0 - cell-constant)
+        self.V_psi = fem.functionspace(mesh, ("DG", 0))
+        self.psi = fem.Function(self.V_psi, name="psi")
+        self._psi_temp = fem.Function(self.V_psi)  # Reusable temp buffer
+        self._n_owned = self.V_psi.dofmap.index_map.size_local
 
-        self.stage_loads = self._precompute_loads()
-        self._save_load_stages()
+        # Compile stimulus expression
+        self._weight_const = fem.Constant(mesh, 0.0)
+        self._stimulus_expr = self._build_stimulus_expression()
 
-        self.psi_expr: Optional[ufl.core.expr.Expr] = None
-        self._build_expressions()
-        
-        self.V_stats = fem.functionspace(self.mech.u.function_space.mesh, ("DG", 0))
-        self.psi_stats = fem.Function(self.V_stats)
+        if self.rank == 0:
+            self.logger.info(f"GaitDriver: {len(self.stages)} stages, m={self.m_exp:.1f}")
 
     def setup(self) -> None:
+        """Initialize mechanics solver."""
         self.mech.setup()
 
     def destroy(self) -> None:
+        """Release solver resources."""
         self.mech.destroy()
 
     def update_stiffness(self) -> None:
+        """Reassemble mechanics stiffness matrix."""
         self.mech.assemble_lhs()
 
     def update_snapshots(self) -> Dict:
-        """
-        Solve mechanics for each stage and update snapshots.
-        
-        Updates the coefficients (u_snap) of the prebuilt UFL expression 
-        without rebuilding the expression graph.
-        """
+        """Solve mechanics for each stage and accumulate stimulus."""
         times = []
         iters = []
 
-        for idx, stage_data in enumerate(self.stage_loads):
+        # Reset stimulus (owned DOFs only - ghosts updated at end)
+        self.psi.x.array[:self._n_owned] = 0.0
+
+        for stage, weight in zip(self.stages, self.weights):
             start = MPI.Wtime()
-            
-            # Update BCs (coefficients in L_form)
-            self.t_hip.x.array[:] = stage_data[0]
-            self.t_glmed.x.array[:] = stage_data[1]
-            
-            self.t_hip.x.scatter_forward()
-            self.t_glmed.x.scatter_forward()
-            
-            # Solve mechanics (updates self.mech.u)
+
+            self._apply_stage_loads(stage)
             self.mech.assemble_rhs()
             its, _ = self.mech.solve()
-            
+
             elapsed = self.comm.allreduce(MPI.Wtime() - start, op=MPI.MAX)
             times.append(float(elapsed))
-            iters.append(float(its))
+            iters.append(int(its))
 
-            # Update snapshot coefficient (used in psi_expr)
-            self.u_snap[idx].x.array[:] = self.mech.u.x.array
-            self.u_snap[idx].x.scatter_forward()
+            # Accumulate: psi += weight * n_cycles * sigma_tissue^m
+            self._weight_const.value = weight * self.n_cycles
+            self._accumulate_stimulus()
+
+        # Finalize: psi = (sum)^(1/m)
+        self._finalize_stimulus()
 
         return {
             "phase_iters": iters,
             "phase_times": times,
-            "total_time": sum(times)
+            "total_time": sum(times),
         }
 
-    def stimulus_expr(self) -> ufl.core.expr.Expr:
-        return self.psi_expr
+    def stimulus_expr(self) -> fem.Function:
+        """Return computed stimulus field."""
+        return self.psi
 
     def get_stimulus_stats(self) -> Dict[str, float]:
-        psi_expr_compiled = fem.Expression(self.psi_expr, self.V_stats.element.interpolation_points)
-        self.psi_stats.interpolate(psi_expr_compiled)
-        
-        psi_int = self.comm.allreduce(fem.assemble_scalar(fem.form(self.psi_stats * self.cfg.dx)), op=MPI.SUM)
-        vol = self.comm.allreduce(fem.assemble_scalar(fem.form(1.0 * self.cfg.dx)), op=MPI.SUM)
-        psi_avg = psi_int / vol if vol > 0 else 0.0
-        
-        # Use only owned DOFs to avoid ghost double-counting
-        n_owned = self.V_stats.dofmap.index_map.size_local * self.V_stats.dofmap.index_map_bs
-        local_vals = self.psi_stats.x.array[:n_owned]
-        local_min = np.min(local_vals) if local_vals.size > 0 else float('inf')
-        local_max = np.max(local_vals) if local_vals.size > 0 else float('-inf')
-        
+        """Compute MPI-reduced stimulus statistics."""
+        local_vals = self.psi.x.array[:self._n_owned]
+
+        # Local aggregates
+        n_local = local_vals.size
+        if n_local > 0:
+            local_min = float(np.min(local_vals))
+            local_max = float(np.max(local_vals))
+            local_sum = float(np.sum(local_vals))
+        else:
+            local_min = float("inf")
+            local_max = float("-inf")
+            local_sum = 0.0
+
+        # Global reductions
         psi_min = self.comm.allreduce(local_min, op=MPI.MIN)
         psi_max = self.comm.allreduce(local_max, op=MPI.MAX)
-        
-        # Median (approximate via gather to rank 0) - only owned DOFs
-        all_data = self.comm.gather(local_vals, root=0)
-        psi_median = 0.0
-        if self.comm.rank == 0:
-            full_data = np.concatenate(all_data)
-            if full_data.size > 0:
-                psi_median = float(np.median(full_data))
-        psi_median = self.comm.bcast(psi_median, root=0)
-        
-        return {"psi_avg": psi_avg, "psi_min": psi_min, "psi_max": psi_max, "psi_median": psi_median}
+        total_sum = self.comm.allreduce(local_sum, op=MPI.SUM)
+        total_count = self.comm.allreduce(n_local, op=MPI.SUM)
 
-    def _precompute_loads(self) -> List[Tuple[np.ndarray, np.ndarray]]:
-        """Generate traction field arrays for each stage."""
-        rank = self.comm.Get_rank()
-        
-        css = None
-        if rank == 0:
-            pv_mesh = pv.read(str(FemurPaths.FEMUR_MESH_VTK))
-            head_line = load_json_points(FemurPaths.HEAD_LINE_JSON)
-            le_me_line = load_json_points(FemurPaths.LE_ME_LINE_JSON)
-            css = FemurCSS(pv_mesh, head_line, le_me_line, side='left')
-        
-        meshtags = self.cfg.facet_tags
-        V = self.mech.u.function_space
-        
-        precomputed = []
-        
-        for stage in self.stages:
-            hip_tag = stage["hip_tag"]
-            hip_mag = stage["hip_magnitude"]
-            
-            gl_tag = stage["gl_tag"]
-            gl_mag = stage["gl_magnitude"]
-            gl_vec_css = np.array(stage["gl_vector_css"], dtype=float)
-            
-            gl_vec_world = None
-            if rank == 0:
-                gl_vec_world = css.css_to_world_vector(gl_vec_css)
-            gl_vec_world = self.comm.bcast(gl_vec_world, root=0)
-            
-            norm = np.linalg.norm(gl_vec_world)
-            if norm > 1e-6:
-                gl_vec_world = gl_vec_world / norm * gl_mag
+        psi_avg = total_sum / total_count if total_count > 0 else 0.0
+
+        return {
+            "psi_avg": psi_avg,
+            "psi_min": psi_min,
+            "psi_max": psi_max,
+        }
+
+    # -------------------------------------------------------------------------
+    # Private methods
+    # -------------------------------------------------------------------------
+
+    def _apply_stage_loads(self, stage: Dict) -> None:
+        """Update load constants for a stage."""
+        hip_mag = float(stage["hip_magnitude"])
+        gl_mag = float(stage["gl_magnitude"])
+        gl_vec_css = np.asarray(stage["gl_vector_css"], dtype=np.float64)
+
+        # Transform gluteus vector from CSS to world (rank 0 only, then broadcast)
+        gl_vec_world = np.empty(3, dtype=np.float64)
+        if self.rank == 0:
+            if self.css is not None:
+                gl_vec_world[:] = self.css.css_to_world_vector(gl_vec_css)
             else:
-                gl_vec_world = gl_vec_world * 0.0
-            
-            ds_hip = ufl.Measure("ds", domain=V.mesh, subdomain_data=meshtags, subdomain_id=hip_tag)
-            t_hip_func = create_pressure_function(V, ds_hip, hip_mag, blur_radius=10.0)
-            
-            ds_gl = ufl.Measure("ds", domain=V.mesh, subdomain_data=meshtags, subdomain_id=gl_tag)
-            t_glmed_func = create_traction_function(V, ds_gl, gl_vec_world, blur_radius=10.0)
-            
-            precomputed.append((
-                t_hip_func.x.array.copy(),
-                t_glmed_func.x.array.copy()
-            ))
-            
-        return precomputed
+                gl_vec_world[:] = gl_vec_css
+        self.comm.Bcast(gl_vec_world, root=0)
 
-    def _build_expressions(self) -> None:
-        """
-        Prebuild the UFL expression for the stimulus.
-        
-        Constructs the graph linking snapshots (u_snap) and density (rho) to stimulus (psi).
-        """
+        # Normalize and scale by magnitude
+        norm = np.linalg.norm(gl_vec_world)
+        if norm > 1e-12:
+            gl_vec_world *= gl_mag / norm
+        else:
+            gl_vec_world[:] = 0.0
+
+        self.mag_hip.value = hip_mag
+        self.vec_glmed.value[:] = gl_vec_world
+
+    def _build_stimulus_expression(self) -> fem.Expression:
+        """Build UFL expression for single-stage stimulus contribution."""
         rho = self.mech.rho
-        rho_max = self.cfg.rho_max
-        E_max = self.cfg.E0
-        
-        rho_safe = ufl.max_value(rho, self.cfg.smooth_eps)
-        
-        def smoothstep(x, edge0, edge1):
-            t = ufl.max_value(0.0, ufl.min_value(1.0, (x - edge0) / (edge1 - edge0)))
-            return t * t * (3.0 - 2.0 * t)
+        u = self.mech.u
+        cfg = self.cfg
+        eps = cfg.smooth_eps
 
-        w = smoothstep(rho_safe, self.cfg.rho_trab_max, self.cfg.rho_cort_min)
-        k_var = self.cfg.n_trab * (1.0 - w) + self.cfg.n_cort * w
-        
-        # Normalize density for stiffness
-        rho_rel = rho_safe / rho_max
-        E_field = E_max * (rho_rel**k_var)
+        # Safe density and relative density
+        rho_safe = ufl.max_value(rho, eps)
+        rho_rel = rho_safe / cfg.rho_max
 
-        psi_summation = 0.0
-        
-        for u_i, weight in zip(self.u_snap, self.weights):
-            sig_i = self.mech.sigma(u_i, rho)
-            e_i = self.mech.get_strain_tensor(u_i)
-            U_i = 0.5 * ufl.inner(sig_i, e_i)
-            U_safe = ufl.max_value(U_i, 0.0)
-            
-            sigma_continuum = ufl.sqrt(2.0 * E_field * U_safe + self.cfg.smooth_eps)
-            
-            # Tissue stress scaling: sigma_tissue = (rho_max / rho) * sigma_continuum
-            # This assumes rho_max is the tissue density.
-            tissue_scaling = (rho_max / rho_safe)**self.k_stimulus
-            sigma_tissue = tissue_scaling * sigma_continuum
-            
-            n_i = weight * self.n_cycles
-            psi_summation += n_i * (sigma_tissue ** self.m_exp)
+        # Variable stiffness exponent (trabecular -> cortical smoothstep)
+        t = ufl.max_value(
+            0.0,
+            ufl.min_value(
+                1.0,
+                (rho_safe - cfg.rho_trab_max) / (cfg.rho_cort_min - cfg.rho_trab_max),
+            ),
+        )
+        w = t * t * (3.0 - 2.0 * t)
+        k_var = cfg.n_trab * (1.0 - w) + cfg.n_cort * w
 
-        self.psi_expr = ufl.max_value(psi_summation, 0.0) ** (1.0 / self.m_exp)
+        # Elastic modulus
+        E_field = cfg.E0 * (rho_rel**k_var)
 
-    def _save_load_stages(self) -> None:
-        """Save precomputed load stages to VTX for visualization."""
-        from dolfinx.io import VTXWriter
-        from pathlib import Path
-        
-        output_dir = Path(self.cfg.results_dir)
-        if self.comm.rank == 0:
-            output_dir.mkdir(parents=True, exist_ok=True)
-        self.comm.Barrier()
-        
-        file_path = output_dir / "load_stages.bp"
-        
-        # Create writer for t_hip and t_glmed
-        writer = VTXWriter(self.comm, str(file_path), [self.t_hip, self.t_glmed], engine="bp4")
-        
-        for i, (hip_vals, gl_vals) in enumerate(self.stage_loads):
-            # Update functions
-            self.t_hip.x.array[:] = hip_vals
-            self.t_glmed.x.array[:] = gl_vals
-            self.t_hip.x.scatter_forward()
-            self.t_glmed.x.scatter_forward()
-            
-            # Write with time = stage index
-            writer.write(float(i))
-            
-        writer.close()
-        
-        # Reset functions to zero to be safe
-        self.t_hip.x.array[:] = 0.0
-        self.t_glmed.x.array[:] = 0.0
-        self.t_hip.x.scatter_forward()
-        self.t_glmed.x.scatter_forward()
-        
-        if self.comm.rank == 0:
-            self.logger.info(f"Saved {len(self.stage_loads)} load stages to {file_path}")
+        # Strain energy density
+        sig = self.mech.sigma(u, rho)
+        eps_tensor = self.mech.eps(u)
+        U = ufl.max_value(0.5 * ufl.inner(sig, eps_tensor), 0.0)
+
+        # Continuum stress from energy: sigma = sqrt(2 * E * U)
+        sigma_continuum = ufl.sqrt(2.0 * E_field * U + eps)
+
+        # Tissue-level stress (porosity scaling)
+        tissue_scaling = (cfg.rho_max / rho_safe) ** self.k_stimulus
+        sigma_tissue = tissue_scaling * sigma_continuum
+
+        # Weighted contribution
+        contribution = self._weight_const * (sigma_tissue**self.m_exp)
+
+        return fem.Expression(contribution, self.V_psi.element.interpolation_points)
+
+    def _accumulate_stimulus(self) -> None:
+        """Add current stage contribution to stimulus field (owned DOFs)."""
+        self._psi_temp.interpolate(self._stimulus_expr)
+        self.psi.x.array[:self._n_owned] += self._psi_temp.x.array[:self._n_owned]
+
+    def _finalize_stimulus(self) -> None:
+        """Apply power law to accumulated stimulus and sync ghosts."""
+        vals = self.psi.x.array[:self._n_owned]
+        np.maximum(vals, 0.0, out=vals)
+        np.power(vals, 1.0 / self.m_exp, out=vals)
+        self.psi.x.scatter_forward()

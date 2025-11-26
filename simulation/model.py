@@ -7,7 +7,7 @@ for a given finite-element domain and :class:`simulation.config.Config`.
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Tuple
 from pathlib import Path
 
 import numpy as np
@@ -22,7 +22,7 @@ from simulation.utils import build_dirichlet_bcs, assign, current_memory_mb
 from simulation.config import Config
 from simulation.subsolvers import MechanicsSolver, DensitySolver
 from simulation.fixedsolver import FixedPointSolver
-from simulation.drivers import SimplifiedGaitDriver
+from simulation.drivers import GaitDriver
 from simulation.timeintegrator import TimeIntegrator
 
 
@@ -119,16 +119,17 @@ class Remodeller:
         bc_mech = build_dirichlet_bcs(self.V, self.cfg.facet_tags, id_tag=1, value=0.0)
 
         # --- Setup Simplified Driver ---
-        # Create placeholder functions for tractions
-        t_hip = fem.Function(self.V, name="t_hip")
-        t_glmed = fem.Function(self.V, name="t_glmed")
+        # Create placeholder constants for tractions
+        # t_hip is scalar magnitude (pressure), t_glmed is vector (traction)
+        t_hip = fem.Constant(self.domain, 0.0)
+        t_glmed = fem.Constant(self.domain, np.zeros(3, dtype=np.float64))
         
         # Collect all unique tags used in stages
         hip_tags = set()
         gl_tags = set()
         for s in self.stages:
-            hip_tags.add(s.get("hip_tag", 3))
-            gl_tags.add(s.get("gl_tag", 4))
+            hip_tags.add(s["hip_tag"])
+            gl_tags.add(s["gl_tag"])
             
         neumann_bcs = []
         for tag in hip_tags:
@@ -140,8 +141,15 @@ class Remodeller:
         mechsolver = MechanicsSolver(u, self.rho, self.cfg, bc_mech, neumann_bcs)
         self.densolver = DensitySolver(self.rho, self.rho_old, self.cfg)
 
+        # Initialize CSS transformer on rank 0
+        css_transformer = None
+        if self.rank == 0:
+            css_transformer = self._load_css_transformer()
+
         # Driver
-        self.driver = SimplifiedGaitDriver(mechsolver, t_hip, t_glmed, self.stages, self.cfg)
+        self.driver = GaitDriver(
+            mechsolver, t_hip, t_glmed, self.stages, self.cfg, css_transformer
+        )
 
         self.fixedsolver = FixedPointSolver(
             self.comm,
@@ -153,7 +161,7 @@ class Remodeller:
         )
 
         self.solvers_initialized = False
-        self._current_dt: Optional[float] = None
+        self._current_dt: float = 0.0
 
         # Persist initial configuration
         self.cfg.update_config_json()
@@ -182,8 +190,26 @@ class Remodeller:
         self.comm.Barrier()
         self.closed = True
 
-    def _field_stats(self, field: fem.Function) -> Tuple[float, float, float, float]:
-        """MPI global min/max/mean/median."""
+    def _load_css_transformer(self) -> object:
+        """Load FemurCSS coordinate transformer (rank 0 only).
+        
+        Returns None if anatomy files are not available.
+        """
+        try:
+            import pyvista as pv
+            from simulation.femur_css import FemurCSS, load_json_points
+            from simulation.paths import FemurPaths
+
+            pv_mesh = pv.read(str(FemurPaths.FEMUR_MESH_VTK))
+            head_line = load_json_points(FemurPaths.HEAD_LINE_JSON)
+            le_me_line = load_json_points(FemurPaths.LE_ME_LINE_JSON)
+            return FemurCSS(pv_mesh, head_line, le_me_line, side="left")
+        except Exception as e:
+            self.logger.debug(f"CSS not loaded: {e}")
+            return None
+
+    def _field_stats(self, field: fem.Function) -> Tuple[float, float, float]:
+        """MPI global min/max/mean."""
         bs = field.function_space.dofmap.index_map_bs
         local_size = field.x.index_map.size_local * bs
         local_data = field.x.array[:local_size]
@@ -205,40 +231,24 @@ class Remodeller:
         global_count = self.comm.allreduce(local_count, op=MPI.SUM)
         field_mean = global_sum / global_count if global_count > 0 else 0.0
 
-        # Median (approximate via gather to rank 0)
-        all_data = self.comm.gather(local_data, root=0)
-        field_median = 0.0
-        if self.comm.rank == 0:
-            full_data = np.concatenate(all_data)
-            if full_data.size > 0:
-                field_median = float(np.median(full_data))
-        field_median = self.comm.bcast(field_median, root=0)
-
-        return field_min, field_max, field_mean, field_median
+        return field_min, field_max, field_mean
 
     def _collect_field_stats(self) -> Dict[str, float]:
-        """Gather field min/max/mean and energy for reporting."""
-        rho_min, rho_max, rho_mean, rho_median = self._field_stats(self.rho)
+        """Gather field min/max/mean for reporting."""
+        rho_min, rho_max, rho_mean = self._field_stats(self.rho)
 
-        psi_avg = 0.0
-        psi_min = 0.0
-        psi_max = 0.0
-        psi_median = 0.0
-        
-        if hasattr(self.driver, "get_stimulus_stats"):
-            psi_stats = self.driver.get_stimulus_stats()
-            psi_avg = psi_stats.get("psi_avg", 0.0)
-            psi_min = psi_stats.get("psi_min", 0.0)
-            psi_max = psi_stats.get("psi_max", 0.0)
-            psi_median = psi_stats.get("psi_median", 0.0)
+        psi_stats = self.driver.get_stimulus_stats()
+        psi_avg = psi_stats["psi_avg"]
+        psi_min = psi_stats["psi_min"]
+        psi_max = psi_stats["psi_max"]
 
         return dict(
-            rho_min=rho_min, rho_max=rho_max, rho_mean=rho_mean, rho_median=rho_median,
-            psi_avg=psi_avg, psi_min=psi_min, psi_max=psi_max, psi_median=psi_median
+            rho_min=rho_min, rho_max=rho_max, rho_mean=rho_mean,
+            psi_avg=psi_avg, psi_min=psi_min, psi_max=psi_max,
         )
 
     def _output(self, t: float, step: int, coupling_stats: Dict[str, float], 
-                 dt: float = 0.0, wrms_error: float = 0.0, next_dt: float = 0.0):
+                 dt: float, wrms_error: float, next_dt: float):
         """Scatter, stats, log, write."""
         fields = self._collect_field_stats()
         
@@ -262,12 +272,12 @@ class Remodeller:
             lines.append("=" * 100)
             lines.append(f"  TIME STEPPING: dt={dt:8.3f}d | next_dt={next_dt:8.3f}d | WRMS error={wrms_error:.3e}")
             lines.append("-" * 100)
-            lines.append(f"{'Field':>10} | {'Min':>12} | {'Max':>12} | {'Mean':>12} | {'Median':>12} |")
+            lines.append(f"{'Field':>10} | {'Min':>12} | {'Max':>12} | {'Mean':>12} |")
             lines.append("-" * 100)
             
             # Rows
-            lines.append(f"{'rho':>10} | {fields['rho_min']:12.4f} | {fields['rho_max']:12.4f} | {fields['rho_mean']:12.4f} | {fields['rho_median']:12.4f} |")
-            lines.append(f"{'psi':>10} | {fields['psi_min']:12.3e} | {fields['psi_max']:12.3e} | {fields['psi_avg']:12.3e} | {fields['psi_median']:12.3e} |")
+            lines.append(f"{'rho':>10} | {fields['rho_min']:12.4f} | {fields['rho_max']:12.4f} | {fields['rho_mean']:12.4f} |")
+            lines.append(f"{'psi':>10} | {fields['psi_min']:12.3e} | {fields['psi_max']:12.3e} | {fields['psi_avg']:12.3e} |")
             
             lines.append("-" * 100)
             lines.append(f"{'Solver':>10} | {'Tot Time':>12} | {'Avg Time':>12} | {'Tot Iters':>12} | {'Avg Iters':>12} | {'Reason':>12} |")
@@ -278,8 +288,7 @@ class Remodeller:
             for name, key in [("Mechanics", "mech"), ("Density", "dens")]:
                 st = s_stats[key]
                 
-                # Mechanics solver runs for each gait sample in every GS iteration
-                # For SimplifiedGaitDriver, it runs for each stage
+                # Mechanics solver runs for each gait stage in every GS iteration
                 n_stages = len(self.stages)
                 if key == "mech":
                     n_solves = gs_iters * n_stages
@@ -300,7 +309,7 @@ class Remodeller:
 
         self.storage.fields.write("scalars", float(t))
 
-    def step(self, dt: float, *, step_index: Optional[int] = None, time_days: Optional[float] = None) -> Tuple[float, Dict]:
+    def step(self, dt: float, step_index: int, time_days: float) -> Tuple[float, Dict]:
         """Single timestep attempt: predictor + fixed-point iteration.
         
         Returns
@@ -326,7 +335,7 @@ class Remodeller:
         self.rho.x.scatter_forward()
 
         # Update dt [days] and reassemble LHS for time-dependent solvers if dt changed
-        if self._current_dt is None or abs(float(dt) - float(self._current_dt)) > 1e-12:
+        if abs(float(dt) - self._current_dt) > 1e-12:
             self.cfg.set_dt(float(dt))
             self._current_dt = float(dt)
         
@@ -366,8 +375,7 @@ class Remodeller:
                 "wrms_error": float(error_norm),
                 "converged": converged
             }
-            if time_days is not None:
-                payload["time_days"] = float(time_days)
+            payload["time_days"] = float(time_days)
             if last_rec is not None:
                 proj_val = last_rec.get("proj_res")
                 if proj_val is not None:
@@ -424,7 +432,7 @@ class Remodeller:
                 dt = total_time - t
             
             # Attempt step
-            error, metrics = self.step(dt, step_index=step_idx, time_days=t+dt)
+            error, metrics = self.step(dt, step_idx, t + dt)
             
             accepted, next_dt, reason = self.integrator.suggest_dt(dt, metrics["converged"], error)
             
@@ -459,6 +467,9 @@ class Remodeller:
                 dt = next_dt
 
         if self.progress is not None:
+            # Final update to show last dt
+            info_str = f"t={t:5.1f}d dt={dt:5.1f} done"
+            self.progress.update(self.main_task_id, completed=t, info=f"{info_str:<35}")
             self.progress.stop()
             self.progress = None
             self.main_task_id = None

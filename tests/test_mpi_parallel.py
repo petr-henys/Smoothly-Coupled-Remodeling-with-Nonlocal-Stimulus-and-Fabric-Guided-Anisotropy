@@ -299,7 +299,7 @@ class TestFixedPointParallel:
         
         with Remodeller(cfg, stages) as rem:
             # Take one time step
-            rem.step(dt=1.0)
+            rem.step(1.0, 0, 1.0)
             
             # Check Anderson was used
             gs_iters = len(rem.fixedsolver.subiter_metrics)
@@ -321,7 +321,7 @@ class TestFixedPointParallel:
         )
         
         with Remodeller(cfg, stages) as rem:
-            rem.step(dt=1.0)
+            rem.step(1.0, 0, 1.0)
             
             # Should converge
             assert len(rem.fixedsolver.subiter_metrics) > 0
@@ -520,7 +520,7 @@ class TestTiming:
         
         with Remodeller(cfg, stages) as rem:
             t0 = time.perf_counter()
-            rem.step(dt=1.0)
+            rem.step(1.0, 0, 1.0)
             elapsed = time.perf_counter() - t0
             
             # Document timing, no hard threshold (environment-dependent)
@@ -536,7 +536,7 @@ class TestTiming:
         cfg = Config(domain=domain, facet_tags=facet_tags, max_subiters=10)
         
         with Remodeller(cfg, stages) as rem:
-            rem.step(dt=1.0)
+            rem.step(1.0, 0, 1.0)
             
             fps = rem.fixedsolver
             

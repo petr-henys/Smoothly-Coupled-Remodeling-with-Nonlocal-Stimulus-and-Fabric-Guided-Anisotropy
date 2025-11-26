@@ -168,8 +168,16 @@ class MechanicsSolver(_BaseLinearSolver):
         # RHS: L(v) = inner(t, v) * ds
         zero_vec = fem.Constant(self.mesh, (0.0,) * self.gdim)
         L_ufl = ufl.inner(zero_vec, self.test) * self.ds
+        
+        n = ufl.FacetNormal(self.mesh)
+        
         for t, tag in self.neumann_bcs:
-            L_ufl = L_ufl + ufl.inner(t, self.test) * self.ds(tag)
+            # Check if t is scalar (pressure) or vector (traction)
+            if len(t.ufl_shape) == 0:
+                L_ufl = L_ufl + ufl.inner(-t * n, self.test) * self.ds(tag)
+            else:
+                # Vector -> Traction
+                L_ufl = L_ufl + ufl.inner(t, self.test) * self.ds(tag)
         
         self.L_ufl = L_ufl
         self.L_form = fem.form(L_ufl)

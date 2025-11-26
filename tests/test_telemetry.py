@@ -208,8 +208,8 @@ class TestMonitoringIntegration:
             }
             with Remodeller(cfg, stages=[dummy_stage]) as rem:
                 # Run 2 steps
-                rem.step(dt=1.0)
-                rem.step(dt=1.0)
+                rem.step(1.0, 0, 1.0)
+                rem.step(1.0, 1, 2.0)
                 
                 # Verify telemetry has recorded data (rank 0 only)
                 if comm.rank == 0:
@@ -243,7 +243,7 @@ class TestMonitoringIntegration:
                 "gl_vector_css": [0.0, 0.0, 1.0]
             }
             with Remodeller(cfg, stages=[dummy_stage]) as rem:
-                rem.step(dt=1.0)
+                rem.step(1.0, 0, 1.0)
                 
                 # Check solver stats were accumulated
                 mech_iters = rem.fixedsolver.mech_iters_total
