@@ -52,6 +52,7 @@ def _unit(v: NDArrayF) -> NDArrayF:
 
 
 class FemurCSS:
+    """Femur coordinate system: Y along neck, Z mediolateral, origin at head center."""
 
     def __init__(
         self,

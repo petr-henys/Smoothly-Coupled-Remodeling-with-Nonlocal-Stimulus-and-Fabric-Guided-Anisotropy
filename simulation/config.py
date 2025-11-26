@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, fields
-from typing import Optional, TYPE_CHECKING, Any, Dict, Union
+from typing import Optional, TYPE_CHECKING, Any, Dict
 
 from dolfinx import mesh
 import ufl
@@ -12,14 +12,7 @@ if TYPE_CHECKING:
 
 @dataclass
 class Config:
-    """Global configuration for bone remodeling simulation.
-
-    Units (model-wide):
-    - Length: millimetres [mm]
-    - Time: days [day]
-    - Stress/Modulus: megapascals [MPa]
-    - Density: apparent density [g/cm³]
-    """
+    """Simulation config with material, solver, and I/O parameters. Units: mm, day, MPa, g/cm³."""
 
     # =========================================================================
     # Material Properties

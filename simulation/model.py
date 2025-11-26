@@ -1,9 +1,4 @@
-"""Core remodeling model: orchestration of coupled subsolvers.
-
-This module exposes a single high-level entry point, :class:`Remodeller`,
-which wires the mechanics, stimulus, density and direction solvers together
-for a given finite-element domain and :class:`simulation.config.Config`.
-"""
+"""Remodelling orchestrator: couples mechanics and density solvers."""
 
 from __future__ import annotations
 
@@ -27,21 +22,10 @@ from simulation.timeintegrator import TimeIntegrator
 
 
 class Remodeller:
-    """High-level bone remodeling orchestrator.
-    
-    Owns FE fields, subsolvers, and storage. Requires fully specified Config.
-    """
+    """Bone remodeling orchestrator. Owns FE fields, subsolvers, and storage."""
 
     def __init__(self, cfg: Config, stages: List[Dict]):
-        """Initialize remodeler with configuration.
-        
-        Parameters
-        ----------
-        cfg : Config
-            Complete simulation configuration with domain and facet_tags.
-        stages : List[Dict]
-            List of load stages for the simplified gait driver.
-        """
+        """Initialize with config and load stages."""
         self.cfg = cfg
         self.domain = self.cfg.domain
         self.closed = False

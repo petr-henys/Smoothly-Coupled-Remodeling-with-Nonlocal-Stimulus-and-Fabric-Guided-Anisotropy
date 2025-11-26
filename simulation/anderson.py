@@ -1,6 +1,4 @@
-"""
-Type-I Anderson (Pulay) acceleration with equality-constrained least squares.
-"""
+"""Anderson (Pulay) acceleration with restart heuristics."""
 
 from collections import deque
 from typing import Callable, Dict, Optional, Sequence, Tuple
@@ -11,7 +9,7 @@ from simulation.logger import get_logger
 
 
 class _Anderson:
-    """Anderson acceleration with restart heuristics."""
+    """Anderson acceleration with safeguard, backtracking, and auto-restart."""
 
     def __init__(
         self,

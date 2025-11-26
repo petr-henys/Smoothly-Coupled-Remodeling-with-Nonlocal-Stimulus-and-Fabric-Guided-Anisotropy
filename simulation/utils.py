@@ -1,17 +1,16 @@
-from typing import List, Tuple
+from typing import List
 import resource
 
 from dolfinx import fem, la, mesh, default_scalar_type
 from dolfinx.fem import FunctionSpace
 from petsc4py import PETSc
 import numpy as np
-from mpi4py import MPI
 import ufl
 
 dtype = PETSc.ScalarType
 
 def build_nullspace(V: FunctionSpace):
-    """Build PETSc nullspace for 3D elasticity."""
+    """Build 6-vector PETSc nullspace for 3D elasticity (rigid-body modes)."""
     bs = V.dofmap.index_map_bs
     length0 = V.dofmap.index_map.size_local
     basis = [la.vector(V.dofmap.index_map, bs=bs, dtype=dtype) for i in range(6)]
@@ -39,60 +38,8 @@ def build_nullspace(V: FunctionSpace):
     ]
     return PETSc.NullSpace().create(vectors=basis_petsc)
 
-def compute_principal_dirs_and_vals_vec(
-    A_func: fem.Function,
-    V_vec: fem.FunctionSpace,
-    Q_sca: fem.FunctionSpace,
-) -> Tuple[List[fem.Function], List[fem.Function]]:
-    """Nodewise eigen-decomposition of tensor field A via NumPy."""
-    A_func.x.scatter_forward()
-
-    T = A_func.function_space
-    msh = T.mesh
-    gdim = msh.geometry.dim
-
-    nT = T.dofmap.index_map.size_local
-    bsT = T.dofmap.index_map_bs
-    nV = V_vec.dofmap.index_map.size_local
-    bsV = V_vec.dofmap.index_map_bs
-    nQ = Q_sca.dofmap.index_map.size_local
-    bsQ = Q_sca.dofmap.index_map_bs
-
-    A_all = A_func.x.array
-    A_owned_flat = A_all[: nT * bsT]
-    A_owned = A_owned_flat.reshape(nT, gdim, gdim, order="C")
-    A_owned = 0.5 * (A_owned + np.swapaxes(A_owned, 1, 2))
-
-    w, V = np.linalg.eigh(A_owned)
-    order = np.argsort(w, axis=1)[:, ::-1]
-    w_sorted = np.take_along_axis(w, order, axis=1)
-    V_sorted = np.take_along_axis(V, order[:, np.newaxis, :], axis=2)
-
-    eigvec_funcs = [fem.Function(V_vec, name=f"A_eigvec_{k+1}") for k in range(gdim)]
-    eigval_funcs = [fem.Function(Q_sca, name=f"A_eigval_{k+1}") for k in range(gdim)]
-
-    for k in range(gdim):
-        vecs_k = V_sorted[:, :, k]
-        arr = eigvec_funcs[k].x.array
-        arr[:] = 0.0
-        arr[: nV * bsV] = vecs_k.reshape(-1)
-        eigvec_funcs[k].x.scatter_forward()
-
-        vals_k = w_sorted[:, k]
-        arr = eigval_funcs[k].x.array
-        arr[:] = 0.0
-        arr[: nQ * bsQ] = vals_k
-        eigval_funcs[k].x.scatter_forward()
-
-    for vf in eigvec_funcs:
-        vf.x.scatter_forward()
-    for lf in eigval_funcs:
-        lf.x.scatter_forward()
-
-    return eigvec_funcs, eigval_funcs
-
 def build_facetag(m: mesh.Mesh) -> mesh.MeshTags:
-    """Create facet tags for unit-cube-like domains (MPI-safe)."""
+    """Tag unit-cube boundary facets: x=0→1, x=1→2, y=0→3, y=1→4."""
     boundaries = [
         (1, lambda x: np.isclose(x[0], 0)),
         (2, lambda x: np.isclose(x[0], 1)),
@@ -116,7 +63,7 @@ def build_facetag(m: mesh.Mesh) -> mesh.MeshTags:
 def build_dirichlet_bcs(
     V: fem.FunctionSpace, facet_tags: mesh.MeshTags, id_tag: int, value: float = 0.0
 ) -> List[fem.DirichletBC]:
-    """Homogeneous Dirichlet on facets with tag id_tag."""
+    """Create homogeneous Dirichlet BCs on facets with given tag."""
     fdim = V.mesh.topology.dim - 1
     facets = facet_tags.find(id_tag)
     bcs = []
@@ -127,6 +74,7 @@ def build_dirichlet_bcs(
     return bcs
 
 def assign(f: fem.Function, v) -> None:
+    """Assign scalar/array/Function to owned DOFs, then scatter."""
     owned = f.function_space.dofmap.index_map.size_local * f.function_space.dofmap.index_map_bs
     if isinstance(v, fem.Function):
         f.x.array[:owned] = v.x.array[:owned]
@@ -141,11 +89,11 @@ def assign(f: fem.Function, v) -> None:
     f.x.scatter_forward()
 
 def get_owned_size(field: fem.Function) -> int:
-    """Return count of locally owned scalar DOFs."""
+    """Count of locally owned DOFs."""
     return int(field.function_space.dofmap.index_map.size_local * field.function_space.dofmap.index_map_bs)
 
 def collect_dirichlet_dofs(bcs, n_owned: int) -> np.ndarray:
-    """Return unique owned Dirichlet DOFs."""
+    """Unique owned DOF indices from Dirichlet BCs."""
     chunks = []
     for bc in bcs:
         idx, first_ghost = bc.dof_indices()
@@ -157,26 +105,21 @@ def collect_dirichlet_dofs(bcs, n_owned: int) -> np.ndarray:
     return np.unique(np.concatenate(chunks))
 
 
-def _global_dot(comm: MPI.Comm, a: np.ndarray, b: np.ndarray) -> float:
-    """MPI global dot product."""
-    return comm.allreduce(float(a @ b), op=MPI.SUM)
-
-def _global_norm(comm: MPI.Comm, v: np.ndarray) -> float:
-    """MPI global norm."""
-    return _global_dot(comm, v, v) ** 0.5
-
 def current_memory_mb() -> float:
-    """Return current process RSS memory in MB."""
+    """Process RSS memory in MB."""
     mem_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     return mem_kb / 1024.0
 
 def smooth_abs(x, eps=1e-4):
+    """Smooth |x| approximation: sqrt(x² + eps²) - eps."""
     return ufl.sqrt(x**2 + eps**2) - eps
 
 def smooth_plus(x, eps=1e-4):
+    """Smooth max(x, 0) approximation."""
     return 0.5 * (x + smooth_abs(x, eps))
 
 def smooth_max(x, y, eps=1e-4):
+    """Smooth max(x, y) approximation."""
     return 0.5 * (x + y + smooth_abs(x - y, eps))
 
 

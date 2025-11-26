@@ -1,14 +1,8 @@
-"""Linear PDE subsolvers for coupled bone remodeling.
-
-Mechanics: elastic equilibrium with density-dependent stiffness.
-Density: reaction-diffusion evolution driven by mechanical stimulus.
-"""
+"""Linear subsolvers: mechanics (elastic equilibrium) and density (reaction-diffusion)."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, List, Tuple, Optional
-
-import numpy as np
 from mpi4py import MPI
 from petsc4py import PETSc
 from dolfinx import fem
@@ -29,7 +23,7 @@ if TYPE_CHECKING:
     from simulation.config import Config
 
 class _BaseLinearSolver:
-    """Base linear solver with assembly, KSP solve, and iteration tracking."""
+    """Base class: assembly, KSP solve, iteration tracking."""
 
     def __init__(
         self,
@@ -145,7 +139,7 @@ class _BaseLinearSolver:
 
 
 class MechanicsSolver(_BaseLinearSolver):
-    """Isotropic elastic equilibrium solver."""
+    """Isotropic elasticity with density-dependent stiffness E(ρ)."""
 
     def __init__(
         self,
@@ -254,7 +248,7 @@ class MechanicsSolver(_BaseLinearSolver):
 
 
 class DensitySolver(_BaseLinearSolver):
-    """Density evolution with isotropic diffusion and local remodeling."""
+    """Density evolution: diffusion + stimulus-driven relaxation to bounds."""
 
     def __init__(
         self,

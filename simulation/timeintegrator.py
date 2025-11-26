@@ -1,4 +1,4 @@
-"""Time integration and adaptive step size control."""
+"""Adaptive time stepping with AB2 predictor and PI error control."""
 
 from __future__ import annotations
 
@@ -12,13 +12,7 @@ from simulation.utils import assign
 
 
 class TimeIntegrator:
-    """Manages temporal discretization, adaptive time stepping, and error control.
-
-    Implements:
-    - Adams-Bashforth 2 (AB2) predictor
-    - Weighted RMS error estimation
-    - Gustafsson PI step size controller (Aggressive tuning)
-    """
+    """AB2 predictor, WRMS error estimation, Gustafsson PI step control."""
 
     def __init__(self, comm: MPI.Intracomm, cfg: Config, Q: fem.FunctionSpace):
         """Initialize time integrator.

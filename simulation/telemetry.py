@@ -20,7 +20,7 @@ def _iso_utc(dt: datetime) -> str:
 
 
 class Telemetry:
-    """Experiment tracking and telemetry system."""
+    """CSV event streams and JSON metadata for experiment tracking."""
 
     def __init__(
         self,

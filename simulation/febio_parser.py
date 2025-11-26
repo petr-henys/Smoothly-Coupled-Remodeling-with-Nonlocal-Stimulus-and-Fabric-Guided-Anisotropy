@@ -12,19 +12,10 @@ from simulation.logger import get_logger
 
 
 class FEBio2Dolfinx:
-    """Parse FEBio XML and build DOLFINx mesh with surface boundary tags via KDTree matching.
-
-    The mesh coordinates are assumed to already be provided in millimetres. No
-    additional scaling is applied so that downstream loads and material
-    parameters remain physically consistent.
-    """
+    """Parse FEBio .feb file and build DOLFINx mesh with surface tags (units: mm)."""
 
     def __init__(self, feb_file: str):
-        """Parse FEBio file and build DOLFINx mesh with surface tags.
-        
-        Args:
-            feb_file: Path to FEBio .feb file
-        """
+        """Load .feb file and build mesh with surface tags."""
         self.logger = get_logger(MPI.COMM_WORLD, name="FEBio2Dolfinx")
         self.feb_file = Path(feb_file)
         
@@ -64,7 +55,7 @@ class FEBio2Dolfinx:
             self.logger.info(f"FEBio import complete: {len(self.surface_tags)} surfaces")
 
     def _broadcast_mesh_data(self):
-        """Broadcast nodes and surfaces from rank 0 to all ranks. Elements remain on rank 0."""
+        """MPI broadcast nodes/surfaces from rank 0."""
         comm = MPI.COMM_WORLD
         rank = comm.Get_rank()
 
@@ -80,7 +71,7 @@ class FEBio2Dolfinx:
         self.surfaces = comm.bcast(self.surfaces, root=0)
 
     def _log_unit_hint(self) -> None:
-        """Lightweight heuristic to flag likely unit mistakes (e.g., m vs mm)."""
+        """Warn if mesh extent suggests wrong units."""
         bbox = self.nodes.max(axis=0) - self.nodes.min(axis=0)
         diag = float(np.linalg.norm(bbox))
         if diag < 1e-2 or diag > 5e3:
@@ -92,7 +83,7 @@ class FEBio2Dolfinx:
             self.logger.info("Mesh extent: [{:.3f}, {:.3f}, {:.3f}] mm", *bbox)
 
     def _create_dolfinx_mesh(self) -> mesh.Mesh:
-        """Build DOLFINx mesh from tet4 connectivity and node coordinates."""
+        """Build DOLFINx mesh from tet4 elements."""
         from basix.ufl import element as basix_element
         
         element = basix_element("Lagrange", "tetrahedron", 1, shape=(3,))
@@ -157,18 +148,7 @@ class FEBio2Dolfinx:
             self.surfaces[name] = np.array(triangles, dtype=np.int64)
 
     def _match_surface_tags(self) -> mesh.MeshTags:
-        """Match FEBio surface triangles to DOLFINx boundary facets in an MPI-safe way.
-
-        This implementation:
-        - computes local exterior boundary facets and their midpoints on each rank,
-        - gathers all facet midpoints and their owning ranks on rank 0,
-        - performs a global KDTree search on rank 0 to match FEBio surface midpoints
-          to the nearest mesh facet midpoints,
-        - scatters the matched facet indices and markers back to individual ranks,
-        - and finally builds a local `mesh.meshtags` object on each rank.
-
-        The resulting `self.meshtags` is consistent across different MPI layouts.
-        """
+        """Match FEBio triangles to DOLFINx facets via KDTree (MPI-safe)."""
         comm = self.mesh_dolfinx.comm
         rank = comm.Get_rank()
         size = comm.Get_size()

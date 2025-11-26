@@ -19,7 +19,7 @@ from simulation.logger import get_logger
 
 
 class FieldStorage:
-    """VTX field output. COLLECTIVE operations only."""
+    """VTX field output (collective MPI operations)."""
 
     __slots__ = ("comm", "logger", "output_dir", "_writers", "_write_counts")
 
@@ -71,7 +71,7 @@ class FieldStorage:
 
 
 class MetricsStorage:
-    """CSV metrics writer. Rank-0 only operations."""
+    """CSV metrics writer (rank-0 only)."""
 
     __slots__ = ("comm", "logger", "output_dir", "_flush_interval", "_buffers", "_files", "_writers")
 
@@ -160,7 +160,7 @@ class MetricsStorage:
 
 
 class UnifiedStorage:
-    """Unified field + metrics storage."""
+    """Combined field and metrics storage."""
 
     __slots__ = ("comm", "fields", "metrics")
 

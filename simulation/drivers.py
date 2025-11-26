@@ -1,4 +1,4 @@
-"""Gait driver: solve mechanics for load stages and compute daily stimulus."""
+"""Gait driver: solves mechanics for load stages and computes daily stimulus."""
 
 from typing import Dict, List
 import numpy as np
@@ -12,10 +12,7 @@ from simulation.logger import get_logger
 
 
 class GaitDriver:
-    """Remodeling driver using discrete load cases (stages).
-    
-    Solves mechanics for each stage, accumulates weighted stimulus.
-    """
+    """Solves mechanics for discrete load stages, accumulates weighted stimulus."""
 
     def __init__(
         self,

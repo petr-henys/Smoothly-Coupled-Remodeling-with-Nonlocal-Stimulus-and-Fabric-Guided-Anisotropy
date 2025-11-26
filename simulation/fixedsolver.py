@@ -1,7 +1,7 @@
-"""Fixed-point solver for coupled mechanics-density problem."""
+"""Fixed-point iteration for coupled mechanics-density problem."""
 
 from __future__ import annotations
-from typing import Optional, Dict, List
+from typing import Dict, List
 
 import numpy as np
 from mpi4py import MPI
@@ -13,11 +13,7 @@ from simulation.logger import get_logger
 from simulation.anderson import _Anderson
 
 class FixedPointSolver:
-    """
-    Simplified fixed-point solver for 2-field coupling (Mechanics <-> Density).
-    Mechanics is handled by the driver (which may involve multiple load cases).
-    Density is handled by the density solver.
-    """
+    """Fixed-point solver for 2-field coupling. Supports Anderson acceleration."""
 
     def __init__(
         self, 

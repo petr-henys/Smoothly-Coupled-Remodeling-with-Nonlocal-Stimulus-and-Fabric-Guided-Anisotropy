@@ -1,10 +1,8 @@
 """Utilities for creating traction and pressure functions."""
 
 from dolfinx import fem
-import basix.ufl
 import ufl
 import numpy as np
-from mpi4py import MPI
 from dolfinx.fem.petsc import LinearProblem
 
 def create_traction_function(V, ds, value, blur_radius):

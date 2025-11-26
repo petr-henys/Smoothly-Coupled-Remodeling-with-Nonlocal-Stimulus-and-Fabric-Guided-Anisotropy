@@ -1,9 +1,4 @@
-"""
-Centralized logging configuration for the FemurLoader project.
-
-This module provides a unified logging setup to ensure consistent logging
-behavior across all modules in the project.
-"""
+"""Standard logging setup for console and file output."""
 
 import logging
 import sys
@@ -16,18 +11,7 @@ def setup_logging(
     log_file: Optional[str] = None,
     format_string: Optional[str] = None
 ) -> None:
-    """
-    Configure logging for the entire project.
-    
-    Parameters
-    ----------
-    level : str, default "WARNING"
-        Logging level: "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
-    log_file : str, optional
-        Path to log file. If None, logs only to console.
-    format_string : str, optional
-        Custom format string. If None, uses default format.
-    """
+    """Configure root logger with console and optional file handler."""
     if format_string is None:
         format_string = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     
@@ -68,19 +52,7 @@ def setup_logging(
 
 
 def get_logger(name: str) -> logging.Logger:
-    """
-    Get a logger with the specified name.
-    
-    Parameters
-    ----------
-    name : str
-        Logger name, typically __name__ for module loggers
-        
-    Returns
-    -------
-    logging.Logger
-        Configured logger instance
-    """
+    """Get logger by name, cleaning up __main__ and src. prefixes."""
     # Clean up module names for better readability
     if name == "__main__":
         # For main scripts, use the script filename
@@ -100,19 +72,7 @@ def get_logger(name: str) -> logging.Logger:
 
 
 def get_class_logger(cls) -> logging.Logger:
-    """
-    Get a logger for a class instance.
-    
-    Parameters
-    ----------
-    cls : object
-        Class instance
-        
-    Returns
-    -------
-    logging.Logger
-        Configured logger instance with class name
-    """
+    """Get logger for a class instance, using module.class name."""
     module_name = cls.__class__.__module__
     class_name = cls.__class__.__name__
     

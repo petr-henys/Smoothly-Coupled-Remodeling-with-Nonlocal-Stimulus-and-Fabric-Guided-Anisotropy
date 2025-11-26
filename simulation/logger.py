@@ -1,17 +1,4 @@
-"""
-MPI-aware logging - rank 0 only output via PETSc.Sys.Print.
-
-Simple, explicit design:
-- Only rank 0 prints (MPI-safe by default)
-- Lazy message evaluation via callables
-- Standard levels: DEBUG < INFO < WARNING < ERROR
-- No environment variables, no fallbacks
-
-Usage:
-    logger = get_logger(comm, name="Solver")
-    logger.info("Iteration {0}", iter_count)
-    logger.debug(lambda: f"Expensive: {compute_stats()}")
-"""
+"""MPI-safe logging: rank-0 console/file output via PETSc.Sys.Print."""
 
 from enum import IntEnum
 from typing import Any, Callable, Union
@@ -28,7 +15,7 @@ class Level(IntEnum):
 
 
 class Logger:
-    """Rank-0 only logger with lazy evaluation and file output."""
+    """Rank-0 logger with lazy evaluation and optional file output."""
 
     __slots__ = ("comm", "console_level", "file_level", "name", "prefix", "log_file")
 
