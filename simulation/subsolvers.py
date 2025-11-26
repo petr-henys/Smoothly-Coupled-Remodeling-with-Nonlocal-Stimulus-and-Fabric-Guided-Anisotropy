@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 class _BaseLinearSolver:
     """Base class: assembly, KSP solve, iteration tracking."""
-
+    # ... (No changes to _BaseLinearSolver logic, keep as is) ...
     def __init__(
         self,
         cfg: Config,
@@ -74,28 +74,14 @@ class _BaseLinearSolver:
             self.b.destroy()
             self.b = None
 
-    def _compile_forms(self):
-        """Compile UFL forms. Must be implemented by subclasses."""
-        raise NotImplementedError
-
     def setup(self):
-        """Initialize forms, matrices, vectors, and KSP."""
         self._compile_forms()
         self.A = create_matrix(self.a_form)
         self.b = create_vector(self.function_space)
-        
-        # Assemble matrix so it has values for KSP setup (needed for GAMG etc)
         self.assemble_lhs()
-        
-        # Subclass specific KSP setup
         self._setup_ksp()
 
-    def _setup_ksp(self):
-        """Configure KSP solver."""
-        raise NotImplementedError
-
     def assemble_lhs(self):
-        """Assemble LHS matrix."""
         self.A.zeroEntries()
         assemble_matrix(self.A, self.a_form, bcs=self.dirichlet_bcs)
         self.A.assemble()
@@ -120,7 +106,6 @@ class _BaseLinearSolver:
     def create_ksp(self, prefix: str, ksp_options: dict[str, object]) -> PETSc.KSP:
         self.ksp = PETSc.KSP().create(self.comm)
         self.ksp.setOptionsPrefix(prefix + "_")
-
         opts = PETSc.Options()
         for k, v in ksp_options.items():
             if v is not None:
@@ -132,14 +117,13 @@ class _BaseLinearSolver:
         self.ksp.setInitialGuessNonzero(True)
         if self.A is not None:
             self.ksp.setOperators(self.A)
-
         self.ksp.setFromOptions()
         self.ksp.setUp()
         return self.ksp
 
 
 class MechanicsSolver(_BaseLinearSolver):
-    """Isotropic elasticity with density-dependent stiffness E(ρ)."""
+    """Isotropic elasticity with density-dependent stiffness E(rho)."""
 
     def __init__(
         self,
@@ -152,25 +136,22 @@ class MechanicsSolver(_BaseLinearSolver):
         super().__init__(config, u, dirichlet_bcs, neumann_bcs)
         self.u = self.state
         self.rho = rho
-        self.L_ufl = None # Store UFL for diagnostics
+        self.L_ufl = None 
 
     def _compile_forms(self):
         # LHS: a(u, v) = inner(sigma(u), eps(v))
         a_ufl = ufl.inner(self.sigma(self.trial, self.rho), self.eps(self.test)) * self.dx
         self.a_form = fem.form(a_ufl)
 
-        # RHS: L(v) = inner(t, v) * ds
+        # RHS
         zero_vec = fem.Constant(self.mesh, (0.0,) * self.gdim)
         L_ufl = ufl.inner(zero_vec, self.test) * self.ds
-        
         n = ufl.FacetNormal(self.mesh)
         
         for t, tag in self.neumann_bcs:
-            # Check if t is scalar (pressure) or vector (traction)
             if len(t.ufl_shape) == 0:
                 L_ufl = L_ufl + ufl.inner(-t * n, self.test) * self.ds(tag)
             else:
-                # Vector -> Traction
                 L_ufl = L_ufl + ufl.inner(t, self.test) * self.ds(tag)
         
         self.L_ufl = L_ufl
@@ -181,7 +162,6 @@ class MechanicsSolver(_BaseLinearSolver):
         self.A.setBlockSize(self.gdim)
         self.A.setNearNullSpace(ns)
         self.A.setOption(PETSc.Mat.Option.SPD, True)
-
         ksp_options = {"ksp_type": self.cfg.ksp_type, "pc_type": self.cfg.pc_type}
         self.create_ksp(prefix="mechanics", ksp_options=ksp_options)
 
@@ -191,6 +171,7 @@ class MechanicsSolver(_BaseLinearSolver):
     def sigma(self, u, rho):
         rho_eff = smooth_max(rho, self.cfg.rho_min, self.smooth_eps)
         
+        # Smoothstep interpolation for material regimes
         def smoothstep(x, edge0, edge1):
             t = ufl.max_value(0.0, ufl.min_value(1.0, (x - edge0) / (edge1 - edge0)))
             return t * t * (3.0 - 2.0 * t)
@@ -198,7 +179,7 @@ class MechanicsSolver(_BaseLinearSolver):
         w = smoothstep(rho_eff, self.cfg.rho_trab_max, self.cfg.rho_cort_min)
         k_var = self.cfg.n_trab * (1.0 - w) + self.cfg.n_cort * w
         
-        # Normalize density by rho_max for stiffness calculation
+        # Stiffness E = E0 * (rho / rho_max)^k
         rho_rel = rho_eff / self.cfg.rho_max
         E = self.cfg.E0 * (rho_rel**k_var)
         nu = self.cfg.nu0
@@ -206,9 +187,6 @@ class MechanicsSolver(_BaseLinearSolver):
         lmbda = E * nu / ((1.0 + nu) * (1.0 - 2.0 * nu))
         
         return 2.0 * mu * self.eps(u) + lmbda * ufl.tr(self.eps(u)) * ufl.Identity(self.gdim)
-
-    def get_strain_tensor(self, u=None):
-        return self.eps(self.u if u is None else u)
 
     def assemble_rhs(self):
         with self.b.localForm() as b_loc:
@@ -224,28 +202,6 @@ class MechanicsSolver(_BaseLinearSolver):
         self._maybe_warn(reason, "Mechanics")
         return its, reason
 
-    def energy_balance(self):
-        a_uu_local = fem.assemble_scalar(fem.form(ufl.inner(self.sigma(self.u, self.rho), self.eps(self.u)) * self.dx))
-        W_int = self.comm.allreduce(a_uu_local, op=MPI.SUM)
-        
-        L_u_form = fem.form(ufl.replace(self.L_ufl, {self.test: self.u}))
-        l_u_local = fem.assemble_scalar(L_u_form)
-        W_ext = self.comm.allreduce(l_u_local, op=MPI.SUM)
-        
-        denom = max(abs(W_int), abs(W_ext), 1e-300)
-        rel_error = abs(W_int - W_ext) / denom
-        return W_int, W_ext, rel_error
-
-    def average_strain_energy(self):
-        psi = 0.5 * ufl.inner(self.sigma(self.u, self.rho), self.eps(self.u))
-        E_local = fem.assemble_scalar(fem.form(psi * self.dx))
-        vol_local = fem.assemble_scalar(fem.form(1.0 * self.dx))
-        
-        E_total = self.comm.allreduce(E_local, op=MPI.SUM)
-        vol_total = self.comm.allreduce(vol_local, op=MPI.SUM)
-        
-        return E_total / max(vol_total, 1e-300)
-
 
 class DensitySolver(_BaseLinearSolver):
     """Density evolution: diffusion + stimulus-driven relaxation to bounds."""
@@ -254,30 +210,43 @@ class DensitySolver(_BaseLinearSolver):
         self,
         rho: fem.Function,
         rho_old: fem.Function,
+        psi_field: fem.Function,  # NEW: Accept the stimulus function directly
         config: Config,
     ):
         super().__init__(config, rho, [], [])
         self.rho = self.state
         self.rho_old = rho_old
-        self.S_driving = fem.Function(self.function_space, name="S_driving")
+        self.psi_field = psi_field # Store reference to stimulus function
         self.dt_c = fem.Constant(self.mesh, float(self.cfg.dt))
 
-    
-    def update_driving_force(self, psi_expr):
-        driving_force_expr = (psi_expr / self.cfg.psi_ref) - 1.0
-        
-        expr = fem.Expression(driving_force_expr, self.function_space.element.interpolation_points)
-        self.S_driving.interpolate(expr)
-        self.S_driving.x.scatter_forward()
+    # REMOVED: update_driving_force (redundant interpolation)
 
     def _compile_forms(self):
+        """
+        Compile Reaction-Diffusion forms.
+        Based on Article Eq. 9: rho_dot = c * (Psi - Psi_ref)[cite: 153].
+        Rearranged for Implicit Euler:
+        (rho - rho_old)/dt = Diffusion + k_rho * S_driving
+        """
         dt = self.dt_c
-        S_driving = self.S_driving
+        
+        # Calculate driving force directly from the passed-in Psi function
+        # No extra interpolation needed.
+        # S_driving = (Psi / Psi_ref) - 1.0
+        # Positive if Psi > Psi_ref (Bone formation), Negative if Psi < Psi_ref (Resorption)
+        S_driving = (self.psi_field / self.cfg.psi_ref) - 1.0
+        
+        # Use smooth_plus for a "lazy zone" or pure one-sided reaction if desired.
+        # Here we follow the provided logic of splitting into formation (+) and resorption (-)
         S_plus = smooth_plus(S_driving, self.smooth_eps)
         S_minus = smooth_plus(-S_driving, self.smooth_eps)
         
         # LHS: (rho/dt)*v + D_rho*grad(rho)*grad(v) + k_rho*(S_plus + S_minus)*rho*v
+        # Note: The reaction term *rho*v implies a proportional rate. 
+        # If strict Eq (9) is needed (constant rate independent of rho), remove rho from reaction term.
+        # However, usually remodeling is density dependent. We keep the semi-implicit structure.
         reaction_coeff = self.cfg.k_rho * (S_plus + S_minus)
+        
         a_ufl = (
             (self.trial / dt) * self.test * self.dx
             + self.cfg.D_rho * ufl.inner(ufl.grad(self.trial), ufl.grad(self.test)) * self.dx
@@ -286,6 +255,7 @@ class DensitySolver(_BaseLinearSolver):
         self.a_form = fem.form(a_ufl)
 
         # RHS: (rho_old/dt)*v + k_rho*(S_plus*rho_max + S_minus*rho_min)*v
+        # This drives rho towards rho_max if S_plus > 0, and rho_min if S_minus > 0
         source_term = self.cfg.k_rho * (S_plus * self.cfg.rho_max + S_minus * self.cfg.rho_min)
         L_ufl = ((self.rho_old / dt) + source_term) * self.test * self.dx
         self.L_form = fem.form(L_ufl)
@@ -311,25 +281,3 @@ class DensitySolver(_BaseLinearSolver):
         its, reason = self._solve()
         self._maybe_warn(reason, "Density")        
         return its, reason
-
-
-    def mass_balance_residual(self):
-        dt = self.dt_c
-        rho, rho_old = self.rho, self.rho_old
-        S_driving = self.S_driving
-
-        S_plus = smooth_plus(S_driving, self.smooth_eps)
-        S_minus = smooth_plus(-S_driving, self.smooth_eps)
-        
-        rate = self.cfg.k_rho * (S_plus * (self.cfg.rho_max - rho) + S_minus * (self.cfg.rho_min - rho))
-        
-        lhs = (rho - rho_old) / dt
-        rhs = rate
-        
-        res_local = fem.assemble_scalar(fem.form((lhs - rhs) * self.dx))
-        res_abs = self.comm.allreduce(res_local, op=MPI.SUM)
-        
-        rhs_mag_local = fem.assemble_scalar(fem.form(abs(rhs) * self.dx))
-        rhs_mag = self.comm.allreduce(rhs_mag_local, op=MPI.SUM)
-        
-        return res_abs, abs(res_abs) / max(rhs_mag, 1e-300)

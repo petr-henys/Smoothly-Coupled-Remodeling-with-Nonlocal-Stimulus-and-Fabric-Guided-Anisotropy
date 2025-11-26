@@ -58,42 +58,22 @@ class FixedPointSolver:
             )
 
         
-    # --- NEW: relative projected "residual" norm for Anderson ---
     def proj_residual_norm(self, x_old_vec: np.ndarray,
                             x_trial_vec: np.ndarray,
                             x_ref_vec: np.ndarray) -> float:
-        """
-        Relative step size: ||x_trial - x_old|| / ||x_ref|| in global (MPI) 2-norm.
-        - r_norm  = proj_residual_norm(x_old, x_raw, x_raw)
-        - rp_norm = proj_residual_norm(x_old, x_cand, x_raw)
-        
-        Returns absolute step norm if ||x_ref|| ~ 0.
-        """
+        """Relative step size: ||x_trial - x_old|| / ||x_ref|| in global (MPI) 2-norm."""
         diff = x_trial_vec - x_old_vec
-
-        # Lokální součet
         diff_loc = float(np.dot(diff, diff))
         ref_loc  = float(np.dot(x_ref_vec, x_ref_vec))
-
-        # Globální součet přes všechny MPI ranky
         diff_glob = self.comm.allreduce(diff_loc, op=MPI.SUM)
         ref_glob  = self.comm.allreduce(ref_loc,  op=MPI.SUM)
 
         if ref_glob <= 1e-30:
-            # Když je referenční vektor prakticky nulový,
-            # použij absolutní normu kroku (aby se něco aspoň měřilo).
             return np.sqrt(diff_glob)
-        # Relative step norm: ||x_trial - x_old|| / ||x_ref|| in global 2-norm.
         return np.sqrt(diff_glob / ref_glob)
 
     def run(self, *, progress=None, task_id=None) -> bool:
-        """Execute fixed-point loop.
-        
-        Returns
-        -------
-        bool
-            True if converged, False otherwise.
-        """
+        """Execute fixed-point loop."""
         tol = float(self.cfg.coupling_tol)
         max_subiters = int(self.cfg.max_subiters)
         min_subiters = int(self.cfg.min_subiters)
@@ -119,9 +99,9 @@ class FixedPointSolver:
         for itr in range(1, max_subiters + 1):
             assign(rho_prev_iter, self.rho)
             
-            # 1. Mechanics (Driver updates snapshots)
-            # The driver solves mechanics for all stages and updates u_snap
-            self.driver.update_stiffness() # Update E(rho)
+            # 1. Mechanics
+            # Driver solves equilibrium and updates its internal fields
+            self.driver.update_stiffness() 
             mech_stats = self.driver.update_snapshots()
             
             self.mech_time_total += mech_stats["total_time"]
@@ -130,16 +110,11 @@ class FixedPointSolver:
             self.solver_stats["mech"]["time"] += mech_stats["total_time"]
             self.solver_stats["mech"]["iters"] += int(sum(mech_stats["phase_iters"]))
             
-            # 2. Stimulus
-            # Driver provides the stimulus expression based on updated snapshots
-            psi_expr = self.driver.stimulus_expr()
-            
-            # 3. Density
-            # Update driving force in density solver
+            # 2. Density
+            # The driving force (stimulus) is already updated inside the driver's memory 
+            # (which is linked to densolver.psi_field). 
+            # We just need to re-assemble because the coefficient in the form changed.
             t0 = MPI.Wtime()
-            self.densolver.update_driving_force(psi_expr)
-            # Re-assemble LHS because reaction_coeff depends on S_driving, which changed.
-            # Note: dt is constant within this loop, but S changes.
             self.densolver.assemble_lhs()
             self.densolver.assemble_rhs()
             dens_iters, dens_reason = self.densolver.solve()
@@ -151,15 +126,10 @@ class FixedPointSolver:
             self.solver_stats["dens"]["iters"] += dens_iters
             self.solver_stats["dens"]["reason"] = dens_reason
 
-            # 4. Anderson Acceleration (before convergence check)
-            # Use only owned DOFs to avoid ghost double-counting in MPI reductions
+            # 3. Anderson Acceleration
             n_owned = get_owned_size(self.rho)
-            
             aa_info = {}
             if self.anderson:
-                # x_old = rho_prev_iter (input to this step)
-                # x_raw = self.rho (output of this step, unaccelerated)
-                # Operate only on owned DOFs to avoid ghost double-counting in Gram matrix
                 x_new_owned, aa_info = self.anderson.mix(
                     x_old=rho_prev_iter.x.array[:n_owned],
                     x_raw=self.rho.x.array[:n_owned],
@@ -169,12 +139,10 @@ class FixedPointSolver:
                     use_safeguard=self.cfg.safeguard,
                     backtrack_max=self.cfg.backtrack_max
                 )
-                
                 self.rho.x.array[:n_owned] = x_new_owned
                 self.rho.x.scatter_forward()
             
-            # 5. Convergence Check (after acceleration, on owned DOFs only)
-            # Norm of (rho - rho_prev_iter)
+            # 4. Convergence Check
             diff_owned = self.rho.x.array[:n_owned] - rho_prev_iter.x.array[:n_owned]
             diff_norm_sq = self.comm.allreduce(np.dot(diff_owned, diff_owned), op=MPI.SUM)
             rho_owned = self.rho.x.array[:n_owned]
@@ -182,7 +150,6 @@ class FixedPointSolver:
             
             rel_error = np.sqrt(diff_norm_sq) / max(np.sqrt(rho_norm_sq), 1e-10)
             
-            # Log
             log_msg = f"   Substep {itr}: rel_err={rel_error:.3e}"
             if aa_info:
                 hist = aa_info.get('aa_hist', 0)
@@ -202,10 +169,9 @@ class FixedPointSolver:
                     prog_info += f" AA({aa_info.get('aa_hist',0)})"
                 progress.update(task_id, advance=1, info=prog_info)
 
-            # Record metrics
             rec = {
                 "iter": itr,
-                "proj_res": float(rel_error), # Using rel_error as proxy for projected residual
+                "proj_res": float(rel_error),
                 "mech_time": float(mech_stats["total_time"]),
                 "dens_time": float(elapsed),
                 "mech_iters": int(sum(mech_stats["phase_iters"])),

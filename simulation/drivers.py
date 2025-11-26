@@ -12,7 +12,7 @@ from simulation.logger import get_logger
 
 
 class GaitDriver:
-    """Solves mechanics for discrete load stages, accumulates weighted stimulus."""
+    """Solves mechanics for discrete load stages, accumulates weighted stimulus (SED)."""
 
     def __init__(
         self,
@@ -23,23 +23,6 @@ class GaitDriver:
         config: Config,
         css_transformer: object,
     ):
-        """Initialize gait driver.
-        
-        Parameters
-        ----------
-        mech : MechanicsSolver
-            Mechanics solver instance.
-        mag_hip : fem.Constant
-            Hip load magnitude constant (scalar pressure).
-        vec_glmed : fem.Constant
-            Gluteus medius traction vector constant.
-        load_stages : List[Dict]
-            Stage defs with: hip_magnitude, gl_magnitude, gl_vector_css, weight.
-        config : Config
-            Simulation configuration.
-        css_transformer : object
-            Object with css_to_world_vector(v) method, or None for identity transform.
-        """
         self.mech = mech
         self.mag_hip = mag_hip
         self.vec_glmed = vec_glmed
@@ -58,23 +41,21 @@ class GaitDriver:
             raise ValueError("Total weight of load stages must be positive.")
         self.weights = np.array([s["weight"] / total_weight for s in self.stages])
 
-        # Physical parameters
-        self.m_exp = float(config.n_power)
-        self.n_cycles = float(config.gait_cycles_per_day)
-        self.k_stimulus = float(config.k_stimulus)
 
-        # Stimulus field (DG0 - cell-constant)
+        # Stimulus field (Strain Energy Density - SED)
+        # Using DG0 (element-wise constant) is standard for SED to avoid smoothing artifacts
         self.V_psi = fem.functionspace(mesh, ("DG", 0))
-        self.psi = fem.Function(self.V_psi, name="psi")
-        self._psi_temp = fem.Function(self.V_psi)  # Reusable temp buffer
-        self._n_owned = self.V_psi.dofmap.index_map.size_local
-
-        # Compile stimulus expression
-        self._weight_const = fem.Constant(mesh, 0.0)
-        self._stimulus_expr = self._build_stimulus_expression()
+        self.psi = fem.Function(self.V_psi, name="Stimulus_SED")
+        
+        # Temp buffer for single-stage SED
+        self._psi_local = fem.Function(self.V_psi)
+        
+        # Optimization: Pre-compile the SED expression to avoid recompilation in loops
+        self._weight_val = fem.Constant(mesh, 0.0)
+        self._sed_expr = self._build_sed_expression()
 
         if self.rank == 0:
-            self.logger.info(f"GaitDriver: {len(self.stages)} stages, m={self.m_exp:.1f}")
+            self.logger.info(f"GaitDriver: {len(self.stages)} stages initialized.")
 
     def setup(self) -> None:
         """Initialize mechanics solver."""
@@ -89,16 +70,18 @@ class GaitDriver:
         self.mech.assemble_lhs()
 
     def update_snapshots(self) -> Dict:
-        """Solve mechanics for each stage and accumulate stimulus."""
+        """Solve mechanics for each stage and accumulate Strain Energy Density."""
         times = []
         iters = []
 
-        # Reset stimulus (owned DOFs only - ghosts updated at end)
-        self.psi.x.array[:self._n_owned] = 0.0
+        # 1. Reset accumulated stimulus to zero
+        self.psi.x.array[:] = 0.0
 
+        # 2. Loop through load stages
         for stage, weight in zip(self.stages, self.weights):
             start = MPI.Wtime()
 
+            # A. Solve Equilibrium
             self._apply_stage_loads(stage)
             self.mech.assemble_rhs()
             its, _ = self.mech.solve()
@@ -107,12 +90,18 @@ class GaitDriver:
             times.append(float(elapsed))
             iters.append(int(its))
 
-            # Accumulate: psi += weight * n_cycles * sigma_tissue^m
-            self._weight_const.value = weight * self.n_cycles
-            self._accumulate_stimulus()
+            # B. Calculate SED for this stage
+            # Update the weight constant (Weight)
+            self._weight_val.value = weight
+            
+            # Interpolate current stage SED into temp buffer
+            self._psi_local.interpolate(self._sed_expr)
+            
+            # Accumulate into total stimulus (Vector addition, very fast)
+            self.psi.x.array[:] += self._psi_local.x.array[:]
 
-        # Finalize: psi = (sum)^(1/m)
-        self._finalize_stimulus()
+        # 3. Synchronize ghosts after accumulation
+        self.psi.x.scatter_forward()
 
         return {
             "phase_iters": iters,
@@ -120,15 +109,15 @@ class GaitDriver:
             "total_time": sum(times),
         }
 
-    def stimulus_expr(self) -> fem.Function:
-        """Return computed stimulus field."""
+    def stimulus_field(self) -> fem.Function:
+        """Return the computed stimulus function (Psi)."""
         return self.psi
 
     def get_stimulus_stats(self) -> Dict[str, float]:
         """Compute MPI-reduced stimulus statistics."""
-        local_vals = self.psi.x.array[:self._n_owned]
+        # Calculate on owned dofs to avoid double counting ghosts
+        local_vals = self.psi.x.array[:self.psi.function_space.dofmap.index_map.size_local]
 
-        # Local aggregates
         n_local = local_vals.size
         if n_local > 0:
             local_min = float(np.min(local_vals))
@@ -139,7 +128,6 @@ class GaitDriver:
             local_max = float("-inf")
             local_sum = 0.0
 
-        # Global reductions
         psi_min = self.comm.allreduce(local_min, op=MPI.MIN)
         psi_max = self.comm.allreduce(local_max, op=MPI.MAX)
         total_sum = self.comm.allreduce(local_sum, op=MPI.SUM)
@@ -172,7 +160,6 @@ class GaitDriver:
                 gl_vec_world[:] = gl_vec_css
         self.comm.Bcast(gl_vec_world, root=0)
 
-        # Normalize and scale by magnitude
         norm = np.linalg.norm(gl_vec_world)
         if norm > 1e-12:
             gl_vec_world *= gl_mag / norm
@@ -182,56 +169,26 @@ class GaitDriver:
         self.mag_hip.value = hip_mag
         self.vec_glmed.value[:] = gl_vec_world
 
-    def _build_stimulus_expression(self) -> fem.Expression:
-        """Build UFL expression for single-stage stimulus contribution."""
-        rho = self.mech.rho
+    def _build_sed_expression(self) -> fem.Expression:
+        """
+        Build UFL expression for Strain Energy Density (SED).
+        Psi = 0.5 * sigma : eps
+        According to Bensel et al. (2024), Eq 1[cite: 114].
+        """
         u = self.mech.u
-        cfg = self.cfg
-        eps = cfg.smooth_eps
-
-        # Safe density and relative density
-        rho_safe = ufl.max_value(rho, eps)
-        rho_rel = rho_safe / cfg.rho_max
-
-        # Variable stiffness exponent (trabecular -> cortical smoothstep)
-        t = ufl.max_value(
-            0.0,
-            ufl.min_value(
-                1.0,
-                (rho_safe - cfg.rho_trab_max) / (cfg.rho_cort_min - cfg.rho_trab_max),
-            ),
-        )
-        w = t * t * (3.0 - 2.0 * t)
-        k_var = cfg.n_trab * (1.0 - w) + cfg.n_cort * w
-
-        # Elastic modulus
-        E_field = cfg.E0 * (rho_rel**k_var)
-
-        # Strain energy density
+        rho = self.mech.rho
+        
+        # Get stress and strain from mechanics solver
         sig = self.mech.sigma(u, rho)
-        eps_tensor = self.mech.eps(u)
-        U = ufl.max_value(0.5 * ufl.inner(sig, eps_tensor), 0.0)
+        eps = self.mech.eps(u)
+        
+        # Strain Energy Density: Psi = 1/2 * inner(sigma, epsilon)
+        # Note: Ensure sigma and eps correspond to the same density state
+        Psi = 0.5 * ufl.inner(sig, eps)
+        
+        # Apply weighting for daily accumulation
+        # Use max(0, Psi) to ensure numerical stability, though SED >= 0 physically
+        weighted_Psi = self._weight_val * ufl.max_value(Psi, 0.0)
 
-        # Continuum stress from energy: sigma = sqrt(2 * E * U)
-        sigma_continuum = ufl.sqrt(2.0 * E_field * U + eps)
-
-        # Tissue-level stress (porosity scaling)
-        tissue_scaling = (cfg.rho_max / rho_safe) ** self.k_stimulus
-        sigma_tissue = tissue_scaling * sigma_continuum
-
-        # Weighted contribution
-        contribution = self._weight_const * (sigma_tissue**self.m_exp)
-
-        return fem.Expression(contribution, self.V_psi.element.interpolation_points)
-
-    def _accumulate_stimulus(self) -> None:
-        """Add current stage contribution to stimulus field (owned DOFs)."""
-        self._psi_temp.interpolate(self._stimulus_expr)
-        self.psi.x.array[:self._n_owned] += self._psi_temp.x.array[:self._n_owned]
-
-    def _finalize_stimulus(self) -> None:
-        """Apply power law to accumulated stimulus and sync ghosts."""
-        vals = self.psi.x.array[:self._n_owned]
-        np.maximum(vals, 0.0, out=vals)
-        np.power(vals, 1.0 / self.m_exp, out=vals)
-        self.psi.x.scatter_forward()
+        # Compile expression for the Stimulus Function Space (DG0)
+        return fem.Expression(weighted_Psi, self.V_psi.element.interpolation_points)

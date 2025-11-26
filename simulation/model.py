@@ -41,7 +41,6 @@ class Remodeller:
                 log_path = Path(self.cfg.log_file)
                 if log_path.parent:
                     log_path.parent.mkdir(parents=True, exist_ok=True)
-                # Do not wipe file here, assuming caller handles it or we append
             except IOError:
                 pass
 
@@ -104,7 +103,6 @@ class Remodeller:
 
         # --- Setup Simplified Driver ---
         # Create placeholder constants for tractions
-        # t_hip is scalar magnitude (pressure), t_glmed is vector (traction)
         t_hip = fem.Constant(self.domain, 0.0)
         t_glmed = fem.Constant(self.domain, np.zeros(3, dtype=np.float64))
         
@@ -121,18 +119,27 @@ class Remodeller:
         for tag in gl_tags:
             neumann_bcs.append((t_glmed, tag))
 
-        # Subsolvers
+        # 1. Mechanics Solver
         mechsolver = MechanicsSolver(u, self.rho, self.cfg, bc_mech, neumann_bcs)
-        self.densolver = DensitySolver(self.rho, self.rho_old, self.cfg)
 
+        # 2. Driver (Moved BEFORE DensitySolver)
         # Initialize CSS transformer on rank 0
         css_transformer = None
         if self.rank == 0:
             css_transformer = self._load_css_transformer()
 
-        # Driver
         self.driver = GaitDriver(
             mechsolver, t_hip, t_glmed, self.stages, self.cfg, css_transformer
+        )
+
+        # 3. Density Solver
+        # Pass the stimulus field (psi) directly from the driver to the solver
+        # This creates the direct memory link and avoids re-interpolation.
+        self.densolver = DensitySolver(
+            self.rho, 
+            self.rho_old, 
+            self.driver.stimulus_field(), # <--- FIX: Passing psi directly
+            self.cfg
         )
 
         self.fixedsolver = FixedPointSolver(
@@ -175,10 +182,7 @@ class Remodeller:
         self.closed = True
 
     def _load_css_transformer(self) -> object:
-        """Load FemurCSS coordinate transformer (rank 0 only).
-        
-        Returns None if anatomy files are not available.
-        """
+        """Load FemurCSS coordinate transformer (rank 0 only)."""
         try:
             import pyvista as pv
             from simulation.femur_css import FemurCSS, load_json_points
@@ -198,7 +202,6 @@ class Remodeller:
         local_size = field.x.index_map.size_local * bs
         local_data = field.x.array[:local_size]
         
-        # Use only owned DOFs for all statistics to avoid ghost double-counting
         if local_data.size > 0:
             field_min_local = local_data.min()
             field_max_local = local_data.max()
@@ -235,22 +238,15 @@ class Remodeller:
                  dt: float, wrms_error: float, next_dt: float):
         """Scatter, stats, log, write."""
         fields = self._collect_field_stats()
-        
-        # Get solver stats from fixedsolver
         s_stats = self.fixedsolver.solver_stats
-        
-        # Memory
         mem_mb = self.comm.allreduce(current_memory_mb(), op=MPI.SUM)
 
         if self.progress is not None and self.main_task_id is not None:
-            # Fixed width formatting to prevent progress bar resizing
             info_str = f"t={t:5.1f}d dt={dt:5.1f} err={wrms_error:.1e}"
             self.progress.update(self.main_task_id, info=f"{info_str:<35}")
 
-        # Concise summary line
         self.logger.info(f"Step {step:3d} | t={t:7.2f}d | dt={dt:7.2f}d | WRMS={wrms_error:.2e} | GS={coupling_stats['iters']:2d}")
 
-        # Detailed table
         def format_table():
             lines = []
             lines.append("=" * 100)
@@ -258,21 +254,15 @@ class Remodeller:
             lines.append("-" * 100)
             lines.append(f"{'Field':>10} | {'Min':>12} | {'Max':>12} | {'Mean':>12} |")
             lines.append("-" * 100)
-            
-            # Rows
             lines.append(f"{'rho':>10} | {fields['rho_min']:12.4f} | {fields['rho_max']:12.4f} | {fields['rho_mean']:12.4f} |")
             lines.append(f"{'psi':>10} | {fields['psi_min']:12.3e} | {fields['psi_max']:12.3e} | {fields['psi_avg']:12.3e} |")
-            
             lines.append("-" * 100)
             lines.append(f"{'Solver':>10} | {'Tot Time':>12} | {'Avg Time':>12} | {'Tot Iters':>12} | {'Avg Iters':>12} | {'Reason':>12} |")
             lines.append("-" * 100)
             
             gs_iters = max(1, coupling_stats['iters'])
-            
             for name, key in [("Mechanics", "mech"), ("Density", "dens")]:
                 st = s_stats[key]
-                
-                # Mechanics solver runs for each gait stage in every GS iteration
                 n_stages = len(self.stages)
                 if key == "mech":
                     n_solves = gs_iters * n_stages
@@ -286,23 +276,13 @@ class Remodeller:
             lines.append("-" * 100)
             lines.append(f"  Memory (RSS): {mem_mb:.1f} MB | Coupling iters: {coupling_stats['iters']} | Solve time: {coupling_stats['time']:.2f}s")
             lines.append("=" * 100)
-            
             return "\n" + "\n".join(lines)
 
         self.logger.info(format_table)
-
         self.storage.fields.write("scalars", float(t))
 
     def step(self, dt: float, step_index: int, time_days: float) -> Tuple[float, Dict]:
-        """Single timestep attempt: predictor + fixed-point iteration.
-        
-        Returns
-        -------
-        error_norm : float
-            WRMS error of the step.
-        metrics : Dict
-            Solver metrics.
-        """
+        """Single timestep attempt."""
         assign(self.rho_old, self.rho)
 
         if not self.solvers_initialized:
@@ -310,15 +290,11 @@ class Remodeller:
             self.densolver.setup()
             self.solvers_initialized = True
 
-        # Predictor step (Adams-Bashforth)
         x_pred = self.integrator.predict(dt, self.rho)
-        
-        # Apply predictor to rho (owned DOFs)
         n_owned = self.rho.function_space.dofmap.index_map.size_local * self.rho.function_space.dofmap.index_map_bs
         self.rho.x.array[:n_owned] = x_pred
         self.rho.x.scatter_forward()
 
-        # Update dt [days] and reassemble LHS for time-dependent solvers if dt changed
         if abs(float(dt) - self._current_dt) > 1e-12:
             self.cfg.set_dt(float(dt))
             self._current_dt = float(dt)
@@ -328,22 +304,15 @@ class Remodeller:
             task_id=getattr(self, 'sub_task_id', None) if self.rank == 0 else None
         )
 
-        # Compute error
         error_norm = self.integrator.compute_wrms_error(x_pred, self.rho)
-
         metrics = list(self.fixedsolver.subiter_metrics)
         used_subiters = len(metrics)
         last_rec = metrics[-1] if metrics else None
-
-        total_time = (
-            float(self.fixedsolver.mech_time_total)
-            + float(self.fixedsolver.dens_time_total)
-        )
+        total_time = (float(self.fixedsolver.mech_time_total) + float(self.fixedsolver.dens_time_total))
 
         if self.telemetry is not None:
             rss_mb_local = current_memory_mb()
             rss_mb_total = self.comm.allreduce(float(rss_mb_local), op=MPI.SUM)
-
             payload = {
                 "step": step_index,
                 "dt_days": float(dt),
@@ -369,7 +338,7 @@ class Remodeller:
         return error_norm, {"converged": converged, "iters": used_subiters}
 
     def simulate(self, dt_initial: float, total_time: float) -> None:
-        """Run remodeling loop for ``total_time`` [days] with adaptive time stepping."""
+        """Run remodeling loop."""
         t = 0.0
         dt = dt_initial
         step_idx = 0
@@ -387,11 +356,7 @@ class Remodeller:
             try:
                 from rich.progress import Progress, TextColumn, BarColumn, TimeRemainingColumn, TimeElapsedColumn, SpinnerColumn
                 from rich.console import Console
-                
-                # Use stderr for progress bar. 
-                # force_terminal=True is often needed with mpirun to ensure detection
                 console = Console(stderr=True, force_terminal=True)
-                
                 self.progress = Progress(
                     SpinnerColumn(),
                     TextColumn("[progress.description]{task.description}"),
@@ -401,9 +366,8 @@ class Remodeller:
                     TimeRemainingColumn(),
                     TextColumn("{task.fields[info]}"),
                     console=console,
-                    transient=False, # Keep the main progress bar visible
+                    transient=False,
                 )
-                # Initialize with spaces to reserve width and prevent resizing
                 self.main_task_id = self.progress.add_task("Remodeling", total=total_time, info=" " * 35)
                 self.sub_task_id = self.progress.add_task("  Coupling", total=self.cfg.max_subiters, info=" " * 35)
                 self.progress.start()
@@ -411,13 +375,10 @@ class Remodeller:
                 self.logger.warning("rich not installed, falling back to standard logging")
 
         while t < total_time:
-            # Clamp dt to hit total_time exactly
             if t + dt > total_time:
                 dt = total_time - t
             
-            # Attempt step
             error, metrics = self.step(dt, step_idx, t + dt)
-            
             accepted, next_dt, reason = self.integrator.suggest_dt(dt, metrics["converged"], error)
             
             if accepted:
@@ -438,26 +399,17 @@ class Remodeller:
                 
                 dt = next_dt
             else:
-                # Reject
                 self.logger.info(f"Step {step_idx} rejected (t={t:.4f}, dt={dt:.4e}): {reason}")
-                
-                # Restore rho
                 assign(self.rho, self.rho_old)
-                
-                # If diverged, maybe reset history?
                 if not metrics["converged"]:
                      self.integrator.reset_history()
-                
                 dt = next_dt
 
         if self.progress is not None:
-            # Final update to show last dt
             info_str = f"t={t:5.1f}d dt={dt:5.1f} done"
             self.progress.update(self.main_task_id, completed=t, info=f"{info_str:<35}")
             self.progress.stop()
             self.progress = None
-            self.main_task_id = None
-            self.sub_task_id = None
 
         self.comm.Barrier()
         overall_elapsed = MPI.Wtime() - overall_start

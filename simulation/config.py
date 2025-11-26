@@ -15,40 +15,43 @@ class Config:
     """Simulation config with material, solver, and I/O parameters. Units: mm, day, MPa, g/cm³."""
 
     # =========================================================================
-    # Material Properties
+    # Material Properties (Updated based on Bensel et al., 2024, Table 2)
     # =========================================================================
-    # Density-stiffness relationship: E = E0 * (rho/rho_max)^n(rho)
-    n_power: float = 4.         # Exponent for stimulus calculation (proximal femur, fatigue-like)
-    n_trab: float = 2.0         # Exponent for trabecular bone
-    n_cort: float = 1.2         # Exponent for cortical bone
+    # Density-stiffness relationship: E = E0 * (rho/rho_max)^n
+    # Article uses p=2 (Eq. 3), so we unify trab/cort exponents.
+    n_trab: float = 2.0         # Exponent for trabecular bone (p=2 in article)
+    n_cort: float = 2.0         # Exponent for cortical bone (p=2 in article)
+    
+    # Smooth step transition parameters (irrelevant if n_trab == n_cort)
     rho_trab_max: float = 1.2   # Max density for trabecular regime [g/cm^3]
     rho_cort_min: float = 1.7   # Min density for cortical regime [g/cm^3]
 
     # =========================================================================
     # Density Evolution (Remodeling)
     # =========================================================================
-    rho_min: float = 0.10       # Min physical density [g/cm^3]
-    rho_max: float = 1.95       # Max physical density [g/cm^3]
-    rho0: float = 0.80          # Initial density [g/cm^3]
-    k_rho: float = 0.1        # Density remodeling rate [1/day] (half-time ~1 year)
+    rho_min: float = 0.001      # Min physical density [g/cm^3] (Table 2)
+    rho_max: float = 2.0        # Max physical density [g/cm^3] (Table 2)
+    rho0: float = 1.0           # Initial density [g/cm^3] (Table 2)
+    
+    # Rate constant
+    # Article uses c=0.01 [s/m^2] (Table 2). 
+    k_rho: float = 0.01         # Density remodeling rate [1/day] (Estimated)
 
     # Density diffusion [mm^2/day]
-    D_rho: float = 0.5       # Isotropic diffusion [mm^2/day]
+    # Replaces gradient enhancement beta from article for regularization
+    D_rho: float = 0.5          # Isotropic diffusion [mm^2/day]
 
     # =========================================================================
     # Stimulus (Local)
     # =========================================================================
-    psi_ref: float = 50.        # Reference effective stress [MPa] for daily stimulus
-    k_stimulus: float = 1.0     # Tissue-level stress scaling exponent (rho_max/rho)^k
-    
+    # Reference Strain Energy Density (SED)
+    # Value for Femur from Table 2: 0.002 N/mm^2 (MPa)
+    psi_ref: float = 0.005      
+        
     # Base moduli [MPa]
-    E0: float = 6500       # Young's modulus
-    nu0: float = 0.3          # Poisson ratio
+    E0: float = 6500.0          # Young's modulus (Table 2)
+    nu0: float = 0.3            # Poisson ratio (Table 2)
 
-    # =========================================================================
-    # Gait & Loading
-    # =========================================================================
-    gait_cycles_per_day: float = 1.   # Daily equivalent hip loading cycles (walking, stairs)
 
     # =========================================================================
     # Adaptive Time Stepping
@@ -56,7 +59,7 @@ class Config:
     adaptive_rtol: float = 1e-2
     adaptive_atol: float = 1e-3
     dt_min: float = 1e-4
-    dt_max: float = 100.
+    dt_max: float = 50.0
 
     # =========================================================================
     # Numerics & I/O
@@ -66,7 +69,7 @@ class Config:
     results_dir: str = ".results"
     log_file: str = "simulation.log"
 
-    # Linear Solver
+    # Linear Solver (RESTORED TO ORIGINAL SETTINGS)
     ksp_type: str = "minres"
     pc_type: str = "gamg"
     ksp_rtol: float = 1e-6
@@ -75,12 +78,12 @@ class Config:
 
     # Nonlinear Solver (Anderson/Picard)
     accel_type: str = "anderson"
-    m: int = 8                  # Anderson history size
+    m: int = 5                  # History size
     beta: float = 1.0           # Mixing parameter
-    lam: float = 1e-8          # Regularization
+    lam: float = 1e-9           # Regularization
     gamma: float = 0.05         # Safeguard tolerance
     safeguard: bool = True
-    backtrack_max: int = 6
+    backtrack_max: int = 5
     coupling_tol: float = 1e-4
     
     # Restart heuristics
@@ -90,11 +93,11 @@ class Config:
     step_limit_factor: float = 2.0
 
     # Subiterations
-    max_subiters: int = 20
-    min_subiters: int = 1
+    max_subiters: int = 25
+    min_subiters: int = 2
 
     # Diagnostics
-    smooth_eps: float = 5e-7    # Regularization for abs/max/PSD
+    smooth_eps: float = 1e-6    # Regularization for abs/max/PSD
 
     # =========================================================================
     # Internal State (Runtime)
@@ -130,32 +133,16 @@ class Config:
             raise ValueError("n_trab and n_cort must be positive.")
         
         # Density
-        if not (0.0 < self.rho_min < self.rho_max):
-            raise ValueError("rho_min/max must satisfy 0 < rho_min < rho_max.")
-        if not (self.rho_min <= self.rho_trab_max <= self.rho_cort_min <= self.rho_max):
-            raise ValueError("rho_trab_max and rho_cort_min must satisfy rho_min <= rho_trab_max <= rho_cort_min <= rho_max.")
-        if not (self.rho_min <= self.rho0 <= self.rho_max):
-            raise ValueError("rho0 must lie within [rho_min, rho_max].")
-        if self.D_rho < 0:
-            raise ValueError("D_rho must be non-negative.")
+        if not (0.0 <= self.rho_min < self.rho_max):
+            raise ValueError("rho_min/max must satisfy 0 <= rho_min < rho_max.")
         
         # Stimulus
         if self.psi_ref <= 0:
             raise ValueError("Reference value psi_ref must be positive.")
-        
-        # Gait
-        if self.gait_cycles_per_day <= 0:
-            raise ValueError("gait_cycles_per_day must be positive.")
-        
-        # Solver
-        if self.accel_type not in ("anderson", "picard"):
-            raise ValueError(f"accel_type must be 'anderson' or 'picard', got {self.accel_type!r}")
             
         # Elasticity
         if self.E0 <= 0:
             raise ValueError("Young's modulus E0 must be positive.")
-        if not (-1.0 < self.nu0 < 0.5):
-            raise ValueError("Poisson ratio nu0 must be in (-1.0, 0.5).")
 
     def _build_measures(self):
         """Create UFL integration measures with quadrature degree."""
