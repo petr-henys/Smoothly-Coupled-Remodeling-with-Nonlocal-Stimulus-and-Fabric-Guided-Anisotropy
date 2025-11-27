@@ -42,7 +42,7 @@ class _BaseLinearSolver:
         self.cfg = cfg
         self.dx = self.cfg.dx
         self.ds = self.cfg.ds
-        self.logger = get_logger(self.comm, name=self.__class__.__name__)
+        self.logger = get_logger(self.comm, name=self.__class__.__name__, log_file=self.cfg.log_file)
         self.smooth_eps: float = self.cfg.smooth_eps
 
         self.trial = ufl.TrialFunction(self.function_space)

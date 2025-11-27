@@ -14,9 +14,9 @@ from simulation.logger import get_logger
 class FEBio2Dolfinx:
     """Parse FEBio .feb file and build DOLFINx mesh with surface tags (units: mm)."""
 
-    def __init__(self, feb_file: str):
+    def __init__(self, feb_file: str, log_file: str = None):
         """Load .feb file and build mesh with surface tags."""
-        self.logger = get_logger(MPI.COMM_WORLD, name="FEBio2Dolfinx")
+        self.logger = get_logger(MPI.COMM_WORLD, name="FEBio2Dolfinx", log_file=log_file)
         self.feb_file = Path(feb_file)
         
         comm = MPI.COMM_WORLD

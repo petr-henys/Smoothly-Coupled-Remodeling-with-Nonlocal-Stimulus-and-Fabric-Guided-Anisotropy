@@ -25,7 +25,7 @@ from simulation.loader import Loader
 class Remodeller:
     """Bone remodeling orchestrator. Owns FE fields, subsolvers, and storage."""
 
-    def __init__(self, cfg: Config, loader: Loader, load_tag: int = 1):
+    def __init__(self, cfg: Config, loader: Loader, load_tag: int = 2):
         """
         Initialize with config and loader.
         
@@ -114,7 +114,7 @@ class Remodeller:
         self.storage.fields.write("loads", 0.0)
 
         # Boundary conditions - fixed at tag 2
-        bc_mech = build_dirichlet_bcs(self.V, self.cfg.facet_tags, id_tag=2, value=0.0)
+        bc_mech = build_dirichlet_bcs(self.V, self.cfg.facet_tags, id_tag=1, value=0.0)
 
         # Neumann BCs: hip and gluteus medius loads on tag 1
         neumann_bcs = [(self.t_hip, self.load_tag), (self.t_glmed, self.load_tag)]
