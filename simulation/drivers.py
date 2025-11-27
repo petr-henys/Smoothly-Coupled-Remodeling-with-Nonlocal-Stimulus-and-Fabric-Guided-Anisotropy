@@ -42,8 +42,7 @@ class GaitDriver:
         # Pre-compile the SED expression
         self._sed_expr = self._build_sed_expression()
 
-        if self.rank == 0:
-            self.logger.info("GaitDriver initialized.")
+        self.logger.debug("GaitDriver initialized.")
 
     def setup(self) -> None:
         """Initialize mechanics solver."""

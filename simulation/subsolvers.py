@@ -231,10 +231,9 @@ class DensitySolver(_BaseLinearSolver):
         dt = self.dt_c
         
         # Calculate driving force directly from the passed-in Psi function
-        # No extra interpolation needed.
-        # S_driving = (Psi / Psi_ref) - 1.0
+        # S_driving = Psi - Psi_ref (dimensional difference)
         # Positive if Psi > Psi_ref (Bone formation), Negative if Psi < Psi_ref (Resorption)
-        S_driving = (self.psi_field - self.cfg.psi_ref)
+        S_driving = self.psi_field - self.cfg.psi_ref
         
         # Use smooth_plus for a "lazy zone" or pure one-sided reaction if desired.
         # Here we follow the provided logic of splitting into formation (+) and resorption (-)

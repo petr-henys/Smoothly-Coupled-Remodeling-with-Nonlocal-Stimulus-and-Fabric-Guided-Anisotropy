@@ -42,7 +42,7 @@ class Telemetry:
         self._flush_interval = max(1, int(20 if flush_interval is None else flush_interval))
         self._start_time = datetime.now(timezone.utc)
 
-        self.logger.info("Telemetry initialized")
+        self.logger.debug("Telemetry initialized")
 
     @property
     def is_root(self) -> bool:
@@ -145,7 +145,7 @@ class Telemetry:
         self._csv_writers.clear()
         self._buffers.clear()
 
-        self.logger.info("Telemetry closed")
+        self.logger.debug("Telemetry closed")
 
     def __enter__(self):
         return self

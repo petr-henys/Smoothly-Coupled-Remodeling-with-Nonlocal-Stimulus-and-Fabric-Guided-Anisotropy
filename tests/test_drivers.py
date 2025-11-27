@@ -18,10 +18,10 @@ def mech_with_traction(spaces, cfg, bc_mech, dummy_load):
     rho.x.array[:] = 0.6
     rho.x.scatter_forward()
 
-    t_hip = dummy_load["t_hip"]
+    loader = dummy_load["loader"]
     load_tag = dummy_load["load_tag"]
 
-    neumann_bcs = [(t_hip, load_tag)]
+    neumann_bcs = [(loader.hip_fun, load_tag)]
     mech = MechanicsSolver(u, rho, cfg, bc_mech, neumann_bcs)
     mech.setup()
     return mech

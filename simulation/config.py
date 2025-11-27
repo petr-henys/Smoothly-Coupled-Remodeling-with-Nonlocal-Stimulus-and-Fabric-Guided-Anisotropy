@@ -142,6 +142,12 @@ class Config:
         # Elasticity
         if self.E0 <= 0:
             raise ValueError("Young's modulus E0 must be positive.")
+        if not (-1.0 < self.nu0 < 0.5):
+            raise ValueError("Poisson ratio nu0 must be in range (-1, 0.5).")
+        
+        # Solver
+        if self.accel_type not in ("anderson", "picard"):
+            raise ValueError("accel_type must be 'anderson' or 'picard'.")
 
     def _build_measures(self):
         """Create UFL integration measures with quadrature degree."""

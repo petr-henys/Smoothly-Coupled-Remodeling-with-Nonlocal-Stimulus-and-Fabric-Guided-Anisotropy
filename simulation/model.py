@@ -12,7 +12,7 @@ from dolfinx import fem
 from dolfinx.fem import Function, functionspace
 
 from simulation.storage import UnifiedStorage
-from simulation.logger import get_logger, Level
+from simulation.logger import get_logger
 from simulation.utils import build_dirichlet_bcs, assign, current_memory_mb
 from simulation.config import Config
 from simulation.subsolvers import MechanicsSolver, DensitySolver
@@ -54,7 +54,7 @@ class Remodeller:
         self.comm.Barrier()
 
         self.logger = get_logger(self.comm, name="Remodeller", log_file=self.cfg.log_file)
-        self.logger.info("Initializing Remodeller...")
+        self.logger.debug("Initializing Remodeller...")
 
         self.storage = UnifiedStorage(cfg)
         self.telemetry = self.cfg.telemetry
@@ -248,7 +248,7 @@ class Remodeller:
             lines.append("=" * 100)
             return "\n" + "\n".join(lines)
 
-        self.logger.info(format_table)
+        self.logger.debug(format_table)
         self.storage.fields.write("scalars", float(t))
 
     def step(self, dt: float, step_index: int, time_days: float) -> Tuple[float, Dict]:
@@ -391,8 +391,7 @@ class Remodeller:
             }
             self.telemetry.write_metadata(summary, filename="run_summary.json")
 
-        if self.logger.is_enabled_for(Level.INFO):
-            self.logger.info(f"Simulation completed in {overall_elapsed:.2f} s")
+        self.logger.info(f"Simulation completed in {overall_elapsed:.2f} s")
 
     def __enter__(self) -> "Remodeller":
         return self

@@ -281,15 +281,20 @@ class TestUnifiedStorage:
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = Config(domain=domain, facet_tags=facet_tags, results_dir=tmpdir)
             
-            # Create dummy traction functions
+            # Create mock loader
             P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(domain.geometry.dim,))
             V = fem.functionspace(domain, P1_vec)
-            t_hip = fem.Function(V, name="t_hip")
-            t_hip.x.array[:] = 0.0
-            t_glmed = fem.Function(V, name="t_glmed")
-            t_glmed.x.array[:] = 0.0
             
-            with Remodeller(cfg, t_hip=t_hip, t_glmed=t_glmed, load_tag=1) as rem:
+            class MockLoader:
+                def __init__(self):
+                    self.hip_fun = fem.Function(V, name="Hip Joint Load")
+                    self.hip_fun.x.array[:] = 0.0
+                    self.glmed_fun = fem.Function(V, name="GL med Load")
+                    self.glmed_fun.x.array[:] = 0.0
+            
+            loader = MockLoader()
+            
+            with Remodeller(cfg, loader=loader, load_tag=1) as rem:
                 # Storage should be initialized
                 assert rem.storage is not None
                 assert rem.storage.fields is not None

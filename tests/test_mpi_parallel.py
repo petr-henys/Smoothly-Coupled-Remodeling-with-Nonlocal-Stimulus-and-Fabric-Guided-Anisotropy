@@ -23,16 +23,28 @@ from simulation.fixedsolver import FixedPointSolver
 from simulation.model import Remodeller
 comm = MPI.COMM_WORLD
 
-stages = [
-    {
-        "weight": 1.0,
-        "hip_tag": 2,
-        "hip_magnitude": 1.0,
-        "gl_tag": 2,
-        "gl_magnitude": 0.5,
-        "gl_vector_css": [0.0, 1.0, 0.0]
-    }
-]
+
+def create_mock_loader(domain):
+    """Create a mock Loader for testing without femur-specific dependencies."""
+    P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(domain.geometry.dim,))
+    V = fem.functionspace(domain, P1_vec)
+    
+    class MockLoader:
+        def __init__(self):
+            self.hip_fun = Function(V, name="Hip Joint Load")
+            self.hip_fun.x.array[:] = 0.01  # Small non-zero load
+            self.hip_fun.x.scatter_forward()
+            self.glmed_fun = Function(V, name="GL med Load")
+            self.glmed_fun.x.array[:] = 0.005
+            self.glmed_fun.x.scatter_forward()
+        
+        def hip_force(self, magnitude, alpha_sag, alpha_front, sigma_deg=10.0, flip=True):
+            return self.hip_fun
+        
+        def glmed_force(self, magnitude, alpha_sag, alpha_front, sigma=2.0, flip=False):
+            return self.glmed_fun
+    
+    return MockLoader()
 
 # =============================================================================
 # Ghost Update Tests
@@ -190,8 +202,9 @@ class TestMPIIO:
         import tempfile
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = Config(domain=domain, facet_tags=facet_tags, results_dir=tmpdir)
+            loader = create_mock_loader(domain)
             
-            with Remodeller(cfg, stages) as rem:
+            with Remodeller(cfg, loader=loader, load_tag=1) as rem:
                 # Compute total scalar DOFs (account for block sizes)
                 dofs_V = rem.V.dofmap.index_map.size_global * rem.V.dofmap.index_map_bs
                 dofs_Q = rem.Q.dofmap.index_map.size_global * rem.Q.dofmap.index_map_bs
@@ -234,8 +247,9 @@ class TestMPIIO:
         
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = Config(domain=domain, facet_tags=facet_tags, results_dir=tmpdir)
+            loader = create_mock_loader(domain)
             
-            with Remodeller(cfg, stages) as rem:
+            with Remodeller(cfg, loader=loader, load_tag=1) as rem:
                 # Compute total scalar DOFs (account for block sizes)
                 dofs_V = rem.V.dofmap.index_map.size_global * rem.V.dofmap.index_map_bs
                 dofs_Q = rem.Q.dofmap.index_map.size_global * rem.Q.dofmap.index_map_bs
@@ -296,8 +310,9 @@ class TestFixedPointParallel:
             max_subiters=20,
             coupling_tol=1e-6
         )
+        loader = create_mock_loader(domain)
         
-        with Remodeller(cfg, stages) as rem:
+        with Remodeller(cfg, loader=loader, load_tag=1) as rem:
             # Take one time step
             rem.step(1.0, 0, 1.0)
             
@@ -319,8 +334,9 @@ class TestFixedPointParallel:
             max_subiters=30,
             coupling_tol=1e-5
         )
+        loader = create_mock_loader(domain)
         
-        with Remodeller(cfg, stages) as rem:
+        with Remodeller(cfg, loader=loader, load_tag=1) as rem:
             rem.step(1.0, 0, 1.0)
             
             # Should converge
@@ -517,8 +533,9 @@ class TestTiming:
             facet_tags=facet_tags,
             max_subiters=max_subiters
         )
+        loader = create_mock_loader(domain)
         
-        with Remodeller(cfg, stages) as rem:
+        with Remodeller(cfg, loader=loader, load_tag=1) as rem:
             t0 = time.perf_counter()
             rem.step(1.0, 0, 1.0)
             elapsed = time.perf_counter() - t0
@@ -534,8 +551,9 @@ class TestTiming:
         domain = mesh.create_unit_cube(comm, 8, 8, 8, ghost_mode=mesh.GhostMode.shared_facet)
         facet_tags = build_facetag(domain)
         cfg = Config(domain=domain, facet_tags=facet_tags, max_subiters=10)
+        loader = create_mock_loader(domain)
         
-        with Remodeller(cfg, stages) as rem:
+        with Remodeller(cfg, loader=loader, load_tag=1) as rem:
             rem.step(1.0, 0, 1.0)
             
             fps = rem.fixedsolver

@@ -156,16 +156,17 @@ class TestAdvancedConstitutiveLaws:
         
         rho = Function(Q, name="rho")
         rho_old = Function(Q, name="rho_old")
+        psi_field = Function(Q, name="psi")
         rho_old.x.array[:] = 0.5
         rho_old.x.scatter_forward()
         
         def get_rate(S_val):
-            # S = psi/psi_ref - 1.  So psi = psi_ref * (S + 1)
-            psi_val = cfg.psi_ref * (S_val + 1.0)
-            psi_expr = fem.Constant(unit_cube, psi_val)
+            # S = psi - psi_ref (dimensional).  So psi = psi_ref + S
+            psi_val = cfg.psi_ref + S_val
+            psi_field.x.array[:] = psi_val
+            psi_field.x.scatter_forward()
             
-            dens = DensitySolver(rho, rho_old, cfg)
-            dens.update_driving_force(psi_expr)
+            dens = DensitySolver(rho, rho_old, psi_field, cfg)
             dens.setup()
             dens.assemble_rhs()
             dens.solve()

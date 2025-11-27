@@ -411,5 +411,5 @@ def dummy_load(spaces, cfg):
     loader = MockLoader(spaces.V)
     return {
         "loader": loader,
-        "load_tag": 1  # Apply load on facet tag 1 (BC is on tag 2)
+        "load_tag": 2  # Apply load on facet tag 2 (Dirichlet BC is on tag 1)
     }

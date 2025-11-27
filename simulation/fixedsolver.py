@@ -161,7 +161,7 @@ class FixedPointSolver:
                 if aa_info.get('restart_reason'):
                     log_msg += f" | Rst: {aa_info['restart_reason']}"
             
-            self.logger.info(log_msg)
+            self.logger.debug(log_msg)
             
             if progress is not None and task_id is not None:
                 prog_info = f"err={rel_error:.1e}"

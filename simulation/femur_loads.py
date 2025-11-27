@@ -82,7 +82,7 @@ class GaussianSurfaceLoad:
         # create a class‐named logger for this instance
         self.logger = get_logger(MPI.COMM_WORLD, name="GaussianSurfaceLoad")
 
-        self.logger.info(f"Init {self.__class__.__name__} (use_cell_data={use_cell_data})")
+        self.logger.debug(f"Init {self.__class__.__name__} (use_cell_data={use_cell_data})")
         self._setup_mesh(femur_mesh)
 
     def _setup_mesh(self, femur_mesh: pv.PolyData) -> None:
@@ -165,7 +165,7 @@ class GaussianSurfaceLoad:
 
         if flip:
             traction_vectors = -traction_vectors
-            self.logger.info("Force direction flipped")
+            self.logger.debug("Force direction flipped")
 
         self.check_equilibrium(traction_vectors, F_norm)
         return traction_vectors
@@ -175,7 +175,7 @@ class HIPJointLoad(GaussianSurfaceLoad):
 
     def apply_gaussian_load(self, force_vector_css: Optional[np.ndarray] = None, sigma_deg: float = 10.0, 
                           flip: bool = False) -> pv.PolyData:
-        self.logger.info("Applying HIPJointLoad Gaussian")
+        self.logger.debug("Applying HIPJointLoad Gaussian")
         # resolve vector but do not flip here (keeps ray‐trace location correct)
         F_world, F_norm = self._resolve_force_vector(force_vector_css)
         unit_force = F_world / F_norm
@@ -221,11 +221,11 @@ class MuscleLoad(GaussianSurfaceLoad):
         
         self._curve = curve
         self._tree = cKDTree(curve)
-        self.logger.info(f"Muscle curve set: pts={pts.shape[0]}, spline_degree={k}, smooth={smooth}")
+        self.logger.debug(f"Muscle curve set: pts={pts.shape[0]}, spline_degree={k}, smooth={smooth}")
 
     def apply_gaussian_load(self, force_vector_css: Optional[np.ndarray] = None, sigma: float = 3.0, 
                           flip: bool = False) -> pv.PolyData:
-        self.logger.info("Applying MuscleLoad Gaussian")
+        self.logger.debug("Applying MuscleLoad Gaussian")
         if not hasattr(self, '_tree'):
             raise RuntimeError("Set attachment points first")
 
