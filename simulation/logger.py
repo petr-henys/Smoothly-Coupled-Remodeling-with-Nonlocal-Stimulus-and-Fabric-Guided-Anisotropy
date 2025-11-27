@@ -48,11 +48,8 @@ class Logger:
         # File output (Rank 0 only)
         if self.comm.rank == 0 and self.log_file and lvl >= self.file_level:
             if formatted is None: formatted = self._format(msg, args)
-            try:
-                with open(self.log_file, "a", encoding="utf-8") as f:
-                    f.write(formatted + "\n")
-            except IOError:
-                pass # Ignore file write errors to avoid crashing
+            with open(self.log_file, "a", encoding="utf-8") as f:
+                f.write(formatted + "\n")
 
     def debug(self, msg: Union[str, Callable[[], str]], *args: Any) -> None:
         self.log(Level.DEBUG, msg, *args)

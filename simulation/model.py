@@ -25,14 +25,14 @@ from simulation.loader import Loader
 class Remodeller:
     """Bone remodeling orchestrator. Owns FE fields, subsolvers, and storage."""
 
-    def __init__(self, cfg: Config, loader: Loader, load_tag: int = 2):
+    def __init__(self, cfg: Config, loader: Loader, load_tag: int):
         """
         Initialize with config and loader.
         
         Args:
             cfg: Simulation configuration with mesh and facet_tags.
             loader: Loader object containing hip and gluteus medius traction fields.
-            load_tag: Facet tag where loads are applied (default: 1).
+            load_tag: Facet tag where loads are applied.
         """
         self.cfg = cfg
         self.domain = self.cfg.domain
@@ -46,14 +46,12 @@ class Remodeller:
         self.comm = self.domain.comm
         self.rank = self.comm.rank
         
-        # Ensure log directory exists
+        # Ensure log directory exists (rank 0 creates, all ranks wait)
         if self.rank == 0:
-            try:
-                log_path = Path(self.cfg.log_file)
-                if log_path.parent:
-                    log_path.parent.mkdir(parents=True, exist_ok=True)
-            except IOError:
-                pass
+            log_path = Path(self.cfg.log_file)
+            if log_path.parent:
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+        self.comm.Barrier()
 
         self.logger = get_logger(self.comm, name="Remodeller", log_file=self.cfg.log_file)
         self.logger.info("Initializing Remodeller...")
@@ -325,26 +323,23 @@ class Remodeller:
         overall_start = MPI.Wtime()
 
         if self.rank == 0:
-            try:
-                from rich.progress import Progress, TextColumn, BarColumn, TimeRemainingColumn, TimeElapsedColumn, SpinnerColumn
-                from rich.console import Console
-                console = Console(stderr=True, force_terminal=True)
-                self.progress = Progress(
-                    SpinnerColumn(),
-                    TextColumn("[progress.description]{task.description}"),
-                    BarColumn(bar_width=60),
-                    TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-                    TimeElapsedColumn(),
-                    TimeRemainingColumn(),
-                    TextColumn("{task.fields[info]}"),
-                    console=console,
-                    transient=False,
-                )
-                self.main_task_id = self.progress.add_task("Remodeling", total=total_time, info=" " * 35)
-                self.sub_task_id = self.progress.add_task("  Coupling", total=self.cfg.max_subiters, info=" " * 35)
-                self.progress.start()
-            except ImportError:
-                self.logger.warning("rich not installed, falling back to standard logging")
+            from rich.progress import Progress, TextColumn, BarColumn, TimeRemainingColumn, TimeElapsedColumn, SpinnerColumn
+            from rich.console import Console
+            console = Console(stderr=True, force_terminal=True)
+            self.progress = Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(bar_width=60),
+                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                TimeElapsedColumn(),
+                TimeRemainingColumn(),
+                TextColumn("{task.fields[info]}"),
+                console=console,
+                transient=False,
+            )
+            self.main_task_id = self.progress.add_task("Remodeling", total=total_time, info=" " * 35)
+            self.sub_task_id = self.progress.add_task("  Coupling", total=self.cfg.max_subiters, info=" " * 35)
+            self.progress.start()
 
         while t < total_time:
             if t + dt > total_time:
