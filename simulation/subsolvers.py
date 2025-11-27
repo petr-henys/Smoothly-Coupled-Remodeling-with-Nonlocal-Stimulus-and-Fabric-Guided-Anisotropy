@@ -216,10 +216,8 @@ class DensitySolver(_BaseLinearSolver):
         super().__init__(config, rho, [], [])
         self.rho = self.state
         self.rho_old = rho_old
-        self.psi_field = psi_field # Store reference to stimulus function
+        self.psi_field = psi_field
         self.dt_c = fem.Constant(self.mesh, float(self.cfg.dt))
-
-    # REMOVED: update_driving_force (redundant interpolation)
 
     def _compile_forms(self):
         """

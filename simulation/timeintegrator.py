@@ -8,7 +8,7 @@ from mpi4py import MPI
 from dolfinx import fem
 
 from simulation.config import Config
-from simulation.utils import assign
+from simulation.utils import assign, get_owned_size
 
 
 class TimeIntegrator:
@@ -72,7 +72,7 @@ class TimeIntegrator:
         dt_curr = float(dt)
 
         # Get owned DOF count
-        n_owned = self.Q.dofmap.index_map.size_local * self.Q.dofmap.index_map_bs
+        n_owned = get_owned_size(rho_current)
 
         # Current values (owned)
         rho_vals = rho_current.x.array[:n_owned]
@@ -93,7 +93,7 @@ class TimeIntegrator:
 
     def compute_wrms_error(self, x_pred: np.ndarray, x_corr: fem.Function) -> float:
         """Compute Weighted RMS error between prediction and correction."""
-        n_owned = self.Q.dofmap.index_map.size_local * self.Q.dofmap.index_map_bs
+        n_owned = get_owned_size(x_corr)
 
         # Get owned arrays
         val_corr = x_corr.x.array[:n_owned]
@@ -176,7 +176,7 @@ class TimeIntegrator:
         assign(self.rho_rate_last2, self.rho_rate_last)
 
         # Calculate new rate
-        n_owned = self.Q.dofmap.index_map.size_local * self.Q.dofmap.index_map_bs
+        n_owned = get_owned_size(rho_new)
         rate_data = (rho_new.x.array[:n_owned] - rho_old.x.array[:n_owned]) / dt_curr
         self.rho_rate_last.x.array[:n_owned] = rate_data
         self.rho_rate_last.x.scatter_forward()

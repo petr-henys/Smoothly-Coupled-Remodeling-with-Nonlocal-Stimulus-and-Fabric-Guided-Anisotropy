@@ -13,7 +13,7 @@ from dolfinx.fem import Function, functionspace
 
 from simulation.storage import UnifiedStorage
 from simulation.logger import get_logger
-from simulation.utils import build_dirichlet_bcs, assign, current_memory_mb
+from simulation.utils import build_dirichlet_bcs, assign, current_memory_mb, get_owned_size, field_stats
 from simulation.config import Config
 from simulation.subsolvers import MechanicsSolver, DensitySolver
 from simulation.fixedsolver import FixedPointSolver
@@ -172,27 +172,7 @@ class Remodeller:
 
     def _field_stats(self, field: fem.Function) -> Tuple[float, float, float]:
         """MPI global min/max/mean."""
-        bs = field.function_space.dofmap.index_map_bs
-        local_size = field.x.index_map.size_local * bs
-        local_data = field.x.array[:local_size]
-        
-        if local_data.size > 0:
-            field_min_local = local_data.min()
-            field_max_local = local_data.max()
-        else:
-            field_min_local = float("inf")
-            field_max_local = float("-inf")
-        field_min = self.comm.allreduce(field_min_local, op=MPI.MIN)
-        field_max = self.comm.allreduce(field_max_local, op=MPI.MAX)
-
-        local_sum = np.sum(local_data)
-        local_count = local_size
-
-        global_sum = self.comm.allreduce(local_sum, op=MPI.SUM)
-        global_count = self.comm.allreduce(local_count, op=MPI.SUM)
-        field_mean = global_sum / global_count if global_count > 0 else 0.0
-
-        return field_min, field_max, field_mean
+        return field_stats(field, self.comm)
 
     def _collect_field_stats(self) -> Dict[str, float]:
         """Gather field min/max/mean for reporting."""
@@ -211,6 +191,9 @@ class Remodeller:
     def _output(self, t: float, step: int, coupling_stats: Dict[str, float], 
                  dt: float, wrms_error: float, next_dt: float):
         """Scatter, stats, log, write."""
+        # Ensure ghost DOFs are up-to-date before VTX write
+        self.rho.x.scatter_forward()
+        
         fields = self._collect_field_stats()
         s_stats = self.fixedsolver.solver_stats
         mem_mb = self.comm.allreduce(current_memory_mb(), op=MPI.SUM)
@@ -261,7 +244,7 @@ class Remodeller:
             self.solvers_initialized = True
 
         x_pred = self.integrator.predict(dt, self.rho)
-        n_owned = self.rho.function_space.dofmap.index_map.size_local * self.rho.function_space.dofmap.index_map_bs
+        n_owned = get_owned_size(self.rho)
         self.rho.x.array[:n_owned] = x_pred
         self.rho.x.scatter_forward()
 
@@ -366,7 +349,7 @@ class Remodeller:
                 
                 dt = next_dt
             else:
-                self.logger.info(f"Step {step_idx} rejected (t={t:.4f}, dt={dt:.4e}): {reason}")
+                self.logger.debug(f"Step {step_idx} rejected (t={t:.4f}, dt={dt:.4e}): {reason}")
                 assign(self.rho, self.rho_old)
                 if not metrics["converged"]:
                      self.integrator.reset_history()

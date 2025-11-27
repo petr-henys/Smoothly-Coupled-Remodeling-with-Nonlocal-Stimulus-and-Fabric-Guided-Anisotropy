@@ -65,8 +65,8 @@ class Logger:
 
 
 def get_logger(comm: MPI.Comm, name: str = "", log_file: str = None) -> Logger:
-    """Create logger. Console: INFO+, File: DEBUG+."""
-    console_level = Level.INFO
+    """Create logger. Console: WARNING+, File: DEBUG+."""
+    console_level = Level.WARNING
     file_level = Level.DEBUG
     return Logger(comm, console_level, file_level, name, log_file)
 

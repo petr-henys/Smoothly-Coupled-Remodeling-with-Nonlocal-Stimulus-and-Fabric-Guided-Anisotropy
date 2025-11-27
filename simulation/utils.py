@@ -1,6 +1,7 @@
-from typing import List
+from typing import List, Tuple
 import resource
 
+from mpi4py import MPI
 from dolfinx import fem, la, mesh, default_scalar_type
 from dolfinx.fem import FunctionSpace
 from petsc4py import PETSc
@@ -91,6 +92,30 @@ def assign(f: fem.Function, v) -> None:
 def get_owned_size(field: fem.Function) -> int:
     """Count of locally owned DOFs."""
     return int(field.function_space.dofmap.index_map.size_local * field.function_space.dofmap.index_map_bs)
+
+
+def field_stats(field: fem.Function, comm: MPI.Comm) -> Tuple[float, float, float]:
+    """Compute MPI-reduced min, max, mean of a field's owned DOFs."""
+    n_owned = get_owned_size(field)
+    local_data = field.x.array[:n_owned]
+    
+    if local_data.size > 0:
+        local_min = float(local_data.min())
+        local_max = float(local_data.max())
+        local_sum = float(local_data.sum())
+    else:
+        local_min = float("inf")
+        local_max = float("-inf")
+        local_sum = 0.0
+    
+    global_min = comm.allreduce(local_min, op=MPI.MIN)
+    global_max = comm.allreduce(local_max, op=MPI.MAX)
+    global_sum = comm.allreduce(local_sum, op=MPI.SUM)
+    global_count = comm.allreduce(n_owned, op=MPI.SUM)
+    
+    global_mean = global_sum / global_count if global_count > 0 else 0.0
+    return global_min, global_max, global_mean
+
 
 def collect_dirichlet_dofs(bcs, n_owned: int) -> np.ndarray:
     """Unique owned DOF indices from Dirichlet BCs."""

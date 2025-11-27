@@ -9,6 +9,7 @@ import ufl
 from simulation.config import Config
 from simulation.subsolvers import MechanicsSolver
 from simulation.logger import get_logger
+from simulation.utils import field_stats
 
 
 class GaitDriver:
@@ -82,25 +83,7 @@ class GaitDriver:
 
     def get_stimulus_stats(self) -> Dict[str, float]:
         """Compute MPI-reduced stimulus statistics."""
-        local_vals = self.psi.x.array[:self.psi.function_space.dofmap.index_map.size_local]
-
-        n_local = local_vals.size
-        if n_local > 0:
-            local_min = float(np.min(local_vals))
-            local_max = float(np.max(local_vals))
-            local_sum = float(np.sum(local_vals))
-        else:
-            local_min = float("inf")
-            local_max = float("-inf")
-            local_sum = 0.0
-
-        psi_min = self.comm.allreduce(local_min, op=MPI.MIN)
-        psi_max = self.comm.allreduce(local_max, op=MPI.MAX)
-        total_sum = self.comm.allreduce(local_sum, op=MPI.SUM)
-        total_count = self.comm.allreduce(n_local, op=MPI.SUM)
-
-        psi_avg = total_sum / total_count if total_count > 0 else 0.0
-
+        psi_min, psi_max, psi_avg = field_stats(self.psi, self.comm)
         return {
             "psi_avg": psi_avg,
             "psi_min": psi_min,
