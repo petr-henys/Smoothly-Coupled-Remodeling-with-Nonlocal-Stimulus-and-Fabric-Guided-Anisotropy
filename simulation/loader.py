@@ -55,58 +55,76 @@ class Loader:
         self.comm.Barrier()
     
     def _interpolate_mpi(self, loader_obj, target_fun: fem.Function) -> None:
-        """Interpolate load values using MPI gather/scatter pattern.
+        """Interpolate load values safely using 'Owner Computes' pattern.
         
-        Each rank gathers its local DOF coordinates to rank 0,
-        rank 0 evaluates the interpolator, then scatters results back.
+        Only OWNED coordinates are sent to rank 0 for evaluation.
+        Ghosts are updated via Dolfinx scatter_forward mechanism.
         """
-        # Get local DOF coordinates (interpolation points)
-        # For vector spaces, we need geometry coordinates
-        x_coords = target_fun.function_space.tabulate_dof_coordinates()
-        local_n = x_coords.shape[0]
+        # 1. Získání informací o DOFs
+        V = target_fun.function_space
+        imap = V.dofmap.index_map
+        bs = V.dofmap.index_map_bs
         
-        # Gather counts from all ranks
+        # size_local udává počet vlastněných entit (uzlů) v tomto ranku
+        n_owned = imap.size_local
+        
+        # Získání souřadnic všech lokálních uzlů (Owned + Ghosts)
+        # Dolfinx standard: prvních 'n_owned' řádků jsou owned uzly.
+        all_coords = V.tabulate_dof_coordinates()
+        
+        # Vyřízneme JEN souřadnice, které tento rank vlastní
+        x_owned = all_coords[:n_owned]
+        
+        # Počet vlastněných uzlů pro MPI komunikaci
+        local_n = n_owned
+        
+        # Gather počtů od všech ranků
         all_n = self.comm.allgather(local_n)
-        total_n = sum(all_n)
         
-        # Displacements for Gatherv/Scatterv
+        # Displacements pro Gatherv/Scatterv (kam se data uloží v bufferu)
         displs = [sum(all_n[:i]) for i in range(len(all_n))]
         
         if self.rank == 0:
-            # Gather all coordinates to rank 0
-            all_coords = np.empty((total_n, 3), dtype=np.float64)
+            total_n = sum(all_n)
+            
+            # Buffer pro příchozí souřadnice (pouze owned od všech)
+            recv_coords = np.empty((total_n, 3), dtype=np.float64)
+            
+            # 1. GATHER: Všichni pošlou své owned souřadnice
             self.comm.Gatherv(
-                np.ascontiguousarray(x_coords),
-                [all_coords, [n * 3 for n in all_n], [d * 3 for d in displs], MPI.DOUBLE],
+                np.ascontiguousarray(x_owned),
+                [recv_coords, [n * 3 for n in all_n], [d * 3 for d in displs], MPI.DOUBLE],
                 root=0
             )
             
-            # Evaluate interpolator at all coordinates
-            all_values = loader_obj(all_coords)  # (total_n, 3)
+            # 2. EVALUATE: Rank 0 vyhodnotí zátěž na všech bodech
+            # loader_obj je např. HIPJointLoad, vrací (N, 3)
+            computed_values = loader_obj(recv_coords) 
             
-            # Scatter values back to each rank
+            # 3. SCATTER: Rozeslání výsledků zpět vlastníkům
             local_values = np.empty((local_n, 3), dtype=np.float64)
             self.comm.Scatterv(
-                [all_values, [n * 3 for n in all_n], [d * 3 for d in displs], MPI.DOUBLE],
+                [computed_values, [n * 3 for n in all_n], [d * 3 for d in displs], MPI.DOUBLE],
                 local_values,
                 root=0
             )
         else:
-            # Send local coordinates to rank 0
-            self.comm.Gatherv(np.ascontiguousarray(x_coords), None, root=0)
+            # Worker pošle své owned souřadnice
+            self.comm.Gatherv(np.ascontiguousarray(x_owned), None, root=0)
             
-            # Receive interpolated values from rank 0
+            # Worker připraví buffer a přijme výsledky
             local_values = np.empty((local_n, 3), dtype=np.float64)
             self.comm.Scatterv(None, local_values, root=0)
         
-        # Assign values to function
-        # DOLFINx vector functions store components interleaved: [x0,y0,z0, x1,y1,z1, ...]
-        bs = target_fun.function_space.dofmap.index_map_bs
-        n_owned = target_fun.function_space.dofmap.index_map.size_local
+        # 4. ASSIGN & SYNC
+        # Zápis do pole funkce. Protože jsme pracovali jen s n_owned,
+        # zapisujeme přesně do 'owned' části pole (začátek).
+        # target_fun.x.array je ploché pole [x0, y0, z0, x1...] nebo blokové,
+        # flatten() to srovná správně pro P1 Vector space.
+        target_fun.x.array[:n_owned * bs] = local_values.flatten()
         
-        # local_values is (n_dofs, 3) where n_dofs = n_owned for vector space
-        # We need to flatten to interleaved format
-        target_fun.x.array[:n_owned * bs] = local_values[:n_owned].flatten()
+        # KLÍČOVÝ KROK: Propagace hodnot na ghost uzly sousedních procesů.
+        # Tím se vyhladí přechody na partition boundary.
         target_fun.x.scatter_forward()
     
     def hip_force(self, magnitude: float, alpha_sag: float, alpha_front: float, 

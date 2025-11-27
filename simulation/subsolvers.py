@@ -82,6 +82,7 @@ class _BaseLinearSolver:
         self._setup_ksp()
 
     def assemble_lhs(self):
+        self.state.x.scatter_forward()
         self.A.zeroEntries()
         assemble_matrix(self.A, self.a_form, bcs=self.dirichlet_bcs)
         self.A.assemble()
@@ -263,6 +264,7 @@ class DensitySolver(_BaseLinearSolver):
         self.create_ksp(prefix="density", ksp_options=ksp_options)
 
     def assemble_lhs(self):
+        self.psi_field.x.scatter_forward()
         self.dt_c.value = float(self.cfg.dt)
         super().assemble_lhs()
 
