@@ -16,6 +16,7 @@ import csv as csv_module
 from mpi4py import MPI
 from dolfinx import mesh, fem
 from dolfinx.fem import Function
+import basix.ufl
 import tempfile
 from pathlib import Path
 
@@ -182,6 +183,20 @@ class TestFieldStatistics:
 class TestMonitoringIntegration:
     """Test end-to-end monitoring in simulation."""
     
+    def _create_mock_loader(self, domain):
+        """Create a mock loader for testing."""
+        P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(domain.geometry.dim,))
+        V = fem.functionspace(domain, P1_vec)
+        
+        class MockLoader:
+            def __init__(self):
+                self.hip_fun = fem.Function(V, name="Hip Joint Load")
+                self.hip_fun.x.array[:] = 0.01  # Small non-zero load
+                self.glmed_fun = fem.Function(V, name="GL med Load")
+                self.glmed_fun.x.array[:] = 0.005
+        
+        return MockLoader()
+    
     @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
     def test_telemetry_records_steps(self, unit_cube):
         """Telemetry should record step data correctly."""
@@ -197,16 +212,9 @@ class TestMonitoringIntegration:
                 coupling_tol=1e-5
             )
             
-            dummy_stage = {
-                "weight": 1.0, 
-                "angle": 0.0, 
-                "hip_tag": 1, 
-                "gl_tag": 2,
-                "hip_magnitude": 100.0,
-                "gl_magnitude": 50.0,
-                "gl_vector_css": [0.0, 0.0, 1.0]
-            }
-            with Remodeller(cfg, stages=[dummy_stage]) as rem:
+            loader = self._create_mock_loader(domain)
+            
+            with Remodeller(cfg, loader=loader, load_tag=1) as rem:
                 # Run 2 steps
                 rem.step(1.0, 0, 1.0)
                 rem.step(1.0, 1, 2.0)
@@ -233,16 +241,9 @@ class TestMonitoringIntegration:
                 max_subiters=10
             )
             
-            dummy_stage = {
-                "weight": 1.0, 
-                "angle": 0.0, 
-                "hip_tag": 1, 
-                "gl_tag": 2,
-                "hip_magnitude": 100.0,
-                "gl_magnitude": 50.0,
-                "gl_vector_css": [0.0, 0.0, 1.0]
-            }
-            with Remodeller(cfg, stages=[dummy_stage]) as rem:
+            loader = self._create_mock_loader(domain)
+            
+            with Remodeller(cfg, loader=loader, load_tag=1) as rem:
                 rem.step(1.0, 0, 1.0)
                 
                 # Check solver stats were accumulated
@@ -260,16 +261,10 @@ class TestMonitoringIntegration:
                 results_dir=tmpdir,
                 max_subiters=5,
             )
-            dummy_stage = {
-                "weight": 1.0, 
-                "angle": 0.0, 
-                "hip_tag": 1, 
-                "gl_tag": 2,
-                "hip_magnitude": 100.0,
-                "gl_magnitude": 50.0,
-                "gl_vector_css": [0.0, 0.0, 1.0]
-            }
-            with Remodeller(cfg, stages=[dummy_stage]) as rem:
+            
+            loader = self._create_mock_loader(domain)
+            
+            with Remodeller(cfg, loader=loader, load_tag=1) as rem:
                 rem.simulate(dt_initial=1.0, total_time=1.0)
             comm.Barrier()
             if comm.rank == 0:

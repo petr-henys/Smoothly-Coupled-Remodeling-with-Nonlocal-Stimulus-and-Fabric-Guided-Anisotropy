@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, List, Tuple
+from typing import Dict, Tuple
 from pathlib import Path
 
 import numpy as np
@@ -19,19 +19,30 @@ from simulation.subsolvers import MechanicsSolver, DensitySolver
 from simulation.fixedsolver import FixedPointSolver
 from simulation.drivers import GaitDriver
 from simulation.timeintegrator import TimeIntegrator
+from simulation.loader import Loader
 
 
 class Remodeller:
     """Bone remodeling orchestrator. Owns FE fields, subsolvers, and storage."""
 
-    def __init__(self, cfg: Config, stages: List[Dict]):
-        """Initialize with config and load stages."""
+    def __init__(self, cfg: Config, loader: Loader, load_tag: int = 1):
+        """
+        Initialize with config and loader.
+        
+        Args:
+            cfg: Simulation configuration with mesh and facet_tags.
+            loader: Loader object containing hip and gluteus medius traction fields.
+            load_tag: Facet tag where loads are applied (default: 1).
+        """
         self.cfg = cfg
         self.domain = self.cfg.domain
         self.closed = False
         self.progress = None
         self.main_task_id = None
-        self.stages = stages
+        self.loader = loader
+        self.t_hip = loader.hip_fun
+        self.t_glmed = loader.glmed_fun
+        self.load_tag = load_tag
         self.comm = self.domain.comm
         self.rank = self.comm.rank
         
@@ -95,50 +106,30 @@ class Remodeller:
 
         assign(self.rho, self.cfg.rho0)
 
-        # Register fields
+        # Register fields for output
         self.storage.fields.register("scalars", [self.rho], filename="scalars.bp")
-
-        # Boundary conditions
-        bc_mech = build_dirichlet_bcs(self.V, self.cfg.facet_tags, id_tag=1, value=0.0)
-
-        # --- Setup Simplified Driver ---
-        # Create placeholder constants for tractions
-        t_hip = fem.Constant(self.domain, 0.0)
-        t_glmed = fem.Constant(self.domain, np.zeros(3, dtype=np.float64))
+        self.storage.fields.register("loads", [self.t_hip, self.t_glmed], filename="loads.bp")
         
-        # Collect all unique tags used in stages
-        hip_tags = set()
-        gl_tags = set()
-        for s in self.stages:
-            hip_tags.add(s["hip_tag"])
-            gl_tags.add(s["gl_tag"])
-            
-        neumann_bcs = []
-        for tag in hip_tags:
-            neumann_bcs.append((t_hip, tag))
-        for tag in gl_tags:
-            neumann_bcs.append((t_glmed, tag))
+        # Write initial load fields (t=0)
+        self.storage.fields.write("loads", 0.0)
+
+        # Boundary conditions - fixed at tag 2
+        bc_mech = build_dirichlet_bcs(self.V, self.cfg.facet_tags, id_tag=2, value=0.0)
+
+        # Neumann BCs: hip and gluteus medius loads on tag 1
+        neumann_bcs = [(self.t_hip, self.load_tag), (self.t_glmed, self.load_tag)]
 
         # 1. Mechanics Solver
         mechsolver = MechanicsSolver(u, self.rho, self.cfg, bc_mech, neumann_bcs)
 
-        # 2. Driver (Moved BEFORE DensitySolver)
-        # Initialize CSS transformer on rank 0
-        css_transformer = None
-        if self.rank == 0:
-            css_transformer = self._load_css_transformer()
-
-        self.driver = GaitDriver(
-            mechsolver, t_hip, t_glmed, self.stages, self.cfg, css_transformer
-        )
+        # 2. Driver
+        self.driver = GaitDriver(mechsolver, self.cfg)
 
         # 3. Density Solver
-        # Pass the stimulus field (psi) directly from the driver to the solver
-        # This creates the direct memory link and avoids re-interpolation.
         self.densolver = DensitySolver(
             self.rho, 
             self.rho_old, 
-            self.driver.stimulus_field(), # <--- FIX: Passing psi directly
+            self.driver.stimulus_field(),
             self.cfg
         )
 
@@ -180,21 +171,6 @@ class Remodeller:
 
         self.comm.Barrier()
         self.closed = True
-
-    def _load_css_transformer(self) -> object:
-        """Load FemurCSS coordinate transformer (rank 0 only)."""
-        try:
-            import pyvista as pv
-            from simulation.femur_css import FemurCSS, load_json_points
-            from simulation.paths import FemurPaths
-
-            pv_mesh = pv.read(str(FemurPaths.FEMUR_MESH_VTK))
-            head_line = load_json_points(FemurPaths.HEAD_LINE_JSON)
-            le_me_line = load_json_points(FemurPaths.LE_ME_LINE_JSON)
-            return FemurCSS(pv_mesh, head_line, le_me_line, side="left")
-        except Exception as e:
-            self.logger.debug(f"CSS not loaded: {e}")
-            return None
 
     def _field_stats(self, field: fem.Function) -> Tuple[float, float, float]:
         """MPI global min/max/mean."""
@@ -263,11 +239,7 @@ class Remodeller:
             gs_iters = max(1, coupling_stats['iters'])
             for name, key in [("Mechanics", "mech"), ("Density", "dens")]:
                 st = s_stats[key]
-                n_stages = len(self.stages)
-                if key == "mech":
-                    n_solves = gs_iters * n_stages
-                else:
-                    n_solves = gs_iters
+                n_solves = gs_iters
                     
                 avg_its = st['iters'] / max(1, n_solves)
                 avg_time = st['time'] / max(1, n_solves)

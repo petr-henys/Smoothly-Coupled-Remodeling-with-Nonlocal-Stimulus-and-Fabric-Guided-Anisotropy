@@ -275,27 +275,26 @@ class TestUnifiedStorage:
         comm = MPI.COMM_WORLD
         domain = unit_cube
         from simulation.utils import build_facetag
+        import basix.ufl
         facet_tags = build_facetag(domain)
         
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = Config(domain=domain, facet_tags=facet_tags, results_dir=tmpdir)
             
-            dummy_stage = {
-                "weight": 1.0, 
-                "angle": 0.0, 
-                "hip_tag": 1, 
-                "gl_tag": 2,
-                "hip_magnitude": 100.0,
-                "gl_magnitude": 50.0,
-                "gl_vector_css": [0.0, 0.0, 1.0]
-            }
-            with Remodeller(cfg, stages=[dummy_stage]) as rem:
+            # Create dummy traction functions
+            P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(domain.geometry.dim,))
+            V = fem.functionspace(domain, P1_vec)
+            t_hip = fem.Function(V, name="t_hip")
+            t_hip.x.array[:] = 0.0
+            t_glmed = fem.Function(V, name="t_glmed")
+            t_glmed.x.array[:] = 0.0
+            
+            with Remodeller(cfg, t_hip=t_hip, t_glmed=t_glmed, load_tag=1) as rem:
                 # Storage should be initialized
                 assert rem.storage is not None
                 assert rem.storage.fields is not None
                 
                 # Field writers should be registered
                 assert "scalars" in rem.storage.fields._writers
-                # assert "A" in rem.storage.fields._writers
             
             comm.Barrier()

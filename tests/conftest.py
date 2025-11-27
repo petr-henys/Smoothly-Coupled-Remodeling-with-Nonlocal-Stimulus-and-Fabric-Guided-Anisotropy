@@ -380,37 +380,36 @@ def fiber_tensor_factory():
 
 
 @pytest.fixture
-def dummy_gait_loader(spaces, cfg):
-    """Create dummy gait data for unit tests."""
+def dummy_load(spaces, cfg):
+    """Create dummy Loader-like object for unit tests."""
     from dolfinx import fem
     import numpy as np
     
-    t_hip = fem.Constant(cfg.domain, 0.0)
-    t_glmed = fem.Constant(cfg.domain, np.zeros(3, dtype=np.float64))
+    class MockLoader:
+        """Mock Loader for testing without femur-specific dependencies."""
+        def __init__(self, V):
+            self.hip_fun = fem.Function(V, name="Hip Joint Load")
+            self.glmed_fun = fem.Function(V, name="GL med Load")
+            
+            # Apply a constant traction in negative y direction (simulating hip load)
+            traction_hip = np.array([0.0, -0.1, 0.0], dtype=np.float64)  # MPa
+            n_dofs = self.hip_fun.x.array.size // 3
+            self.hip_fun.x.array[:] = np.tile(traction_hip, n_dofs)
+            self.hip_fun.x.scatter_forward()
+            
+            # Apply a smaller traction in x direction (simulating GL med load)
+            traction_glmed = np.array([0.05, 0.0, 0.0], dtype=np.float64)  # MPa
+            self.glmed_fun.x.array[:] = np.tile(traction_glmed, n_dofs)
+            self.glmed_fun.x.scatter_forward()
+        
+        def hip_force(self, magnitude, alpha_sag, alpha_front, sigma_deg=10.0, flip=True):
+            return self.hip_fun
+        
+        def glmed_force(self, magnitude, alpha_sag, alpha_front, sigma=2.0, flip=False):
+            return self.glmed_fun
     
-    # Create dummy stages
-    stages = [
-        {
-            "weight": 0.6,
-            "hip_tag": 2,
-            "hip_magnitude": 1.0,
-            "gl_tag": 2,
-            "gl_magnitude": 0.5,
-            "gl_vector_css": [0.0, 1.0, 0.0]
-        },
-        {
-            "weight": 0.4,
-            "hip_tag": 2,
-            "hip_magnitude": 0.8,
-            "gl_tag": 2,
-            "gl_magnitude": 0.4,
-            "gl_vector_css": [0.0, 1.0, 0.0]
-        }
-    ]
-    
+    loader = MockLoader(spaces.V)
     return {
-        "t_hip": t_hip,
-        "t_glmed": t_glmed,
-        "stages": stages,
-        "tag": 2
+        "loader": loader,
+        "load_tag": 1  # Apply load on facet tag 1 (BC is on tag 2)
     }

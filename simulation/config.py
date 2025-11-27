@@ -46,7 +46,7 @@ class Config:
     # =========================================================================
     # Reference Strain Energy Density (SED)
     # Value for Femur from Table 2: 0.002 N/mm^2 (MPa)
-    psi_ref: float = 0.0003          # Reference SED [MPa] (Estimated)      
+    psi_ref: float = 0.05          # Reference SED [MPa] (Estimated)      
         
     # Base moduli [MPa]
     E0: float = 6500.0          # Young's modulus (Table 2)
