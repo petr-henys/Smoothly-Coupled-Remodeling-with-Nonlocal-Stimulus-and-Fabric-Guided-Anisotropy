@@ -12,7 +12,7 @@ from simulation.logger import get_logger
 
 
 class GaitDriver:
-    """Solves mechanics for discrete load stages, accumulates weighted stimulus (SED)."""
+    """Solves mechanics for discrete load stages, accumulates stimulus (SED)."""
 
     def __init__(
         self,
@@ -35,13 +35,6 @@ class GaitDriver:
         self.rank = self.comm.rank
         self.logger = get_logger(self.comm, name="Driver", log_file=self.cfg.log_file)
 
-        # Normalize weights
-        total_weight = sum(s["weight"] for s in self.stages)
-        if total_weight <= 0:
-            raise ValueError("Total weight of load stages must be positive.")
-        self.weights = np.array([s["weight"] / total_weight for s in self.stages])
-
-
         # Stimulus field (Strain Energy Density - SED)
         # Using DG0 (element-wise constant) is standard for SED to avoid smoothing artifacts
         self.V_psi = fem.functionspace(mesh, ("DG", 0))
@@ -50,8 +43,7 @@ class GaitDriver:
         # Temp buffer for single-stage SED
         self._psi_local = fem.Function(self.V_psi)
         
-        # Optimization: Pre-compile the SED expression to avoid recompilation in loops
-        self._weight_val = fem.Constant(mesh, 0.0)
+        # Pre-compile the SED expression to avoid recompilation in loops
         self._sed_expr = self._build_sed_expression()
 
         if self.rank == 0:
@@ -78,7 +70,7 @@ class GaitDriver:
         self.psi.x.array[:] = 0.0
 
         # 2. Loop through load stages
-        for stage, weight in zip(self.stages, self.weights):
+        for stage in self.stages:
             start = MPI.Wtime()
 
             # A. Solve Equilibrium
@@ -91,9 +83,6 @@ class GaitDriver:
             iters.append(int(its))
 
             # B. Calculate SED for this stage
-            # Update the weight constant (Weight)
-            self._weight_val.value = weight
-            
             # Interpolate current stage SED into temp buffer
             self._psi_local.interpolate(self._sed_expr)
             
@@ -183,12 +172,10 @@ class GaitDriver:
         eps = self.mech.eps(u)
         
         # Strain Energy Density: Psi = 1/2 * inner(sigma, epsilon)
-        # Note: Ensure sigma and eps correspond to the same density state
         Psi = 0.5 * ufl.inner(sig, eps)
         
-        # Apply weighting for daily accumulation
         # Use max(0, Psi) to ensure numerical stability, though SED >= 0 physically
-        weighted_Psi = self._weight_val * ufl.max_value(Psi, 0.0)
+        Psi_safe = ufl.max_value(Psi, 0.0)
 
         # Compile expression for the Stimulus Function Space (DG0)
-        return fem.Expression(weighted_Psi, self.V_psi.element.interpolation_points)
+        return fem.Expression(Psi_safe, self.V_psi.element.interpolation_points)

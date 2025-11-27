@@ -32,21 +32,21 @@ class Config:
     rho_min: float = 0.001      # Min physical density [g/cm^3] (Table 2)
     rho_max: float = 2.0        # Max physical density [g/cm^3] (Table 2)
     rho0: float = 1.0           # Initial density [g/cm^3] (Table 2)
-    
+    rho_ref: float = 1.0        # Reference density for stiffness [g/cm^3]
     # Rate constant
-    # Article uses c=0.01 [s/m^2] (Table 2). 
-    k_rho: float = 0.01         # Density remodeling rate [1/day] (Estimated)
+    # Article uses c=0.02 [s/m^2] (Table 2). 
+    k_rho: float = 0.02         # Density remodeling rate [1/day] (Estimated)
 
     # Density diffusion [mm^2/day]
     # Replaces gradient enhancement beta from article for regularization
-    D_rho: float = 0.5          # Isotropic diffusion [mm^2/day]
+    D_rho: float = 0.001          # Isotropic diffusion [mm^2/day]
 
     # =========================================================================
     # Stimulus (Local)
     # =========================================================================
     # Reference Strain Energy Density (SED)
     # Value for Femur from Table 2: 0.002 N/mm^2 (MPa)
-    psi_ref: float = 0.005      
+    psi_ref: float = 0.0003          # Reference SED [MPa] (Estimated)      
         
     # Base moduli [MPa]
     E0: float = 6500.0          # Young's modulus (Table 2)

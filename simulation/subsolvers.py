@@ -179,8 +179,8 @@ class MechanicsSolver(_BaseLinearSolver):
         w = smoothstep(rho_eff, self.cfg.rho_trab_max, self.cfg.rho_cort_min)
         k_var = self.cfg.n_trab * (1.0 - w) + self.cfg.n_cort * w
         
-        # Stiffness E = E0 * (rho / rho_max)^k
-        rho_rel = rho_eff / self.cfg.rho_max
+        # Stiffness E = E0 * (rho / rho_ref)^k
+        rho_rel = rho_eff / self.cfg.rho_ref
         E = self.cfg.E0 * (rho_rel**k_var)
         nu = self.cfg.nu0
         mu = E / (2.0 * (1.0 + nu))
@@ -234,7 +234,7 @@ class DensitySolver(_BaseLinearSolver):
         # No extra interpolation needed.
         # S_driving = (Psi / Psi_ref) - 1.0
         # Positive if Psi > Psi_ref (Bone formation), Negative if Psi < Psi_ref (Resorption)
-        S_driving = (self.psi_field / self.cfg.psi_ref) - 1.0
+        S_driving = (self.psi_field - self.cfg.psi_ref)
         
         # Use smooth_plus for a "lazy zone" or pure one-sided reaction if desired.
         # Here we follow the provided logic of splitting into formation (+) and resorption (-)
