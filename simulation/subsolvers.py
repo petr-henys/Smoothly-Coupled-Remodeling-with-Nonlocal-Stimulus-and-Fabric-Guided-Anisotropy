@@ -213,27 +213,7 @@ class MechanicsSolver(_BaseLinearSolver):
 
 
 class DensitySolver(_BaseLinearSolver):
-    """
-    Density evolution solver: reaction-diffusion PDE.
-    
-    Equation (implicit Euler):
-        (ρ - ρ_old)/dt = D_ρ ∇²ρ + k_ρ × source_term
-    
-    Source term formulation:
-        S_driving = Ψ - Ψ_ref  (stimulus deviation from homeostasis)
-        S_plus = smooth_plus(S_driving)   → bone formation
-        S_minus = smooth_plus(-S_driving) → bone resorption
-        
-        LHS reaction: k_ρ(S_plus + S_minus) × ρ
-        RHS source:   k_ρ(S_plus × ρ_max + S_minus × ρ_min)
-    
-    This drives ρ toward ρ_max when Ψ > Ψ_ref, and toward ρ_min when Ψ < Ψ_ref.
-    
-    KNOWN ISSUES:
-        1. Dimensional inconsistency: [k_ρ × S × ρ] ≠ [g/cm³/day] as required
-        2. Bounds not strictly enforced (soft relaxation only)
-        3. Consider adding np.clip() post-solve for robustness
-    """
+    """Density evolution: diffusion + stimulus-driven relaxation to bounds."""
 
     def __init__(
         self,
@@ -250,49 +230,41 @@ class DensitySolver(_BaseLinearSolver):
 
     def _compile_forms(self):
         """
-        Compile reaction-diffusion variational forms for implicit Euler.
-        
-        Weak formulation:
-            ∫ (ρ/dt)·v dx + ∫ D_ρ ∇ρ·∇v dx + ∫ k_ρ(S+ + S-)ρ·v dx 
-            = ∫ (ρ_old/dt)·v dx + ∫ k_ρ(S+·ρ_max + S-·ρ_min)·v dx
-        
-        where:
-            S+ = smooth_plus(Ψ - Ψ_ref)  (formation signal)
-            S- = smooth_plus(Ψ_ref - Ψ)  (resorption signal)
-        
-        Note: This is a semi-implicit relaxation scheme, not a pure ODE discretization.
-        The reaction term (S+ + S-)ρ provides damping that prevents overshoot.
+        Compile Reaction-Diffusion forms.
+        Based on Article Eq. 9: rho_dot = c * (Psi - Psi_ref)[cite: 153].
+        Rearranged for Implicit Euler:
+        (rho - rho_old)/dt = Diffusion + k_rho * S_driving
         """
         dt = self.dt_c
-        
+
         # Calculate driving force directly from the passed-in Psi function
         # S_driving = Psi - Psi_ref (dimensional difference)
         # Positive if Psi > Psi_ref (Bone formation), Negative if Psi < Psi_ref (Resorption)
         S_driving = self.psi_field - self.cfg.psi_ref
-        
+
         # Use smooth_plus for a "lazy zone" or pure one-sided reaction if desired.
-        # Here we follow the provided logic of splitting into formation (+) and resorption (-)
+        # We still split into formation (+) and resorption (-), but with the same k_rho
+        # for both branches (symmetric mechanostat).
         S_plus = smooth_plus(S_driving, self.smooth_eps)
         S_minus = smooth_plus(-S_driving, self.smooth_eps)
-        
-        # LHS: (rho/dt)*v + D_rho*grad(rho)*grad(v) + k_rho*(S_plus + S_minus)*rho*v
-        # Note: The reaction term *rho*v implies a proportional rate. 
-        # If strict Eq (9) is needed (constant rate independent of rho), remove rho from reaction term.
-        # However, usually remodeling is density dependent. We keep the semi-implicit structure.
-        reaction_coeff = self.cfg.k_rho * (S_plus + S_minus)
-        
+
+        # LHS: (rho/dt)*v + D_rho*grad(rho)*grad(v)
+        # NOTE: No reaction term multiplying rho on the left-hand side.
+        # The remodeling rate is driven only by the stimulus and the bounds rho_min/rho_max.
         a_ufl = (
             (self.trial / dt) * self.test * self.dx
             + self.cfg.D_rho * ufl.inner(ufl.grad(self.trial), ufl.grad(self.test)) * self.dx
-            + reaction_coeff * self.trial * self.test * self.dx
         )
         self.a_form = fem.form(a_ufl)
 
         # RHS: (rho_old/dt)*v + k_rho*(S_plus*rho_max + S_minus*rho_min)*v
-        # This drives rho towards rho_max if S_plus > 0, and rho_min if S_minus > 0
-        source_term = self.cfg.k_rho * (S_plus * self.cfg.rho_max + S_minus * self.cfg.rho_min)
+        # Formation and resorption use the same k_rho; the sign/branch is encoded in S_plus/S_minus.
+        source_term = self.cfg.k_rho * (
+            S_plus * self.cfg.rho_max + S_minus * self.cfg.rho_min
+        )
         L_ufl = ((self.rho_old / dt) + source_term) * self.test * self.dx
         self.L_form = fem.form(L_ufl)
+
 
     def _setup_ksp(self):
         self.A.setOption(PETSc.Mat.Option.SPD, True)
