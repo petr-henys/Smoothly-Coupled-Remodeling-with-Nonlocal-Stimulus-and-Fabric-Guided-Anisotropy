@@ -9,7 +9,32 @@ from simulation.logger import get_logger
 
 
 class _Anderson:
-    """Anderson acceleration with safeguard, backtracking, and auto-restart."""
+    """
+    Anderson (Pulay) acceleration with safeguard, backtracking, and auto-restart.
+    
+    Algorithm:
+        Given history {x_k, r_k} for k=0..m-1 where r_k = G(x_k) - x_k:
+        1. Build Gram matrix H = R R^T (MPI collective)
+        2. Solve min ||alpha||_H s.t. sum(alpha) = 1
+        3. Compute accelerated iterate: x_new = sum(alpha_k * (x_k + beta * r_k))
+    
+    Safeguards:
+        - Step size limiting (step_limit_factor)
+        - Armijo-type backtracking
+        - Automatic restart on:
+            - Consecutive rejections (restart_on_reject_k)
+            - Stalling (r_norm > restart_on_stall * best_r_norm)
+            - Ill-conditioning (cond(H) > restart_on_cond)
+    
+    MPI Notes:
+        - Gram matrix built via allreduce (O(m²) doubles per iter)
+        - Minimization solved redundantly on each rank
+        - Only owned DOFs participate in residual norms
+    
+    References:
+        - Walker & Ni (2011): Anderson acceleration for fixed-point iterations
+        - Fang & Saad (2009): Two classes of multisecant methods
+    """
 
     def __init__(
         self,

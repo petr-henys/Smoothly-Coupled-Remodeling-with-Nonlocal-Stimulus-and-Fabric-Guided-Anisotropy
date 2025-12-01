@@ -23,7 +23,28 @@ from simulation.loader import Loader
 
 
 class Remodeller:
-    """Bone remodeling orchestrator. Owns FE fields, subsolvers, and storage."""
+    """
+    Bone remodeling simulation orchestrator.
+    
+    Owns:
+        - FE fields: u (displacements), rho (density)
+        - Subsolvers: MechanicsSolver, DensitySolver via GaitDriver
+        - Coupling: FixedPointSolver with Anderson acceleration
+        - Time stepping: TimeIntegrator with adaptive dt control
+        - I/O: UnifiedStorage for VTX output
+    
+    Main loop (simulate method):
+        1. Predict ρ using AB2 extrapolation
+        2. Fixed-point iteration:
+           a. Solve mechanics: K(ρ)u = f
+           b. Compute stimulus: Ψ = ½σ:ε
+           c. Solve density: (M/dt + D + R)ρ = (M/dt)ρ_old + source
+           d. Anderson mixing for ρ
+        3. Estimate error, accept/reject step
+        4. Adapt dt using PI controller
+    
+    Units: mm (length), day (time), MPa (stress), g/cm³ (density)
+    """
 
     def __init__(self, cfg: Config, loader: Loader, load_tag: int):
         """

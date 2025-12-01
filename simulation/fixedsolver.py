@@ -13,7 +13,26 @@ from simulation.logger import get_logger
 from simulation.anderson import _Anderson
 
 class FixedPointSolver:
-    """Fixed-point solver for 2-field coupling. Supports Anderson acceleration."""
+    """
+    Fixed-point solver for mechanics-density coupling.
+    
+    Algorithm (Block Gauss-Seidel with Anderson acceleration):
+        for iter = 1..max_subiters:
+            1. Store ρ_prev = ρ
+            2. Assemble K(ρ), solve K(ρ)u = f  → new u
+            3. Compute Ψ(u, ρ)
+            4. Assemble density system, solve → new ρ
+            5. Anderson mixing: ρ = mix(ρ_prev, ρ_raw)
+            6. Check convergence: ||ρ - ρ_prev|| / ||ρ|| < tol
+    
+    Anderson acceleration:
+        - Builds history of m previous iterates
+        - Minimizes residual in least-squares sense
+        - Includes safeguard, backtracking, and restart heuristics
+    
+    Note: Only ρ is accelerated, not (u, ρ) jointly. This is suboptimal
+    but simpler. For full Newton, consider monolithic formulation.
+    """
 
     def __init__(
         self, 

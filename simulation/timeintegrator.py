@@ -12,7 +12,27 @@ from simulation.utils import assign, get_owned_size
 
 
 class TimeIntegrator:
-    """AB2 predictor, WRMS error estimation, Gustafsson PI step control."""
+    """
+    Adaptive time stepping with AB2 predictor and PI error control.
+    
+    Predictor (for error estimation):
+        AB2: ρ_pred = ρ + dt·(1.5·ρ'_n - 0.5·ρ'_{n-1})  [variable step]
+        AB1: ρ_pred = ρ + dt·ρ'_n  [first steps]
+    
+    Error metric:
+        WRMS = sqrt(mean((ρ_corr - ρ_pred)² / (atol + rtol·|ρ_corr|)²))
+        Step accepted if WRMS ≤ 1.0
+    
+    Step size control (Gustafsson PI):
+        dt_new = dt · safety · err^(-kI) · (err_prev/err)^(-kP)
+    
+    Note: The predictor estimates local truncation error by comparing
+    explicit (AB2) prediction with implicit (density solver) correction.
+    This is heuristic - not a rigorous embedded method error estimate.
+    
+    Current tuning is aggressive (growth_factor=5.0, ki=0.40).
+    Consider reducing to growth_factor=2.0, ki=0.25 for robustness.
+    """
 
     def __init__(self, comm: MPI.Intracomm, cfg: Config, Q: fem.FunctionSpace):
         """Initialize time integrator.
@@ -39,17 +59,19 @@ class TimeIntegrator:
         self.dt_prev: Optional[float] = None
         self.error_prev = 1.0  # Initialize with 1.0
 
-        # --- CONTROLLER TUNING (Aggressive) ---
-        self.safety = 0.9
-        self.growth_factor = 5.0   # Allow step to grow up to 5x in one go
-        self.shrink_factor = 0.1   # Limit shrinking
+        # --- CONTROLLER TUNING ---
+        # WARNING: Current settings are aggressive. May cause oscillations.
+        # Conservative alternative: growth_factor=2.0, ki=0.25
+        self.safety = 0.9           # Safety factor for step acceptance
+        self.growth_factor = 5.0    # Max step growth ratio (aggressive!)
+        self.shrink_factor = 0.1    # Min step shrink ratio
         
-        # PID parameters adjusted for aggressive growth
-        # Standard theory suggests kI ~ 1/k. For AB2 (k=2), limit is 0.5.
-        # Previous values (0.08) were too conservative.
-        self.k_exp = 1.5   # Exponent for rejection (lower = safer restart)
-        self.kp = 0.20     # Proportional gain (damping)
-        self.ki = 0.40     # Integral gain (Main driver for speed!)
+        # PI controller gains
+        # Theory for order-k method: kI ~ 1/k, kP ~ kI/2
+        # For AB2 (k=2): theoretical limit kI ~ 0.5
+        self.k_exp = 1.5   # Exponent for rejection shrink factor
+        self.kp = 0.20     # Proportional gain (smooths response)
+        self.ki = 0.40     # Integral gain (aggressive - drives fast growth)
 
         self.reset_history()
 

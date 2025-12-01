@@ -213,7 +213,27 @@ class MechanicsSolver(_BaseLinearSolver):
 
 
 class DensitySolver(_BaseLinearSolver):
-    """Density evolution: diffusion + stimulus-driven relaxation to bounds."""
+    """
+    Density evolution solver: reaction-diffusion PDE.
+    
+    Equation (implicit Euler):
+        (ρ - ρ_old)/dt = D_ρ ∇²ρ + k_ρ × source_term
+    
+    Source term formulation:
+        S_driving = Ψ - Ψ_ref  (stimulus deviation from homeostasis)
+        S_plus = smooth_plus(S_driving)   → bone formation
+        S_minus = smooth_plus(-S_driving) → bone resorption
+        
+        LHS reaction: k_ρ(S_plus + S_minus) × ρ
+        RHS source:   k_ρ(S_plus × ρ_max + S_minus × ρ_min)
+    
+    This drives ρ toward ρ_max when Ψ > Ψ_ref, and toward ρ_min when Ψ < Ψ_ref.
+    
+    KNOWN ISSUES:
+        1. Dimensional inconsistency: [k_ρ × S × ρ] ≠ [g/cm³/day] as required
+        2. Bounds not strictly enforced (soft relaxation only)
+        3. Consider adding np.clip() post-solve for robustness
+    """
 
     def __init__(
         self,
@@ -230,10 +250,18 @@ class DensitySolver(_BaseLinearSolver):
 
     def _compile_forms(self):
         """
-        Compile Reaction-Diffusion forms.
-        Based on Article Eq. 9: rho_dot = c * (Psi - Psi_ref)[cite: 153].
-        Rearranged for Implicit Euler:
-        (rho - rho_old)/dt = Diffusion + k_rho * S_driving
+        Compile reaction-diffusion variational forms for implicit Euler.
+        
+        Weak formulation:
+            ∫ (ρ/dt)·v dx + ∫ D_ρ ∇ρ·∇v dx + ∫ k_ρ(S+ + S-)ρ·v dx 
+            = ∫ (ρ_old/dt)·v dx + ∫ k_ρ(S+·ρ_max + S-·ρ_min)·v dx
+        
+        where:
+            S+ = smooth_plus(Ψ - Ψ_ref)  (formation signal)
+            S- = smooth_plus(Ψ_ref - Ψ)  (resorption signal)
+        
+        Note: This is a semi-implicit relaxation scheme, not a pure ODE discretization.
+        The reaction term (S+ + S-)ρ provides damping that prevents overshoot.
         """
         dt = self.dt_c
         

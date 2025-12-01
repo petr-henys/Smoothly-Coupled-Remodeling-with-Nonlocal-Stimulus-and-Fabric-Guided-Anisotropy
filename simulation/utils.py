@@ -144,15 +144,59 @@ def current_memory_mb() -> float:
     return mem_kb / 1024.0
 
 def smooth_abs(x, eps=1e-4):
-    """Smooth |x| approximation: sqrt(x² + eps²) - eps."""
+    """
+    Smooth approximation of |x|.
+    
+    Formula: sqrt(x² + eps²) - eps
+    
+    Properties:
+        - C∞ differentiable everywhere
+        - smooth_abs(0, eps) = 0 (exact at origin)
+        - Approaches |x| as eps → 0
+        - Derivative: x / sqrt(x² + eps²)
+    
+    Args:
+        x: UFL expression or scalar
+        eps: Smoothing parameter (smaller = sharper but less smooth)
+    
+    Returns:
+        UFL expression approximating |x|
+    """
     return ufl.sqrt(x**2 + eps**2) - eps
 
 def smooth_plus(x, eps=1e-4):
-    """Smooth max(x, 0) approximation."""
+    """
+    Smooth approximation of max(x, 0).
+    
+    Formula: 0.5 * (x + smooth_abs(x, eps))
+    
+    Used in remodeling to separate formation (x > 0) and resorption (x < 0).
+    
+    Args:
+        x: UFL expression or scalar
+        eps: Smoothing parameter
+    
+    Returns:
+        UFL expression approximating max(x, 0)
+    """
     return 0.5 * (x + smooth_abs(x, eps))
 
 def smooth_max(x, y, eps=1e-4):
-    """Smooth max(x, y) approximation."""
+    """
+    Smooth approximation of max(x, y).
+    
+    Formula: 0.5 * (x + y + smooth_abs(x - y, eps))
+    
+    Commonly used for rho_eff = smooth_max(rho, rho_min) to prevent
+    singular stiffness when rho approaches zero.
+    
+    Args:
+        x, y: UFL expressions or scalars
+        eps: Smoothing parameter
+    
+    Returns:
+        UFL expression approximating max(x, y)
+    """
     return 0.5 * (x + y + smooth_abs(x - y, eps))
 
 

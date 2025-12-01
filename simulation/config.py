@@ -12,7 +12,20 @@ if TYPE_CHECKING:
 
 @dataclass
 class Config:
-    """Simulation config with material, solver, and I/O parameters. Units: mm, day, MPa, g/cm³."""
+    """
+    Simulation configuration with material, solver, and I/O parameters.
+    
+    Units Convention:
+        - Length: mm
+        - Time: day  
+        - Stress/Modulus: MPa (N/mm²)
+        - Density: g/cm³ (equivalent to kg/L)
+    
+    Note on Dimensional Consistency:
+        The remodeling equation dρ/dt = k_rho × f(Ψ) currently has dimensional issues.
+        k_rho [1/day] × Ψ [MPa] does not yield [g/cm³/day] without a conversion constant.
+        This is a known limitation - see code review documentation.
+    """
 
     # =========================================================================
     # Material Properties (Updated based on Bensel et al., 2024, Table 2)
@@ -29,24 +42,33 @@ class Config:
     # =========================================================================
     # Density Evolution (Remodeling)
     # =========================================================================
-    rho_min: float = 0.1      # Min physical density [g/cm^3] (Table 2)
-    rho_max: float = 2.0        # Max physical density [g/cm^3] (Table 2)
-    rho0: float = 1.0           # Initial density [g/cm^3] (Table 2)
-    rho_ref: float = 1.0        # Reference density for stiffness [g/cm^3]
-    # Rate constant
-    # Article uses c=0.02 [s/m^2] (Table 2). 
-    k_rho: float = 2         # Density remodeling rate [1/day] (Estimated)
+    rho_min: float = 0.1        # Min physical density [g/cm³] - prevents singular stiffness
+    rho_max: float = 2.0        # Max physical density [g/cm³] - cortical bone limit
+    rho0: float = 1.0           # Initial density [g/cm³]
+    rho_ref: float = 1.0        # Reference density for E(ρ) power law [g/cm³]
+    
+    # Rate constant for relaxation formulation
+    # WARNING: Dimensional analysis issue!
+    # For dρ/dt = k_rho × (Ψ - Ψ_ref), we need [k_rho] = [g/cm³/(MPa·day)]
+    # Current interpretation: k_rho as dimensionless rate coefficient
+    # Actual physical rate depends on how source term is formulated.
+    k_rho: float = 2            # Remodeling rate coefficient [1/day] (heuristic)
 
-    # Density diffusion [mm^2/day]
-    # Replaces gradient enhancement beta from article for regularization
-    D_rho: float = 0.1          # Isotropic diffusion [mm^2/day]
+    # Density diffusion coefficient [mm²/day]
+    # Provides spatial regularization (prevents checkerboard patterns)
+    # Physical interpretation: nonlocal averaging of remodeling signal
+    # Typical range: 0.01-1.0 mm²/day (larger = more smoothing)
+    D_rho: float = 0.1          # Isotropic diffusion [mm²/day]
 
     # =========================================================================
-    # Stimulus (Local)
+    # Stimulus (Strain Energy Density)
     # =========================================================================
-    # Reference Strain Energy Density (SED)
-    # Value for Femur from Table 2: 0.002 N/mm^2 (MPa)
-    psi_ref: float = 0.01          # Reference SED [MPa] (Estimated)      
+    # Reference SED (homeostatic setpoint)
+    # Ψ = ½ σ:ε [MPa] - computed from mechanics solution
+    # When Ψ > Ψ_ref: bone formation (ρ increases toward ρ_max)
+    # When Ψ < Ψ_ref: bone resorption (ρ decreases toward ρ_min)
+    # Typical cortical bone: Ψ_ref ~ 0.001-0.01 MPa
+    psi_ref: float = 0.01          # Reference SED [MPa]      
         
     # Base moduli [MPa]
     E0: float = 6500.0          # Young's modulus (Table 2)

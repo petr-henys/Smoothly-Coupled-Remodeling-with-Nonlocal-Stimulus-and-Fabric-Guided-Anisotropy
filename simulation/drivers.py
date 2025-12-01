@@ -13,7 +13,20 @@ from simulation.utils import field_stats
 
 
 class GaitDriver:
-    """Solves mechanics for applied load, computes Strain Energy Density (SED) stimulus."""
+    """
+    Solves mechanics and computes Strain Energy Density (SED) stimulus.
+    
+    Workflow:
+        1. update_stiffness() - reassemble K(ρ) matrix
+        2. update_snapshots() - solve Ku=f, compute Ψ
+    
+    Stimulus definition:
+        Ψ = ½ σ(u,ρ) : ε(u)  [MPa]
+        
+    Note: Since σ = C(ρ):ε and C(ρ) ~ E(ρ), the stimulus Ψ depends on ρ.
+    This creates a positive feedback: higher ρ → higher E → higher σ → higher Ψ.
+    Consider using normalized stimulus Ψ/E(ρ) for stability if issues arise.
+    """
 
     def __init__(
         self,
@@ -96,7 +109,16 @@ class GaitDriver:
     def _build_sed_expression(self) -> fem.Expression:
         """
         Build UFL expression for Strain Energy Density (SED).
-        Psi = 0.5 * sigma : epsilon
+        
+        Formula: Ψ = ½ σ:ε = ½ (C(ρ):ε):ε
+        
+        Note: This expression is evaluated at interpolation time, using
+        current values of u and ρ. The result is stored in DG0 space
+        (element-wise constant), which is appropriate for P1 displacements.
+        
+        Stability consideration:
+            Since E(ρ) = E₀(ρ/ρ_ref)^n appears in σ, Ψ scales with E(ρ).
+            For material-independent stimulus, consider Ψ_norm = Ψ / E(ρ).
         """
         u = self.mech.u
         rho = self.mech.rho
