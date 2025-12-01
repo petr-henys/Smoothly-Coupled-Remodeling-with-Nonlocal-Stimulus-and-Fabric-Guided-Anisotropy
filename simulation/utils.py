@@ -74,8 +74,15 @@ def build_dirichlet_bcs(
         bcs.append(fem.dirichletbc(default_scalar_type(value), dofs, Vi))
     return bcs
 
-def assign(f: fem.Function, v) -> None:
-    """Assign scalar/array/Function to owned DOFs, then scatter."""
+def assign(f: fem.Function, v, *, scatter: bool = True) -> None:
+    """Assign scalar/array/Function to owned DOFs, optionally scatter.
+    
+    Args:
+        f: Target function.
+        v: Value (scalar, array, or Function).
+        scatter: If True (default), call scatter_forward() after assignment.
+                 Set False when caller will scatter later or value is already synced.
+    """
     owned = f.function_space.dofmap.index_map.size_local * f.function_space.dofmap.index_map_bs
     if isinstance(v, fem.Function):
         f.x.array[:owned] = v.x.array[:owned]
@@ -87,7 +94,8 @@ def assign(f: fem.Function, v) -> None:
             if arr.size != owned:
                 raise ValueError(f"assign: size mismatch (got {arr.size}, need {owned})")
             f.x.array[:owned] = arr.ravel()
-    f.x.scatter_forward()
+    if scatter:
+        f.x.scatter_forward()
 
 def get_owned_size(field: fem.Function) -> int:
     """Count of locally owned DOFs."""

@@ -172,14 +172,14 @@ class TimeIntegrator:
         """Update history with accepted step."""
         dt_curr = float(dt)
 
-        # Shift history
-        assign(self.rho_rate_last2, self.rho_rate_last)
+        # Shift history (internal fields, only owned DOFs matter)
+        assign(self.rho_rate_last2, self.rho_rate_last, scatter=False)
 
-        # Calculate new rate
+        # Calculate new rate from owned DOFs only
         n_owned = get_owned_size(rho_new)
         rate_data = (rho_new.x.array[:n_owned] - rho_old.x.array[:n_owned]) / dt_curr
         self.rho_rate_last.x.array[:n_owned] = rate_data
-        self.rho_rate_last.x.scatter_forward()
+        # Skip scatter - rate history is only used for owned DOF prediction
 
         self.dt_prev = dt_curr
         self.step_count += 1

@@ -67,8 +67,11 @@ class GaitDriver:
 
         elapsed = self.comm.allreduce(MPI.Wtime() - start, op=MPI.MAX)
 
-        # Calculate SED
+        # Calculate SED (DG0 space - no ghost sharing needed, but scatter
+        # ensures consistency for any downstream consumers)
         self.psi.interpolate(self._sed_expr)
+        # Note: DG0 has cell-local DOFs. Scatter updates ghost cells which
+        # are needed if psi is used in forms assembled over ghost cells.
         self.psi.x.scatter_forward()
 
         return {

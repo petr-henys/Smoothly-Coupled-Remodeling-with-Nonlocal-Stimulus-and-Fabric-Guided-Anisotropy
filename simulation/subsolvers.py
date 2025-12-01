@@ -81,8 +81,16 @@ class _BaseLinearSolver:
         self.assemble_lhs()
         self._setup_ksp()
 
-    def assemble_lhs(self):
-        self.state.x.scatter_forward()
+    def assemble_lhs(self, *, scatter_state: bool = False):
+        """Assemble LHS matrix.
+        
+        Args:
+            scatter_state: If True, scatter state before assembly.
+                          Default False - caller is responsible for ensuring
+                          state is synced before calling.
+        """
+        if scatter_state:
+            self.state.x.scatter_forward()
         self.A.zeroEntries()
         assemble_matrix(self.A, self.a_form, bcs=self.dirichlet_bcs)
         self.A.assemble()
@@ -263,10 +271,17 @@ class DensitySolver(_BaseLinearSolver):
         ksp_options = {"ksp_type": self.cfg.ksp_type, "pc_type": self.cfg.pc_type}
         self.create_ksp(prefix="density", ksp_options=ksp_options)
 
-    def assemble_lhs(self):
-        self.psi_field.x.scatter_forward()
+    def assemble_lhs(self, *, scatter_psi: bool = False):
+        """Assemble LHS matrix.
+        
+        Args:
+            scatter_psi: If True, scatter psi_field before assembly.
+                        Default False - caller ensures psi is already synced.
+        """
+        if scatter_psi:
+            self.psi_field.x.scatter_forward()
         self.dt_c.value = float(self.cfg.dt)
-        super().assemble_lhs()
+        super().assemble_lhs(scatter_state=False)
 
     def assemble_rhs(self):
         self.dt_c.value = float(self.cfg.dt)

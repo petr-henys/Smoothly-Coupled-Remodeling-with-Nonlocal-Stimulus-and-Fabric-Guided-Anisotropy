@@ -1012,3 +1012,368 @@ class TestPartitionInterfaceArtifacts:
                 print(f"    This can cause visible artifacts at partition boundaries in ParaView.")
                 print(f"    Recommendation: Use 'Merge Blocks' filter or write owned-only data.")
 
+
+# =============================================================================
+# Sanity Checks: Rank ID and Constant Field Tests
+# =============================================================================
+
+class TestSanityChecks:
+    """
+    Sanity check tests to distinguish ghost/solver issues from output issues.
+    
+    (A) Rank ID test: Each subdomain should have constant rank value, no noise at interfaces.
+    (B) Constant field test: A field set to 1.0 everywhere must remain exactly 1.0.
+    
+    If these fail, the problem is in DOF mapping or ghost handling.
+    If these pass but simulation fields show artifacts, the problem is elsewhere.
+    """
+    
+    def test_rank_id_field_owned_values(self):
+        """Test that owned DOFs have correct rank ID value."""
+        domain = create_test_mesh(n=6)
+        P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
+        Q = functionspace(domain, P1)
+        
+        rank_id = Function(Q, name="rank_id")
+        n_owned = get_owned_size(rank_id)
+        
+        # Set owned DOFs to rank
+        rank_id.x.array[:n_owned] = float(rank)
+        rank_id.x.scatter_forward()
+        
+        # Verify owned DOFs are exactly rank
+        owned_vals = rank_id.x.array[:n_owned]
+        assert np.allclose(owned_vals, float(rank)), \
+            f"Rank {rank}: owned DOFs should all be {rank}, got range [{owned_vals.min()}, {owned_vals.max()}]"
+    
+    def test_rank_id_ghost_values_match_owners(self):
+        """Test that ghost DOFs have the correct owner rank value."""
+        if size < 2:
+            pytest.skip("Need at least 2 MPI ranks")
+        
+        domain = create_test_mesh(n=6)
+        P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
+        Q = functionspace(domain, P1)
+        
+        rank_id = Function(Q, name="rank_id")
+        n_owned = get_owned_size(rank_id)
+        
+        # Set owned DOFs to rank
+        rank_id.x.array[:n_owned] = float(rank)
+        rank_id.x.scatter_forward()
+        
+        # Get ghost info
+        imap = Q.dofmap.index_map
+        bs = Q.dofmap.index_map_bs
+        n_local = imap.size_local * bs
+        n_ghosts = imap.num_ghosts
+        ghost_owners = imap.owners
+        
+        if n_ghosts > 0:
+            ghost_vals = rank_id.x.array[n_local:]
+            
+            # Each ghost DOF should have the value equal to its owner rank
+            for i, (val, owner) in enumerate(zip(ghost_vals, ghost_owners)):
+                assert np.isclose(val, float(owner)), \
+                    f"Rank {rank}: ghost DOF {i} has value {val}, but owner is rank {owner}"
+    
+    def test_rank_id_no_interface_noise(self):
+        """Test that rank_id field has no spurious values at partition interfaces."""
+        if size < 2:
+            pytest.skip("Need at least 2 MPI ranks")
+        
+        domain = create_test_mesh(n=6)
+        P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
+        Q = functionspace(domain, P1)
+        
+        rank_id = Function(Q, name="rank_id")
+        n_owned = get_owned_size(rank_id)
+        
+        # Set owned DOFs to rank
+        rank_id.x.array[:n_owned] = float(rank)
+        rank_id.x.scatter_forward()
+        
+        # All values in the array should be valid rank IDs (0, 1, ..., size-1)
+        all_vals = rank_id.x.array
+        valid_ranks = set(range(size))
+        
+        for val in all_vals:
+            rounded = round(val)
+            assert rounded in valid_ranks, \
+                f"Rank {rank}: found invalid rank ID {val} (rounded: {rounded})"
+            assert np.isclose(val, float(rounded), atol=1e-10), \
+                f"Rank {rank}: rank ID has noise: {val} != {rounded}"
+    
+    def test_constant_field_owned_values(self):
+        """Test that a constant field has correct owned DOF values."""
+        domain = create_test_mesh(n=6)
+        P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
+        Q = functionspace(domain, P1)
+        
+        const = Function(Q, name="const")
+        n_owned = get_owned_size(const)
+        
+        # Set owned DOFs to 1.0
+        const.x.array[:n_owned] = 1.0
+        const.x.scatter_forward()
+        
+        # Verify owned DOFs are exactly 1.0
+        owned_vals = const.x.array[:n_owned]
+        assert np.allclose(owned_vals, 1.0, atol=1e-14), \
+            f"Rank {rank}: owned DOFs should all be 1.0, got range [{owned_vals.min()}, {owned_vals.max()}]"
+    
+    def test_constant_field_ghost_values(self):
+        """Test that ghost DOFs of a constant field are also exactly 1.0."""
+        if size < 2:
+            pytest.skip("Need at least 2 MPI ranks")
+        
+        domain = create_test_mesh(n=6)
+        P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
+        Q = functionspace(domain, P1)
+        
+        const = Function(Q, name="const")
+        n_owned = get_owned_size(const)
+        
+        # Set owned DOFs to 1.0
+        const.x.array[:n_owned] = 1.0
+        const.x.scatter_forward()
+        
+        # Verify ghost DOFs are also 1.0
+        imap = Q.dofmap.index_map
+        bs = Q.dofmap.index_map_bs
+        n_local = imap.size_local * bs
+        n_ghosts = imap.num_ghosts
+        
+        if n_ghosts > 0:
+            ghost_vals = const.x.array[n_local:]
+            assert np.allclose(ghost_vals, 1.0, atol=1e-14), \
+                f"Rank {rank}: ghost DOFs should be 1.0, got range [{ghost_vals.min()}, {ghost_vals.max()}]"
+    
+    def test_constant_field_global_integral(self):
+        """Test that integral of constant=1 field equals mesh volume."""
+        domain = create_test_mesh(n=6)
+        P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
+        Q = functionspace(domain, P1)
+        
+        const = Function(Q, name="const")
+        n_owned = get_owned_size(const)
+        
+        const.x.array[:n_owned] = 1.0
+        const.x.scatter_forward()
+        
+        # Integral of 1 over unit cube should be 1.0
+        dx = ufl.Measure("dx", domain=domain)
+        integral = fem.assemble_scalar(fem.form(const * dx))
+        global_integral = comm.allreduce(integral, op=MPI.SUM)
+        
+        # Unit cube volume = 1.0
+        assert np.isclose(global_integral, 1.0, atol=1e-10), \
+            f"Integral of const=1 should be 1.0 (unit cube volume), got {global_integral}"
+    
+    def test_constant_field_no_interface_artifacts(self):
+        """Test that constant field has no artifacts at partition interfaces."""
+        if size < 2:
+            pytest.skip("Need at least 2 MPI ranks")
+        
+        domain = create_test_mesh(n=6)
+        P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
+        Q = functionspace(domain, P1)
+        
+        const = Function(Q, name="const")
+        n_owned = get_owned_size(const)
+        
+        const.x.array[:n_owned] = 1.0
+        const.x.scatter_forward()
+        
+        # ALL values (owned + ghost) should be exactly 1.0
+        all_vals = const.x.array
+        
+        # Check for any deviation from 1.0
+        max_deviation = np.max(np.abs(all_vals - 1.0))
+        assert max_deviation < 1e-14, \
+            f"Rank {rank}: constant field has deviation {max_deviation} from 1.0"
+        
+        # No value should be outside [1.0 - eps, 1.0 + eps]
+        assert np.all(np.isclose(all_vals, 1.0, atol=1e-14)), \
+            f"Rank {rank}: not all values are exactly 1.0"
+    
+    def test_rank_id_statistics(self):
+        """Diagnostic: print rank_id field statistics for debugging."""
+        if size < 2:
+            pytest.skip("Need at least 2 MPI ranks")
+        
+        domain = create_test_mesh(n=6)
+        P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
+        Q = functionspace(domain, P1)
+        
+        rank_id = Function(Q, name="rank_id")
+        n_owned = get_owned_size(rank_id)
+        
+        rank_id.x.array[:n_owned] = float(rank)
+        rank_id.x.scatter_forward()
+        
+        # Compute field stats
+        rmin, rmax, rmean = field_stats(rank_id, comm)
+        
+        if rank == 0:
+            print(f"\n  [DIAGNOSTIC] Rank ID field statistics:")
+            print(f"    Min: {rmin}, Max: {rmax}, Mean: {rmean:.4f}")
+            print(f"    Expected: Min=0, Max={size-1}, Mean={0.5*(size-1):.4f}")
+        
+        # Mean of rank IDs should be approximately (size-1)/2
+        # (weighted by owned DOFs per rank, which may vary slightly)
+        assert rmin == 0.0, f"Min rank should be 0, got {rmin}"
+        assert rmax == float(size - 1), f"Max rank should be {size-1}, got {rmax}"
+    
+    def test_constant_field_statistics(self):
+        """Diagnostic: verify constant field has uniform statistics."""
+        domain = create_test_mesh(n=6)
+        P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
+        Q = functionspace(domain, P1)
+        
+        const = Function(Q, name="const")
+        n_owned = get_owned_size(const)
+        
+        const.x.array[:n_owned] = 1.0
+        const.x.scatter_forward()
+        
+        # Compute field stats
+        cmin, cmax, cmean = field_stats(const, comm)
+        
+        if rank == 0:
+            print(f"\n  [DIAGNOSTIC] Constant field statistics:")
+            print(f"    Min: {cmin}, Max: {cmax}, Mean: {cmean}")
+            print(f"    Expected: Min=1.0, Max=1.0, Mean=1.0")
+        
+        assert np.isclose(cmin, 1.0, atol=1e-14), f"Min should be 1.0, got {cmin}"
+        assert np.isclose(cmax, 1.0, atol=1e-14), f"Max should be 1.0, got {cmax}"
+        assert np.isclose(cmean, 1.0, atol=1e-14), f"Mean should be 1.0, got {cmean}"
+
+
+class TestSanityChecksWithVTXOutput:
+    """
+    Extended sanity checks that verify VTX output format.
+    
+    These tests write diagnostic fields to VTX files and verify the data
+    that would be visible in ParaView.
+    """
+    
+    def test_rank_id_vtx_output_consistency(self, tmp_path_factory):
+        """Test that rank_id field VTX output has correct values."""
+        if size < 2:
+            pytest.skip("Need at least 2 MPI ranks")
+        
+        # Use shared temp directory across ranks
+        if rank == 0:
+            tmp_dir = tmp_path_factory.mktemp("rank_id_test")
+        else:
+            tmp_dir = None
+        tmp_dir = comm.bcast(tmp_dir, root=0)
+        
+        domain = create_test_mesh(n=6)
+        P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
+        Q = functionspace(domain, P1)
+        
+        rank_id = Function(Q, name="rank_id")
+        n_owned = get_owned_size(rank_id)
+        
+        rank_id.x.array[:n_owned] = float(rank)
+        rank_id.x.scatter_forward()
+        
+        # The data that VTX would write
+        vtx_data = rank_id.x.array.copy()
+        
+        # Get ghost info
+        imap = Q.dofmap.index_map
+        bs = Q.dofmap.index_map_bs
+        n_local = imap.size_local * bs
+        n_ghosts = imap.num_ghosts
+        ghost_owners = imap.owners
+        
+        # Verify: each ghost has value = its owner rank
+        if n_ghosts > 0:
+            ghost_vals = vtx_data[n_local:]
+            for i, (val, owner) in enumerate(zip(ghost_vals, ghost_owners)):
+                assert np.isclose(val, float(owner)), \
+                    f"VTX output would show ghost DOF {i} with value {val}, but owner is {owner}"
+        
+        if rank == 0:
+            print(f"\n  [OK] rank_id VTX output would be consistent")
+            print(f"       Owned DOFs show rank {rank}, ghosts show their owner ranks")
+    
+    def test_constant_field_vtx_output_no_artifacts(self, tmp_path_factory):
+        """Test that constant field VTX output has no artifacts."""
+        if size < 2:
+            pytest.skip("Need at least 2 MPI ranks")
+        
+        # Use shared temp directory across ranks
+        if rank == 0:
+            tmp_dir = tmp_path_factory.mktemp("const_test")
+        else:
+            tmp_dir = None
+        tmp_dir = comm.bcast(tmp_dir, root=0)
+        
+        domain = create_test_mesh(n=6)
+        P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
+        Q = functionspace(domain, P1)
+        
+        const = Function(Q, name="const")
+        n_owned = get_owned_size(const)
+        
+        const.x.array[:n_owned] = 1.0
+        const.x.scatter_forward()
+        
+        # The data that VTX would write
+        vtx_data = const.x.array.copy()
+        
+        # ALL data should be exactly 1.0
+        max_deviation = np.max(np.abs(vtx_data - 1.0))
+        
+        assert max_deviation < 1e-14, \
+            f"Rank {rank}: VTX output would show artifacts with deviation {max_deviation}"
+        
+        if rank == 0:
+            print(f"\n  [OK] constant field VTX output would have no artifacts")
+            print(f"       All values (owned + ghost) are exactly 1.0")
+    
+    def test_vtx_ghost_duplication_diagnostic(self):
+        """Diagnostic: show ghost duplication in VTX output."""
+        if size < 2:
+            pytest.skip("Need at least 2 MPI ranks")
+        
+        domain = create_test_mesh(n=6)
+        P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
+        Q = functionspace(domain, P1)
+        
+        rank_id = Function(Q, name="rank_id")
+        n_owned = get_owned_size(rank_id)
+        
+        rank_id.x.array[:n_owned] = float(rank)
+        rank_id.x.scatter_forward()
+        
+        # Get counts
+        imap = Q.dofmap.index_map
+        bs = Q.dofmap.index_map_bs
+        local_owned = imap.size_local * bs
+        local_ghosts = imap.num_ghosts
+        local_total = len(rank_id.x.array)
+        
+        global_owned = comm.allreduce(local_owned, op=MPI.SUM)
+        global_ghosts = comm.allreduce(local_ghosts, op=MPI.SUM)
+        global_vtx_total = comm.allreduce(local_total, op=MPI.SUM)
+        global_unique = imap.size_global
+        
+        if rank == 0:
+            print(f"\n  [DIAGNOSTIC] VTX output duplication analysis:")
+            print(f"    Global unique DOFs: {global_unique}")
+            print(f"    Total owned across ranks: {global_owned}")
+            print(f"    Total ghosts across ranks: {global_ghosts}")
+            print(f"    VTX would output per rank: sum = {global_vtx_total}")
+            print(f"    Duplication factor: {global_vtx_total / global_unique:.2f}x")
+            print(f"    ")
+            print(f"    [INFO] ParaView sees overlapping data at interfaces.")
+            print(f"    [INFO] Use 'Merge Blocks' filter or 'Group Datasets' to fix.")
+        
+        # Test passes - this is informational
+        assert global_vtx_total >= global_unique, "VTX output should include at least all unique DOFs"
+

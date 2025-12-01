@@ -190,9 +190,9 @@ class Remodeller:
 
     def _output(self, t: float, step: int, coupling_stats: Dict[str, float], 
                  dt: float, wrms_error: float, next_dt: float):
-        """Scatter, stats, log, write."""
-        # Ensure ghost DOFs are up-to-date before VTX write
-        self.rho.x.scatter_forward()
+        """Collect stats, log, write fields."""
+        # Note: rho is already synced after fixedsolver.run()
+        # VTXWriter handles ghost DOFs correctly
         
         fields = self._collect_field_stats()
         s_stats = self.fixedsolver.solver_stats
@@ -236,7 +236,8 @@ class Remodeller:
 
     def step(self, dt: float, step_index: int, time_days: float) -> Tuple[float, Dict]:
         """Single timestep attempt."""
-        assign(self.rho_old, self.rho)
+        # rho is synced from previous step or init, skip redundant scatter
+        assign(self.rho_old, self.rho, scatter=False)
 
         if not self.solvers_initialized:
             self.driver.setup()
@@ -246,6 +247,7 @@ class Remodeller:
         x_pred = self.integrator.predict(dt, self.rho)
         n_owned = get_owned_size(self.rho)
         self.rho.x.array[:n_owned] = x_pred
+        # Must scatter after prediction modifies owned DOFs
         self.rho.x.scatter_forward()
 
         if abs(float(dt) - self._current_dt) > 1e-12:
