@@ -1,4 +1,4 @@
-"""Anderson (Pulay) acceleration with restart heuristics."""
+"""Anderson acceleration with safeguard and restart."""
 
 from collections import deque
 from typing import Callable, Dict, Optional, Sequence, Tuple
@@ -10,30 +10,8 @@ from simulation.logger import get_logger
 
 class _Anderson:
     """
-    Anderson (Pulay) acceleration with safeguard, backtracking, and auto-restart.
-    
-    Algorithm:
-        Given history {x_k, r_k} for k=0..m-1 where r_k = G(x_k) - x_k:
-        1. Build Gram matrix H = R R^T (MPI collective)
-        2. Solve min ||alpha||_H s.t. sum(alpha) = 1
-        3. Compute accelerated iterate: x_new = sum(alpha_k * (x_k + beta * r_k))
-    
-    Safeguards:
-        - Step size limiting (step_limit_factor)
-        - Armijo-type backtracking
-        - Automatic restart on:
-            - Consecutive rejections (restart_on_reject_k)
-            - Stalling (r_norm > restart_on_stall * best_r_norm)
-            - Ill-conditioning (cond(H) > restart_on_cond)
-    
-    MPI Notes:
-        - Gram matrix built via allreduce (O(m²) doubles per iter)
-        - Minimization solved redundantly on each rank
-        - Only owned DOFs participate in residual norms
-    
-    References:
-        - Walker & Ni (2011): Anderson acceleration for fixed-point iterations
-        - Fang & Saad (2009): Two classes of multisecant methods
+    Anderson mixing: x_new = sum(alpha_k * (x_k + beta*r_k)).
+    Includes step limiting, backtracking, and auto-restart on stall/ill-conditioning.
     """
 
     def __init__(
@@ -75,7 +53,7 @@ class _Anderson:
         self.gamma_decay_p = gamma_decay_p
 
     def reset(self) -> None:
-        """Clear history and reset tracking."""
+        """Clear history."""
         self.x_hist.clear()
         self.r_hist.clear()
         self.reject_streak = 0
@@ -83,7 +61,7 @@ class _Anderson:
         self.pending_reset = False
 
     def _build_gram(self, r_list: Sequence[np.ndarray]) -> np.ndarray:
-        """Global Gram matrix H = R R^T (MPI collective)."""
+        """Global Gram matrix H = R R^T."""
         if len(r_list) == 0:
             return np.zeros((0, 0), dtype=float)
         R_loc = np.vstack(r_list)
@@ -91,7 +69,7 @@ class _Anderson:
         return self.comm.allreduce(H_loc, op=MPI.SUM)
 
     def _solve_kkt(self, H: np.ndarray, lam_eff: float) -> np.ndarray:
-        """Solve min ||alpha||_{H+lam I} s.t. 1^T alpha = 1."""
+        """Solve min ||alpha||_H s.t. 1^T alpha = 1."""
         p = H.shape[0]
         if p == 0:
             return np.zeros(0, dtype=float)
@@ -109,7 +87,7 @@ class _Anderson:
         return y / denom
 
     def _condition_number(self, H: np.ndarray, lam_eff: float) -> float:
-        """Estimate condition number of H + lam*I."""
+        """Condition number of H + lam*I."""
         p = H.shape[0]
         if p == 0:
             return 1.0
@@ -215,7 +193,7 @@ class _Anderson:
         use_safeguard: bool,
         info: Dict,
     ) -> Tuple[np.ndarray, Dict]:
-        """Damped Picard step."""
+        """Damped Picard: x_new = x_old + beta*r."""
         x_new = x_old + self.beta * r
         
         if mask_fixed is not None and mask_fixed.any():

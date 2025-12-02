@@ -1,8 +1,4 @@
-"""MPI-parallel loader for femur surface loads.
-
-Handles pyvista mesh reading and load computation on rank 0,
-then broadcasts/scatters results to all MPI ranks for DOLFINx interpolation.
-"""
+"""MPI-parallel femur surface load interpolation."""
 
 import numpy as np
 import dolfinx
@@ -16,11 +12,7 @@ from simulation.femur_loads import HIPJointLoad, MuscleLoad, vector_from_angles
 
 
 class Loader:
-    """MPI-parallel loader for hip and gluteus medius loads.
-    
-    PyVista mesh reading and load objects are only created on rank 0.
-    Load interpolation uses MPI gather/scatter for parallel evaluation.
-    """
+    """Parallel loader: rank 0 computes loads, scatter to all."""
     
     def __init__(self, dolfinx_mesh: dolfinx.mesh.Mesh):
         self.mesh = dolfinx_mesh
@@ -55,53 +47,37 @@ class Loader:
         self.comm.Barrier()
     
     def _interpolate_mpi(self, loader_obj, target_fun: fem.Function) -> None:
-        """Interpolate load values safely using 'Owner Computes' pattern.
-        
-        Only OWNED coordinates are sent to rank 0 for evaluation.
-        Ghosts are updated via Dolfinx scatter_forward mechanism.
-        """
-        # 1. Získání informací o DOFs
+        """Owner-computes pattern: gather coords, eval on rank 0, scatter back."""
+        # DOF info
         V = target_fun.function_space
         imap = V.dofmap.index_map
         bs = V.dofmap.index_map_bs
-        
-        # size_local udává počet vlastněných entit (uzlů) v tomto ranku
         n_owned = imap.size_local
         
-        # Získání souřadnic všech lokálních uzlů (Owned + Ghosts)
-        # Dolfinx standard: prvních 'n_owned' řádků jsou owned uzly.
+        # Owned coordinates only
         all_coords = V.tabulate_dof_coordinates()
-        
-        # Vyřízneme JEN souřadnice, které tento rank vlastní
         x_owned = all_coords[:n_owned]
-        
-        # Počet vlastněných uzlů pro MPI komunikaci
         local_n = n_owned
         
-        # Gather počtů od všech ranků
+        # MPI setup
         all_n = self.comm.allgather(local_n)
-        
-        # Displacements pro Gatherv/Scatterv (kam se data uloží v bufferu)
         displs = [sum(all_n[:i]) for i in range(len(all_n))]
         
         if self.rank == 0:
             total_n = sum(all_n)
-            
-            # Buffer pro příchozí souřadnice (pouze owned od všech)
             recv_coords = np.empty((total_n, 3), dtype=np.float64)
             
-            # 1. GATHER: Všichni pošlou své owned souřadnice
+            # Gather coords from all ranks
             self.comm.Gatherv(
                 np.ascontiguousarray(x_owned),
                 [recv_coords, [n * 3 for n in all_n], [d * 3 for d in displs], MPI.DOUBLE],
                 root=0
             )
             
-            # 2. EVALUATE: Rank 0 vyhodnotí zátěž na všech bodech
-            # loader_obj je např. HIPJointLoad, vrací (N, 3)
-            computed_values = loader_obj(recv_coords) 
+            # Evaluate load
+            computed_values = loader_obj(recv_coords)
             
-            # 3. SCATTER: Rozeslání výsledků zpět vlastníkům
+            # Scatter results
             local_values = np.empty((local_n, 3), dtype=np.float64)
             self.comm.Scatterv(
                 [computed_values, [n * 3 for n in all_n], [d * 3 for d in displs], MPI.DOUBLE],
@@ -109,38 +85,17 @@ class Loader:
                 root=0
             )
         else:
-            # Worker pošle své owned souřadnice
             self.comm.Gatherv(np.ascontiguousarray(x_owned), None, root=0)
-            
-            # Worker připraví buffer a přijme výsledky
             local_values = np.empty((local_n, 3), dtype=np.float64)
             self.comm.Scatterv(None, local_values, root=0)
         
-        # 4. ASSIGN & SYNC
-        # Zápis do pole funkce. Protože jsme pracovali jen s n_owned,
-        # zapisujeme přesně do 'owned' části pole (začátek).
-        # target_fun.x.array je ploché pole [x0, y0, z0, x1...] nebo blokové,
-        # flatten() to srovná správně pro P1 Vector space.
+        # Assign and sync
         target_fun.x.array[:n_owned * bs] = local_values.flatten()
-        
-        # KLÍČOVÝ KROK: Propagace hodnot na ghost uzly sousedních procesů.
-        # Tím se vyhladí přechody na partition boundary.
         target_fun.x.scatter_forward()
     
     def hip_force(self, magnitude: float, alpha_sag: float, alpha_front: float, 
                   sigma_deg: float = 10.0, flip: bool = True) -> fem.Function:
-        """Apply hip joint load and interpolate to DOLFINx function.
-        
-        Args:
-            magnitude: Force magnitude in N.
-            alpha_sag: Sagittal plane angle in degrees.
-            alpha_front: Frontal plane angle in degrees.
-            sigma_deg: Gaussian spread in degrees (default: 10.0).
-            flip: Flip force direction (default: True).
-        
-        Returns:
-            DOLFINx function with interpolated traction field.
-        """
+        """Apply hip joint load. Returns interpolated traction field."""
         # Rank 0 computes the load distribution
         if self.rank == 0:
             v = vector_from_angles(magnitude=magnitude, alpha_sag=alpha_sag, 
@@ -157,18 +112,7 @@ class Loader:
 
     def glmed_force(self, magnitude: float, alpha_sag: float, alpha_front: float, 
                     sigma: float = 2.0, flip: bool = False) -> fem.Function:
-        """Apply gluteus medius load and interpolate to DOLFINx function.
-        
-        Args:
-            magnitude: Force magnitude in N.
-            alpha_sag: Sagittal plane angle in degrees.
-            alpha_front: Frontal plane angle in degrees.
-            sigma: Gaussian spread in mm (default: 2.0).
-            flip: Flip force direction (default: False).
-        
-        Returns:
-            DOLFINx function with interpolated traction field.
-        """
+        """Apply gluteus medius load. Returns interpolated traction field."""
         # Rank 0 computes the load distribution
         if self.rank == 0:
             v = vector_from_angles(magnitude=magnitude, alpha_sag=alpha_sag, 

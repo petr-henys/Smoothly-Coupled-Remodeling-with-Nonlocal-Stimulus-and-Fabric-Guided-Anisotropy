@@ -1,4 +1,4 @@
-"""Fixed-point iteration for coupled mechanics-density problem."""
+"""Block Gauss-Seidel with Anderson acceleration."""
 
 from __future__ import annotations
 from typing import Dict, List
@@ -14,24 +14,8 @@ from simulation.anderson import _Anderson
 
 class FixedPointSolver:
     """
-    Fixed-point solver for mechanics-density coupling.
-    
-    Algorithm (Block Gauss-Seidel with Anderson acceleration):
-        for iter = 1..max_subiters:
-            1. Store ρ_prev = ρ
-            2. Assemble K(ρ), solve K(ρ)u = f  → new u
-            3. Compute Ψ(u, ρ)
-            4. Assemble density system, solve → new ρ
-            5. Anderson mixing: ρ = mix(ρ_prev, ρ_raw)
-            6. Check convergence: ||ρ - ρ_prev|| / ||ρ|| < tol
-    
-    Anderson acceleration:
-        - Builds history of m previous iterates
-        - Minimizes residual in least-squares sense
-        - Includes safeguard, backtracking, and restart heuristics
-    
-    Note: Only ρ is accelerated, not (u, ρ) jointly. This is suboptimal
-    but simpler. For full Newton, consider monolithic formulation.
+    Fixed-point iteration: mechanics → SED → density → Anderson mixing.
+    Converges when ||ρ_new - ρ_old|| / ||ρ|| < coupling_tol.
     """
 
     def __init__(
@@ -80,7 +64,7 @@ class FixedPointSolver:
     def proj_residual_norm(self, x_old_vec: np.ndarray,
                             x_trial_vec: np.ndarray,
                             x_ref_vec: np.ndarray) -> float:
-        """Relative step size: ||x_trial - x_old|| / ||x_ref|| in global (MPI) 2-norm."""
+        """Relative step: ||x_trial - x_old|| / ||x_ref|| (global L2)."""
         diff = x_trial_vec - x_old_vec
         diff_loc = float(np.dot(diff, diff))
         ref_loc  = float(np.dot(x_ref_vec, x_ref_vec))
@@ -92,7 +76,7 @@ class FixedPointSolver:
         return np.sqrt(diff_glob / ref_glob)
 
     def run(self, *, progress=None, task_id=None) -> bool:
-        """Execute fixed-point loop."""
+        """Run fixed-point loop. Returns True if converged."""
         tol = float(self.cfg.coupling_tol)
         max_subiters = int(self.cfg.max_subiters)
         min_subiters = int(self.cfg.min_subiters)

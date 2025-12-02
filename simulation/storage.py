@@ -1,4 +1,4 @@
-"""Universal storage system for field I/O."""
+"""VTX field output (collective MPI)."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from simulation.logger import get_logger
 
 
 class FieldStorage:
-    """VTX field output (collective MPI operations)."""
+    """VTX field writers. All ops are MPI-collective."""
 
     __slots__ = ("comm", "logger", "output_dir", "_writers", "_write_counts")
 
@@ -40,7 +40,7 @@ class FieldStorage:
         filename: Optional[str] = None,
         engine: str = "bp4",
     ) -> None:
-        """Register VTX writer. COLLECTIVE operation."""
+        """Register VTX writer (collective)."""
         path = self.output_dir / (filename or f"{key}.bp")
         writer = VTXWriter(self.comm, str(path), list(fields), engine=engine)
         self._writers[key] = writer
@@ -48,12 +48,12 @@ class FieldStorage:
         self.logger.debug(lambda: f"Registered '{key}': {path}")
 
     def write(self, key: str, t: float) -> None:
-        """Write field group. COLLECTIVE operation."""
+        """Write field group (collective)."""
         self._writers[key].write(t)
         self._write_counts[key] += 1
 
     def close(self) -> None:
-        """Close all writers. COLLECTIVE operation."""
+        """Close all writers (collective)."""
         self.comm.Barrier()
         for writer in self._writers.values():
             writer.close()
@@ -69,7 +69,7 @@ class FieldStorage:
 
 
 class UnifiedStorage:
-    """Unified field storage wrapper."""
+    """Field storage wrapper."""
 
     __slots__ = ("comm", "fields")
 
@@ -78,7 +78,7 @@ class UnifiedStorage:
         self.fields = FieldStorage(cfg, self.comm)
 
     def close(self) -> None:
-        """Close storage. COLLECTIVE operation."""
+        """Close storage (collective)."""
         self.fields.close()
 
     def __enter__(self) -> "UnifiedStorage":

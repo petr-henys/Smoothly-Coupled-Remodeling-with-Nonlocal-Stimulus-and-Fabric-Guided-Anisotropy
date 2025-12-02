@@ -11,7 +11,7 @@ import ufl
 dtype = PETSc.ScalarType
 
 def build_nullspace(V: FunctionSpace):
-    """Build 6-vector PETSc nullspace for 3D elasticity (rigid-body modes)."""
+    """6-vector PETSc nullspace for 3D elasticity (rigid-body modes)."""
     bs = V.dofmap.index_map_bs
     length0 = V.dofmap.index_map.size_local
     basis = [la.vector(V.dofmap.index_map, bs=bs, dtype=dtype) for i in range(6)]
@@ -40,7 +40,7 @@ def build_nullspace(V: FunctionSpace):
     return PETSc.NullSpace().create(vectors=basis_petsc)
 
 def build_facetag(m: mesh.Mesh) -> mesh.MeshTags:
-    """Tag unit-cube boundary facets: x=0→1, x=1→2, y=0→3, y=1→4."""
+    """Tag unit-cube facets: x=0→1, x=1→2, y=0→3, y=1→4."""
     boundaries = [
         (1, lambda x: np.isclose(x[0], 0)),
         (2, lambda x: np.isclose(x[0], 1)),
@@ -64,7 +64,7 @@ def build_facetag(m: mesh.Mesh) -> mesh.MeshTags:
 def build_dirichlet_bcs(
     V: fem.FunctionSpace, facet_tags: mesh.MeshTags, id_tag: int, value: float = 0.0
 ) -> List[fem.DirichletBC]:
-    """Create homogeneous Dirichlet BCs on facets with given tag."""
+    """Homogeneous Dirichlet BCs on tagged facets."""
     fdim = V.mesh.topology.dim - 1
     facets = facet_tags.find(id_tag)
     bcs = []
@@ -75,14 +75,7 @@ def build_dirichlet_bcs(
     return bcs
 
 def assign(f: fem.Function, v, *, scatter: bool = True) -> None:
-    """Assign scalar/array/Function to owned DOFs, optionally scatter.
-    
-    Args:
-        f: Target function.
-        v: Value (scalar, array, or Function).
-        scatter: If True (default), call scatter_forward() after assignment.
-                 Set False when caller will scatter later or value is already synced.
-    """
+    """Assign scalar/array/Function to owned DOFs."""
     owned = f.function_space.dofmap.index_map.size_local * f.function_space.dofmap.index_map_bs
     if isinstance(v, fem.Function):
         f.x.array[:owned] = v.x.array[:owned]
@@ -98,12 +91,12 @@ def assign(f: fem.Function, v, *, scatter: bool = True) -> None:
         f.x.scatter_forward()
 
 def get_owned_size(field: fem.Function) -> int:
-    """Count of locally owned DOFs."""
+    """Number of locally owned DOFs."""
     return int(field.function_space.dofmap.index_map.size_local * field.function_space.dofmap.index_map_bs)
 
 
 def field_stats(field: fem.Function, comm: MPI.Comm) -> Tuple[float, float, float]:
-    """Compute MPI-reduced min, max, mean of a field's owned DOFs."""
+    """Global min, max, mean of owned DOFs."""
     n_owned = get_owned_size(field)
     local_data = field.x.array[:n_owned]
     
@@ -126,7 +119,7 @@ def field_stats(field: fem.Function, comm: MPI.Comm) -> Tuple[float, float, floa
 
 
 def collect_dirichlet_dofs(bcs, n_owned: int) -> np.ndarray:
-    """Unique owned DOF indices from Dirichlet BCs."""
+    """Unique owned DOF indices from BCs."""
     chunks = []
     for bc in bcs:
         idx, first_ghost = bc.dof_indices()
@@ -139,64 +132,20 @@ def collect_dirichlet_dofs(bcs, n_owned: int) -> np.ndarray:
 
 
 def current_memory_mb() -> float:
-    """Process RSS memory in MB."""
+    """Process RSS in MB."""
     mem_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     return mem_kb / 1024.0
 
 def smooth_abs(x, eps=1e-4):
-    """
-    Smooth approximation of |x|.
-    
-    Formula: sqrt(x² + eps²) - eps
-    
-    Properties:
-        - C∞ differentiable everywhere
-        - smooth_abs(0, eps) = 0 (exact at origin)
-        - Approaches |x| as eps → 0
-        - Derivative: x / sqrt(x² + eps²)
-    
-    Args:
-        x: UFL expression or scalar
-        eps: Smoothing parameter (smaller = sharper but less smooth)
-    
-    Returns:
-        UFL expression approximating |x|
-    """
+    """C¹ approximation of |x|: sqrt(x² + eps²) - eps."""
     return ufl.sqrt(x**2 + eps**2) - eps
 
 def smooth_plus(x, eps=1e-4):
-    """
-    Smooth approximation of max(x, 0).
-    
-    Formula: 0.5 * (x + smooth_abs(x, eps))
-    
-    Used in remodeling to separate formation (x > 0) and resorption (x < 0).
-    
-    Args:
-        x: UFL expression or scalar
-        eps: Smoothing parameter
-    
-    Returns:
-        UFL expression approximating max(x, 0)
-    """
+    """C¹ approximation of max(x, 0)."""
     return 0.5 * (x + smooth_abs(x, eps))
 
 def smooth_max(x, y, eps=1e-4):
-    """
-    Smooth approximation of max(x, y).
-    
-    Formula: 0.5 * (x + y + smooth_abs(x - y, eps))
-    
-    Commonly used for rho_eff = smooth_max(rho, rho_min) to prevent
-    singular stiffness when rho approaches zero.
-    
-    Args:
-        x, y: UFL expressions or scalars
-        eps: Smoothing parameter
-    
-    Returns:
-        UFL expression approximating max(x, y)
-    """
+    """C¹ approximation of max(x, y)."""
     return 0.5 * (x + y + smooth_abs(x - y, eps))
 
 

@@ -1,4 +1,4 @@
-"""Telemetry system for experiment tracking and reproducibility."""
+"""CSV event streams and JSON metadata for experiment tracking."""
 
 from __future__ import annotations
 
@@ -15,12 +15,12 @@ from simulation.logger import get_logger
 
 
 def _iso_utc(dt: datetime) -> str:
-    """Format datetime as ISO-8601 Zulu (UTC) string."""
+    """ISO-8601 UTC string."""
     return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 class Telemetry:
-    """CSV event streams and JSON metadata for experiment tracking."""
+    """CSV streams and JSON metadata (rank-0 only)."""
 
     def __init__(
         self,
@@ -55,7 +55,7 @@ class Telemetry:
         gz: bool = False,
         filename: Optional[str] = None,
     ) -> None:
-        """Register a CSV event stream."""
+        """Register CSV stream (rank-0)."""
         if self.comm.rank != 0:
             return
 
@@ -77,7 +77,7 @@ class Telemetry:
         self.logger.debug(lambda: f"Registered CSV stream '{stream_name}' at {path}")
 
     def record(self, stream_name: str, data: Dict[str, Any], csv_event: bool = True) -> None:
-        """Record an event to a registered stream."""
+        """Record event to stream (rank-0)."""
         if self.comm.rank != 0 or not csv_event:
             return
         if stream_name not in self._csv_writers:
@@ -88,7 +88,7 @@ class Telemetry:
             self._flush(stream_name)
 
     def _flush(self, stream_name: str) -> None:
-        """Flush buffered events to disk."""
+        """Flush buffered events."""
         if self.comm.rank != 0 or stream_name not in self._buffers:
             return
 
@@ -100,7 +100,7 @@ class Telemetry:
         self._csv_files[stream_name].flush()
 
     def flush_all(self) -> None:
-        """Flush all buffered events."""
+        """Flush all streams."""
         for stream_name in list(self._buffers.keys()):
             self._flush(stream_name)
 
@@ -112,7 +112,7 @@ class Telemetry:
         *,
         inject_standard_fields: bool = True,
     ) -> None:
-        """Write run metadata to JSON file."""
+        """Write JSON metadata (rank-0)."""
         if self.comm.rank != 0:
             return
 

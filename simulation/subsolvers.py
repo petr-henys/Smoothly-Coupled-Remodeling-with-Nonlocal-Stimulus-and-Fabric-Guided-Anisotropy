@@ -230,41 +230,46 @@ class DensitySolver(_BaseLinearSolver):
 
     def _compile_forms(self):
         """
-        Compile Reaction-Diffusion forms.
-        Based on Article Eq. 9: rho_dot = c * (Psi - Psi_ref)[cite: 153].
-        Rearranged for Implicit Euler:
-        (rho - rho_old)/dt = Diffusion + k_rho * S_driving
+        Compile reaction–diffusion forms for density evolution.
+
+        PDE (semi-discrete, pointwise form):
+
+            ∂ρ/∂t - D_rho Δρ = k_rho [ S_plus (rho_max - ρ) - S_minus (ρ - rho_min) ],
+
+        where
+            S      = (Psi - psi_ref) / psi_ref  (dimensionless stimulus),
+            S_plus  = max(S, 0),
+            S_minus = max(-S, 0).
+
+        For Ψ > Ψ_ref (S_plus > 0), density is driven towards rho_max.
+        For Ψ < Ψ_ref (S_minus > 0), density is driven towards rho_min.
+        Implicit Euler is used in time, with S lagged from the current psi_field.
         """
         dt = self.dt_c
 
-        # Calculate driving force directly from the passed-in Psi function
-        # S_driving = Psi - Psi_ref (dimensional difference)
-        # Positive if Psi > Psi_ref (Bone formation), Negative if Psi < Psi_ref (Resorption)
-        S_driving = self.psi_field - self.cfg.psi_ref
+        # Dimensionless mechanical stimulus
+        S_raw = (self.psi_field - self.cfg.psi_ref) / self.cfg.psi_ref
+        S_plus = smooth_plus(S_raw, self.smooth_eps)
+        S_minus = smooth_plus(-S_raw, self.smooth_eps)
 
-        # Use smooth_plus for a "lazy zone" or pure one-sided reaction if desired.
-        # We still split into formation (+) and resorption (-), but with the same k_rho
-        # for both branches (symmetric mechanostat).
-        S_plus = smooth_plus(S_driving, self.smooth_eps)
-        S_minus = smooth_plus(-S_driving, self.smooth_eps)
+        # Semi-implicit reaction coefficient on the left-hand side
+        reaction_coeff = self.cfg.k_rho * (S_plus + S_minus)
 
-        # LHS: (rho/dt)*v + D_rho*grad(rho)*grad(v)
-        # NOTE: No reaction term multiplying rho on the left-hand side.
-        # The remodeling rate is driven only by the stimulus and the bounds rho_min/rho_max.
+        # LHS: (rho^{n+1}/dt)*v + D_rho * grad(rho^{n+1})·grad(v)
+        #      + k_rho * (S_plus + S_minus) * rho^{n+1} * v
         a_ufl = (
             (self.trial / dt) * self.test * self.dx
             + self.cfg.D_rho * ufl.inner(ufl.grad(self.trial), ufl.grad(self.test)) * self.dx
+            + reaction_coeff * self.trial * self.test * self.dx
         )
         self.a_form = fem.form(a_ufl)
 
-        # RHS: (rho_old/dt)*v + k_rho*(S_plus*rho_max + S_minus*rho_min)*v
-        # Formation and resorption use the same k_rho; the sign/branch is encoded in S_plus/S_minus.
+        # RHS: (rho^n/dt)*v + k_rho * [S_plus * rho_max + S_minus * rho_min] * v
         source_term = self.cfg.k_rho * (
             S_plus * self.cfg.rho_max + S_minus * self.cfg.rho_min
         )
         L_ufl = ((self.rho_old / dt) + source_term) * self.test * self.dx
         self.L_form = fem.form(L_ufl)
-
 
     def _setup_ksp(self):
         self.A.setOption(PETSc.Mat.Option.SPD, True)

@@ -1,4 +1,4 @@
-"""Adaptive time stepping with AB2 predictor and PI error control."""
+"""Adaptive AB2 predictor with Gustafsson PI control."""
 
 from __future__ import annotations
 
@@ -13,39 +13,13 @@ from simulation.utils import assign, get_owned_size
 
 class TimeIntegrator:
     """
-    Adaptive time stepping with AB2 predictor and PI error control.
-    
-    Predictor (for error estimation):
-        AB2: ρ_pred = ρ + dt·(1.5·ρ'_n - 0.5·ρ'_{n-1})  [variable step]
-        AB1: ρ_pred = ρ + dt·ρ'_n  [first steps]
-    
-    Error metric:
-        WRMS = sqrt(mean((ρ_corr - ρ_pred)² / (atol + rtol·|ρ_corr|)²))
-        Step accepted if WRMS ≤ 1.0
-    
-    Step size control (Gustafsson PI):
-        dt_new = dt · safety · err^(-kI) · (err_prev/err)^(-kP)
-    
-    Note: The predictor estimates local truncation error by comparing
-    explicit (AB2) prediction with implicit (density solver) correction.
-    This is heuristic - not a rigorous embedded method error estimate.
-    
-    Current tuning is aggressive (growth_factor=5.0, ki=0.40).
-    Consider reducing to growth_factor=2.0, ki=0.25 for robustness.
+    AB2 predictor for error estimation, PI controller for dt adaptation.
+    WRMS error: sqrt(mean((ρ_corr - ρ_pred)² / (atol + rtol·|ρ|)²)).
+    Step accepted if WRMS ≤ 1.0.
     """
 
     def __init__(self, comm: MPI.Intracomm, cfg: Config, Q: fem.FunctionSpace):
-        """Initialize time integrator.
-
-        Parameters
-        ----------
-        comm : MPI.Intracomm
-            MPI communicator.
-        cfg : Config
-            Simulation configuration.
-        Q : fem.FunctionSpace
-            Function space for density (scalar).
-        """
+        """Initialize with MPI comm, config, and density function space."""
         self.comm = comm
         self.cfg = cfg
         self.Q = Q
@@ -59,24 +33,18 @@ class TimeIntegrator:
         self.dt_prev: Optional[float] = None
         self.error_prev = 1.0  # Initialize with 1.0
 
-        # --- CONTROLLER TUNING ---
-        # WARNING: Current settings are aggressive. May cause oscillations.
-        # Conservative alternative: growth_factor=2.0, ki=0.25
-        self.safety = 0.9           # Safety factor for step acceptance
-        self.growth_factor = 5.0    # Max step growth ratio (aggressive!)
-        self.shrink_factor = 0.1    # Min step shrink ratio
-        
-        # PI controller gains
-        # Theory for order-k method: kI ~ 1/k, kP ~ kI/2
-        # For AB2 (k=2): theoretical limit kI ~ 0.5
-        self.k_exp = 1.5   # Exponent for rejection shrink factor
-        self.kp = 0.20     # Proportional gain (smooths response)
-        self.ki = 0.40     # Integral gain (aggressive - drives fast growth)
+        # Controller parameters
+        self.safety = 0.9
+        self.growth_factor = 5.0
+        self.shrink_factor = 0.1
+        self.k_exp = 1.5
+        self.kp = 0.20
+        self.ki = 0.40
 
         self.reset_history()
 
     def reset_history(self):
-        """Reset history for restart or initial step."""
+        """Reset predictor history."""
         assign(self.rho_rate_last, 0.0)
         assign(self.rho_rate_last2, 0.0)
         self.step_count = 0
@@ -84,13 +52,7 @@ class TimeIntegrator:
         self.error_prev = 1.0
 
     def predict(self, dt: float, rho_current: fem.Function) -> np.ndarray:
-        """Calculate predictor step using AB2 (or Forward Euler).
-
-        Returns
-        -------
-        np.ndarray
-            Predicted values for the owned DOFs.
-        """
+        """AB2 (or AB1) prediction for owned DOFs."""
         dt_curr = float(dt)
 
         # Get owned DOF count
@@ -114,7 +76,7 @@ class TimeIntegrator:
         return pred
 
     def compute_wrms_error(self, x_pred: np.ndarray, x_corr: fem.Function) -> float:
-        """Compute Weighted RMS error between prediction and correction."""
+        """WRMS error between prediction and correction."""
         n_owned = get_owned_size(x_corr)
 
         # Get owned arrays
@@ -142,7 +104,7 @@ class TimeIntegrator:
         return np.sqrt(sq_error_global / N_global)
 
     def suggest_dt(self, dt: float, converged: bool, error_norm: float) -> Tuple[bool, float, str]:
-        """Suggest next timestep based on Gustafsson PI controller."""
+        """PI controller: returns (accepted, next_dt, reason)."""
         if not converged:
             # Divergence: Cut aggressively
             next_dt = max(self.cfg.dt_min, dt * 0.5)
@@ -191,7 +153,7 @@ class TimeIntegrator:
         return True, next_dt, "accepted"
 
     def commit_step(self, dt: float, rho_new: fem.Function, rho_old: fem.Function):
-        """Update history with accepted step."""
+        """Update AB2 history after accepted step."""
         dt_curr = float(dt)
 
         # Shift history (internal fields, only owned DOFs matter)

@@ -1,4 +1,4 @@
-"""Gait driver: solves mechanics and computes stimulus (SED)."""
+"""GaitDriver: mechanics + SED stimulus computation."""
 
 from typing import Dict
 import numpy as np
@@ -14,18 +14,7 @@ from simulation.utils import field_stats
 
 class GaitDriver:
     """
-    Solves mechanics and computes Strain Energy Density (SED) stimulus.
-    
-    Workflow:
-        1. update_stiffness() - reassemble K(ρ) matrix
-        2. update_snapshots() - solve Ku=f, compute Ψ
-    
-    Stimulus definition:
-        Ψ = ½ σ(u,ρ) : ε(u)  [MPa]
-        
-    Note: Since σ = C(ρ):ε and C(ρ) ~ E(ρ), the stimulus Ψ depends on ρ.
-    This creates a positive feedback: higher ρ → higher E → higher σ → higher Ψ.
-    Consider using normalized stimulus Ψ/E(ρ) for stability if issues arise.
+    Solves mechanics and computes Strain Energy Density: Ψ = ½σ:ε.
     """
 
     def __init__(
@@ -33,13 +22,7 @@ class GaitDriver:
         mech: MechanicsSolver,
         config: Config,
     ):
-        """
-        Initialize driver with mechanics solver.
-        
-        Args:
-            mech: Pre-configured MechanicsSolver with Neumann BCs already set.
-            config: Simulation configuration.
-        """
+        """Initialize with MechanicsSolver and config."""
         self.mech = mech
         self.cfg = config
 
@@ -59,7 +42,7 @@ class GaitDriver:
         self.logger.debug("GaitDriver initialized.")
 
     def setup(self) -> None:
-        """Initialize mechanics solver."""
+        """Initialize solver."""
         self.mech.setup()
 
     def destroy(self) -> None:
@@ -67,11 +50,11 @@ class GaitDriver:
         self.mech.destroy()
 
     def update_stiffness(self) -> None:
-        """Reassemble mechanics stiffness matrix."""
+        """Reassemble K(ρ)."""
         self.mech.assemble_lhs()
 
     def update_snapshots(self) -> Dict:
-        """Solve mechanics and compute Strain Energy Density."""
+        """Solve mechanics and compute SED."""
         start = MPI.Wtime()
 
         # Solve mechanics equilibrium
@@ -94,11 +77,11 @@ class GaitDriver:
         }
 
     def stimulus_field(self) -> fem.Function:
-        """Return the computed stimulus function (Psi)."""
+        """Return Ψ function."""
         return self.psi
 
     def get_stimulus_stats(self) -> Dict[str, float]:
-        """Compute MPI-reduced stimulus statistics."""
+        """Return global min/max/mean of Ψ."""
         psi_min, psi_max, psi_avg = field_stats(self.psi, self.comm)
         return {
             "psi_avg": psi_avg,
@@ -107,19 +90,7 @@ class GaitDriver:
         }
 
     def _build_sed_expression(self) -> fem.Expression:
-        """
-        Build UFL expression for Strain Energy Density (SED).
-        
-        Formula: Ψ = ½ σ:ε = ½ (C(ρ):ε):ε
-        
-        Note: This expression is evaluated at interpolation time, using
-        current values of u and ρ. The result is stored in DG0 space
-        (element-wise constant), which is appropriate for P1 displacements.
-        
-        Stability consideration:
-            Since E(ρ) = E₀(ρ/ρ_ref)^n appears in σ, Ψ scales with E(ρ).
-            For material-independent stimulus, consider Ψ_norm = Ψ / E(ρ).
-        """
+        """Build UFL expression: Ψ = ½σ:ε."""
         u = self.mech.u
         rho = self.mech.rho
         
