@@ -22,8 +22,8 @@ class FixedPointSolver:
         self, 
         comm: MPI.Comm, 
         cfg: Config,
-        driver, # SimplifiedGaitDriver
-        densolver, # DensitySolver
+        driver,
+        densolver,
         rho: fem.Function, 
         rho_old: fem.Function
     ):

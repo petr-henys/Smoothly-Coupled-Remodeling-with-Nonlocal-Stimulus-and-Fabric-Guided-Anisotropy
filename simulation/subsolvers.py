@@ -213,13 +213,13 @@ class MechanicsSolver(_BaseLinearSolver):
 
 
 class DensitySolver(_BaseLinearSolver):
-    """Density evolution: diffusion + stimulus-driven relaxation to bounds."""
+    """Density evolution: diffusion + stimulus-driven update without soft bounds."""
 
     def __init__(
         self,
         rho: fem.Function,
         rho_old: fem.Function,
-        psi_field: fem.Function,  # NEW: Accept the stimulus function directly
+        psi_field: fem.Function,
         config: Config,
     ):
         super().__init__(config, rho, [], [])
@@ -230,44 +230,39 @@ class DensitySolver(_BaseLinearSolver):
 
     def _compile_forms(self):
         """
-        Compile reaction–diffusion forms for density evolution.
+        Compile forms for density evolution *without* soft bounds.
 
         PDE (semi-discrete, pointwise form):
 
-            ∂ρ/∂t - D_rho Δρ = k_rho [ S_plus (rho_max - ρ) - S_minus (ρ - rho_min) ],
+            ∂ρ/∂t - D_rho Δρ = k_rho * S,
 
         where
-            S      = (Psi - psi_ref) / psi_ref  (dimensionless stimulus),
-            S_plus  = max(S, 0),
-            S_minus = max(-S, 0).
+            S_raw   = (Psi - psi_ref) / psi_ref  (dimensionless stimulus),
+            S_plus  = smooth_plus(S_raw, smooth_eps),
+            S_minus = smooth_plus(-S_raw, smooth_eps),
+            S       = S_plus - S_minus.
 
-        For Ψ > Ψ_ref (S_plus > 0), density is driven towards rho_max.
-        For Ψ < Ψ_ref (S_minus > 0), density is driven towards rho_min.
-        Implicit Euler is used in time, with S lagged from the current psi_field.
+        ŽÁDNÉ relaxování k rho_min / rho_max v samotné PDE.
+        Fyzikální meze se vynucují až po solve natvrdo clampem.
         """
         dt = self.dt_c
 
-        # Dimensionless mechanical stimulus
+        # Dimensionless mechanical stimulus (hladké kolem nuly, žádná dead zone)
         S_raw = (self.psi_field - self.cfg.psi_ref) / self.cfg.psi_ref
         S_plus = smooth_plus(S_raw, self.smooth_eps)
         S_minus = smooth_plus(-S_raw, self.smooth_eps)
-
-        # Semi-implicit reaction coefficient on the left-hand side
-        reaction_coeff = self.cfg.k_rho * (S_plus + S_minus)
+        S = S_plus - S_minus  # signovaný stimul ≈ S_raw
 
         # LHS: (rho^{n+1}/dt)*v + D_rho * grad(rho^{n+1})·grad(v)
-        #      + k_rho * (S_plus + S_minus) * rho^{n+1} * v
+        # → žádný reakční člen s (S_plus + S_minus), jen mass + diffusion
         a_ufl = (
             (self.trial / dt) * self.test * self.dx
             + self.cfg.D_rho * ufl.inner(ufl.grad(self.trial), ufl.grad(self.test)) * self.dx
-            + reaction_coeff * self.trial * self.test * self.dx
         )
         self.a_form = fem.form(a_ufl)
 
-        # RHS: (rho^n/dt)*v + k_rho * [S_plus * rho_max + S_minus * rho_min] * v
-        source_term = self.cfg.k_rho * (
-            S_plus * self.cfg.rho_max + S_minus * self.cfg.rho_min
-        )
+        # RHS: (rho^n/dt)*v + k_rho * S * v
+        source_term = self.cfg.k_rho * S
         L_ufl = ((self.rho_old / dt) + source_term) * self.test * self.dx
         self.L_form = fem.form(L_ufl)
 
@@ -281,7 +276,7 @@ class DensitySolver(_BaseLinearSolver):
         
         Args:
             scatter_psi: If True, scatter psi_field before assembly.
-                        Default False - caller ensures psi is already synced.
+                         Default False - caller ensures psi is already synced.
         """
         if scatter_psi:
             self.psi_field.x.scatter_forward()
@@ -298,5 +293,19 @@ class DensitySolver(_BaseLinearSolver):
 
     def solve(self):
         its, reason = self._solve()
-        self._maybe_warn(reason, "Density")        
+        self._maybe_warn(reason, "Density")
+
+        # Hard clamp: rho ∈ [rho_min, rho_max] až po solve
+        rho_min = self.cfg.rho_min
+        rho_max = self.cfg.rho_max
+
+        # Stejný styl jako u self.b.localForm() výše – pracujeme s PETSc Vec
+        with self.rho.x.petsc_vec.localForm() as loc:
+            local = loc.array
+            local[local < rho_min] = rho_min
+            local[local > rho_max] = rho_max
+
+        # Update ghost dofů po úpravě lokálních hodnot
+        self.rho.x.scatter_forward()
+
         return its, reason

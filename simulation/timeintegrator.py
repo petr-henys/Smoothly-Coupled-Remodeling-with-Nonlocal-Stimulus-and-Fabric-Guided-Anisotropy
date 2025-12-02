@@ -109,6 +109,11 @@ class TimeIntegrator:
             # Divergence: Cut aggressively
             next_dt = max(self.cfg.dt_min, dt * 0.5)
             return False, next_dt, "diverged"
+        
+        if self.step_count == 0:
+            # zapamatuj si chybu jako historii, ale neodmítej
+            self.error_prev = max(error_norm, 1.0)
+            return True, dt, "first step accepted (no rejection)"
 
         # Rejection (Error too high)
         if error_norm > 1.0:

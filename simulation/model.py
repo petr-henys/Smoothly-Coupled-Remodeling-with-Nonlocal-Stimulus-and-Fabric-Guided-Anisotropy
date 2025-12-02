@@ -111,10 +111,10 @@ class Remodeller:
         # Write initial load fields (t=0)
         self.storage.fields.write("loads", 0.0)
 
-        # Boundary conditions - fixed at tag 2
+        # Boundary conditions - fixed at tag 1
         bc_mech = build_dirichlet_bcs(self.V, self.cfg.facet_tags, id_tag=1, value=0.0)
 
-        # Neumann BCs: hip and gluteus medius loads on tag 1
+        # Neumann BCs: hip and gluteus medius loads on tag 2
         neumann_bcs = [(self.t_hip, self.load_tag), (self.t_glmed, self.load_tag)]
 
         # 1. Mechanics Solver
@@ -237,7 +237,7 @@ class Remodeller:
     def step(self, dt: float, step_index: int, time_days: float) -> Tuple[float, Dict]:
         """Single timestep attempt."""
         # rho is synced from previous step or init, skip redundant scatter
-        assign(self.rho_old, self.rho, scatter=False)
+        assign(self.rho_old, self.rho, scatter=True)
 
         if not self.solvers_initialized:
             self.driver.setup()

@@ -37,11 +37,11 @@ class Config:
     # We use a *dimensionless* stimulus
     #     S = (Psi - psi_ref) / psi_ref
     # so that k_rho has clear units [1/day].
-    k_rho: float = 2.0        # Density remodeling rate [1/day] (estimated)
+    k_rho: float = 0.005        # Density remodeling rate [1/day] (estimated)
 
     # Density diffusion [mm^2/day]
     # Replaces gradient enhancement beta from article for regularization
-    D_rho: float = 0.1          # Isotropic diffusion [mm^2/day]
+    D_rho: float = 0.02          # Isotropic diffusion [mm^2/day]
 
     # =========================================================================
     # Stimulus (Local)
