@@ -38,7 +38,7 @@ class Loader:
             head_line = load_json_points(FemurPaths.HEAD_LINE_JSON)
             le_me_line = load_json_points(FemurPaths.LE_ME_LINE_JSON)
             
-            css = FemurCSS(femur_mesh, head_line, le_me_line, side="right")
+            css = FemurCSS(femur_mesh, head_line, le_me_line, side="left")
             
             self.hip = HIPJointLoad(femur_mesh, css, use_cell_data=False)
             self.gl_med = MuscleLoad(femur_mesh, css, use_cell_data=False)
