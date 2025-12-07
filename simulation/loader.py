@@ -27,10 +27,24 @@ class Loader:
         # Create traction functions
         self.hip_fun = fem.Function(self.V, name="Hip Joint Load")
         self.glmed_fun = fem.Function(self.V, name="GL med Load")
+        self.glmin_fun = fem.Function(self.V, name="GL min Load")
+        self.glmax_fun = fem.Function(self.V, name="GL max Load")
+        self.psoas_fun = fem.Function(self.V, name="Psoas Load")
+
+        self.vastus_lateralis_fun = fem.Function(self.V, name="Vastus Lateralis Load")
+        self.vastus_medialis_fun = fem.Function(self.V, name="Vastus Medialis Load")
+        self.vastus_intermedius_fun = fem.Function(self.V, name="Vastus Intermedius Load")
         
         # Only rank 0 sets up pyvista and load objects
         self.hip = None
         self.gl_med = None
+        self.gl_min = None
+        self.gl_max = None
+        self.psoas = None
+
+        self.vastus_lateralis = None
+        self.vastus_medialis = None
+        self.vastus_intermedius = None
         
         if self.rank == 0:
             import pyvista as pv
@@ -41,8 +55,27 @@ class Loader:
             css = FemurCSS(femur_mesh, head_line, le_me_line, side="left")
             
             self.hip = HIPJointLoad(femur_mesh, css, use_cell_data=False)
+
             self.gl_med = MuscleLoad(femur_mesh, css, use_cell_data=False)
             self.gl_med.set_attachment_points(load_json_points(FemurPaths.GL_MED_JSON))
+
+            self.gl_min = MuscleLoad(femur_mesh, css, use_cell_data=False)
+            self.gl_min.set_attachment_points(load_json_points(FemurPaths.GL_MIN_JSON))
+
+            self.gl_max = MuscleLoad(femur_mesh, css, use_cell_data=False)
+            self.gl_max.set_attachment_points(load_json_points(FemurPaths.GL_MAX_JSON))
+
+            self.psoas = MuscleLoad(femur_mesh, css, use_cell_data=False)
+            self.psoas.set_attachment_points(load_json_points(FemurPaths.PSOAS_JSON))
+
+            self.vastus_lateralis = MuscleLoad(femur_mesh, css, use_cell_data=False)
+            self.vastus_lateralis.set_attachment_points(load_json_points(FemurPaths.VASTUS_LATERALIS_JSON))
+
+            self.vastus_medialis = MuscleLoad(femur_mesh, css, use_cell_data=False)
+            self.vastus_medialis.set_attachment_points(load_json_points(FemurPaths.VASTUS_MEDIALIS_JSON))
+
+            self.vastus_intermedius = MuscleLoad(femur_mesh, css, use_cell_data=False)
+            self.vastus_intermedius.set_attachment_points(load_json_points(FemurPaths.VASTUS_INTERMEDIUS_JSON))
         
         self.comm.Barrier()
     
@@ -126,6 +159,120 @@ class Loader:
         self._interpolate_mpi(self.gl_med, self.glmed_fun)
         
         return self.glmed_fun
+    
+    def glmin_force(self, magnitude: float, alpha_sag: float, alpha_front: float, 
+                    sigma: float = 2.0, flip: bool = False) -> fem.Function:
+        """Apply gluteus minimus load. Returns interpolated traction field."""
+        # Rank 0 computes the load distribution
+        if self.rank == 0:
+            v = vector_from_angles(magnitude=magnitude, alpha_sag=alpha_sag, 
+                                   alpha_front=alpha_front)
+            self.gl_min.apply_gaussian_load(force_vector_css=v, 
+                                            sigma=sigma, flip=flip)
+        
+        self.comm.Barrier()
+        
+        # All ranks interpolate using MPI communication
+        self._interpolate_mpi(self.gl_min, self.glmin_fun)
+        
+        return self.glmin_fun
+    
+    def glmax_force(self, magnitude: float, alpha_sag: float, alpha_front: float, 
+                    sigma: float = 2.0, flip: bool = False) -> fem.Function:
+        """Apply gluteus maximus load. Returns interpolated traction field."""
+        # Rank 0 computes the load distribution
+        if self.rank == 0:
+            v = vector_from_angles(magnitude=magnitude, alpha_sag=alpha_sag, 
+                                   alpha_front=alpha_front)
+            self.gl_max.apply_gaussian_load(force_vector_css=v, 
+                                            sigma=sigma, flip=flip)
+        
+        self.comm.Barrier()
+        
+        # All ranks interpolate using MPI communication
+        self._interpolate_mpi(self.gl_max, self.glmax_fun)
+        
+        return self.glmax_fun
+    
+    def psoas_force(self, magnitude: float, alpha_sag: float, alpha_front: float, sigma: float = 2.0, flip: bool = False) -> fem.Function:
+        """Apply psoas load. Returns interpolated traction field."""
+        # Rank 0 computes the load distribution
+        if self.rank == 0:
+            v = vector_from_angles(magnitude=magnitude, alpha_sag=alpha_sag, 
+                                   alpha_front=alpha_front)
+            self.psoas.apply_gaussian_load(force_vector_css=v, 
+                                           sigma=sigma, flip=flip)
+        
+        self.comm.Barrier()
+        
+        # All ranks interpolate using MPI communication
+        self._interpolate_mpi(self.psoas, self.psoas_fun)
+        
+        return self.psoas_fun
+    
+    def vastus_lateralis_force(self, magnitude: float, alpha_sag: float, alpha_front: float, sigma: float = 2.0, flip: bool = False) -> fem.Function:   
+        """Apply vastus lateralis load. Returns interpolated traction field."""
+        # Rank 0 computes the load distribution
+        if self.rank == 0:
+            v = vector_from_angles(magnitude=magnitude, alpha_sag=alpha_sag, 
+                                   alpha_front=alpha_front)
+            self.vastus_lateralis.apply_gaussian_load(force_vector_css=v, 
+                                           sigma=sigma, flip=flip)
+        
+        self.comm.Barrier()
+        
+        # All ranks interpolate using MPI communication
+        self._interpolate_mpi(self.vastus_lateralis, self.vastus_lateralis_fun)
+        
+        return self.vastus_lateralis_fun
+    
+    def vastus_medialis_force(self, magnitude: float, alpha_sag: float, alpha_front: float, sigma: float = 2.0, flip: bool = False) -> fem.Function:   
+        """Apply vastus medialis load. Returns interpolated traction field."""
+        # Rank 0 computes the load distribution
+        if self.rank == 0:
+            v = vector_from_angles(magnitude=magnitude, alpha_sag=alpha_sag, 
+                                   alpha_front=alpha_front)
+            self.vastus_medialis.apply_gaussian_load(force_vector_css=v, 
+                                           sigma=sigma, flip=flip)
+        
+        self.comm.Barrier()
+        
+        # All ranks interpolate using MPI communication
+        self._interpolate_mpi(self.vastus_medialis, self.vastus_medialis_fun)
+        
+        return self.vastus_medialis_fun
+    
+    def vastus_intermedius_force(self, magnitude: float, alpha_sag: float, alpha_front: float, sigma: float = 2.0, flip: bool = False) -> fem.Function:   
+        """Apply vastus intermedius load. Returns interpolated traction field."""
+        # Rank 0 computes the load distribution
+        if self.rank == 0:
+            v = vector_from_angles(magnitude=magnitude, alpha_sag=alpha_sag, 
+                                   alpha_front=alpha_front)
+            self.vastus_intermedius.apply_gaussian_load(force_vector_css=v, 
+                                           sigma=sigma, flip=flip)
+        
+        self.comm.Barrier()
+        
+        # All ranks interpolate using MPI communication
+        self._interpolate_mpi(self.vastus_intermedius, self.vastus_intermedius_fun)
+        
+        return self.vastus_intermedius_fun
+
+
+    def collect_loads(self) -> fem.Function:
+        """Collect all applied loads into a single traction field."""
+        total_fun = fem.Function(self.V, name="Total Applied Load")
+        
+        # Sum the individual load functions
+        total_fun.x.array[:] = (self.hip_fun.x.array + 
+                                self.glmed_fun.x.array + 
+                                self.glmin_fun.x.array + 
+                                self.glmax_fun.x.array +
+                                self.psoas_fun.x.array + self.vastus_lateralis_fun.x.array +
+                                self.vastus_medialis_fun.x.array + self.vastus_intermedius_fun.x.array)
+        total_fun.x.scatter_forward()
+        
+        return total_fun
 
 
 if __name__ == "__main__":

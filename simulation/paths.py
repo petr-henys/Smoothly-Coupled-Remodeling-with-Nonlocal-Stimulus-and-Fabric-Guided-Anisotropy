@@ -21,9 +21,13 @@ class FemurPaths:
     
     HEAD_LINE_JSON = FEMUR_ANATOMY_DIR / "infsup_head_line.mrk.json"
     LE_ME_LINE_JSON = FEMUR_ANATOMY_DIR / "LE-ME_line.mrk.json"
-    VASTUS_LATERALIS_JSON = FEMUR_ANATOMY_DIR / "VASTUS_lateralis.mrk.json"
+    VASTUS_LATERALIS_JSON = FEMUR_ANATOMY_DIR / "VASTUS_lateralis_short.mrk.json"
+    VASTUS_MEDIALIS_JSON = FEMUR_ANATOMY_DIR / "VASTUS_medialis_short.mrk.json"
+    VASTUS_INTERMEDIUS_JSON = FEMUR_ANATOMY_DIR / "VASTUS_intermedius_short.mrk.json"
+    PSOAS_JSON = FEMUR_ANATOMY_DIR / "PSOAS.mrk.json"
     GL_MED_JSON = FEMUR_ANATOMY_DIR / "GL_med.mrk.json"
     GL_MAX_JSON = FEMUR_ANATOMY_DIR / "GL_max.mrk.json"
+    GL_MIN_JSON = FEMUR_ANATOMY_DIR / "GL_min.mrk.json"
     
     CSS_AXES_VTK = RESULTS_DIR / "css.vtk"
     FACET_MARKERS_VTK = RESULTS_DIR / "facet_markers.vtk"

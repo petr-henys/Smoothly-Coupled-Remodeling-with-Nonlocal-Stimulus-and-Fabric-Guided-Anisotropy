@@ -40,8 +40,6 @@ class Remodeller:
         self.progress = None
         self.main_task_id = None
         self.loader = loader
-        self.t_hip = loader.hip_fun
-        self.t_glmed = loader.glmed_fun
         self.load_tag = load_tag
         self.comm = self.domain.comm
         self.rank = self.comm.rank
@@ -106,7 +104,10 @@ class Remodeller:
 
         # Register fields for output
         self.storage.fields.register("scalars", [self.rho], filename="scalars.bp")
-        self.storage.fields.register("loads", [self.t_hip, self.t_glmed], filename="loads.bp")
+        self.storage.fields.register("loads", [self.loader.hip_fun, self.loader.glmed_fun, self.loader.glmin_fun,
+                                               self.loader.glmax_fun, self.loader.psoas_fun,
+                                               self.loader.vastus_lateralis_fun, self.loader.vastus_medialis_fun,
+                                               self.loader.vastus_intermedius_fun], filename="loads.bp")
         
         # Write initial load fields (t=0)
         self.storage.fields.write("loads", 0.0)
@@ -115,7 +116,7 @@ class Remodeller:
         bc_mech = build_dirichlet_bcs(self.V, self.cfg.facet_tags, id_tag=1, value=0.0)
 
         # Neumann BCs: hip and gluteus medius loads on tag 2
-        neumann_bcs = [(self.t_hip, self.load_tag), (self.t_glmed, self.load_tag)]
+        neumann_bcs = [(self.loader.collect_loads(), self.load_tag)]
 
         # 1. Mechanics Solver
         mechsolver = MechanicsSolver(u, self.rho, self.cfg, bc_mech, neumann_bcs)

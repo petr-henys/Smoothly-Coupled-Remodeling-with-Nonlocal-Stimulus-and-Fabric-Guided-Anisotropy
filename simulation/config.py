@@ -37,11 +37,11 @@ class Config:
     # We use a *dimensionless* stimulus
     #     S = (Psi - psi_ref) / psi_ref
     # so that k_rho has clear units [1/day].
-    k_rho: float = 0.005        # Density remodeling rate [1/day] (estimated)
+    k_rho: float = 0.001        # Density remodeling rate [1/day] (estimated)
 
     # Density diffusion [mm^2/day]
     # Replaces gradient enhancement beta from article for regularization
-    D_rho: float = 0.02          # Isotropic diffusion [mm^2/day]
+    D_rho: float = 0.005          # Isotropic diffusion [mm^2/day]
 
     # =========================================================================
     # Stimulus (Local)
@@ -49,7 +49,7 @@ class Config:
     # Reference Strain Energy Density (SED), used to nondimensionalize stimulus:
     #     S = (Psi - psi_ref) / psi_ref
     # Value for Femur from Table 2: 0.002 N/mm^2 (MPa)
-    psi_ref: float = 0.01          # Reference SED [MPa] (estimated)
+    psi_ref: float = 0.006          # Reference SED [MPa] (estimated)
 
     # Base moduli [MPa]
     E0: float = 6500.0          # Young's modulus (Table 2)
