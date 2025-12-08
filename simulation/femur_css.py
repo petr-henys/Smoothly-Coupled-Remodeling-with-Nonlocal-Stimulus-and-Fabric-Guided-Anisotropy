@@ -152,6 +152,16 @@ class FemurCSS:
         R = np.vstack([self.axes[a] for a in ("x", "y", "z")])
         return R @ v_w
 
+    def css_to_world_point(self, p_css: NDArrayF) -> NDArrayF:
+        """Transform a point from CSS → world coords (rotation + translation)."""
+        R = np.vstack([self.axes[a] for a in ("x", "y", "z")])
+        return R.T @ p_css + self.fhc
+
+    def world_to_css_point(self, p_w: NDArrayF) -> NDArrayF:
+        """Transform a point from world → CSS (rotation + translation)."""
+        R = np.vstack([self.axes[a] for a in ("x", "y", "z")])
+        return R @ (p_w - self.fhc)
+
 ###############################################################################
 # CLI demo (for manual testing) – run `python femur_css.py <femur.vtk> <line1.json> <line2.json>`
 ###############################################################################

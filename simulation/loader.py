@@ -126,6 +126,15 @@ class Loader:
         target_fun.x.array[:n_owned * bs] = local_values.flatten()
         target_fun.x.scatter_forward()
     
+    def get_hip_contact_point(self, alpha_sag: float, alpha_front: float) -> np.ndarray:
+        """Calculate the center of the hip contact patch in CSS."""
+        if self.rank == 0:
+            v_css = vector_from_angles(magnitude=1.0, alpha_sag=alpha_sag, alpha_front=alpha_front)
+            pt = self.hip.get_contact_point_css(v_css)
+        else:
+            pt = None
+        return self.comm.bcast(pt, root=0)
+
     def hip_force(self, magnitude: float, alpha_sag: float, alpha_front: float, 
                   sigma_deg: float = 10.0, flip: bool = True) -> fem.Function:
         """Apply hip joint load. Returns interpolated traction field."""

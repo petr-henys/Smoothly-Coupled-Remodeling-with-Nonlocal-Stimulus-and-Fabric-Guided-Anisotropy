@@ -173,6 +173,25 @@ class GaussianSurfaceLoad:
 class HIPJointLoad(GaussianSurfaceLoad):
     """Hip joint load using ray-traced Gaussian distribution."""
 
+    def get_contact_point_css(self, force_vector_css: np.ndarray) -> np.ndarray:
+        """Find the center of the contact patch on the CSS surface."""
+        F_world, F_norm = self._resolve_force_vector(force_vector_css)
+        unit_force = F_world / F_norm
+
+        # Ray trace to find impact center
+        start = self.head_center_world
+        end = start + unit_force * (self.head_radius * 1.1)
+        _, hits = self.mesh_world.ray_trace(start, end, first_point=True)
+        
+        if not hits:
+            # Fallback: project to sphere surface in CSS
+            # This happens if ray misses the mesh (e.g. gaps or bad geometry)
+            # We assume FHC is origin in CSS.
+            v_css = force_vector_css / np.linalg.norm(force_vector_css)
+            return v_css * self.head_radius
+            
+        return self.centers_css[hits[0]]
+
     def apply_gaussian_load(self, force_vector_css: Optional[np.ndarray] = None, sigma_deg: float = 10.0, 
                           flip: bool = False) -> pv.PolyData:
         self.logger.debug("Applying HIPJointLoad Gaussian")

@@ -30,9 +30,9 @@ class Config:
     # Density Evolution (Remodeling)
     # =========================================================================
     rho_min: float = 0.1      # Min physical density [g/cm^3] (Table 2)
-    rho_max: float = 2.0        # Max physical density [g/cm^3] (Table 2)
+    rho_max: float = 1.        # Max physical density [g/cm^3] (Table 2)
     rho0: float = 1.0           # Initial density [g/cm^3]
-    rho_ref: float = 1.0        # Reference density for stiffness [g/cm^3]
+    rho_ref: float = 0.5        # Reference density for stiffness [g/cm^3]
     # Rate constant for mechanostat:
     # We use a *dimensionless* stimulus
     #     S = (Psi - psi_ref) / psi_ref
@@ -49,7 +49,7 @@ class Config:
     # Reference Strain Energy Density (SED), used to nondimensionalize stimulus:
     #     S = (Psi - psi_ref) / psi_ref
     # Value for Femur from Table 2: 0.002 N/mm^2 (MPa)
-    psi_ref: float = 0.006          # Reference SED [MPa] (estimated)
+    psi_ref: float = 0.01          # Reference SED [MPa] (estimated)
 
     # Base moduli [MPa]
     E0: float = 6500.0          # Young's modulus (Table 2)
