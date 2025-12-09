@@ -43,7 +43,7 @@ def test_model_initializes_with_traction(tmp_path, unit_cube, facet_tags, dummy_
     comm = MPI.COMM_WORLD
     cfg = Config(domain=unit_cube, facet_tags=facet_tags, results_dir=str(tmp_path))
 
-    with Remodeller(cfg, loader=dummy_load["loader"], load_tag=dummy_load["load_tag"]) as rem:
+    with Remodeller(cfg, loader=dummy_load["loader"], loading_cases=dummy_load["loading_cases"]) as rem:
         assert "scalars" in rem.storage.fields._writers
         rho_mean = comm.allreduce(np.mean(rem.rho.x.array), op=MPI.SUM) / comm.size
         assert abs(rho_mean - cfg.rho0) < 1e-10
@@ -56,7 +56,7 @@ def test_mechanics_produces_displacement_under_load(tmp_path, unit_cube, facet_t
         domain=unit_cube, facet_tags=facet_tags, results_dir=str(tmp_path), max_subiters=8, ksp_atol=1e-15
     )
 
-    with Remodeller(cfg, loader=dummy_load["loader"], load_tag=dummy_load["load_tag"]) as rem:
+    with Remodeller(cfg, loader=dummy_load["loader"], loading_cases=dummy_load["loading_cases"]) as rem:
         rem.step(1.0, 0, 1.0)
 
         u_fn = rem.driver.mech.u
@@ -71,7 +71,7 @@ def test_stimulus_responds_to_strain_energy(tmp_path, unit_cube, facet_tags, dum
     """Stimulus field should develop non-zero values driven by mechanical energy."""
     cfg = Config(domain=unit_cube, facet_tags=facet_tags, results_dir=str(tmp_path), max_subiters=8)
 
-    with Remodeller(cfg, loader=dummy_load["loader"], load_tag=dummy_load["load_tag"]) as rem:
+    with Remodeller(cfg, loader=dummy_load["loader"], loading_cases=dummy_load["loading_cases"]) as rem:
         stats_init = rem.driver.get_stimulus_stats()
         assert stats_init["psi_max"] < 1e-2
 
@@ -89,7 +89,7 @@ def test_density_evolves_with_stimulus(tmp_path, unit_cube, facet_tags, dummy_lo
         domain=unit_cube, facet_tags=facet_tags, results_dir=str(tmp_path), max_subiters=8, rho0=0.8
     )
 
-    with Remodeller(cfg, loader=dummy_load["loader"], load_tag=dummy_load["load_tag"]) as rem:
+    with Remodeller(cfg, loader=dummy_load["loader"], loading_cases=dummy_load["loading_cases"]) as rem:
         rho_initial = rem.rho.x.array.copy()
 
         t = 0.0
@@ -115,7 +115,7 @@ def test_model_single_step_records_metrics(tmp_path, unit_cube, facet_tags, dumm
     """Single timestep execution with subiteration metrics collection."""
     cfg = Config(domain=unit_cube, facet_tags=facet_tags, results_dir=str(tmp_path), max_subiters=6)
 
-    with Remodeller(cfg, loader=dummy_load["loader"], load_tag=dummy_load["load_tag"]) as rem:
+    with Remodeller(cfg, loader=dummy_load["loader"], loading_cases=dummy_load["loading_cases"]) as rem:
         rem.step(1.0, 0, 1.0)
         metrics = rem.fixedsolver.subiter_metrics
         assert metrics, "No subiteration metrics recorded"
@@ -132,7 +132,7 @@ def test_model_convergence_stability(tmp_path, unit_cube, facet_tags, dummy_load
         ksp_atol=1e-15,
     )
 
-    with Remodeller(cfg, loader=dummy_load["loader"], load_tag=dummy_load["load_tag"]) as rem:
+    with Remodeller(cfg, loader=dummy_load["loader"], loading_cases=dummy_load["loading_cases"]) as rem:
         rem.step(1.0, 0, 1.0)
 
         metrics = rem.fixedsolver.subiter_metrics
@@ -149,7 +149,7 @@ def test_model_two_steps_energy_stability(tmp_path, unit_cube, facet_tags, dummy
         domain=unit_cube, facet_tags=facet_tags, results_dir=str(tmp_path), max_subiters=6, ksp_atol=1e-15
     )
 
-    with Remodeller(cfg, loader=dummy_load["loader"], load_tag=dummy_load["load_tag"]) as rem:
+    with Remodeller(cfg, loader=dummy_load["loader"], loading_cases=dummy_load["loading_cases"]) as rem:
         rem.step(1.0, 0, 1.0)
         psi1 = rem.driver.get_stimulus_stats()["psi_avg"]
 

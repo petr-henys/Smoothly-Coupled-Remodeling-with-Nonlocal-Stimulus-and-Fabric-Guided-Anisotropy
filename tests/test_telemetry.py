@@ -190,12 +190,22 @@ class TestMonitoringIntegration:
         
         class MockLoader:
             def __init__(self):
-                self.hip_fun = fem.Function(V, name="Hip Joint Load")
-                self.hip_fun.x.array[:] = 0.01  # Small non-zero load
-                self.glmed_fun = fem.Function(V, name="GL med Load")
-                self.glmed_fun.x.array[:] = 0.005
+                self.V = V
+                self.load_tag = 1
+                self.cut_tag = 1
+                self.traction = fem.Function(V, name="Traction")
+                self.traction_cut = fem.Function(V, name="TractionCut")
+                self.traction.x.array[:] = 0.01  # Small non-zero load
+                
+            def apply_loading_case(self, case):
+                pass
         
         return MockLoader()
+    
+    def _create_loading_cases(self):
+        """Create loading cases for testing."""
+        from simulation.loader import LoadingCase
+        return [LoadingCase(name="test")]
     
     @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
     def test_telemetry_records_steps(self, unit_cube):
@@ -213,8 +223,9 @@ class TestMonitoringIntegration:
             )
             
             loader = self._create_mock_loader(domain)
+            loading_cases = self._create_loading_cases()
             
-            with Remodeller(cfg, loader=loader, load_tag=1) as rem:
+            with Remodeller(cfg, loader=loader, loading_cases=loading_cases) as rem:
                 # Run 2 steps
                 rem.step(1.0, 0, 1.0)
                 rem.step(1.0, 1, 2.0)
@@ -242,8 +253,9 @@ class TestMonitoringIntegration:
             )
             
             loader = self._create_mock_loader(domain)
+            loading_cases = self._create_loading_cases()
             
-            with Remodeller(cfg, loader=loader, load_tag=1) as rem:
+            with Remodeller(cfg, loader=loader, loading_cases=loading_cases) as rem:
                 rem.step(1.0, 0, 1.0)
                 
                 # Check solver stats were accumulated
@@ -263,8 +275,9 @@ class TestMonitoringIntegration:
             )
             
             loader = self._create_mock_loader(domain)
+            loading_cases = self._create_loading_cases()
             
-            with Remodeller(cfg, loader=loader, load_tag=1) as rem:
+            with Remodeller(cfg, loader=loader, loading_cases=loading_cases) as rem:
                 rem.simulate(dt_initial=1.0, total_time=1.0)
             comm.Barrier()
             if comm.rank == 0:

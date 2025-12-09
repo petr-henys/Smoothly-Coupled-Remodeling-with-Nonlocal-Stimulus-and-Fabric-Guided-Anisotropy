@@ -381,35 +381,40 @@ def fiber_tensor_factory():
 
 @pytest.fixture
 def dummy_load(spaces, cfg):
-    """Create dummy Loader-like object for unit tests."""
+    """Create dummy Loader and LoadingCase for unit tests."""
     from dolfinx import fem
     import numpy as np
+    from simulation.loader import LoadingCase
     
     class MockLoader:
         """Mock Loader for testing without femur-specific dependencies."""
-        def __init__(self, V):
-            self.hip_fun = fem.Function(V, name="Hip Joint Load")
-            self.glmed_fun = fem.Function(V, name="GL med Load")
+        def __init__(self, V, load_tag: int = 2, cut_tag: int = 1):
+            self.V = V
+            self.load_tag = load_tag
+            self.cut_tag = cut_tag
+            self.traction = fem.Function(V, name="Traction")
+            self.traction_cut = fem.Function(V, name="TractionCut")
             
-            # Apply a constant traction in negative y direction (simulating hip load)
-            traction_hip = np.array([0.0, -0.1, 0.0], dtype=np.float64)  # MPa
-            n_dofs = self.hip_fun.x.array.size // 3
-            self.hip_fun.x.array[:] = np.tile(traction_hip, n_dofs)
-            self.hip_fun.x.scatter_forward()
+        def apply_loading_case(self, case: LoadingCase) -> None:
+            """Apply constant test traction."""
+            # Apply a constant traction for testing (proximal)
+            traction_vec = np.array([0.0, -0.1, 0.05], dtype=np.float64)  # MPa
+            n_dofs = self.traction.x.array.size // 3
+            self.traction.x.array[:] = np.tile(traction_vec, n_dofs)
+            self.traction.x.scatter_forward()
             
-            # Apply a smaller traction in x direction (simulating GL med load)
-            traction_glmed = np.array([0.05, 0.0, 0.0], dtype=np.float64)  # MPa
-            self.glmed_fun.x.array[:] = np.tile(traction_glmed, n_dofs)
-            self.glmed_fun.x.scatter_forward()
-        
-        def hip_force(self, magnitude, alpha_sag, alpha_front, sigma_deg=10.0, flip=True):
-            return self.hip_fun
-        
-        def glmed_force(self, magnitude, alpha_sag, alpha_front, sigma=2.0, flip=False):
-            return self.glmed_fun
+            # Apply equilibrating traction on cut (reaction = -applied / area)
+            # For unit cube with face area = 1, just reverse the force
+            cut_traction = np.array([0.0, 0.1, -0.05], dtype=np.float64)  # MPa
+            self.traction_cut.x.array[:] = np.tile(cut_traction, n_dofs)
+            self.traction_cut.x.scatter_forward()
     
-    loader = MockLoader(spaces.V)
+    loader = MockLoader(spaces.V, load_tag=2, cut_tag=1)
+    
+    # Simple loading case for testing
+    loading_case = LoadingCase(name="test_case", weight=1.0)
+    
     return {
         "loader": loader,
-        "load_tag": 2  # Apply load on facet tag 2 (Dirichlet BC is on tag 1)
+        "loading_cases": [loading_case],
     }

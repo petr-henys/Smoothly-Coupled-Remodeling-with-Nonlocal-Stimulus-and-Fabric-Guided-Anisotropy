@@ -285,16 +285,24 @@ class TestUnifiedStorage:
             P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(domain.geometry.dim,))
             V = fem.functionspace(domain, P1_vec)
             
+            from simulation.loader import LoadingCase
+            
             class MockLoader:
                 def __init__(self):
-                    self.hip_fun = fem.Function(V, name="Hip Joint Load")
-                    self.hip_fun.x.array[:] = 0.0
-                    self.glmed_fun = fem.Function(V, name="GL med Load")
-                    self.glmed_fun.x.array[:] = 0.0
+                    self.V = V
+                    self.load_tag = 1
+                    self.cut_tag = 1
+                    self.traction = fem.Function(V, name="Traction")
+                    self.traction_cut = fem.Function(V, name="TractionCut")
+                    self.traction.x.array[:] = 0.0
+                    
+                def apply_loading_case(self, case):
+                    pass
             
             loader = MockLoader()
+            loading_cases = [LoadingCase(name="test")]
             
-            with Remodeller(cfg, loader=loader, load_tag=1) as rem:
+            with Remodeller(cfg, loader=loader, loading_cases=loading_cases) as rem:
                 # Storage should be initialized
                 assert rem.storage is not None
                 assert rem.storage.fields is not None

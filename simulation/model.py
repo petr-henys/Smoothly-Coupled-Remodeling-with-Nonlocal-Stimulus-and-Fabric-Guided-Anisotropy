@@ -1,8 +1,16 @@
-"""Remodelling orchestrator: couples mechanics and density solvers."""
+"""
+Remodelling orchestrator: couples mechanics and density solvers.
+
+The Remodeller class owns all FE fields, subsolvers, storage, and telemetry.
+It implements adaptive timestepping with PI-controlled step size.
+
+MPI: All operations are MPI-parallel. Fields use scatter_forward() after
+owned-DOF modifications.
+"""
 
 from __future__ import annotations
 
-from typing import Dict, Tuple
+from typing import Dict, Tuple, List
 from pathlib import Path
 
 import numpy as np
@@ -19,20 +27,25 @@ from simulation.subsolvers import MechanicsSolver, DensitySolver
 from simulation.fixedsolver import FixedPointSolver
 from simulation.drivers import GaitDriver
 from simulation.timeintegrator import TimeIntegrator
-from simulation.loader import Loader
+from simulation.loader import Loader, LoadingCase
 
 
 class Remodeller:
-    """Bone remodeling orchestrator. Owns FE fields, subsolvers, and storage."""
+    """
+    Bone remodeling orchestrator.
+    
+    Owns FE fields, subsolvers, storage, and telemetry.
+    Uses GaitDriver to compute weighted-average SED over loading cases.
+    """
 
-    def __init__(self, cfg: Config, loader: Loader, load_tag: int):
+    def __init__(self, cfg: Config, loader: Loader, loading_cases: List[LoadingCase]):
         """
-        Initialize with config and loader.
+        Initialize with config, loader, and loading cases.
         
         Args:
             cfg: Simulation configuration with mesh and facet_tags.
-            loader: Loader object containing hip and gluteus medius traction fields.
-            load_tag: Facet tag where loads are applied.
+            loader: Loader object for applying loads (contains load_tag and cut_tag).
+            loading_cases: List of LoadingCase objects defining load combinations.
         """
         self.cfg = cfg
         self.domain = self.cfg.domain
@@ -40,7 +53,7 @@ class Remodeller:
         self.progress = None
         self.main_task_id = None
         self.loader = loader
-        self.load_tag = load_tag
+        self.loading_cases = loading_cases
         self.comm = self.domain.comm
         self.rank = self.comm.rank
         
@@ -104,25 +117,29 @@ class Remodeller:
 
         # Register fields for output
         self.storage.fields.register("scalars", [self.rho], filename="scalars.bp")
-        self.storage.fields.register("loads", [self.loader.hip_fun, self.loader.glmed_fun, self.loader.glmin_fun,
-                                               self.loader.glmax_fun, self.loader.psoas_fun,
-                                               self.loader.vastus_lateralis_fun, self.loader.vastus_medialis_fun,
-                                               self.loader.vastus_intermedius_fun], filename="loads.bp")
-        
-        # Write initial load fields (t=0)
-        self.storage.fields.write("loads", 0.0)
+        self.storage.fields.register("loads", [self.loader.traction, self.loader.traction_cut], filename="loads.bp")
 
-        # Boundary conditions - fixed at tag 1
+        # Boundary conditions - fixed at tag 1 (temporary until full equilibrium is verified)
+        # TODO: Once equilibrium is verified, remove Dirichlet BC and use rigid body removal
         bc_mech = build_dirichlet_bcs(self.V, self.cfg.facet_tags, id_tag=1, value=0.0)
 
-        # Neumann BCs: hip and gluteus medius loads on tag 2
-        neumann_bcs = [(self.loader.collect_loads(), self.load_tag)]
+        # Neumann BCs: 
+        # - traction on proximal surface (hip + muscles) at loader.load_tag
+        # - traction_cut on distal cut (equilibrating reaction) at loader.cut_tag
+        neumann_bcs = [
+            (self.loader.traction, self.loader.load_tag),      # Proximal loads
+            #(self.loader.traction_cut, self.loader.cut_tag),   # Cut equilibrium (distal)
+        ]
 
         # 1. Mechanics Solver
         mechsolver = MechanicsSolver(u, self.rho, self.cfg, bc_mech, neumann_bcs)
 
-        # 2. Driver
-        self.driver = GaitDriver(mechsolver, self.cfg)
+        # 2. Driver with loading cases
+        self.driver = GaitDriver(
+            mechsolver, self.cfg, 
+            loader=self.loader,
+            loading_cases=self.loading_cases,
+        )
 
         # 3. Density Solver
         self.densolver = DensitySolver(

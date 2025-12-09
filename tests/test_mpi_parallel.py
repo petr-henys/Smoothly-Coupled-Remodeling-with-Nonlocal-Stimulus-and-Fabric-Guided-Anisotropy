@@ -21,6 +21,7 @@ from simulation.utils import build_facetag, build_dirichlet_bcs, current_memory_
 from simulation.subsolvers import MechanicsSolver, DensitySolver
 from simulation.fixedsolver import FixedPointSolver
 from simulation.model import Remodeller
+from simulation.loader import LoadingCase
 comm = MPI.COMM_WORLD
 
 
@@ -31,20 +32,23 @@ def create_mock_loader(domain):
     
     class MockLoader:
         def __init__(self):
-            self.hip_fun = Function(V, name="Hip Joint Load")
-            self.hip_fun.x.array[:] = 0.01  # Small non-zero load
-            self.hip_fun.x.scatter_forward()
-            self.glmed_fun = Function(V, name="GL med Load")
-            self.glmed_fun.x.array[:] = 0.005
-            self.glmed_fun.x.scatter_forward()
+            self.V = V
+            self.load_tag = 1
+            self.cut_tag = 1
+            self.traction = Function(V, name="Traction")
+            self.traction_cut = Function(V, name="TractionCut")
+            self.traction.x.array[:] = 0.01  # Small non-zero load
+            self.traction.x.scatter_forward()
         
-        def hip_force(self, magnitude, alpha_sag, alpha_front, sigma_deg=10.0, flip=True):
-            return self.hip_fun
-        
-        def glmed_force(self, magnitude, alpha_sag, alpha_front, sigma=2.0, flip=False):
-            return self.glmed_fun
+        def apply_loading_case(self, case):
+            pass
     
     return MockLoader()
+
+
+def create_loading_cases():
+    """Create loading cases for testing."""
+    return [LoadingCase(name="test")]
 
 # =============================================================================
 # Ghost Update Tests
@@ -204,7 +208,7 @@ class TestMPIIO:
             cfg = Config(domain=domain, facet_tags=facet_tags, results_dir=tmpdir)
             loader = create_mock_loader(domain)
             
-            with Remodeller(cfg, loader=loader, load_tag=1) as rem:
+            with Remodeller(cfg, loader=loader, loading_cases=create_loading_cases()) as rem:
                 # Compute total scalar DOFs (account for block sizes)
                 dofs_V = rem.V.dofmap.index_map.size_global * rem.V.dofmap.index_map_bs
                 dofs_Q = rem.Q.dofmap.index_map.size_global * rem.Q.dofmap.index_map_bs
@@ -249,7 +253,7 @@ class TestMPIIO:
             cfg = Config(domain=domain, facet_tags=facet_tags, results_dir=tmpdir)
             loader = create_mock_loader(domain)
             
-            with Remodeller(cfg, loader=loader, load_tag=1) as rem:
+            with Remodeller(cfg, loader=loader, loading_cases=create_loading_cases()) as rem:
                 # Compute total scalar DOFs (account for block sizes)
                 dofs_V = rem.V.dofmap.index_map.size_global * rem.V.dofmap.index_map_bs
                 dofs_Q = rem.Q.dofmap.index_map.size_global * rem.Q.dofmap.index_map_bs
@@ -312,7 +316,7 @@ class TestFixedPointParallel:
         )
         loader = create_mock_loader(domain)
         
-        with Remodeller(cfg, loader=loader, load_tag=1) as rem:
+        with Remodeller(cfg, loader=loader, loading_cases=create_loading_cases()) as rem:
             # Take one time step
             rem.step(1.0, 0, 1.0)
             
@@ -336,7 +340,7 @@ class TestFixedPointParallel:
         )
         loader = create_mock_loader(domain)
         
-        with Remodeller(cfg, loader=loader, load_tag=1) as rem:
+        with Remodeller(cfg, loader=loader, loading_cases=create_loading_cases()) as rem:
             rem.step(1.0, 0, 1.0)
             
             # Should converge
@@ -535,7 +539,7 @@ class TestTiming:
         )
         loader = create_mock_loader(domain)
         
-        with Remodeller(cfg, loader=loader, load_tag=1) as rem:
+        with Remodeller(cfg, loader=loader, loading_cases=create_loading_cases()) as rem:
             t0 = time.perf_counter()
             rem.step(1.0, 0, 1.0)
             elapsed = time.perf_counter() - t0
@@ -553,7 +557,7 @@ class TestTiming:
         cfg = Config(domain=domain, facet_tags=facet_tags, max_subiters=10)
         loader = create_mock_loader(domain)
         
-        with Remodeller(cfg, loader=loader, load_tag=1) as rem:
+        with Remodeller(cfg, loader=loader, loading_cases=create_loading_cases()) as rem:
             rem.step(1.0, 0, 1.0)
             
             fps = rem.fixedsolver

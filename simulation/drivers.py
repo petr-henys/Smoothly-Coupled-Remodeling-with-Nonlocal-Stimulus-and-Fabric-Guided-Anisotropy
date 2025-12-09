@@ -1,7 +1,10 @@
-"""GaitDriver: mechanics + SED stimulus computation."""
+"""
+GaitDriver: mechanics + averaged SED stimulus computation over multiple loading cases.
+"""
 
-from typing import Dict
-import numpy as np
+from __future__ import annotations
+from typing import Dict, List, TYPE_CHECKING
+
 from mpi4py import MPI
 from dolfinx import fem
 import ufl
@@ -11,38 +14,70 @@ from simulation.subsolvers import MechanicsSolver
 from simulation.logger import get_logger
 from simulation.utils import field_stats
 
+if TYPE_CHECKING:
+    from simulation.loader import LoadingCase, Loader
+
 
 class GaitDriver:
     """
-    Solves mechanics and computes Strain Energy Density: Ψ = ½σ:ε.
+    Solves mechanics and computes weighted-averaged Strain Energy Density Ψ = ½σ:ε.
+    
+    Workflow for each loading case:
+    1. Apply loads to traction field (via Loader, MPI-parallel)
+    2. Reassemble RHS and solve mechanics (MPI-parallel)
+    3. Compute element-wise SED (DG0)
+    4. Accumulate weighted SED
+    
+    Final stimulus: Ψ = Σ(wᵢ·Ψᵢ) / Σ(wᵢ)
+    
+    MPI: All operations are MPI-safe. Loader handles coordinate gather/scatter.
     """
 
     def __init__(
         self,
         mech: MechanicsSolver,
         config: Config,
+        loader: "Loader",
+        loading_cases: List["LoadingCase"],
     ):
-        """Initialize with MechanicsSolver and config."""
+        """
+        Initialize GaitDriver.
+        
+        Args:
+            mech: MechanicsSolver (already configured with Neumann BC pointing to loader.traction)
+            config: Simulation configuration
+            loader: Loader instance for applying loads
+            loading_cases: List of LoadingCase objects to average over
+        """
         self.mech = mech
         self.cfg = config
+        self.loader = loader
+        self.loading_cases = loading_cases
 
         mesh = self.mech.u.function_space.mesh
         self.comm = mesh.comm
         self.rank = self.comm.rank
         self.logger = get_logger(self.comm, name="Driver", log_file=self.cfg.log_file)
 
-        # Stimulus field (Strain Energy Density - SED)
-        # Using DG0 (element-wise constant) is standard for SED
+        # Stimulus field (DG0 - element-wise constant)
         self.V_psi = fem.functionspace(mesh, ("DG", 0))
         self.psi = fem.Function(self.V_psi, name="Stimulus_SED")
         
-        # Pre-compile the SED expression
+        # Temporary SED for each loading case
+        self._psi_temp = fem.Function(self.V_psi, name="Stimulus_SED_temp")
+        
+        # Pre-compile SED expression
         self._sed_expr = self._build_sed_expression()
+        
+        # Total weight for normalization
+        self._total_weight = sum(case.weight for case in self.loading_cases)
+        if self._total_weight <= 0:
+            raise ValueError("Total weight of loading cases must be positive")
 
-        self.logger.debug("GaitDriver initialized.")
+        self.logger.debug(f"GaitDriver initialized with {len(loading_cases)} loading case(s)")
 
     def setup(self) -> None:
-        """Initialize solver."""
+        """Initialize mechanics solver."""
         self.mech.setup()
 
     def destroy(self) -> None:
@@ -50,38 +85,73 @@ class GaitDriver:
         self.mech.destroy()
 
     def update_stiffness(self) -> None:
-        """Reassemble K(ρ)."""
+        """Reassemble stiffness matrix K(ρ)."""
         self.mech.assemble_lhs()
 
     def update_snapshots(self) -> Dict:
-        """Solve mechanics and compute SED."""
+        """
+        Solve mechanics for each loading case and compute weighted-averaged SED.
+        
+        MPI-parallel: All ranks participate in loader.apply_loading_case() and mech.solve().
+        
+        Returns:
+            dict with keys:
+            - phase_iters: list of KSP iterations per case
+            - phase_times: list of wall-clock times per case
+            - total_time: total elapsed time (max across ranks)
+        """
         start = MPI.Wtime()
+        
+        phase_iters = []
+        phase_times = []
+        
+        # Zero out averaged psi
+        self.psi.x.array[:] = 0.0
+        
+        for case in self.loading_cases:
+            case_start = MPI.Wtime()
+            
+            # Apply loading case - updates loader.traction in-place
+            self.loader.apply_loading_case(case)
+            
+            # Reassemble RHS (traction field is already referenced in form)
+            self.mech.assemble_rhs()
+            its, _ = self.mech.solve()
+            
+            # Compute SED for this case
+            self._psi_temp.interpolate(self._sed_expr)
+            self._psi_temp.x.scatter_forward()
+            
+            # Accumulate weighted SED
+            self.psi.x.array[:] += case.weight * self._psi_temp.x.array
+            
+            case_elapsed = self.comm.allreduce(MPI.Wtime() - case_start, op=MPI.MAX)
+            phase_iters.append(int(its))
+            phase_times.append(float(case_elapsed))
 
-        # Solve mechanics equilibrium
-        self.mech.assemble_rhs()
-        its, _ = self.mech.solve()
+        # Normalize by total weight
+        self.psi.x.array[:] /= self._total_weight
+        self.psi.x.scatter_forward()
 
         elapsed = self.comm.allreduce(MPI.Wtime() - start, op=MPI.MAX)
 
-        # Calculate SED (DG0 space - no ghost sharing needed, but scatter
-        # ensures consistency for any downstream consumers)
-        self.psi.interpolate(self._sed_expr)
-        # Note: DG0 has cell-local DOFs. Scatter updates ghost cells which
-        # are needed if psi is used in forms assembled over ghost cells.
-        self.psi.x.scatter_forward()
-
         return {
-            "phase_iters": [int(its)],
-            "phase_times": [float(elapsed)],
+            "phase_iters": phase_iters,
+            "phase_times": phase_times,
             "total_time": float(elapsed),
         }
 
     def stimulus_field(self) -> fem.Function:
-        """Return Ψ function."""
+        """Return the averaged Ψ function (DG0 field)."""
         return self.psi
 
     def get_stimulus_stats(self) -> Dict[str, float]:
-        """Return global min/max/mean of Ψ."""
+        """
+        Return global min/max/mean of Ψ across all MPI ranks.
+        
+        Returns:
+            dict with psi_avg, psi_min, psi_max
+        """
         psi_min, psi_max, psi_avg = field_stats(self.psi, self.comm)
         return {
             "psi_avg": psi_avg,
@@ -90,7 +160,11 @@ class GaitDriver:
         }
 
     def _build_sed_expression(self) -> fem.Expression:
-        """Build UFL expression: Ψ = ½σ:ε."""
+        """
+        Build UFL expression for Strain Energy Density: Ψ = ½σ:ε.
+        
+        Uses max_value(..., 0) to clamp any numerical noise to non-negative.
+        """
         u = self.mech.u
         rho = self.mech.rho
         
