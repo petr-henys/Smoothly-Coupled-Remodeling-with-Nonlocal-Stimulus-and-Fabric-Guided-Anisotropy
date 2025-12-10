@@ -119,16 +119,16 @@ class Remodeller:
         self.storage.fields.register("scalars", [self.rho], filename="scalars.bp")
         self.storage.fields.register("loads", [self.loader.traction, self.loader.traction_cut], filename="loads.bp")
 
-        # Boundary conditions - fixed at tag 1 (temporary until full equilibrium is verified)
-        # TODO: Once equilibrium is verified, remove Dirichlet BC and use rigid body removal
-        bc_mech = build_dirichlet_bcs(self.V, self.cfg.facet_tags, id_tag=1, value=0.0)
+        # Boundary conditions - free body equilibrium (pure Neumann)
+        # No Dirichlet BCs - the nullspace removal in MechanicsSolver handles rigid body modes
+        bc_mech = []
 
         # Neumann BCs: 
         # - traction on proximal surface (hip + muscles) at loader.load_tag
         # - traction_cut on distal cut (equilibrating reaction) at loader.cut_tag
         neumann_bcs = [
             (self.loader.traction, self.loader.load_tag),      # Proximal loads
-            #(self.loader.traction_cut, self.loader.cut_tag),   # Cut equilibrium (distal)
+            (self.loader.traction_cut, self.loader.cut_tag),   # Cut equilibrium (distal)
         ]
 
         # 1. Mechanics Solver
@@ -140,6 +140,11 @@ class Remodeller:
             loader=self.loader,
             loading_cases=self.loading_cases,
         )
+        
+        # Save each loading case's traction fields (static, done once)
+        for i, case in enumerate(self.loading_cases):
+            self.loader.set_loading_case(case.name)
+            self.storage.fields.write("loads", float(i))
 
         # 3. Density Solver
         self.densolver = DensitySolver(

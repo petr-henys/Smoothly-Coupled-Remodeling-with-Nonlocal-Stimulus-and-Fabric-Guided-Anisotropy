@@ -72,20 +72,18 @@ class TestConstitutiveLaw:
 # =============================================================================
 
 class TestAdvancedConstitutiveLaws:
-    """Test new density-elasticity relationship and density evolution."""
+    """Test density-elasticity relationship and density evolution."""
 
     @pytest.mark.parametrize("unit_cube", [6], indirect=True)
-    def test_dual_power_law_stiffness(self, unit_cube, facet_tags):
-        """Verify E(ρ) follows different power laws in trabecular vs cortical regimes."""
+    def test_power_law_stiffness(self, unit_cube, facet_tags):
+        """Verify E(ρ) follows the power-law relationship E = E0 * (ρ/ρ_ref)^n."""
         comm = MPI.COMM_WORLD
         cfg = Config(domain=unit_cube, facet_tags=facet_tags)
         
-        # Set distinct exponents
-        cfg.n_trab = 2.0
-        cfg.n_cort = 1.0
-        cfg.rho_trab_max = 0.4
-        cfg.rho_cort_min = 0.8
+        # Set exponent
+        cfg.n = 2.0
         cfg.E0 = 1000.0
+        cfg.rho_ref = 1.0
         
         P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
         Q = functionspace(unit_cube, P1)
@@ -96,60 +94,33 @@ class TestAdvancedConstitutiveLaws:
             rho.x.array[:] = rho_val
             rho.x.scatter_forward()
             
-            # Use UFL expression from MechanicsSolver logic (simplified)
+            # Use UFL expression from MechanicsSolver logic
             rho_eff = smooth_max(rho, cfg.rho_min, cfg.smooth_eps)
-            
-            # Replicate smoothstep logic
-            rho1 = float(cfg.rho_trab_max)
-            rho2 = float(cfg.rho_cort_min)
-            
-            s_raw = (rho_eff - rho1) / (rho2 - rho1)
-            s0 = smooth_max(s_raw, 0.0, cfg.smooth_eps)
-            s1 = 1.0 - smooth_max(1.0 - s0, 0.0, cfg.smooth_eps)
-            w = 3.0 * s1**2 - 2.0 * s1**3
-            n_eff = (1.0 - w) * cfg.n_trab + w * cfg.n_cort
-            
-            # Normalize density by rho_max for stiffness calculation
-            rho_rel = rho_eff / cfg.rho_max
-            E_expr = cfg.E0 * (rho_rel ** n_eff)
+            rho_rel = rho_eff / cfg.rho_ref
+            E_expr = cfg.E0 * (rho_rel ** cfg.n)
             
             E_local = fem.assemble_scalar(fem.form(E_expr * cfg.dx))
             vol_local = fem.assemble_scalar(fem.form(1.0 * cfg.dx))
             E_avg = comm.allreduce(E_local, op=MPI.SUM) / comm.allreduce(vol_local, op=MPI.SUM)
             return E_avg
 
-        # 1. Trabecular regime (rho < rho_trab_max)
-        rho_trab = 0.2
-        E_trab = compute_E_eff(rho_trab)
-        # E = E0 * (rho/rho_max)^n
-        E_expected_trab = cfg.E0 * ((rho_trab / cfg.rho_max) ** cfg.n_trab)
-        assert abs(E_trab - E_expected_trab) / E_expected_trab < 0.01,             f"Trabecular law failed: E({rho_trab})={E_trab:.2f}, expected {E_expected_trab:.2f}"
-
-        # 2. Cortical regime (rho > rho_cort_min)
-        rho_cort = 0.9
-        E_cort = compute_E_eff(rho_cort)
-        E_expected_cort = cfg.E0 * ((rho_cort / cfg.rho_max) ** cfg.n_cort)
-        assert abs(E_cort - E_expected_cort) / E_expected_cort < 0.01,             f"Cortical law failed: E({rho_cort})={E_cort:.2f}, expected {E_expected_cort:.2f}"
-
-        # 3. Transition regime (rho_trab_max < rho < rho_cort_min)
-        rho_trans = 0.6
-        E_trans = compute_E_eff(rho_trans)
-        # Should be between the two power laws
-        E_low = cfg.E0 * ((rho_trans / cfg.rho_max) ** cfg.n_trab)
-        E_high = cfg.E0 * ((rho_trans / cfg.rho_max) ** cfg.n_cort)
-        # Since n_trab=2 > n_cort=1 and rho < rho_max, (rho/rho_max)^2 < (rho/rho_max)^1, so E_low < E_high
-        assert E_low < E_trans < E_high,             f"Transition E({rho_trans})={E_trans:.2f} not between {E_low:.2f} and {E_high:.2f}"
+        # Test at different densities
+        test_densities = [0.5, 1.0, 1.5]
+        for rho_val in test_densities:
+            E_computed = compute_E_eff(rho_val)
+            E_expected = cfg.E0 * ((rho_val / cfg.rho_ref) ** cfg.n)
+            rel_err = abs(E_computed - E_expected) / E_expected
+            assert rel_err < 0.01, \
+                f"Power law failed at ρ={rho_val}: E={E_computed:.2f}, expected {E_expected:.2f}"
 
     @pytest.mark.parametrize("unit_cube", [6], indirect=True)
     def test_linear_driver_rate(self, unit_cube, facet_tags):
-        """Verify density evolution rate is proportional to stimulus."""
+        """Verify density evolution rate follows tanh-saturated specific energy stimulus."""
         comm = MPI.COMM_WORLD
         cfg = Config(domain=unit_cube, facet_tags=facet_tags)
         
         cfg.k_rho = 1.0
         cfg.dt = 0.1
-        # Disable distal damping
-        cfg.distal_damping_height = -100.0
         
         P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
         Q = functionspace(unit_cube, P1)
@@ -157,14 +128,16 @@ class TestAdvancedConstitutiveLaws:
         rho = Function(Q, name="rho")
         rho_old = Function(Q, name="rho_old")
         psi_field = Function(Q, name="psi")
-        rho_old.x.array[:] = 0.5
+        rho_val = cfg.rho_ref  # Use reference density for simpler math
+        rho_old.x.array[:] = rho_val
         rho_old.x.scatter_forward()
         
-        def get_rate(S_val):
-            # S = psi - psi_ref (dimensional).  So psi = psi_ref + S
-            psi_val = cfg.psi_ref + S_val
+        def get_rate(psi_val):
             psi_field.x.array[:] = psi_val
             psi_field.x.scatter_forward()
+            
+            rho.x.array[:] = rho_val
+            rho.x.scatter_forward()
             
             dens = DensitySolver(rho, rho_old, psi_field, cfg)
             dens.setup()
@@ -178,19 +151,16 @@ class TestAdvancedConstitutiveLaws:
             
             return (dM / vol) / cfg.dt
         
-        # Rate should be k_rho * S * (rho_max - rho) for S > 0
-        # Rate should be k_rho * S * (rho - rho_min) for S < 0 (S is negative, so rate is negative)
+        # DensitySolver uses: ∂ρ/∂t = k_rho * tanh((psi/rho - psi_ref/rho_ref) / (psi_ref/rho_ref))
+        # With rho = rho_ref, this simplifies to: k_rho * tanh((psi - psi_ref) / psi_ref)
         
-        # Case 1: S = 0.1
-        rate_pos = get_rate(0.1)
-        expected_pos = cfg.k_rho * 0.1 * (cfg.rho_max - 0.5)
-        assert abs(rate_pos - expected_pos) < 2e-3, f"Positive rate mismatch: got {rate_pos}, expected {expected_pos}"
+        # Case 1: psi = 2*psi_ref → S_norm = 1 → tanh(1) ≈ 0.762
+        rate_pos = get_rate(2.0 * cfg.psi_ref)
+        expected_pos = cfg.k_rho * np.tanh(1.0)
+        assert abs(rate_pos - expected_pos) < 0.05, f"Positive rate mismatch: got {rate_pos}, expected {expected_pos}"
         
-        # Case 2: S = -0.1
-        rate_neg = get_rate(-0.1)
-        # Formula: k_rho * (S_plus*rho_max + S_minus*rho_min - (S_plus+S_minus)*rho)
-        # S_plus=0, S_minus=0.1
-        # Rate = k_rho * (0.1 * rho_min - 0.1 * rho) = k_rho * 0.1 * (rho_min - rho)
-        expected_neg = cfg.k_rho * 0.1 * (cfg.rho_min - 0.5)
-        assert abs(rate_neg - expected_neg) < 2e-3, f"Negative rate mismatch: got {rate_neg}, expected {expected_neg}"
+        # Case 2: psi = 0.5*psi_ref → S_norm = -0.5 → tanh(-0.5) ≈ -0.462
+        rate_neg = get_rate(0.5 * cfg.psi_ref)
+        expected_neg = cfg.k_rho * np.tanh(-0.5)
+        assert abs(rate_neg - expected_neg) < 0.05, f"Negative rate mismatch: got {rate_neg}, expected {expected_neg}"
 

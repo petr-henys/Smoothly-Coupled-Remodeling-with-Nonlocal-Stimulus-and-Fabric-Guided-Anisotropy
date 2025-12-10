@@ -73,8 +73,11 @@ class GaitDriver:
         self._total_weight = sum(case.weight for case in self.loading_cases)
         if self._total_weight <= 0:
             raise ValueError("Total weight of loading cases must be positive")
+        
+        # Precompute all loading cases (expensive interpolation done once)
+        self.loader.precompute_loading_cases(self.loading_cases)
 
-        self.logger.debug(f"GaitDriver initialized with {len(loading_cases)} loading case(s)")
+        self.logger.debug(f"GaitDriver initialized with {len(loading_cases)} loading case(s), loads precomputed")
 
     def setup(self) -> None:
         """Initialize mechanics solver."""
@@ -111,8 +114,8 @@ class GaitDriver:
         for case in self.loading_cases:
             case_start = MPI.Wtime()
             
-            # Apply loading case - updates loader.traction in-place
-            self.loader.apply_loading_case(case)
+            # Set cached loading case - copies precomputed traction arrays
+            self.loader.set_loading_case(case.name)
             
             # Reassemble RHS (traction field is already referenced in form)
             self.mech.assemble_rhs()

@@ -1,19 +1,21 @@
 """
-MPI-parallel femur surface load interpolation.
+MPI-parallel femur surface load interpolation with precomputed traction caching.
 
 This module provides:
+- HipLoadSpec, MuscleLoadSpec: Dataclasses for load specifications
 - LoadingCase: Configuration of loads (hip + muscles) for one loading scenario
-- Loader: Applies LoadingCase to compute traction fields for FEM
+- Loader: Precomputes and caches traction fields for all loading cases
 
 Architecture:
 - Rank 0 owns pyvista geometry and computes load distributions
 - DOF coordinates gathered from all ranks to rank 0
 - Computed traction values scattered back to owners
-- All MPI communication uses owner-computes pattern
+- **All loads are computed ONCE during initialization and cached**
+- During simulation, cached arrays are copied to traction fields (O(1))
 
 Two traction fields:
-- traction: Hip + muscle loads on proximal surface (tag=2)
-- traction_cut: Equilibrating reaction on distal cut (tag=1)
+- traction: Hip + muscle loads on proximal surface (load_tag)
+- traction_cut: Equilibrating reaction on distal cut (cut_tag)
 
 The cut equilibrium ensures: ΣF = 0, ΣM = 0 for the free body.
 
@@ -21,13 +23,16 @@ Units: mm, N, MPa (forces as traction = N/mm² = MPa)
 """
 
 from __future__ import annotations
+
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Dict
 
 import numpy as np
 import dolfinx
 import dolfinx.fem as fem
+import dolfinx.mesh as dmesh
 import basix.ufl
+import ufl
 from mpi4py import MPI
 
 from simulation.femur_css import FemurCSS, load_json_points
@@ -36,7 +41,7 @@ from simulation.femur_loads import HIPJointLoad, MuscleLoad, vector_from_angles
 
 
 # =============================================================================
-# Loading Case Definition
+# Load Specifications (Dataclasses)
 # =============================================================================
 
 @dataclass
@@ -45,17 +50,17 @@ class HipLoadSpec:
     Hip joint load specification.
     
     Attributes:
-        magnitude: Force magnitude in N
-        alpha_sag: Sagittal plane angle in degrees (+ = anterior, - = posterior)
-        alpha_front: Frontal plane angle in degrees (+ = lateral, - = medial)
-        sigma_deg: Gaussian spread in degrees (contact patch size)
+        magnitude: Force magnitude [N]
+        alpha_sag: Sagittal plane angle [deg] (+ anterior, - posterior)
+        alpha_front: Frontal plane angle [deg] (+ lateral, - medial)
+        sigma_deg: Gaussian spread [deg] (contact patch size)
         flip: If True, flip force direction (compression into head)
     """
     magnitude: float
-    alpha_sag: float = 0.0
-    alpha_front: float = 0.0
-    sigma_deg: float = 10.0
-    flip: bool = True
+    alpha_sag: float
+    alpha_front: float
+    sigma_deg: float
+    flip: bool
 
 
 @dataclass
@@ -64,20 +69,19 @@ class MuscleLoadSpec:
     Muscle load specification.
     
     Attributes:
-        name: Muscle identifier ("glmed", "glmin", "glmax", "psoas", 
-              "vastus_lateralis", "vastus_medialis", "vastus_intermedius")
-        magnitude: Force magnitude in N
-        alpha_sag: Sagittal plane angle in degrees (+ = anterior, - = posterior)
-        alpha_front: Frontal plane angle in degrees (+ = lateral, - = medial)
-        sigma: Gaussian spread in mm (attachment area size)
+        name: Muscle identifier (glmed, glmin, glmax, psoas, vastus_*)
+        magnitude: Force magnitude [N]
+        alpha_sag: Sagittal plane angle [deg] (+ anterior, - posterior)
+        alpha_front: Frontal plane angle [deg] (+ lateral, - medial)
+        sigma: Gaussian spread [mm] (attachment area size)
         flip: If True, flip force direction (muscle contraction pulls)
     """
     name: str
     magnitude: float
-    alpha_sag: float = 0.0
-    alpha_front: float = 0.0
-    sigma: float = 2.0
-    flip: bool = False
+    alpha_sag: float
+    alpha_front: float
+    sigma: float
+    flip: bool
 
 
 @dataclass 
@@ -88,498 +92,602 @@ class LoadingCase:
     Represents a specific loading scenario (e.g., mid-stance phase of gait)
     with hip joint reaction force and active muscle forces.
     
-    Multiple LoadingCases can be defined and their stimulus (Ψ) will be 
-    weight-averaged for bone remodeling.
-    
     Attributes:
         name: Descriptive name for the loading case
-        hip: Hip joint load specification (optional)
+        weight: Weight for averaging multiple cases
+        hip: Hip joint load specification (None if no hip load)
         muscles: List of muscle load specifications
-        weight: Weight for averaging multiple cases (default 1.0)
-    
-    Example:
-        case = (LoadingCase(name="mid_stance")
-            .set_hip(magnitude=2000, alpha_front=-10)
-            .add_muscle("glmed", magnitude=500, alpha_front=35))
     """
     name: str
-    hip: Optional[HipLoadSpec] = None
+    weight: float
+    hip: HipLoadSpec = field(default=None)
     muscles: List[MuscleLoadSpec] = field(default_factory=list)
-    weight: float = 1.0
     
-    def set_hip(self, magnitude: float, alpha_sag: float = 0.0, 
-                alpha_front: float = 0.0, sigma_deg: float = 10.0, 
-                flip: bool = True) -> "LoadingCase":
+    def set_hip(
+        self, 
+        magnitude: float, 
+        alpha_sag: float, 
+        alpha_front: float, 
+        sigma_deg: float, 
+        flip: bool
+    ) -> LoadingCase:
         """Set the hip joint load. Returns self for chaining."""
         self.hip = HipLoadSpec(
-            magnitude=magnitude, alpha_sag=alpha_sag, alpha_front=alpha_front,
-            sigma_deg=sigma_deg, flip=flip
+            magnitude=magnitude, 
+            alpha_sag=alpha_sag, 
+            alpha_front=alpha_front,
+            sigma_deg=sigma_deg, 
+            flip=flip
         )
         return self
     
-    def add_muscle(self, name: str, magnitude: float, 
-                   alpha_sag: float = 0.0, alpha_front: float = 0.0,
-                   sigma: float = 2.0, flip: bool = False) -> "LoadingCase":
+    def add_muscle(
+        self, 
+        name: str, 
+        magnitude: float, 
+        alpha_sag: float, 
+        alpha_front: float,
+        sigma: float, 
+        flip: bool
+    ) -> LoadingCase:
         """Add a muscle load. Returns self for chaining."""
         self.muscles.append(MuscleLoadSpec(
-            name=name, magnitude=magnitude, 
-            alpha_sag=alpha_sag, alpha_front=alpha_front,
-            sigma=sigma, flip=flip
+            name=name, 
+            magnitude=magnitude, 
+            alpha_sag=alpha_sag, 
+            alpha_front=alpha_front,
+            sigma=sigma, 
+            flip=flip
         ))
         return self
 
 
 # =============================================================================
-# Loader: Applies LoadingCase to DOLFINx mesh
+# Loader: Precomputes and caches traction fields
 # =============================================================================
+
+# Mapping of muscle names to JSON paths
+MUSCLE_PATHS = {
+    "glmed": FemurPaths.GL_MED_JSON,
+    "glmin": FemurPaths.GL_MIN_JSON,
+    "glmax": FemurPaths.GL_MAX_JSON,
+    "psoas": FemurPaths.PSOAS_JSON,
+    "vastus_lateralis": FemurPaths.VASTUS_LATERALIS_JSON,
+    "vastus_medialis": FemurPaths.VASTUS_MEDIALIS_JSON,
+    "vastus_intermedius": FemurPaths.VASTUS_INTERMEDIUS_JSON,
+}
+
+
+@dataclass
+class CachedTraction:
+    """Cached traction arrays for a single loading case."""
+    name: str
+    weight: float
+    traction: np.ndarray      # Flat array for proximal traction
+    traction_cut: np.ndarray  # Flat array for cut equilibrium traction
+
 
 class Loader:
     """
-    MPI-parallel loader: applies LoadingCase to produce traction fields.
+    MPI-parallel loader with precomputed traction caching.
+    
+    All loading cases are computed ONCE during precompute_loading_cases().
+    Subsequently, set_loading_case() just copies cached arrays (O(n) copy).
     
     Two traction fields:
-    - traction: Hip + muscle loads (for Neumann BC on proximal surface, tag=2)
-    - traction_cut: Equilibrating reaction (for Neumann BC on distal cut, tag=1)
-    
-    The cut equilibrium ensures global force and moment balance:
-        ∫ t dS = -F_applied  (force balance)
-        ∫ (x - x_c) × t dS = -M_applied  (moment balance)
-    
-    MPI pattern: Rank 0 computes, all ranks participate in interpolation.
+    - traction: Hip + muscle loads (Neumann BC on proximal surface)
+    - traction_cut: Equilibrating reaction (Neumann BC on distal cut)
     """
     
-    # Mapping of muscle names to JSON paths
-    MUSCLE_PATHS = {
-        "glmed": FemurPaths.GL_MED_JSON,
-        "glmin": FemurPaths.GL_MIN_JSON,
-        "glmax": FemurPaths.GL_MAX_JSON,
-        "psoas": FemurPaths.PSOAS_JSON,
-        "vastus_lateralis": FemurPaths.VASTUS_LATERALIS_JSON,
-        "vastus_medialis": FemurPaths.VASTUS_MEDIALIS_JSON,
-        "vastus_intermedius": FemurPaths.VASTUS_INTERMEDIUS_JSON,
-    }
-    
-    def __init__(self, dolfinx_mesh: dolfinx.mesh.Mesh, facet_tags, load_tag: int = 2, cut_tag: int = 1):
+    def __init__(
+        self, 
+        mesh: dolfinx.mesh.Mesh, 
+        facet_tags: dmesh.MeshTags, 
+        load_tag: int, 
+        cut_tag: int
+    ):
         """
         Initialize loader with mesh and facet tags.
         
         Args:
-            dolfinx_mesh: DOLFINx mesh
+            mesh: DOLFINx mesh
             facet_tags: MeshTags for boundary facets
-            load_tag: Facet tag for proximal load surface (hip + muscles, default 2)
-            cut_tag: Facet tag for distal cut surface (equilibrium reaction, default 1)
+            load_tag: Facet tag for proximal load surface (hip + muscles)
+            cut_tag: Facet tag for distal cut surface (equilibrium reaction)
         """
-        self.mesh = dolfinx_mesh
-        self.comm = self.mesh.comm
+        self.mesh = mesh
+        self.comm = mesh.comm
         self.rank = self.comm.rank
         self.facet_tags = facet_tags
         self.load_tag = load_tag
         self.cut_tag = cut_tag
+        self.gdim = mesh.geometry.dim
         
         # Vector function space for traction (P1, 3D)
-        gdim = self.mesh.geometry.dim
-        P1_vec = basix.ufl.element("Lagrange", self.mesh.basix_cell(), 1, shape=(gdim,))
-        self.V = fem.functionspace(self.mesh, P1_vec)
+        P1_vec = basix.ufl.element("Lagrange", mesh.basix_cell(), 1, shape=(self.gdim,))
+        self.V = fem.functionspace(mesh, P1_vec)
         
-        # Traction for hip + muscles (proximal surface)
+        # Traction fields (updated by set_loading_case)
         self.traction = fem.Function(self.V, name="Traction")
-        
-        # Traction for cut equilibrium (distal cut)
         self.traction_cut = fem.Function(self.V, name="TractionCut")
         
-        # Only rank 0 sets up pyvista geometry and load objects
-        self._hip_loader: Optional[HIPJointLoad] = None
-        self._muscle_loaders: dict = {}
+        # Geometry objects (rank 0 only)
+        self._hip_loader: HIPJointLoad = None
+        self._muscle_loaders: dict[str, MuscleLoad] = {}
+        self._femur_mesh = None
+        self._css: FemurCSS = None
         
-        # Cache for applied forces/moments (computed on rank 0, broadcast)
-        self._F_total = np.zeros(3)  # Total applied force [N]
-        self._M_total = np.zeros(3)  # Total applied moment about cut centroid [Nmm]
+        # Cut surface geometry (all ranks)
+        self._cut_centroid: np.ndarray = None
+        self._cut_area: float = 0.0
         
-        # Cut surface geometry (computed once)
-        self._cut_centroid: Optional[np.ndarray] = None
-        self._cut_area: Optional[float] = None
+        # Cached forms for cut equilibrium
+        self._I0_form: fem.Form = None
+        self._J_forms: List[fem.Form] = None
         
+        # Cached DOFs on cut surface
+        self._cut_dofs: np.ndarray = None
+        
+        # Cached coordinates and MPI patterns for interpolation
+        self._n_owned: int = 0
+        self._x_owned: np.ndarray = None
+        self._mpi_counts: List[int] = None
+        self._mpi_displs: List[int] = None
+        
+        # Precomputed traction cache: case_name -> CachedTraction
+        self._cache: Dict[str, CachedTraction] = {}
+        
+        # Equilibrium verification forms (initialized in _init_equilibrium_forms)
+        self._force_forms_load: List[fem.Form] = None
+        self._moment_forms_load: List[fem.Form] = None
+        self._force_forms_cut: List[fem.Form] = None
+        self._moment_forms_cut: List[fem.Form] = None
+        
+        # Initialize geometry
         if self.rank == 0:
-            self._setup_geometry()
+            self._init_geometry_rank0()
         
-        # Setup cut surface geometry on all ranks
-        self._setup_cut_geometry()
+        self._init_cut_geometry()
+        self._init_interpolation_cache()
+        self._init_equilibrium_forms()
         
         self.comm.Barrier()
     
-    def _setup_geometry(self) -> None:
-        """Setup femur geometry and load objects on rank 0."""
+    # -------------------------------------------------------------------------
+    # Initialization Methods
+    # -------------------------------------------------------------------------
+    
+    def _init_geometry_rank0(self) -> None:
+        """Load femur geometry and create hip loader on rank 0."""
         import pyvista as pv
         
-        femur_mesh = pv.read(str(FemurPaths.FEMUR_MESH_VTK))
+        self._femur_mesh = pv.read(str(FemurPaths.FEMUR_MESH_VTK))
         head_line = load_json_points(FemurPaths.HEAD_LINE_JSON)
         le_me_line = load_json_points(FemurPaths.LE_ME_LINE_JSON)
         
-        css = FemurCSS(femur_mesh, head_line, le_me_line, side="left")
-        
-        # Hip loader
-        self._hip_loader = HIPJointLoad(femur_mesh, css, use_cell_data=False)
-        
-        # Muscle loaders - lazy init when needed
-        self._femur_mesh = femur_mesh
-        self._css = css
+        self._css = FemurCSS(self._femur_mesh, head_line, le_me_line, side="left")
+        self._hip_loader = HIPJointLoad(self._femur_mesh, self._css, use_cell_data=False)
     
-    def _setup_cut_geometry(self) -> None:
-        """
-        Compute cut surface geometry (centroid, area) for equilibrium.
+    def _init_cut_geometry(self) -> None:
+        """Compute cut surface geometry (centroid, area) and cache equilibrium forms."""
+        ds_cut = ufl.Measure(
+            "ds", domain=self.mesh, 
+            subdomain_data=self.facet_tags, 
+            subdomain_id=self.cut_tag
+        )
+        area_form = fem.form(fem.Constant(self.mesh, 1.0) * ds_cut)
+        local_area = fem.assemble_scalar(area_form)
+        self._cut_area = self.comm.allreduce(local_area, op=MPI.SUM)
         
-        MPI: Each rank computes its local contribution, then reduce to get global.
-        Note: fem.assemble_scalar is collective - all ranks must call it.
-        """
-        from dolfinx import mesh as dmesh
-        import ufl
+        # Compute centroid exactly using surface integrals: x_c = ∫ x dS / ∫ dS
+        x = ufl.SpatialCoordinate(self.mesh)
+        centroid = np.zeros(3, dtype=np.float64)
+        for i in range(self.gdim):
+            local_val = fem.assemble_scalar(fem.form(x[i] * ds_cut))
+            centroid[i] = self.comm.allreduce(local_val, op=MPI.SUM)
         
-        # Compute facet areas using UFL - MUST be called by all ranks (collective)
-        ds_cut = ufl.Measure("ds", domain=self.mesh, subdomain_data=self.facet_tags, subdomain_id=self.cut_tag)
-        one = fem.Constant(self.mesh, 1.0)
-        area_form = fem.form(one * ds_cut)
-        local_area = fem.assemble_scalar(area_form)  # Collective operation
+        if self._cut_area > 1e-12:
+            self._cut_centroid = centroid / self._cut_area
+        else:
+            self._cut_centroid = np.zeros(3, dtype=np.float64)
         
-        # Find facets with cut_tag for centroid computation
+        self._cache_equilibrium_forms(ds_cut)
+        self._cache_cut_dofs()
+    
+    def _cache_equilibrium_forms(self, ds_cut: ufl.Measure) -> None:
+        """Pre-compile UFL forms for cut equilibrium."""
+        x = ufl.SpatialCoordinate(self.mesh)
+        x_c = fem.Constant(self.mesh, self._cut_centroid.astype(np.float64))
+        r = x - x_c
+        
+        self._I0_form = fem.form(ufl.inner(r, r) * ds_cut)
+        
+        self._J_forms = []
+        for i in range(self.gdim):
+            for j in range(i, self.gdim):
+                self._J_forms.append(fem.form(r[i] * r[j] * ds_cut))
+    
+    def _cache_cut_dofs(self) -> None:
+        """Cache owned DOF indices on cut surface."""
+        V = self.traction_cut.function_space
+        fdim = self.mesh.topology.dim - 1
         cut_facets = self.facet_tags.find(self.cut_tag)
         
-        if cut_facets.size == 0:
-            # This rank has no cut facets - contribute zeros to centroid
-            local_centroid_weighted = np.zeros(3)
-        else:
-            # Compute facet midpoints (approximation of centroid per facet)
-            fdim = self.mesh.topology.dim - 1
-            midpoints = dmesh.compute_midpoints(self.mesh, fdim, cut_facets)
-            
-            # Weighted centroid: sum(midpoint * facet_area) / total_area
-            # For simplicity, assume equal weight per facet locally
-            # (more accurate would integrate x over each facet)
-            local_centroid_weighted = midpoints.sum(axis=0) * (local_area / max(cut_facets.size, 1))
-        
-        # Global reduce
-        global_area = self.comm.allreduce(local_area, op=MPI.SUM)
-        global_centroid_weighted = np.zeros(3)
-        self.comm.Allreduce(local_centroid_weighted, global_centroid_weighted, op=MPI.SUM)
-        
-        if global_area > 0:
-            self._cut_centroid = global_centroid_weighted / global_area
-        else:
-            # Fallback - no cut surface found
-            self._cut_centroid = np.zeros(3)
-            
-        self._cut_area = global_area
-
-    def _get_muscle_loader(self, name: str) -> MuscleLoad:
-        """Get or create muscle loader by name (rank 0 only)."""
-        if name not in self._muscle_loaders:
-            if name not in self.MUSCLE_PATHS:
-                raise ValueError(f"Unknown muscle: {name}. Available: {list(self.MUSCLE_PATHS.keys())}")
-            
-            loader = MuscleLoad(self._femur_mesh, self._css, use_cell_data=False)
-            loader.set_attachment_points(load_json_points(self.MUSCLE_PATHS[name]))
-            self._muscle_loaders[name] = loader
-        
-        return self._muscle_loaders[name]
+        all_dofs = fem.locate_dofs_topological(V, fdim, cut_facets)
+        n_owned = V.dofmap.index_map.size_local
+        self._cut_dofs = np.array([d for d in all_dofs if d < n_owned], dtype=np.int32)
     
-    def apply_loading_case(self, case: LoadingCase) -> None:
+    def _init_interpolation_cache(self) -> None:
+        """Cache DOF coordinates and MPI communication patterns."""
+        V = self.traction.function_space
+        imap = V.dofmap.index_map
+        self._n_owned = imap.size_local
+        
+        all_coords = V.tabulate_dof_coordinates()
+        self._x_owned = np.ascontiguousarray(all_coords[:self._n_owned])
+        
+        all_n = self.comm.allgather(self._n_owned)
+        self._mpi_counts = all_n
+        self._mpi_displs = [sum(all_n[:i]) for i in range(len(all_n))]
+    
+    def _init_equilibrium_forms(self) -> None:
+        """Pre-compile forms for verifying force and moment equilibrium."""
+        x = ufl.SpatialCoordinate(self.mesh)
+        x_c = fem.Constant(self.mesh, self._cut_centroid.astype(np.float64))
+        r = x - x_c  # Position relative to cut centroid
+        
+        ds_load = ufl.Measure(
+            "ds", domain=self.mesh, 
+            subdomain_data=self.facet_tags, 
+            subdomain_id=self.load_tag
+        )
+        ds_cut = ufl.Measure(
+            "ds", domain=self.mesh, 
+            subdomain_data=self.facet_tags, 
+            subdomain_id=self.cut_tag
+        )
+        
+        # Force forms: ∫ t_i dS for i=0,1,2
+        self._force_forms_load = [
+            fem.form(self.traction[i] * ds_load) for i in range(self.gdim)
+        ]
+        self._force_forms_cut = [
+            fem.form(self.traction_cut[i] * ds_cut) for i in range(self.gdim)
+        ]
+        
+        # Moment forms: ∫ (r × t)_i dS for i=0,1,2
+        # (r × t)_0 = r_1*t_2 - r_2*t_1
+        # (r × t)_1 = r_2*t_0 - r_0*t_2
+        # (r × t)_2 = r_0*t_1 - r_1*t_0
+        t_load = self.traction
+        t_cut = self.traction_cut
+        
+        self._moment_forms_load = [
+            fem.form((r[1]*t_load[2] - r[2]*t_load[1]) * ds_load),
+            fem.form((r[2]*t_load[0] - r[0]*t_load[2]) * ds_load),
+            fem.form((r[0]*t_load[1] - r[1]*t_load[0]) * ds_load),
+        ]
+        self._moment_forms_cut = [
+            fem.form((r[1]*t_cut[2] - r[2]*t_cut[1]) * ds_cut),
+            fem.form((r[2]*t_cut[0] - r[0]*t_cut[2]) * ds_cut),
+            fem.form((r[0]*t_cut[1] - r[1]*t_cut[0]) * ds_cut),
+        ]
+    
+    def _verify_equilibrium(self, case_name: str, rtol: float = 1e-2) -> dict:
         """
-        Apply a LoadingCase to compute both traction fields.
+        Verify force and moment equilibrium for current traction fields.
         
-        Updates:
-        - self.traction: Combined traction from hip + muscles (proximal)
-        - self.traction_cut: Equilibrating reaction on distal cut
-        
-        The cut traction ensures global equilibrium:
-            ∫ t dS + ∫ t_cut dS = 0  (force balance)
-            ∫ r×t dS + ∫ r×t_cut dS = 0  (moment balance)
+        Computes:
+            F_total = ∫_load t dS + ∫_cut t_cut dS  (should be ≈ 0)
+            M_total = ∫_load r×t dS + ∫_cut r×t_cut dS  (should be ≈ 0)
         
         Args:
-            case: LoadingCase specification
+            case_name: Name of loading case (for logging)
+            rtol: Relative tolerance for equilibrium check
+            
+        Returns:
+            dict with F_load, F_cut, F_total, M_load, M_cut, M_total, is_balanced
         """
-        # Zero out both tractions
+        # Integrate forces on load surface
+        F_load = np.zeros(3, dtype=np.float64)
+        for i in range(3):
+            local_val = fem.assemble_scalar(self._force_forms_load[i])
+            F_load[i] = self.comm.allreduce(local_val, op=MPI.SUM)
+        
+        # Integrate forces on cut surface
+        F_cut = np.zeros(3, dtype=np.float64)
+        for i in range(3):
+            local_val = fem.assemble_scalar(self._force_forms_cut[i])
+            F_cut[i] = self.comm.allreduce(local_val, op=MPI.SUM)
+        
+        # Integrate moments on load surface
+        M_load = np.zeros(3, dtype=np.float64)
+        for i in range(3):
+            local_val = fem.assemble_scalar(self._moment_forms_load[i])
+            M_load[i] = self.comm.allreduce(local_val, op=MPI.SUM)
+        
+        # Integrate moments on cut surface
+        M_cut = np.zeros(3, dtype=np.float64)
+        for i in range(3):
+            local_val = fem.assemble_scalar(self._moment_forms_cut[i])
+            M_cut[i] = self.comm.allreduce(local_val, op=MPI.SUM)
+        
+        F_total = F_load + F_cut
+        M_total = M_load + M_cut
+        
+        # Check equilibrium
+        F_ref = max(np.linalg.norm(F_load), np.linalg.norm(F_cut), 1.0)
+        M_ref = max(np.linalg.norm(M_load), np.linalg.norm(M_cut), 1.0)
+        
+        F_err = np.linalg.norm(F_total) / F_ref
+        M_err = np.linalg.norm(M_total) / M_ref
+        
+        is_balanced = (F_err < rtol) and (M_err < rtol)
+        
+        # Only print warning if equilibrium is NOT satisfied
+        if not is_balanced and self.rank == 0:
+            print(f"  [✗] Equilibrium check FAILED for '{case_name}':")
+            print(f"      F_load = [{F_load[0]:+.2f}, {F_load[1]:+.2f}, {F_load[2]:+.2f}] N")
+            print(f"      F_cut  = [{F_cut[0]:+.2f}, {F_cut[1]:+.2f}, {F_cut[2]:+.2f}] N")
+            print(f"      F_total= [{F_total[0]:+.2e}, {F_total[1]:+.2e}, {F_total[2]:+.2e}] N (err={F_err:.2e})")
+            print(f"      M_load = [{M_load[0]:+.2f}, {M_load[1]:+.2f}, {M_load[2]:+.2f}] N·mm")
+            print(f"      M_cut  = [{M_cut[0]:+.2f}, {M_cut[1]:+.2f}, {M_cut[2]:+.2f}] N·mm")
+            print(f"      M_total= [{M_total[0]:+.2e}, {M_total[1]:+.2e}, {M_total[2]:+.2e}] N·mm (err={M_err:.2e})")
+            print(f"      ⚠ WARNING: Equilibrium not satisfied (rtol={rtol})")
+        
+        return {
+            "F_load": F_load,
+            "F_cut": F_cut, 
+            "F_total": F_total,
+            "M_load": M_load,
+            "M_cut": M_cut,
+            "M_total": M_total,
+            "F_err": F_err,
+            "M_err": M_err,
+            "is_balanced": is_balanced,
+        }
+
+    # -------------------------------------------------------------------------
+    # Precomputation API
+    # -------------------------------------------------------------------------
+    
+    def precompute_loading_cases(self, cases: List[LoadingCase]) -> None:
+        """
+        Precompute and cache traction fields for all loading cases.
+        
+        This method computes the expensive load interpolation ONCE for each case.
+        Subsequent calls to set_loading_case() just copy cached arrays.
+        
+        Args:
+            cases: List of LoadingCase objects to precompute
+        """
+        for case in cases:
+            self._precompute_single_case(case)
+        
+        self.comm.Barrier()
+    
+    def _precompute_single_case(self, case: LoadingCase) -> None:
+        """Compute and cache traction arrays for a single loading case."""
+        # Reset working arrays
         self.traction.x.array[:] = 0.0
         self.traction_cut.x.array[:] = 0.0
         
-        # Reset force/moment accumulators
-        self._F_total[:] = 0.0
-        self._M_total[:] = 0.0
-        
-        # Apply hip load if specified
+        # Apply hip load
         if case.hip is not None:
-            self._apply_hip(case.hip)
+            self._apply_hip_internal(case.hip)
         
-        # Apply each muscle load
+        # Apply muscle loads
         for muscle in case.muscles:
-            self._apply_muscle(muscle)
+            self._apply_muscle_internal(muscle)
         
         self.traction.x.scatter_forward()
         
-        # Compute equilibrating traction on cut
-        self._apply_cut_equilibrium()
+        # Integrate ACTUAL forces and moments from the FEM traction field
+        # This accounts for interpolation errors between pyvista and FEM mesh
+        F_actual, M_actual = self._integrate_load_surface_forces()
+        
+        # Compute cut equilibrium using actual integrated forces
+        self._compute_cut_equilibrium_internal(F_actual, M_actual)
+        self.traction_cut.x.scatter_forward()
+        
+        # Verify force and moment equilibrium
+        self._verify_equilibrium(case.name)
+        
+        # Cache the computed arrays
+        self._cache[case.name] = CachedTraction(
+            name=case.name,
+            weight=case.weight,
+            traction=self.traction.x.array.copy(),
+            traction_cut=self.traction_cut.x.array.copy(),
+        )
+    
+    def _integrate_load_surface_forces(self) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Integrate actual force and moment from traction field on load surface.
+        
+        Returns:
+            (F, M): Force and moment vectors from ∫t dS and ∫r×t dS
+        """
+        F = np.zeros(3, dtype=np.float64)
+        for i in range(3):
+            local_val = fem.assemble_scalar(self._force_forms_load[i])
+            F[i] = self.comm.allreduce(local_val, op=MPI.SUM)
+        
+        M = np.zeros(3, dtype=np.float64)
+        for i in range(3):
+            local_val = fem.assemble_scalar(self._moment_forms_load[i])
+            M[i] = self.comm.allreduce(local_val, op=MPI.SUM)
+        
+        return F, M
+    
+    def set_loading_case(self, case_name: str) -> None:
+        """
+        Set traction fields from precomputed cache.
+        
+        This is O(n) array copy - no interpolation, no MPI communication.
+        
+        Args:
+            case_name: Name of precomputed loading case
+        
+        Raises:
+            KeyError: If case_name was not precomputed
+        """
+        cached = self._cache[case_name]
+        self.traction.x.array[:] = cached.traction
+        self.traction_cut.x.array[:] = cached.traction_cut
+        self.traction.x.scatter_forward()
         self.traction_cut.x.scatter_forward()
     
-    def _apply_hip(self, spec: HipLoadSpec) -> None:
-        """
-        Apply hip load and add to traction.
-        
-        Also accumulates force and moment for cut equilibrium.
-        MPI pattern: rank 0 computes, all ranks participate in interpolation.
-        """
-        F_applied = np.zeros(3)
-        r_app = np.zeros(3)  # Application point
+    def get_cached_weight(self, case_name: str) -> float:
+        """Get the weight of a cached loading case."""
+        return self._cache[case_name].weight
+    
+    def get_cached_names(self) -> List[str]:
+        """Get list of precomputed loading case names."""
+        return list(self._cache.keys())
+    
+    # -------------------------------------------------------------------------
+    # Internal Load Computation (used only during precomputation)
+    # -------------------------------------------------------------------------
+    
+    def _apply_hip_internal(self, spec: HipLoadSpec) -> tuple[np.ndarray, np.ndarray]:
+        """Apply hip load and return (force, moment) contribution."""
+        F_applied = np.zeros(3, dtype=np.float64)
+        r_app = np.zeros(3, dtype=np.float64)
         
         if self.rank == 0:
             v = vector_from_angles(spec.magnitude, spec.alpha_sag, spec.alpha_front)
-            # Apply load returns traction mesh
             self._hip_loader.apply_gaussian_load(
-                force_vector_css=v, sigma_deg=spec.sigma_deg, flip=spec.flip
+                force_vector_css=v, 
+                sigma_deg=spec.sigma_deg, 
+                flip=spec.flip
             )
-            # Force vector after flip
-            if spec.flip:
-                F_applied = -v
-            else:
-                F_applied = v.copy()
-            # Application point: femoral head center
-            r_app = self._hip_loader.head_center_world.copy()
+            F_applied[:] = -v if spec.flip else v
+            r_app[:] = self._hip_loader.head_center_world
         
-        # Broadcast force and application point
         self.comm.Bcast(F_applied, root=0)
         self.comm.Bcast(r_app, root=0)
         
-        # Accumulate force and moment about cut centroid
-        self._F_total += F_applied
-        if self._cut_centroid is not None:
-            self._M_total += np.cross(r_app - self._cut_centroid, F_applied)
+        M_applied = np.cross(r_app - self._cut_centroid, F_applied)
         
-        self.comm.Barrier()
         self._interpolate_and_add(self._hip_loader)
-    
-    def _apply_muscle(self, spec: MuscleLoadSpec) -> None:
-        """
-        Apply muscle load and add to traction.
         
-        Also accumulates force and moment for cut equilibrium.
-        MPI pattern: rank 0 computes, all ranks participate in interpolation.
-        Note: loader is None on non-root ranks but _interpolate_and_add only
-        uses it on rank 0.
-        """
-        F_applied = np.zeros(3)
-        r_app = np.zeros(3)  # Application point (centroid of attachment)
+        return F_applied, M_applied
+    
+    def _apply_muscle_internal(self, spec: MuscleLoadSpec) -> tuple[np.ndarray, np.ndarray]:
+        """Apply muscle load and return (force, moment) contribution."""
+        F_applied = np.zeros(3, dtype=np.float64)
+        r_app = np.zeros(3, dtype=np.float64)
         loader = None
         
         if self.rank == 0:
             loader = self._get_muscle_loader(spec.name)
             v = vector_from_angles(spec.magnitude, spec.alpha_sag, spec.alpha_front)
-            loader.apply_gaussian_load(force_vector_css=v, sigma=spec.sigma, flip=spec.flip)
-            # Force vector after flip
-            if spec.flip:
-                F_applied = -v
-            else:
-                F_applied = v.copy()
-            # Application point: centroid of muscle attachment curve
-            r_app = loader._curve.mean(axis=0)
+            loader.apply_gaussian_load(
+                force_vector_css=v, 
+                sigma=spec.sigma, 
+                flip=spec.flip
+            )
+            F_applied[:] = -v if spec.flip else v
+            r_app[:] = loader._curve.mean(axis=0)
         
-        # Broadcast force and application point
         self.comm.Bcast(F_applied, root=0)
         self.comm.Bcast(r_app, root=0)
         
-        # Accumulate force and moment about cut centroid
-        self._F_total += F_applied
-        if self._cut_centroid is not None:
-            self._M_total += np.cross(r_app - self._cut_centroid, F_applied)
+        M_applied = np.cross(r_app - self._cut_centroid, F_applied)
         
-        self.comm.Barrier()
         self._interpolate_and_add(loader)
+        
+        return F_applied, M_applied
+    
+    def _get_muscle_loader(self, name: str) -> MuscleLoad:
+        """Get or create muscle loader by name (rank 0 only)."""
+        if name not in self._muscle_loaders:
+            if name not in MUSCLE_PATHS:
+                raise ValueError(f"Unknown muscle: {name}. Available: {list(MUSCLE_PATHS.keys())}")
+            
+            loader = MuscleLoad(self._femur_mesh, self._css, use_cell_data=False)
+            loader.set_attachment_points(load_json_points(MUSCLE_PATHS[name]))
+            self._muscle_loaders[name] = loader
+        
+        return self._muscle_loaders[name]
     
     def _interpolate_and_add(self, loader_obj) -> None:
-        """
-        Interpolate load from loader_obj and add to traction field.
-        
-        MPI owner-computes pattern:
-        1. All ranks gather their owned DOF coordinates to rank 0
-        2. Rank 0 evaluates loader_obj at all coordinates (loader_obj can be None on other ranks)
-        3. Rank 0 scatters computed values back to owners
-        4. Each rank adds received values to its owned DOFs
-        
-        Args:
-            loader_obj: Load interpolator (only used on rank 0, can be None on others)
-        """
-        V = self.traction.function_space
-        imap = V.dofmap.index_map
-        bs = V.dofmap.index_map_bs
-        n_owned = imap.size_local
-        
-        # Get owned coordinates
-        all_coords = V.tabulate_dof_coordinates()
-        x_owned = all_coords[:n_owned]
-        local_n = n_owned
-        
-        # MPI setup
-        all_n = self.comm.allgather(local_n)
-        displs = [sum(all_n[:i]) for i in range(len(all_n))]
+        """Interpolate load from loader_obj and add to traction field."""
+        bs = self.V.dofmap.index_map_bs
+        counts = self._mpi_counts
+        displs = self._mpi_displs
         
         if self.rank == 0:
-            total_n = sum(all_n)
+            total_n = sum(counts)
             recv_coords = np.empty((total_n, 3), dtype=np.float64)
             
-            # Gather coords from all ranks
             self.comm.Gatherv(
-                np.ascontiguousarray(x_owned),
-                [recv_coords, [n * 3 for n in all_n], [d * 3 for d in displs], MPI.DOUBLE],
+                self._x_owned,
+                [recv_coords, [n * 3 for n in counts], [d * 3 for d in displs], MPI.DOUBLE],
                 root=0
             )
             
-            # Evaluate load at all coordinates
             computed_values = loader_obj(recv_coords)
             
-            # Scatter results
-            local_values = np.empty((local_n, 3), dtype=np.float64)
+            local_values = np.empty((self._n_owned, 3), dtype=np.float64)
             self.comm.Scatterv(
-                [computed_values, [n * 3 for n in all_n], [d * 3 for d in displs], MPI.DOUBLE],
+                [computed_values, [n * 3 for n in counts], [d * 3 for d in displs], MPI.DOUBLE],
                 local_values,
                 root=0
             )
         else:
-            self.comm.Gatherv(np.ascontiguousarray(x_owned), None, root=0)
-            local_values = np.empty((local_n, 3), dtype=np.float64)
+            self.comm.Gatherv(self._x_owned, None, root=0)
+            local_values = np.empty((self._n_owned, 3), dtype=np.float64)
             self.comm.Scatterv(None, local_values, root=0)
         
-        # Add to traction (not replace!)
-        self.traction.x.array[:n_owned * bs] += local_values.flatten()
-
-    def _apply_cut_equilibrium(self) -> None:
-        """
-        Compute equilibrating traction on the cut surface.
-        
-        The cut traction balances applied forces and moments:
-            t_cut = t_F + t_M
-        
-        where:
-            t_F = -F_total / A_cut  (uniform, balances force)
-            t_M = C × (x - x_c)     (linear, balances moment)
-        
-        The constant C is chosen so that:
-            ∫ (x - x_c) × t_M dS = -M_total
-        
-        MPI pattern: All ranks participate in applying to their owned DOFs.
-        """
-        if self._cut_area is None or self._cut_area < 1e-12:
-            # No cut surface - nothing to do
+        self.traction.x.array[:self._n_owned * bs] += local_values.flatten()
+    
+    def _compute_cut_equilibrium_internal(self, F_total: np.ndarray, M_total: np.ndarray) -> None:
+        """Compute equilibrating traction on the cut surface."""
+        if self._cut_area < 1e-12:
             return
         
-        # Get DOFs on cut surface (facets with cut_tag)
-        V = self.traction_cut.function_space
-        imap = V.dofmap.index_map
-        bs = V.dofmap.index_map_bs
-        n_owned = imap.size_local
+        F_norm = np.linalg.norm(F_total)
+        M_norm = np.linalg.norm(M_total)
+        if F_norm < 1e-15 and M_norm < 1e-15:
+            return
         
-        # Force part: uniform traction
-        # t_F = -F_total / A_cut (reaction = negative of applied)
-        t_F = -self._F_total / self._cut_area
+        t_F = -F_total / self._cut_area
         
-        # Get coordinates
-        all_coords = V.tabulate_dof_coordinates()
-        x_owned = all_coords[:n_owned]
+        # Assemble I0 (collective)
+        local_I0 = fem.assemble_scalar(self._I0_form)
+        I0 = self.comm.allreduce(local_I0, op=MPI.SUM)
         
-        # Find which DOFs are on the cut surface
-        # We need DOFs associated with facets tagged with cut_tag
-        cut_dofs = self._get_cut_surface_dofs()
+        # Assemble J tensor (collective)
+        J = np.zeros((3, 3), dtype=np.float64)
+        form_idx = 0
+        for i in range(3):
+            for j in range(i, 3):
+                local_val = fem.assemble_scalar(self._J_forms[form_idx])
+                global_val = self.comm.allreduce(local_val, op=MPI.SUM)
+                J[i, j] = global_val
+                J[j, i] = global_val
+                form_idx += 1
         
-        # For moment part, we need: ∫ (x - x_c) × t_M dS = -M_total
-        # Using t_M(x) = C × (x - x_c), where C is a pseudo-vector
-        #
-        # For a circular cross-section with radius R:
-        #   ∫ (x - x_c) × [C × (x - x_c)] dS = C × ∫ |x - x_c|² dS = C × I_polar
-        # where I_polar = π R⁴ / 2 for a circle.
-        #
-        # For general shape, compute: I = ∫ |x - x_c|² dS locally
-        
-        # Compute second moment of area (polar) on cut surface
-        I_polar = self._compute_cut_polar_moment()
-        
-        if I_polar > 1e-12:
-            # C such that C × I_polar = -M_total  =>  C = -M_total / I_polar
-            C = -self._M_total / I_polar
+        if I0 < 1e-12:
+            C = np.zeros(3, dtype=np.float64)
         else:
-            C = np.zeros(3)
+            K = I0 * np.eye(3) - J
+            try:
+                C = -np.linalg.solve(K, M_total)
+            except np.linalg.LinAlgError:
+                C = -np.linalg.pinv(K) @ M_total
         
-        # Apply traction to cut DOFs
-        for i in range(n_owned):
-            if i in cut_dofs:
-                x = x_owned[i]
-                r = x - self._cut_centroid
-                
-                # t_M = C × r
-                t_M = np.cross(C, r)
-                
-                # Total traction at this DOF
-                t_total = t_F + t_M
-                
-                self.traction_cut.x.array[i * bs:(i + 1) * bs] = t_total
-    
-    def _get_cut_surface_dofs(self) -> set:
-        """
-        Get set of owned DOF indices that lie on the cut surface.
+        if len(self._cut_dofs) == 0:
+            return
         
-        Returns:
-            Set of local DOF indices on cut surface
-        """
-        from dolfinx import mesh as dmesh
+        bs = self.V.dofmap.index_map_bs
+        x_cut = self._x_owned[self._cut_dofs]
+        r_cut = x_cut - self._cut_centroid
+        t_M = np.cross(C, r_cut)
+        t_total = t_F + t_M
         
-        # Find facets with cut_tag
-        cut_facets = self.facet_tags.find(self.cut_tag)
-        
-        if cut_facets.size == 0:
-            return set()
-        
-        # Get DOFs associated with these facets
-        V = self.traction_cut.function_space
-        fdim = self.mesh.topology.dim - 1
-        
-        # Ensure connectivity
-        self.mesh.topology.create_connectivity(fdim, self.mesh.topology.dim)
-        
-        cut_dofs = set()
-        for facet in cut_facets:
-            # Get cells connected to this facet
-            facet_to_cell = self.mesh.topology.connectivity(fdim, self.mesh.topology.dim)
-            cells = facet_to_cell.links(facet)
-            
-            for cell in cells:
-                cell_dofs = V.dofmap.cell_dofs(cell)
-                # We need DOFs on this facet - approximate by taking first few
-                # For P1 elements on triangular facet: 3 DOFs
-                # This is approximate - proper way would be to check coordinates
-                cut_dofs.update(cell_dofs[:3])  # First 3 DOFs (vertices of facet approx)
-        
-        # Filter to owned only
-        n_owned = V.dofmap.index_map.size_local
-        cut_dofs = {d for d in cut_dofs if d < n_owned}
-        
-        return cut_dofs
-    
-    def _compute_cut_polar_moment(self) -> float:
-        """
-        Compute polar second moment of area: I = ∫ |x - x_c|² dS
-        
-        Returns:
-            Polar moment of area (mm⁴)
-        """
-        import ufl
-        
-        if self._cut_centroid is None:
-            return 0.0
-        
-        # Build UFL form for ∫ |x - x_c|² dS over cut surface
-        ds_cut = ufl.Measure("ds", domain=self.mesh, subdomain_data=self.facet_tags, subdomain_id=self.cut_tag)
-        
-        x = ufl.SpatialCoordinate(self.mesh)
-        x_c = fem.Constant(self.mesh, self._cut_centroid.astype(np.float64))
-        
-        r_sq = ufl.inner(x - x_c, x - x_c)
-        form = fem.form(r_sq * ds_cut)
-        
-        local_I = fem.assemble_scalar(form)
-        global_I = self.comm.allreduce(local_I, op=MPI.SUM)
-        
-        return global_I
+        traction_array = self.traction_cut.x.array
+        for i, dof in enumerate(self._cut_dofs):
+            traction_array[dof * bs:(dof + 1) * bs] = t_total[i]

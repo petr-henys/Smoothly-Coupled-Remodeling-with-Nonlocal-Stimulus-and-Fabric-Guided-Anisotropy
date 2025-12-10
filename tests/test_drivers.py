@@ -21,15 +21,25 @@ class MockLoader:
         self.traction = fem.Function(V, name="Traction")
         self.traction_cut = fem.Function(V, name="TractionCut")
         self._traction_value = traction_value
+        self._cache = {}
     
-    def apply_loading_case(self, case: LoadingCase) -> None:
-        """Apply constant test traction."""
-        traction_vec = np.array([0.0, -self._traction_value, 0.0], dtype=np.float64)
-        n_dofs = self.traction.x.array.size // 3
-        self.traction.x.array[:] = np.tile(traction_vec, n_dofs)
+    def precompute_loading_cases(self, cases):
+        """Precompute and cache traction arrays for all loading cases."""
+        for case in cases:
+            traction_vec = np.array([0.0, -self._traction_value, 0.0], dtype=np.float64)
+            n_dofs = self.traction.x.array.size // 3
+            traction_array = np.tile(traction_vec, n_dofs)
+            self._cache[case.name] = {
+                "traction": traction_array.copy(),
+                "traction_cut": np.zeros_like(traction_array),
+            }
+    
+    def set_loading_case(self, case_name: str) -> None:
+        """Apply cached traction for named case."""
+        cached = self._cache[case_name]
+        self.traction.x.array[:] = cached["traction"]
         self.traction.x.scatter_forward()
-        # Cut traction - just zero for testing
-        self.traction_cut.x.array[:] = 0.0
+        self.traction_cut.x.array[:] = cached["traction_cut"]
         self.traction_cut.x.scatter_forward()
 
 

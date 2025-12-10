@@ -394,19 +394,31 @@ def dummy_load(spaces, cfg):
             self.cut_tag = cut_tag
             self.traction = fem.Function(V, name="Traction")
             self.traction_cut = fem.Function(V, name="TractionCut")
-            
-        def apply_loading_case(self, case: LoadingCase) -> None:
-            """Apply constant test traction."""
-            # Apply a constant traction for testing (proximal)
-            traction_vec = np.array([0.0, -0.1, 0.05], dtype=np.float64)  # MPa
-            n_dofs = self.traction.x.array.size // 3
-            self.traction.x.array[:] = np.tile(traction_vec, n_dofs)
+            self._cache = {}
+        
+        def precompute_loading_cases(self, cases):
+            """Precompute and cache traction arrays for all loading cases."""
+            for case in cases:
+                # Apply a constant traction for testing (proximal)
+                traction_vec = np.array([0.0, -0.1, 0.05], dtype=np.float64)  # MPa
+                n_dofs = self.traction.x.array.size // 3
+                traction_array = np.tile(traction_vec, n_dofs)
+                
+                # Apply equilibrating traction on cut (reaction = -applied / area)
+                cut_traction = np.array([0.0, 0.1, -0.05], dtype=np.float64)  # MPa
+                traction_cut_array = np.tile(cut_traction, n_dofs)
+                
+                self._cache[case.name] = {
+                    "traction": traction_array.copy(),
+                    "traction_cut": traction_cut_array.copy(),
+                }
+        
+        def set_loading_case(self, case_name: str) -> None:
+            """Apply cached traction for named case."""
+            cached = self._cache[case_name]
+            self.traction.x.array[:] = cached["traction"]
             self.traction.x.scatter_forward()
-            
-            # Apply equilibrating traction on cut (reaction = -applied / area)
-            # For unit cube with face area = 1, just reverse the force
-            cut_traction = np.array([0.0, 0.1, -0.05], dtype=np.float64)  # MPa
-            self.traction_cut.x.array[:] = np.tile(cut_traction, n_dofs)
+            self.traction_cut.x.array[:] = cached["traction_cut"]
             self.traction_cut.x.scatter_forward()
     
     loader = MockLoader(spaces.V, load_tag=2, cut_tag=1)

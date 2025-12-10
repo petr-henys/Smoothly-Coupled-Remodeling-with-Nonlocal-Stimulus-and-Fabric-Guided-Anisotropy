@@ -143,16 +143,18 @@ class _Anderson:
             y += a_i * (xi + self.beta * ri)
         s = y - x_old
 
+        # Compute r_norm once (used for step limiting and safeguard)
+        r_norm = None
         if proj_residual_norm is not None:
+            r_norm = proj_residual_norm(x_old, x_raw, x_raw)
             s_proxy = proj_residual_norm(x_old, x_old + s, x_raw)
-            r_proxy = proj_residual_norm(x_old, x_raw, x_raw) + 1e-300
+            r_proxy = r_norm + 1e-300  # Reuse r_norm instead of recomputing
             if s_proxy > self.step_limit_factor * r_proxy:
                 s *= (self.step_limit_factor * r_proxy) / max(s_proxy, 1e-300)
 
         x_cand = x_old + s
 
         if proj_residual_norm is not None:
-            r_norm = proj_residual_norm(x_old, x_raw, x_raw)
             rp_norm = proj_residual_norm(x_old, x_cand, x_raw)
             info["r_norm"] = r_norm
             info["r_proxy_norm"] = rp_norm
