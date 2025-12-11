@@ -1,25 +1,18 @@
-"""
-MPI-parallel femur surface load interpolation with precomputed traction caching.
+"""MPI-parallel femur load interpolation with precomputed traction caching.
 
-This module provides:
-- HipLoadSpec, MuscleLoadSpec: Dataclasses for load specifications
-- LoadingCase: Configuration of loads (hip + muscles) for one loading scenario
+Provides:
+- HipLoadSpec, MuscleLoadSpec: Load specifications
+- LoadingCase: Configuration for one loading scenario (hip + muscles)
 - Loader: Precomputes and caches traction fields for all loading cases
 
-Architecture:
-- Rank 0 owns pyvista geometry and computes load distributions
-- DOF coordinates gathered from all ranks to rank 0
-- Computed traction values scattered back to owners
-- **All loads are computed ONCE during initialization and cached**
-- During simulation, cached arrays are copied to traction fields (O(1))
+MPI pattern: Rank 0 owns pyvista geometry, computes loads; other ranks gather
+coordinates to rank 0, receive scattered tractions back.
 
 Two traction fields:
 - traction: Hip + muscle loads on proximal surface (load_tag)
 - traction_cut: Equilibrating reaction on distal cut (cut_tag)
 
-The cut equilibrium ensures: ΣF = 0, ΣM = 0 for the free body.
-
-Units: mm, N, MPa (forces as traction = N/mm² = MPa)
+Units: mm, N, MPa
 """
 
 from __future__ import annotations
@@ -46,71 +39,35 @@ from simulation.femur_loads import HIPJointLoad, MuscleLoad, vector_from_angles
 
 @dataclass
 class HipLoadSpec:
-    """
-    Hip joint load specification.
-    
-    Attributes:
-        magnitude: Force magnitude [N]
-        alpha_sag: Sagittal plane angle [deg] (+ anterior, - posterior)
-        alpha_front: Frontal plane angle [deg] (+ lateral, - medial)
-        sigma_deg: Gaussian spread [deg] (contact patch size)
-        flip: If True, flip force direction (compression into head)
-    """
+    """Hip joint load: magnitude [N], angles [deg], Gaussian spread [deg]."""
     magnitude: float
-    alpha_sag: float
-    alpha_front: float
-    sigma_deg: float
-    flip: bool
+    alpha_sag: float       # Sagittal angle (+ anterior)
+    alpha_front: float     # Frontal angle (+ lateral)
+    sigma_deg: float       # Contact patch size
+    flip: bool             # Flip direction (compression into head)
 
 
 @dataclass
 class MuscleLoadSpec:
-    """
-    Muscle load specification.
-    
-    Attributes:
-        name: Muscle identifier (glmed, glmin, glmax, psoas, vastus_*)
-        magnitude: Force magnitude [N]
-        alpha_sag: Sagittal plane angle [deg] (+ anterior, - posterior)
-        alpha_front: Frontal plane angle [deg] (+ lateral, - medial)
-        sigma: Gaussian spread [mm] (attachment area size)
-        flip: If True, flip force direction (muscle contraction pulls)
-    """
-    name: str
-    magnitude: float
-    alpha_sag: float
-    alpha_front: float
-    sigma: float
-    flip: bool
+    """Muscle load: name, magnitude [N], angles [deg], Gaussian spread [mm]."""
+    name: str              # Muscle ID (glmed, glmin, glmax, psoas, vastus_*)
+    magnitude: float       # Force magnitude [N]
+    alpha_sag: float       # Sagittal angle (+ anterior)
+    alpha_front: float     # Frontal angle (+ lateral)
+    sigma: float           # Attachment area size [mm]
+    flip: bool             # Flip direction (contraction pulls)
 
 
 @dataclass 
 class LoadingCase:
-    """
-    A loading case = one combination of hip + muscles that occur together.
-    
-    Represents a specific loading scenario (e.g., mid-stance phase of gait)
-    with hip joint reaction force and active muscle forces.
-    
-    Attributes:
-        name: Descriptive name for the loading case
-        weight: Weight for averaging multiple cases
-        hip: Hip joint load specification (None if no hip load)
-        muscles: List of muscle load specifications
-    """
+    """A loading case = hip + muscles combination for a specific gait phase."""
     name: str
     weight: float
     hip: HipLoadSpec = field(default=None)
     muscles: List[MuscleLoadSpec] = field(default_factory=list)
     
-    def set_hip(
-        self, 
-        magnitude: float, 
-        alpha_sag: float, 
-        alpha_front: float, 
-        sigma_deg: float, 
-        flip: bool
-    ) -> LoadingCase:
+    def set_hip(self, magnitude: float, alpha_sag: float, alpha_front: float, 
+                sigma_deg: float, flip: bool) -> LoadingCase:
         """Set the hip joint load. Returns self for chaining."""
         self.hip = HipLoadSpec(
             magnitude=magnitude, 
@@ -142,11 +99,7 @@ class LoadingCase:
         return self
 
 
-# =============================================================================
-# Loader: Precomputes and caches traction fields
-# =============================================================================
-
-# Mapping of muscle names to JSON paths
+# Muscle name to JSON path mapping
 MUSCLE_PATHS = {
     "glmed": FemurPaths.GL_MED_JSON,
     "glmin": FemurPaths.GL_MIN_JSON,
@@ -168,24 +121,14 @@ class CachedTraction:
 
 
 class Loader:
-    """
-    MPI-parallel loader with precomputed traction caching.
+    """MPI-parallel loader with precomputed traction caching.
     
-    All loading cases are computed ONCE during precompute_loading_cases().
-    Subsequently, set_loading_case() just copies cached arrays (O(n) copy).
-    
-    Two traction fields:
-    - traction: Hip + muscle loads (Neumann BC on proximal surface)
-    - traction_cut: Equilibrating reaction (Neumann BC on distal cut)
+    All loading cases computed ONCE in precompute_loading_cases().
+    Subsequent set_loading_case() just copies cached arrays.
     """
     
-    def __init__(
-        self, 
-        mesh: dolfinx.mesh.Mesh, 
-        facet_tags: dmesh.MeshTags, 
-        load_tag: int, 
-        cut_tag: int
-    ):
+    def __init__(self, mesh: dolfinx.mesh.Mesh, facet_tags: dmesh.MeshTags, 
+                 load_tag: int, cut_tag: int):
         """
         Initialize loader with mesh and facet tags.
         
@@ -252,10 +195,6 @@ class Loader:
         self._init_equilibrium_forms()
         
         self.comm.Barrier()
-    
-    # -------------------------------------------------------------------------
-    # Initialization Methods
-    # -------------------------------------------------------------------------
     
     def _init_geometry_rank0(self) -> None:
         """Load femur geometry and create hip loader on rank 0."""
@@ -446,21 +385,9 @@ class Loader:
             "M_err": M_err,
             "is_balanced": is_balanced,
         }
-
-    # -------------------------------------------------------------------------
-    # Precomputation API
-    # -------------------------------------------------------------------------
     
     def precompute_loading_cases(self, cases: List[LoadingCase]) -> None:
-        """
-        Precompute and cache traction fields for all loading cases.
-        
-        This method computes the expensive load interpolation ONCE for each case.
-        Subsequent calls to set_loading_case() just copy cached arrays.
-        
-        Args:
-            cases: List of LoadingCase objects to precompute
-        """
+        """Precompute and cache traction fields for all loading cases."""
         for case in cases:
             self._precompute_single_case(case)
         
@@ -545,10 +472,6 @@ class Loader:
     def get_cached_names(self) -> List[str]:
         """Get list of precomputed loading case names."""
         return list(self._cache.keys())
-    
-    # -------------------------------------------------------------------------
-    # Internal Load Computation (used only during precomputation)
-    # -------------------------------------------------------------------------
     
     def _apply_hip_internal(self, spec: HipLoadSpec) -> tuple[np.ndarray, np.ndarray]:
         """Apply hip load and return (force, moment) contribution."""

@@ -1,12 +1,4 @@
-"""
-Remodelling orchestrator: couples mechanics and density solvers.
-
-The Remodeller class owns all FE fields, subsolvers, storage, and telemetry.
-It implements adaptive timestepping with PI-controlled step size.
-
-MPI: All operations are MPI-parallel. Fields use scatter_forward() after
-owned-DOF modifications.
-"""
+"""Remodelling orchestrator: couples mechanics and density solvers."""
 
 from __future__ import annotations
 
@@ -31,12 +23,7 @@ from simulation.loader import Loader, LoadingCase
 
 
 class Remodeller:
-    """
-    Bone remodeling orchestrator.
-    
-    Owns FE fields, subsolvers, storage, and telemetry.
-    Uses GaitDriver to compute weighted-average SED over loading cases.
-    """
+    """Bone remodeling orchestrator with GaitDriver for multi-load SED averaging."""
 
     def __init__(self, cfg: Config, loader: Loader, loading_cases: List[LoadingCase]):
         """
@@ -315,10 +302,16 @@ class Remodeller:
 
         return error_norm, {"converged": converged, "iters": used_subiters}
 
-    def simulate(self, dt_initial: float, total_time: float) -> None:
-        """Run remodeling loop."""
+    def simulate(self, dt_initial: float = None, total_time: float = None) -> None:
+        """Run remodeling loop.
+        
+        Args:
+            dt_initial: Initial timestep [days]. If None, uses cfg.dt_initial.
+            total_time: Total simulation time [days]. If None, uses cfg.total_time.
+        """
         t = 0.0
-        dt = dt_initial
+        dt = dt_initial if dt_initial is not None else self.cfg.dt_initial
+        total_time = total_time if total_time is not None else self.cfg.total_time
         step_idx = 0
 
         self.cfg.set_dt(float(dt))
@@ -354,7 +347,15 @@ class Remodeller:
                 dt = total_time - t
             
             error, metrics = self.step(dt, step_idx, t + dt)
-            accepted, next_dt, reason = self.integrator.suggest_dt(dt, metrics["converged"], error)
+            
+            if self.cfg.adaptive_dt:
+                # Adaptive time stepping with PI controller
+                accepted, next_dt, reason = self.integrator.suggest_dt(dt, metrics["converged"], error)
+            else:
+                # Fixed time stepping - always accept, keep dt constant
+                accepted = True
+                next_dt = dt
+                reason = "fixed dt"
             
             if accepted:
                 self.integrator.commit_step(dt, self.rho, self.rho_old)

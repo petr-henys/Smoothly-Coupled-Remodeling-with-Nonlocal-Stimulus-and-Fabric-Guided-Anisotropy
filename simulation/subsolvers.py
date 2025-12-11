@@ -1,20 +1,4 @@
-
-"""Linear subsolvers: mechanics (elastic equilibrium) and density (reaction-diffusion
-with optional Helmholtz filtering of rho).
-
-Helmholtz filter is applied directly to rho after each density solve to impose
-a characteristic length scale on the density field:
-
-    (rho_filt, v) + L_h^2 (∇rho_filt, ∇v) = (rho_raw, v)
-
-where L_h is a filter length (in the same units as the mesh).
-
-If Config.helmholtz_L > 0, that value is used.
-Otherwise, L_h is chosen automatically as a multiple of the minimum cell size
-h_min, computed using dolfinx.mesh.Mesh.h as in the DOLFINx 0.10 manual.
-
-If the resulting L_h <= 0, the filter is skipped and rho stays unfiltered.
-"""
+"""Linear subsolvers for mechanics and density evolution with Helmholtz filtering."""
 
 from __future__ import annotations
 
@@ -41,13 +25,8 @@ if TYPE_CHECKING:
     from simulation.config import Config
 
 
-# -------------------------------------------------------------------------
-# Base class for linear solvers
-# -------------------------------------------------------------------------
-
-
 class _BaseLinearSolver:
-    """Base class: assembly, KSP solve, iteration tracking."""
+    """Base class for PETSc KSP linear solvers."""
 
     def __init__(
         self,
@@ -74,6 +53,7 @@ class _BaseLinearSolver:
 
         self.total_iters = 0
         self.ksp_steps = 0
+        self.last_iters: int = 0
         self.last_reason: Optional[int] = None
 
         self.dirichlet_bcs = dirichlet_bcs
@@ -102,12 +82,9 @@ class _BaseLinearSolver:
     def setup(self):
         self._compile_forms()
         self.A = create_matrix(self.a_form)
-        # RHS vector compatible with function space
         self.b = create_vector(self.function_space)
         self.assemble_lhs()
         self._setup_ksp()
-
-    # --------------------------- assembly / solve ---------------------------
 
     def assemble_lhs(self, *, scatter_state: bool = False):
         if scatter_state:
@@ -127,6 +104,7 @@ class _BaseLinearSolver:
 
         self.total_iters += its
         self.ksp_steps += 1
+        self.last_iters = its
         self.last_reason = reason
         return its, reason
 
@@ -155,13 +133,8 @@ class _BaseLinearSolver:
         return self.ksp
 
 
-# -------------------------------------------------------------------------
-# Mechanics solver
-# -------------------------------------------------------------------------
-
-
 class MechanicsSolver(_BaseLinearSolver):
-    """Isotropic elasticity with density-dependent stiffness E(rho)."""
+    """Elasticity solver with density-dependent stiffness E = E0*(ρ/ρ_ref)^n."""
 
     def __init__(
         self,
@@ -177,11 +150,9 @@ class MechanicsSolver(_BaseLinearSolver):
         self._nullspace = None
 
     def _compile_forms(self):
-        # LHS: a(u, v) = inner(sigma(u), eps(v))
         a_ufl = ufl.inner(self.sigma(self.trial, self.rho), self.eps(self.test)) * self.dx
         self.a_form = fem.form(a_ufl)
 
-        # RHS: body forces (zero) + Neumann BCs
         zero_vec = fem.Constant(self.mesh, (0.0,) * self.gdim)
         L_ufl = ufl.inner(zero_vec, self.test) * self.ds
         n = ufl.FacetNormal(self.mesh)
@@ -195,15 +166,12 @@ class MechanicsSolver(_BaseLinearSolver):
         self.L_form = fem.form(L_ufl)
 
     def _setup_ksp(self):
-        # Nullspace for pure Neumann problem
         self._nullspace = build_nullspace(self.function_space)
         self.A.setBlockSize(self.gdim)
         self.A.setNearNullSpace(self._nullspace)
         self.A.setNullSpace(self._nullspace)
-
         self.A.setOption(PETSc.Mat.Option.SPD, True)
 
-        # CG on SPD matrix with nullspace
         ksp_options = {"ksp_type": "cg", "pc_type": self.cfg.pc_type}
         self.create_ksp(prefix="mechanics", ksp_options=ksp_options)
 
@@ -214,14 +182,10 @@ class MechanicsSolver(_BaseLinearSolver):
     def sigma(self, u, rho):
         rho_eff = smooth_max(rho, self.cfg.rho_min, self.smooth_eps)
         rho_rel = rho_eff / self.cfg.rho_ref
-
-        # Stiffness E = E0 * (rho / rho_ref)^n
         E = self.cfg.E0 * (rho_rel ** self.cfg.n)
-
         nu = self.cfg.nu0
         mu = E / (2.0 * (1.0 + nu))
         lmbda = E * nu / ((1.0 + nu) * (1.0 - 2.0 * nu))
-
         return 2.0 * mu * self.eps(u) + lmbda * ufl.tr(self.eps(u)) * ufl.Identity(self.gdim)
 
     def assemble_rhs(self):
@@ -232,8 +196,6 @@ class MechanicsSolver(_BaseLinearSolver):
         self.b.ghostUpdate(PETSc.InsertMode.ADD, PETSc.ScatterMode.REVERSE)
         set_bc(self.b, self.dirichlet_bcs)
         self.b.ghostUpdate(PETSc.InsertMode.INSERT, PETSc.ScatterMode.FORWARD)
-
-        # Remove rigid body modes from RHS
         if self._nullspace is not None:
             self._nullspace.remove(self.b)
 
@@ -243,30 +205,8 @@ class MechanicsSolver(_BaseLinearSolver):
         return its, reason
 
 
-# -------------------------------------------------------------------------
-# Density solver + optional Helmholtz filter
-# -------------------------------------------------------------------------
-
-
 class DensitySolver(_BaseLinearSolver):
-    """Density evolution with specific-energy stimulus and optional Helmholtz filter.
-
-    Evolution PDE (implicit Euler):
-
-        (rho^{n+1} / dt, v) + (D_rho ∇rho^{n+1}, ∇v)
-            = (rho^n / dt, v) + (k_rho S_saturated, v)
-
-    After solving for rho^{n+1}_raw, a Helmholtz filter can be applied:
-
-        (rho_filt, v) + L_h^2 (∇rho_filt, ∇v) = (rho_raw, v)
-
-    If Config.helmholtz_L > 0, that value is used as L_h.
-    Otherwise, L_h is chosen automatically as L_h = factor * h_min,
-    where h_min is the minimum cell size computed via Mesh.h as
-    described in the DOLFINx 0.10 documentation.
-
-    Set Config.helmholtz_factor (default 2.0) to change the multiple of h_min.
-    """
+    """Density evolution: dρ/dt = D∇²ρ + k_rho*S with optional Helmholtz filtering."""
 
     def __init__(
         self,
@@ -281,41 +221,31 @@ class DensitySolver(_BaseLinearSolver):
         self.psi_field = psi_field
         self.dt_c = fem.Constant(self.mesh, float(self.cfg.dt))
 
-        # ------------------------------------------------------------------
-        # Compute minimum cell size h_min using Mesh.h (DOLFINx 0.10 manual)
-        # ------------------------------------------------------------------
+        # Compute minimum cell size for auto Helmholtz length
         tdim = self.mesh.topology.dim
         num_cells_local = self.mesh.topology.index_map(tdim).size_local
         if num_cells_local > 0:
             cells = np.arange(num_cells_local, dtype=np.int32)
-            h_local = self.mesh.h(tdim, cells)
-            h_min_local = float(h_local.min())
+            h_min_local = float(self.mesh.h(tdim, cells).min())
         else:
             h_min_local = np.inf
         self._h_min = self.comm.allreduce(h_min_local, op=MPI.MIN)
 
-        # Factor for automatic Helmholtz length: L_h = factor * h_min
-        helm_factor = float(getattr(self.cfg, "helmholtz_factor", 0.5))
-
-        # User override takes precedence
-        L_cfg = float(getattr(self.cfg, "helmholtz_L", 0.0))
+        # Helmholtz filter length: user value or auto = factor * h_min
+        helm_factor = self.cfg.helmholtz_factor
+        L_cfg = self.cfg.helmholtz_L
         if L_cfg > 0.0:
-            self.helmholtz_L: float = L_cfg
+            self.helmholtz_L = L_cfg
+        elif np.isfinite(self._h_min) and self._h_min > 0.0 and helm_factor > 0.0:
+            self.helmholtz_L = helm_factor * self._h_min
         else:
-            if np.isfinite(self._h_min) and self._h_min > 0.0 and helm_factor > 0.0:
-                self.helmholtz_L = helm_factor * self._h_min
-            else:
-                self.helmholtz_L = 0.0
+            self.helmholtz_L = 0.0
 
-        self._use_helmholtz: bool = self.helmholtz_L > 0.0
-
+        self._use_helmholtz = self.helmholtz_L > 0.0
         if self.rank == 0 and self._use_helmholtz:
-            self.logger.info(
-                f"Helmholtz filter active: L_h = {self.helmholtz_L:.4e}, "
-                f"h_min = {self._h_min:.4e}, factor = {helm_factor:.3g}"
-            )
+            self.logger.info(f"Helmholtz filter: L={self.helmholtz_L:.4e}, h_min={self._h_min:.4e}")
 
-        # Internal objects for Helmholtz filter (initialized lazily if enabled)
+        # Helmholtz filter resources (lazy init)
         self._helm_tr: Optional[ufl.TrialFunction] = None
         self._helm_ts: Optional[ufl.TestFunction] = None
         self._a_helm_form: Optional[fem.Form] = None
@@ -327,23 +257,20 @@ class DensitySolver(_BaseLinearSolver):
         if self._use_helmholtz:
             self._setup_helmholtz_filter()
 
-    # --------------------------- main PDE forms -----------------------------
-
     def _compile_forms(self):
         dt = self.dt_c
-
-        # 1) Specific energy stimulus S = psi / rho
         rho_safe = smooth_max(self.rho, self.cfg.rho_min, self.smooth_eps)
 
+        # Specific energy stimulus: S = (Ψ/ρ - Ψ_ref/ρ_ref) / (Ψ_ref/ρ_ref)
         S_specific = self.psi_field / rho_safe
         S_ref_specific = self.cfg.psi_ref / self.cfg.rho_ref
-
         S_linear = (S_specific - S_ref_specific) / S_ref_specific
 
+        # Saturated stimulus with tanh
         saturation_limit = 1.0
         S_saturated = saturation_limit * ufl.tanh(S_linear / saturation_limit)
 
-        # 2) PDE for rho (implicit Euler)
+        # Implicit Euler: (ρ^{n+1}/dt, v) + D(∇ρ^{n+1}, ∇v) = (ρ^n/dt, v) + (k*S, v)
         a_ufl = (
             (self.trial / dt) * self.test * self.dx
             + self.cfg.D_rho * ufl.inner(ufl.grad(self.trial), ufl.grad(self.test)) * self.dx
@@ -373,21 +300,14 @@ class DensitySolver(_BaseLinearSolver):
         self.b.ghostUpdate(PETSc.InsertMode.ADD, PETSc.ScatterMode.REVERSE)
         self.b.ghostUpdate(PETSc.InsertMode.INSERT, PETSc.ScatterMode.FORWARD)
 
-    # --------------------------- Helmholtz filter ---------------------------
-
     def _setup_helmholtz_filter(self):
-        """Pre-assemble Helmholtz operator: (I + L_h^2 Δ) on the rho space.
-
-        Weak form:
-            (rho_filt, v) + L_h^2 (∇rho_filt, ∇v) = (rho_raw, v)
-        """
+        """Assemble Helmholtz filter: (ρ_filt, v) + L²(∇ρ_filt, ∇v) = (ρ_raw, v)."""
         if not self._use_helmholtz:
             return
 
         self._helm_tr = ufl.TrialFunction(self.function_space)
         self._helm_ts = ufl.TestFunction(self.function_space)
-
-        L2 = float(self.helmholtz_L ** 2)
+        L2 = self.helmholtz_L ** 2
 
         a_h = (
             self._helm_tr * self._helm_ts * self.dx
@@ -395,7 +315,6 @@ class DensitySolver(_BaseLinearSolver):
         )
         self._a_helm_form = fem.form(a_h)
 
-        # RHS: (rho_raw, v)
         L_h = self.rho * self._helm_ts * self.dx
         self._L_helm_form = fem.form(L_h)
 
@@ -403,44 +322,33 @@ class DensitySolver(_BaseLinearSolver):
         assemble_matrix(self._A_helm, self._a_helm_form, bcs=[])
         self._A_helm.assemble()
         self._A_helm.setOption(PETSc.Mat.Option.SPD, True)
-
         self._b_helm = create_vector(self.function_space)
 
-        # Dedicated KSP for Helmholtz filter
         self._ksp_helm = PETSc.KSP().create(self.comm)
         self._ksp_helm.setOptionsPrefix("helmholtz_")
-
         opts = PETSc.Options()
         opts["helmholtz_ksp_type"] = "cg"
         opts["helmholtz_pc_type"] = self.cfg.pc_type
         opts["helmholtz_ksp_rtol"] = self.cfg.ksp_rtol
         opts["helmholtz_ksp_atol"] = self.cfg.ksp_atol
         opts["helmholtz_ksp_max_it"] = self.cfg.ksp_max_it
-
         self._ksp_helm.setOperators(self._A_helm)
         self._ksp_helm.setFromOptions()
         self._ksp_helm.setUp()
 
     def _apply_helmholtz_filter(self):
-        """Apply Helmholtz filter to rho in-place.
-
-        Solves:  (rho_filt, v) + L_h^2 (∇rho_filt, ∇v) = (rho_raw, v)
-        with rho_raw = current value of self.rho.
-        """
+        """Apply Helmholtz filter to ρ in-place."""
         if not self._use_helmholtz:
             return
-
         with self._b_helm.localForm() as b_local:
             b_local.set(0.0)
         assemble_vector(self._b_helm, self._L_helm_form)
         self._b_helm.ghostUpdate(PETSc.InsertMode.ADD, PETSc.ScatterMode.REVERSE)
         self._b_helm.ghostUpdate(PETSc.InsertMode.INSERT, PETSc.ScatterMode.FORWARD)
-
         self._ksp_helm.solve(self._b_helm, self.rho.x.petsc_vec)
         self.rho.x.scatter_forward()
 
     def destroy(self):
-        """Destroy PETSc objects, including Helmholtz filter KSP/matrix if used."""
         super().destroy()
         if self._ksp_helm is not None:
             self._ksp_helm.destroy()
@@ -452,24 +360,16 @@ class DensitySolver(_BaseLinearSolver):
             self._b_helm.destroy()
             self._b_helm = None
 
-    # --------------------------- public solve -------------------------------
-
     def solve(self):
-        # 1) Solve main density PDE
         its, reason = self._solve()
         self._maybe_warn(reason, "Density")
-
-        # 2) Apply Helmholtz filter to impose length scale (if enabled)
         self._apply_helmholtz_filter()
 
-        # 3) Hard clamp: physical limits [rho_min, rho_max]
-        rho_min = self.cfg.rho_min
-        rho_max = self.cfg.rho_max
-
+        # Clamp to physical bounds
+        rho_min, rho_max = self.cfg.rho_min, self.cfg.rho_max
         with self.rho.x.petsc_vec.localForm() as loc:
-            local = loc.array
-            local[local < rho_min] = rho_min
-            local[local > rho_max] = rho_max
-
+            arr = loc.array
+            arr[arr < rho_min] = rho_min
+            arr[arr > rho_max] = rho_max
         self.rho.x.scatter_forward()
         return its, reason

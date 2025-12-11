@@ -12,103 +12,75 @@ if TYPE_CHECKING:
 
 @dataclass
 class Config:
-    """Simulation config with material, solver, and I/O parameters. Units: mm, day, MPa, g/cm³."""
+    """Simulation parameters. Units: mm, day, MPa, g/cm³."""
 
-    # =========================================================================
-    # Material Properties
-    # =========================================================================
-    # Density-stiffness relationship: E = E0 * (rho/rho_ref)^n
-    n: float = 2.5              # Power-law exponent for stiffness-density relation
+    # Material: E = E0 * (rho/rho_ref)^n
+    n: float = 2.              # Power-law exponent
+    E0: float = 6500.0         # Reference Young's modulus [MPa]
+    nu0: float = 0.3           # Poisson ratio
 
-    # =========================================================================
-    # Density Evolution (Remodeling)
-    # =========================================================================
-    rho_min: float = 0.1      # Min physical density [g/cm^3] (Table 2)
-    rho_max: float = 1.        # Max physical density [g/cm^3] (Table 2)
-    rho0: float = 1.0           # Initial density [g/cm^3]
-    rho_ref: float = 1.0        # Reference density for stiffness [g/cm^3]
-    # Rate constant for mechanostat:
-    # We use a *dimensionless* stimulus
-    #     S = (Psi - psi_ref) / psi_ref
-    # so that k_rho has clear units [1/day].
-    k_rho: float = 0.01        # Density remodeling rate [1/day] (estimated)
+    # Density bounds and initial value
+    rho_min: float = 0.1       # Min density [g/cm³]
+    rho_max: float = 2.        # Max density [g/cm³]
+    rho0: float = 1.5          # Initial density [g/cm³]
+    rho_ref: float = 1.0       # Reference density [g/cm³]
+    
+    # Remodeling: dρ/dt = k_rho * S, where S = (Ψ - Ψ_ref) / Ψ_ref
+    k_rho: float = 0.01        # Remodeling rate [1/day]
+    D_rho: float = 0.03        # Diffusion coefficient [mm²/day]
+    psi_ref: float = 0.1       # Reference SED [MPa]
 
-    # Density diffusion [mm^2/day]
-    # Replaces gradient enhancement beta from article for regularization
-    D_rho: float = 0.03          # Isotropic diffusion [mm^2/day]
+    # Helmholtz filter: (ρ_filt, v) + L²(∇ρ_filt, ∇v) = (ρ_raw, v)
+    helmholtz_L: float = 0.0       # Filter length [mm], 0 = auto
+    helmholtz_factor: float = 2.0  # Auto factor: L = factor * h_min
 
+    # Time stepping
+    total_time: float = 1000.0    # Total time [days]
+    dt_initial: float = 25.0      # Initial timestep [days]
+    adaptive_dt: bool = False     # Enable adaptive time stepping
+    adaptive_rtol: float = 1e-2   # Relative error tolerance
+    adaptive_atol: float = 1e-3   # Absolute error tolerance
+    dt_min: float = 1e-4          # Min timestep [days]
+    dt_max: float = 100           # Max timestep [days]
 
-    # =========================================================================
-    # Stimulus (Local)
-    # =========================================================================
-    # Reference Strain Energy Density (SED), used to nondimensionalize stimulus:
-    #     S = (Psi - psi_ref) / psi_ref
-    # Value for Femur from Table 2: 0.002 N/mm^2 (MPa)
-    psi_ref: float = 0.1          # Reference SED [MPa] (estimated)
-
-    # Base moduli [MPa]
-    E0: float = 6500.0          # Young's modulus (Table 2)
-    nu0: float = 0.3            # Poisson ratio (Table 2)
-
-    # =========================================================================
-    # Adaptive Time Stepping
-    # =========================================================================
-    adaptive_rtol: float = 1e-2
-    adaptive_atol: float = 1e-3
-    dt_min: float = 1e-4
-    dt_max: float = 100
-
-    # =========================================================================
-    # Numerics & I/O
-    # =========================================================================
+    # Numerics
     quadrature_degree: int = 4
     saving_interval: int = 1
     results_dir: str = ".results"
     log_file: str = "simulation.log"
 
-    # Linear Solver (RESTORED TO ORIGINAL SETTINGS)
+    # Linear solver
     ksp_type: str = "minres"
     pc_type: str = "gamg"
     ksp_rtol: float = 1e-6
     ksp_atol: float = 1e-7
     ksp_max_it: int = 100
 
-    # Nonlinear Solver (Anderson/Picard)
+    # Fixed-point iteration (Anderson/Picard)
     accel_type: str = "anderson"
-    m: int = 5                  # History size
-    beta: float = 1.0           # Mixing parameter
-    lam: float = 1e-9           # Regularization
-    gamma: float = 0.05         # Safeguard tolerance
+    m: int = 5                    # History size
+    beta: float = 1.0             # Mixing parameter
+    lam: float = 1e-9             # Regularization
+    gamma: float = 0.05           # Safeguard tolerance
     safeguard: bool = True
     backtrack_max: int = 5
     coupling_tol: float = 1e-4
-    
-    # Restart heuristics
     restart_on_reject_k: int = 2
     restart_on_stall: float = 1.10
     restart_on_cond: float = 1e12
     step_limit_factor: float = 2.0
-
-    # Subiterations
     max_subiters: int = 25
     min_subiters: int = 2
 
-    # Diagnostics
-    smooth_eps: float = 1e-6    # Regularization for abs/max/PSD
+    # Regularization
+    smooth_eps: float = 1e-6
 
-    # =========================================================================
-    # Internal State (Runtime)
-    # =========================================================================
+    # Runtime state (not serialized)
     domain: Optional[mesh.Mesh] = field(default=None, repr=False)
     facet_tags: Optional[mesh.MeshTags] = field(default=None, repr=False)
-    
     telemetry: Optional["Telemetry"] = field(init=False, default=None, repr=False)
-
-    # UFL Measures
     dx: Optional[ufl.Measure] = field(init=False, default=None, repr=False)
     ds: Optional[ufl.Measure] = field(init=False, default=None, repr=False)
-
-    # State
     dt: float = field(init=False, default=1.0)
 
     def __post_init__(self):

@@ -1,6 +1,4 @@
-"""
-GaitDriver: mechanics + averaged SED stimulus computation over multiple loading cases.
-"""
+"""GaitDriver: mechanics + averaged SED stimulus over multiple loading cases."""
 
 from __future__ import annotations
 from typing import Dict, List, TYPE_CHECKING
