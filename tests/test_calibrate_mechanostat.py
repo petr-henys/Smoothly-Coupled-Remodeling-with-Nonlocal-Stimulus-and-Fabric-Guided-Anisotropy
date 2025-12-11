@@ -1,8 +1,8 @@
 """
-Tests for simulation.calibrate_mechanostat module.
+Tests for calibrate_mechanostat module.
 
 Tests the calibration utilities for psi_ref, k_rho, and Helmholtz length.
-Uses unit cube with simple traction loading for reproducible results.
+Uses unit cube with simple loading for reproducible results.
 """
 
 import pytest
@@ -18,50 +18,40 @@ from simulation.utils import build_facetag, assign
 
 
 # =============================================================================
-# Simple Loader stub for testing (no femur geometry needed)
+# Simple Loader stub for testing
 # =============================================================================
 
 class SimpleLoaderStub:
-    """
-    Minimal loader stub for testing calibration without femur mesh.
-    
-    Applies constant traction on tag=2 (x=1 face) and zero on tag=1 (x=0 face).
-    """
+    """Minimal loader stub for testing calibration."""
     
     def __init__(self, domain: mesh.Mesh, facet_tags: mesh.MeshTags):
         self.mesh = domain
         self.comm = domain.comm
         self.load_tag = 2  # x=1 face
-        self.cut_tag = 1   # x=0 face (fixed, but we use cut for equilibrium)
+        self.cut_tag = 1   # x=0 face
         
         gdim = domain.geometry.dim
         P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(gdim,))
         V_traction = functionspace(domain, P1_vec)
         
-        # Traction fields (will be set by loading cases)
         self.traction = Function(V_traction, name="traction")
         self.traction_cut = Function(V_traction, name="traction_cut")
-        
         self._cached_cases = {}
         
     def precompute_loading_cases(self, loading_cases):
         """Store traction arrays for each loading case."""
         for case in loading_cases:
-            # Apply traction in x-direction proportional to magnitude
             traction_val = np.zeros(3)
-            if case.hip is not None:
-                traction_val[0] = case.hip.magnitude * 1e-3  # Scale to reasonable stress
+            if hasattr(case, 'magnitude'):
+                traction_val[0] = case.magnitude * 1e-3
             
-            # Store copy
-            arr = np.zeros_like(self.traction.x.array)
             n_owned = self.traction.function_space.dofmap.index_map.size_local * 3
+            arr = np.zeros_like(self.traction.x.array)
+            arr_cut = np.zeros_like(self.traction_cut.x.array)
+            
             for i in range(n_owned // 3):
                 arr[3*i:3*i+3] = traction_val
-            
-            # Equilibrating reaction on cut (opposite direction)
-            arr_cut = np.zeros_like(self.traction_cut.x.array)
-            for i in range(n_owned // 3):
-                arr_cut[3*i:3*i+3] = -traction_val  # Opposite for equilibrium
+                arr_cut[3*i:3*i+3] = -traction_val
             
             self._cached_cases[case.name] = {
                 "traction": arr.copy(),
@@ -83,8 +73,7 @@ class SimpleLoadingCase:
     def __init__(self, name: str, weight: float = 1.0, magnitude: float = 1000.0):
         self.name = name
         self.weight = weight
-        self.hip = type('Hip', (), {'magnitude': magnitude})()
-        self.muscles = []
+        self.magnitude = magnitude
 
 
 # =============================================================================
@@ -103,7 +92,6 @@ def unit_cube_mesh():
 @pytest.fixture
 def simple_config(unit_cube_mesh):
     """Create config with unit cube."""
-    from simulation.utils import build_facetag
     facet_tags = build_facetag(unit_cube_mesh)
     return Config(domain=unit_cube_mesh, facet_tags=facet_tags)
 
@@ -124,220 +112,200 @@ def simple_loading_cases():
     ]
 
 
+@pytest.fixture
+def constant_rho0(simple_config):
+    """Create constant density field at rho0."""
+    P1 = basix.ufl.element("Lagrange", simple_config.domain.basix_cell(), 1)
+    Q = functionspace(simple_config.domain, P1)
+    rho0 = Function(Q, name="rho0")
+    assign(rho0, simple_config.rho0)
+    return rho0
+
+
 # =============================================================================
-# Tests for auto_helmholtz_length
+# Tests for compute_k_rho
 # =============================================================================
 
-class TestAutoHelmholtzLength:
-    """Tests for Helmholtz length computation from mesh."""
+class TestComputeKRho:
+    """Tests for k_rho computation."""
     
-    def test_returns_dict_with_required_keys(self, simple_config):
-        """auto_helmholtz_length returns dict with h_min, helmholtz_L, factor."""
-        from calibrate_mechanostat import auto_helmholtz_length
+    def test_invalid_T_relax_raises(self, simple_config, simple_loader, 
+                                     simple_loading_cases, constant_rho0):
+        """T_relax must be positive."""
+        from calibrate_mechanostat import compute_k_rho
         
-        result = auto_helmholtz_length(simple_config)
+        with pytest.raises(ValueError, match="T_relax"):
+            compute_k_rho(
+                simple_config, simple_loader, simple_loading_cases,
+                constant_rho0, psi_ref=0.1, T_relax=0.0
+            )
+    
+    def test_invalid_target_fraction_raises(self, simple_config, simple_loader,
+                                             simple_loading_cases, constant_rho0):
+        """target_fraction must be in (0, 1)."""
+        from calibrate_mechanostat import compute_k_rho
         
-        assert "h_min" in result
+        with pytest.raises(ValueError, match="target_fraction"):
+            compute_k_rho(
+                simple_config, simple_loader, simple_loading_cases,
+                constant_rho0, psi_ref=0.1, target_fraction=0.0
+            )
+        
+        with pytest.raises(ValueError, match="target_fraction"):
+            compute_k_rho(
+                simple_config, simple_loader, simple_loading_cases,
+                constant_rho0, psi_ref=0.1, target_fraction=1.0
+            )
+    
+    def test_returns_positive_k_rho(self, simple_config, simple_loader,
+                                     simple_loading_cases, constant_rho0):
+        """k_rho should be positive."""
+        from calibrate_mechanostat import compute_k_rho
+        
+        result = compute_k_rho(
+            simple_config, simple_loader, simple_loading_cases,
+            constant_rho0, psi_ref=0.1, T_relax=500.0
+        )
+        
+        assert result["k_rho"] > 0
+    
+    def test_returns_required_keys(self, simple_config, simple_loader,
+                                    simple_loading_cases, constant_rho0):
+        """Result should contain all required keys."""
+        from calibrate_mechanostat import compute_k_rho
+        
+        result = compute_k_rho(
+            simple_config, simple_loader, simple_loading_cases,
+            constant_rho0, psi_ref=0.1, T_relax=500.0
+        )
+        
+        assert "k_rho" in result
+        assert "tau_eff" in result
+        assert "S_linear_rms" in result
+        assert "saturation_factor" in result
+
+
+# =============================================================================
+# Tests for compute_psi_ref
+# =============================================================================
+
+class TestComputePsiRef:
+    """Tests for psi_ref computation."""
+    
+    def test_returns_positive_psi_ref(self, simple_config, simple_loader,
+                                       simple_loading_cases, constant_rho0):
+        """psi_ref should be positive."""
+        from calibrate_mechanostat import compute_psi_ref
+        
+        result = compute_psi_ref(
+            simple_config, simple_loader, simple_loading_cases, constant_rho0
+        )
+        
+        assert result["psi_ref"] > 0
+    
+    def test_returns_required_keys(self, simple_config, simple_loader,
+                                    simple_loading_cases, constant_rho0):
+        """Result should contain all required keys."""
+        from calibrate_mechanostat import compute_psi_ref
+        
+        result = compute_psi_ref(
+            simple_config, simple_loader, simple_loading_cases, constant_rho0
+        )
+        
+        assert "psi_ref" in result
+        assert "S_ref" in result
+        assert "S_mean" in result
+        assert "S_std" in result
+        assert "psi_mean" in result
+
+
+# =============================================================================
+# Tests for calibrate_mechanostat
+# =============================================================================
+
+class TestCalibrateMechanostat:
+    """Tests for full calibration."""
+    
+    def test_calibrate_returns_all_keys(self, simple_config, simple_loader,
+                                         simple_loading_cases, constant_rho0):
+        """Full calibration returns all required keys."""
+        from calibrate_mechanostat import calibrate_mechanostat
+        
+        result = calibrate_mechanostat(
+            simple_config, simple_loader, simple_loading_cases, constant_rho0,
+            update_config=False
+        )
+        
+        # psi_ref keys
+        assert "psi_ref" in result
+        assert "S_ref" in result
+        
+        # k_rho keys
+        assert "k_rho" in result
+        assert "tau_eff" in result
+        
+        # helmholtz_L should be passed through from config
         assert "helmholtz_L" in result
-        assert "factor" in result
     
-    def test_h_min_is_positive(self, simple_config):
-        """h_min should be positive for non-empty mesh."""
-        from calibrate_mechanostat import auto_helmholtz_length
+    def test_calibrate_updates_config(self, simple_config, simple_loader,
+                                       simple_loading_cases, constant_rho0):
+        """Calibration updates config when requested."""
+        from calibrate_mechanostat import calibrate_mechanostat
         
-        result = auto_helmholtz_length(simple_config)
-        
-        assert result["h_min"] > 0
-    
-    def test_helmholtz_L_equals_factor_times_h_min(self, simple_config):
-        """L_h = factor * h_min."""
-        from calibrate_mechanostat import auto_helmholtz_length
-        
-        factor = 3.0
-        result = auto_helmholtz_length(simple_config, factor=factor)
-        
-        expected_L = factor * result["h_min"]
-        assert np.isclose(result["helmholtz_L"], expected_L, rtol=1e-10)
-    
-    def test_uses_config_factor_if_not_provided(self, simple_config):
-        """Uses cfg.helmholtz_factor if factor arg not provided."""
-        from calibrate_mechanostat import auto_helmholtz_length
-        
-        simple_config.helmholtz_factor = 5.0
-        result = auto_helmholtz_length(simple_config)
-        
-        assert result["factor"] == 5.0
-    
-    def test_h_min_consistent_across_ranks(self, simple_config):
-        """h_min should be same on all MPI ranks."""
-        from calibrate_mechanostat import auto_helmholtz_length
-        
-        result = auto_helmholtz_length(simple_config)
-        h_min = result["h_min"]
-        
-        comm = simple_config.domain.comm
-        all_h_min = comm.allgather(h_min)
-        
-        # All ranks should have same h_min
-        assert all(np.isclose(h, h_min, rtol=1e-14) for h in all_h_min)
-
-
-# =============================================================================
-# Tests for compute_k_rho_from_relaxation
-# =============================================================================
-
-class TestComputeKRhoFromRelaxation:
-    """Tests for k_rho computation from relaxation criterion."""
-    
-    def test_invalid_epsilon_raises(self, simple_config):
-        """epsilon must be in (0, 1)."""
-        from calibrate_mechanostat import compute_k_rho_from_relaxation
-        
-        # Create dummy S_linear field
-        V = functionspace(simple_config.domain, ("DG", 0))
-        S_linear = Function(V)
-        S_linear.x.array[:] = 0.1
-        S_linear.x.scatter_forward()
-        
-        with pytest.raises(ValueError, match="epsilon"):
-            compute_k_rho_from_relaxation(simple_config, S_linear, epsilon=0.0)
-        
-        with pytest.raises(ValueError, match="epsilon"):
-            compute_k_rho_from_relaxation(simple_config, S_linear, epsilon=1.0)
-        
-        with pytest.raises(ValueError, match="epsilon"):
-            compute_k_rho_from_relaxation(simple_config, S_linear, epsilon=-0.1)
-    
-    def test_invalid_T_total_raises(self, simple_config):
-        """T_total must be positive."""
-        from calibrate_mechanostat import compute_k_rho_from_relaxation
-        
-        V = functionspace(simple_config.domain, ("DG", 0))
-        S_linear = Function(V)
-        S_linear.x.array[:] = 0.1
-        S_linear.x.scatter_forward()
-        
-        with pytest.raises(ValueError, match="T_total"):
-            compute_k_rho_from_relaxation(simple_config, S_linear, T_total=0.0)
-        
-        with pytest.raises(ValueError, match="T_total"):
-            compute_k_rho_from_relaxation(simple_config, S_linear, T_total=-100.0)
-    
-    def test_returns_positive_k_rho(self, simple_config):
-        """k_rho should be positive for positive |S_linear|."""
-        from calibrate_mechanostat import compute_k_rho_from_relaxation
-        
-        V = functionspace(simple_config.domain, ("DG", 0))
-        S_linear = Function(V)
-        S_linear.x.array[:] = 0.5  # 50% deviation from reference
-        S_linear.x.scatter_forward()
-        
-        k_rho = compute_k_rho_from_relaxation(
-            simple_config, S_linear, T_total=1000.0, epsilon=0.1
+        result = calibrate_mechanostat(
+            simple_config, simple_loader, simple_loading_cases, constant_rho0,
+            update_config=True
         )
         
-        assert k_rho > 0
+        # psi_ref and k_rho should be updated
+        assert simple_config.psi_ref == result["psi_ref"]
+        assert simple_config.k_rho == result["k_rho"]
+        # helmholtz_L is NOT calibrated, stays from config
+        assert simple_config.helmholtz_L == result["helmholtz_L"]
     
-    def test_k_rho_scales_with_T_total(self, simple_config):
-        """k_rho should be inversely proportional to T_total."""
-        from calibrate_mechanostat import compute_k_rho_from_relaxation
+    def test_calibrate_respects_update_config_false(self, simple_config, simple_loader,
+                                                     simple_loading_cases, constant_rho0):
+        """Calibration preserves config when update_config=False."""
+        from calibrate_mechanostat import calibrate_mechanostat
         
-        V = functionspace(simple_config.domain, ("DG", 0))
-        S_linear = Function(V)
-        S_linear.x.array[:] = 0.3
-        S_linear.x.scatter_forward()
+        old_psi = simple_config.psi_ref
+        old_k = simple_config.k_rho
+        old_L = simple_config.helmholtz_L
         
-        k_rho_1000 = compute_k_rho_from_relaxation(
-            simple_config, S_linear, T_total=1000.0, epsilon=0.1
-        )
-        k_rho_2000 = compute_k_rho_from_relaxation(
-            simple_config, S_linear, T_total=2000.0, epsilon=0.1
+        calibrate_mechanostat(
+            simple_config, simple_loader, simple_loading_cases, constant_rho0,
+            update_config=False
         )
         
-        # k_rho ~ 1/T_total, so doubling T_total halves k_rho
-        assert np.isclose(k_rho_1000 / k_rho_2000, 2.0, rtol=1e-10)
-    
-    def test_k_rho_formula(self, simple_config):
-        """Verify k_rho = 2/(T·L1) * (-ln(epsilon)) formula."""
-        from calibrate_mechanostat import compute_k_rho_from_relaxation
-        
-        V = functionspace(simple_config.domain, ("DG", 0))
-        S_linear = Function(V)
-        S_linear.x.array[:] = 0.25
-        S_linear.x.scatter_forward()
-        
-        T_total = 500.0
-        epsilon = 0.2
-        
-        k_rho = compute_k_rho_from_relaxation(
-            simple_config, S_linear, T_total=T_total, epsilon=epsilon
-        )
-        
-        # L1 = average |S_linear| = 0.25 (uniform field)
-        L1 = 0.25
-        expected_k_rho = (2.0 / (T_total * L1)) * (-np.log(epsilon))
-        
-        assert np.isclose(k_rho, expected_k_rho, rtol=1e-6)
+        # Config should be unchanged
+        assert simple_config.psi_ref == old_psi
+        assert simple_config.k_rho == old_k
+        assert simple_config.helmholtz_L == old_L
 
 
 # =============================================================================
-# Tests for Config updates
+# Tests for utility functions
 # =============================================================================
 
-class TestConfigHelmholtzFields:
-    """Tests for helmholtz_L and helmholtz_factor in Config."""
+class TestUtilities:
+    """Tests for internal utility functions."""
     
-    def test_config_has_helmholtz_L_field(self, simple_config):
-        """Config should have helmholtz_L field."""
-        assert hasattr(simple_config, "helmholtz_L")
-    
-    def test_config_has_helmholtz_factor_field(self, simple_config):
-        """Config should have helmholtz_factor field."""
-        assert hasattr(simple_config, "helmholtz_factor")
-    
-    def test_helmholtz_L_default_is_zero(self, simple_config):
-        """helmholtz_L default should be 0 (auto mode)."""
-        # Create fresh config to check default
-        facet_tags = build_facetag(simple_config.domain)
-        cfg = Config(domain=simple_config.domain, facet_tags=facet_tags)
-        assert cfg.helmholtz_L == 0.0
-    
-    def test_helmholtz_factor_default(self, simple_config):
-        """helmholtz_factor default should be 2.0."""
-        facet_tags = build_facetag(simple_config.domain)
-        cfg = Config(domain=simple_config.domain, facet_tags=facet_tags)
-        assert cfg.helmholtz_factor == 2.0
-
-
-# =============================================================================
-# Integration test placeholder
-# =============================================================================
-
-@pytest.mark.integration
-class TestCalibrateIntegration:
-    """Integration tests requiring full mechanics solve.
-    
-    These tests are more expensive and verify the full calibration pipeline.
-    Skipped if no femur geometry available.
-    """
-    
-    @pytest.mark.skip(reason="Requires full loader infrastructure")
-    def test_calibrate_mechanostat_full_pipeline(self):
-        """Full calibration with real loading cases."""
-        pass
-    
-    def test_auto_helmholtz_respects_config_update(self, simple_config):
-        """Verify helmholtz_L can be set on config."""
-        from calibrate_mechanostat import auto_helmholtz_length
+    def test_golden_section_finds_minimum(self):
+        """Golden section should find minimum of unimodal function."""
+        from calibrate_mechanostat import _golden_section_minimize
         
-        result = auto_helmholtz_length(simple_config)
+        # Minimum of (x - 3)^2 at x = 3
+        f = lambda x: (x - 3.0)**2
+        x_min = _golden_section_minimize(f, 0.0, 10.0, tol=1e-8)
         
-        # Manually update config
-        simple_config.helmholtz_L = result["helmholtz_L"]
+        assert np.isclose(x_min, 3.0, rtol=1e-6)
+    
+    def test_golden_section_asymmetric_bounds(self):
+        """Golden section works with asymmetric bounds."""
+        from calibrate_mechanostat import _golden_section_minimize
         
-        assert simple_config.helmholtz_L > 0
-        assert np.isclose(
-            simple_config.helmholtz_L, 
-            result["factor"] * result["h_min"],
-            rtol=1e-10
-        )
+        # Minimum of (x - 5)^2 at x = 5, with bounds [4, 20]
+        f = lambda x: (x - 5.0)**2
+        x_min = _golden_section_minimize(f, 4.0, 20.0, tol=1e-8)
+        
+        assert np.isclose(x_min, 5.0, rtol=1e-6)

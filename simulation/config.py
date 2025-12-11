@@ -31,8 +31,8 @@ class Config:
     psi_ref: float = 0.1       # Reference SED [MPa]
 
     # Helmholtz filter: (ρ_filt, v) + L²(∇ρ_filt, ∇v) = (ρ_raw, v)
-    helmholtz_L: float = 0.0       # Filter length [mm], 0 = auto
-    helmholtz_factor: float = 2.0  # Auto factor: L = factor * h_min
+    # Physical length scale ~0.3mm (osteocyte mechanosensing range)
+    helmholtz_L: float = 0.3       # Filter length [mm]
 
     # Time stepping
     total_time: float = 1000.0    # Total time [days]

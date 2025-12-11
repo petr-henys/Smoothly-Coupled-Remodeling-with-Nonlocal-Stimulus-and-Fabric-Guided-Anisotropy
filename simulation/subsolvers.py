@@ -221,29 +221,12 @@ class DensitySolver(_BaseLinearSolver):
         self.psi_field = psi_field
         self.dt_c = fem.Constant(self.mesh, float(self.cfg.dt))
 
-        # Compute minimum cell size for auto Helmholtz length
-        tdim = self.mesh.topology.dim
-        num_cells_local = self.mesh.topology.index_map(tdim).size_local
-        if num_cells_local > 0:
-            cells = np.arange(num_cells_local, dtype=np.int32)
-            h_min_local = float(self.mesh.h(tdim, cells).min())
-        else:
-            h_min_local = np.inf
-        self._h_min = self.comm.allreduce(h_min_local, op=MPI.MIN)
-
-        # Helmholtz filter length: user value or auto = factor * h_min
-        helm_factor = self.cfg.helmholtz_factor
-        L_cfg = self.cfg.helmholtz_L
-        if L_cfg > 0.0:
-            self.helmholtz_L = L_cfg
-        elif np.isfinite(self._h_min) and self._h_min > 0.0 and helm_factor > 0.0:
-            self.helmholtz_L = helm_factor * self._h_min
-        else:
-            self.helmholtz_L = 0.0
-
+        # Helmholtz filter length from config (physical parameter, ~0.3mm for bone)
+        self.helmholtz_L = self.cfg.helmholtz_L
         self._use_helmholtz = self.helmholtz_L > 0.0
+        
         if self.rank == 0 and self._use_helmholtz:
-            self.logger.info(f"Helmholtz filter: L={self.helmholtz_L:.4e}, h_min={self._h_min:.4e}")
+            self.logger.info(f"Helmholtz filter: L={self.helmholtz_L:.4f} mm")
 
         # Helmholtz filter resources (lazy init)
         self._helm_tr: Optional[ufl.TrialFunction] = None
