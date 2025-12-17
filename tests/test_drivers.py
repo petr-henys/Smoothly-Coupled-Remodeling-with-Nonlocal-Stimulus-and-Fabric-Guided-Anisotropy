@@ -17,9 +17,7 @@ class MockLoader:
     def __init__(self, V, traction_value=0.1):
         self.V = V
         self.load_tag = 2
-        self.cut_tag = 1
         self.traction = fem.Function(V, name="Traction")
-        self.traction_cut = fem.Function(V, name="TractionCut")
         self._traction_value = traction_value
         self._cache = {}
     
@@ -29,18 +27,13 @@ class MockLoader:
             traction_vec = np.array([0.0, -self._traction_value, 0.0], dtype=np.float64)
             n_dofs = self.traction.x.array.size // 3
             traction_array = np.tile(traction_vec, n_dofs)
-            self._cache[case.name] = {
-                "traction": traction_array.copy(),
-                "traction_cut": np.zeros_like(traction_array),
-            }
+            self._cache[case.name] = {"traction": traction_array.copy()}
     
     def set_loading_case(self, case_name: str) -> None:
         """Apply cached traction for named case."""
         cached = self._cache[case_name]
         self.traction.x.array[:] = cached["traction"]
         self.traction.x.scatter_forward()
-        self.traction_cut.x.array[:] = cached["traction_cut"]
-        self.traction_cut.x.scatter_forward()
 
 
 @pytest.fixture
@@ -52,7 +45,7 @@ def driver_setup(spaces, cfg, bc_mech):
     rho.x.scatter_forward()
 
     loader = MockLoader(spaces.V, traction_value=0.1)
-    loading_cases = [LoadingCase(name="test", weight=1.0)]
+    loading_cases = [LoadingCase(name="test", weight=1.0, hip=None, muscles=[])]
     
     neumann_bcs = [(loader.traction, 2)]
     mech = MechanicsSolver(u, rho, cfg, bc_mech, neumann_bcs)
@@ -93,7 +86,7 @@ class TestGaitDriverUnitCube:
             rho.x.scatter_forward()
             
             loader = MockLoader(spaces.V, traction_value=0.1 * scale)
-            loading_cases = [LoadingCase(name="test", weight=1.0)]
+            loading_cases = [LoadingCase(name="test", weight=1.0, hip=None, muscles=[])]
             
             neumann_bcs = [(loader.traction, 2)]
             mech = MechanicsSolver(u, rho, cfg, bc_mech, neumann_bcs)
@@ -142,8 +135,8 @@ class TestGaitDriverUnitCube:
         
         # Two identical loading cases with equal weight
         loading_cases = [
-            LoadingCase(name="case1", weight=1.0),
-            LoadingCase(name="case2", weight=1.0),
+            LoadingCase(name="case1", weight=1.0, hip=None, muscles=[]),
+            LoadingCase(name="case2", weight=1.0, hip=None, muscles=[]),
         ]
         
         neumann_bcs = [(loader.traction, 2)]

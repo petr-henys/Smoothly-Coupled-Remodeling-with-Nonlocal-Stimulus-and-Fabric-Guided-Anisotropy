@@ -115,7 +115,7 @@ class TestAdvancedConstitutiveLaws:
 
     @pytest.mark.parametrize("unit_cube", [6], indirect=True)
     def test_linear_driver_rate(self, unit_cube, facet_tags):
-        """Verify density evolution rate follows tanh-saturated specific energy stimulus."""
+        """Verify density evolution rate follows specific energy stimulus."""
         comm = MPI.COMM_WORLD
         cfg = Config(domain=unit_cube, facet_tags=facet_tags)
         
@@ -151,16 +151,16 @@ class TestAdvancedConstitutiveLaws:
             
             return (dM / vol) / cfg.dt
         
-        # DensitySolver uses: ∂ρ/∂t = k_rho * tanh((psi/rho - psi_ref/rho_ref) / (psi_ref/rho_ref))
-        # With rho = rho_ref, this simplifies to: k_rho * tanh((psi - psi_ref) / psi_ref)
+        # DensitySolver uses: ∂ρ/∂t = k_rho * (psi/rho - psi_ref/rho_ref) / (psi_ref/rho_ref)
+        # With rho = rho_ref, this simplifies to: k_rho * (psi - psi_ref) / psi_ref
         
-        # Case 1: psi = 2*psi_ref → S_norm = 1 → tanh(1) ≈ 0.762
+        # Case 1: psi = 2*psi_ref → S = 1.0
         rate_pos = get_rate(2.0 * cfg.psi_ref)
-        expected_pos = cfg.k_rho * np.tanh(1.0)
+        expected_pos = cfg.k_rho * 1.0
         assert abs(rate_pos - expected_pos) < 0.05, f"Positive rate mismatch: got {rate_pos}, expected {expected_pos}"
         
-        # Case 2: psi = 0.5*psi_ref → S_norm = -0.5 → tanh(-0.5) ≈ -0.462
+        # Case 2: psi = 0.5*psi_ref → S = -0.5
         rate_neg = get_rate(0.5 * cfg.psi_ref)
-        expected_neg = cfg.k_rho * np.tanh(-0.5)
+        expected_neg = cfg.k_rho * (-0.5)
         assert abs(rate_neg - expected_neg) < 0.05, f"Negative rate mismatch: got {rate_neg}, expected {expected_neg}"
 

@@ -119,7 +119,7 @@ class FixedPointSolver:
             # 2. Density
             # psi was already scattered by driver, no need to scatter again
             t0 = MPI.Wtime()
-            self.densolver.assemble_lhs(scatter_psi=False)
+            self.densolver.assemble_lhs()
             self.densolver.assemble_rhs()
             dens_iters, dens_reason = self.densolver.solve()
             # After solve: rho is synced by _solve()
@@ -144,9 +144,7 @@ class FixedPointSolver:
                     use_safeguard=self.cfg.safeguard,
                     backtrack_max=self.cfg.backtrack_max
                 )
-                self.rho.x.array[:n_owned] = x_new_owned
-                # Must scatter after modifying owned DOFs
-                self.rho.x.scatter_forward()
+                assign(self.rho, x_new_owned, scatter=True)
             # Note: if no Anderson, rho is already synced from _solve()
             
             # 4. Convergence Check

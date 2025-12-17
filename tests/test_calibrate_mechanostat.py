@@ -182,7 +182,6 @@ class TestComputeKRho:
         assert "k_rho" in result
         assert "tau_eff" in result
         assert "S_linear_rms" in result
-        assert "saturation_factor" in result
 
 
 # =============================================================================

@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Dict, Tuple, List
 from pathlib import Path
 
-import numpy as np
 from mpi4py import MPI
 import basix.ufl
 from dolfinx import fem
@@ -13,7 +12,7 @@ from dolfinx.fem import Function, functionspace
 
 from simulation.storage import UnifiedStorage
 from simulation.logger import get_logger
-from simulation.utils import build_dirichlet_bcs, assign, current_memory_mb, get_owned_size, field_stats
+from simulation.utils import build_dirichlet_bcs, assign, current_memory_mb, field_stats
 from simulation.config import Config
 from simulation.subsolvers import MechanicsSolver, DensitySolver
 from simulation.fixedsolver import FixedPointSolver
@@ -104,20 +103,13 @@ class Remodeller:
 
         # Register fields for output
         self.storage.fields.register("scalars", [self.rho], filename="scalars.bp")
-        self.storage.fields.register("loads", [self.loader.traction, self.loader.traction_cut], filename="loads.bp")
+        self.storage.fields.register("loads", [self.loader.traction], filename="loads.bp")
 
-        # Boundary conditions - free body equilibrium (pure Neumann)
-        # No Dirichlet BCs - the nullspace removal in MechanicsSolver handles rigid body modes
-        bc_mech = []
-        #bc_mech = build_dirichlet_bcs(self.V, self.cfg.facet_tags, id_tag=self.loader.cut_tag, value=0.0)
+        # Dirichlet BC: clamp cut surface (u=0)
+        bc_mech = build_dirichlet_bcs(self.V, self.cfg.facet_tags, id_tag=1, value=0.0)
 
-        # Neumann BCs: 
-        # - traction on proximal surface (hip + muscles) at loader.load_tag
-        # - traction_cut on distal cut (equilibrating reaction) at loader.cut_tag
-        neumann_bcs = [
-            (self.loader.traction, self.loader.load_tag),      # Proximal loads
-            (self.loader.traction_cut, self.loader.cut_tag),   # Cut equilibrium (distal)
-        ]
+        # Neumann BC: traction on proximal surface (hip + muscles)
+        neumann_bcs = [(self.loader.traction, self.loader.load_tag)]
 
         # 1. Mechanics Solver
         mechsolver = MechanicsSolver(u, self.rho, self.cfg, bc_mech, neumann_bcs)
@@ -256,10 +248,7 @@ class Remodeller:
             self.solvers_initialized = True
 
         x_pred = self.integrator.predict(dt, self.rho)
-        n_owned = get_owned_size(self.rho)
-        self.rho.x.array[:n_owned] = x_pred
-        # Must scatter after prediction modifies owned DOFs
-        self.rho.x.scatter_forward()
+        assign(self.rho, x_pred, scatter=True)
 
         if abs(float(dt) - self._current_dt) > 1e-12:
             self.cfg.set_dt(float(dt))

@@ -192,30 +192,24 @@ class TestMonitoringIntegration:
             def __init__(self):
                 self.V = V
                 self.load_tag = 1
-                self.cut_tag = 1
                 self.traction = fem.Function(V, name="Traction")
-                self.traction_cut = fem.Function(V, name="TractionCut")
-                self.traction.x.array[:] = 0.01  # Small non-zero load
+                self.traction.x.array[:] = 0.01
                 self._cache = {}
             
             def precompute_loading_cases(self, cases):
                 for case in cases:
-                    self._cache[case.name] = {
-                        "traction": self.traction.x.array.copy(),
-                        "traction_cut": self.traction_cut.x.array.copy(),
-                    }
+                    self._cache[case.name] = {"traction": self.traction.x.array.copy()}
             
             def set_loading_case(self, case_name):
                 cached = self._cache[case_name]
                 self.traction.x.array[:] = cached["traction"]
-                self.traction_cut.x.array[:] = cached["traction_cut"]
         
         return MockLoader()
     
     def _create_loading_cases(self):
         """Create loading cases for testing."""
         from simulation.loader import LoadingCase
-        return [LoadingCase(name="test", weight=1.0)]
+        return [LoadingCase(name="test", weight=1.0, hip=None, muscles=[])]
     
     @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
     def test_telemetry_records_steps(self, unit_cube):

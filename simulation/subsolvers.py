@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, List, Tuple, Optional
 
-import numpy as np
-from mpi4py import MPI
 from petsc4py import PETSc
 from dolfinx import fem
 from dolfinx.fem.petsc import (
@@ -86,9 +84,7 @@ class _BaseLinearSolver:
         self.assemble_lhs()
         self._setup_ksp()
 
-    def assemble_lhs(self, *, scatter_state: bool = False):
-        if scatter_state:
-            self.state.x.scatter_forward()
+    def assemble_lhs(self) -> None:
         self.A.zeroEntries()
         assemble_matrix(self.A, self.a_form, bcs=self.dirichlet_bcs)
         self.A.assemble()
@@ -165,15 +161,19 @@ class MechanicsSolver(_BaseLinearSolver):
 
         self.L_form = fem.form(L_ufl)
 
+    def assemble_lhs(self) -> None:
+        # Mechanics stiffness depends on the current density field.
+        # Any in-place modifications of rho must be followed by a ghost update.
+        self.rho.x.scatter_forward()
+        super().assemble_lhs()
+
     def _setup_ksp(self):
         self._nullspace = build_nullspace(self.function_space)
         self.A.setBlockSize(self.gdim)
         self.A.setNearNullSpace(self._nullspace)
-        if self.dirichlet_bcs == []:
-            self.A.setNullSpace(self._nullspace)
         self.A.setOption(PETSc.Mat.Option.SPD, True)
 
-        ksp_options = {"ksp_type": "cg", "pc_type": self.cfg.pc_type}
+        ksp_options = {"ksp_type": self.cfg.ksp_type, "pc_type": self.cfg.pc_type}
         self.create_ksp(prefix="mechanics", ksp_options=ksp_options)
 
     @staticmethod
@@ -197,8 +197,6 @@ class MechanicsSolver(_BaseLinearSolver):
         self.b.ghostUpdate(PETSc.InsertMode.ADD, PETSc.ScatterMode.REVERSE)
         set_bc(self.b, self.dirichlet_bcs)
         self.b.ghostUpdate(PETSc.InsertMode.INSERT, PETSc.ScatterMode.FORWARD)
-        if self._nullspace is not None and self.dirichlet_bcs == []:
-            self._nullspace.remove(self.b)
 
     def solve(self):
         its, reason = self._solve()
@@ -248,11 +246,7 @@ class DensitySolver(_BaseLinearSolver):
         # Specific energy stimulus: S = (Ψ/ρ - Ψ_ref/ρ_ref) / (Ψ_ref/ρ_ref)
         S_specific = self.psi_field / rho_safe
         S_ref_specific = self.cfg.psi_ref / self.cfg.rho_ref
-        S_linear = (S_specific - S_ref_specific) / S_ref_specific
-
-        # Saturated stimulus with tanh
-        saturation_limit = 1.0
-        S_saturated = saturation_limit * ufl.tanh(S_linear / saturation_limit)
+        S = (S_specific - S_ref_specific) / S_ref_specific
 
         # Implicit Euler: (ρ^{n+1}/dt, v) + D(∇ρ^{n+1}, ∇v) = (ρ^n/dt, v) + (k*S, v)
         a_ufl = (
@@ -261,7 +255,7 @@ class DensitySolver(_BaseLinearSolver):
         )
         self.a_form = fem.form(a_ufl)
 
-        source_term = self.cfg.k_rho * S_saturated
+        source_term = self.cfg.k_rho * S
         L_ufl = ((self.rho_old / dt) + source_term) * self.test * self.dx
         self.L_form = fem.form(L_ufl)
 
@@ -270,13 +264,14 @@ class DensitySolver(_BaseLinearSolver):
         ksp_options = {"ksp_type": self.cfg.ksp_type, "pc_type": self.cfg.pc_type}
         self.create_ksp(prefix="density", ksp_options=ksp_options)
 
-    def assemble_lhs(self, *, scatter_psi: bool = False):
-        if scatter_psi:
-            self.psi_field.x.scatter_forward()
+    def assemble_lhs(self) -> None:
         self.dt_c.value = float(self.cfg.dt)
-        super().assemble_lhs(scatter_state=False)
+        super().assemble_lhs()
 
     def assemble_rhs(self):
+        # RHS uses psi_field and rho_old as coefficients; keep their ghosts synced.
+        self.psi_field.x.scatter_forward()
+        self.rho_old.x.scatter_forward()
         self.dt_c.value = float(self.cfg.dt)
         with self.b.localForm() as b_local:
             b_local.set(0.0)
@@ -311,7 +306,7 @@ class DensitySolver(_BaseLinearSolver):
         self._ksp_helm = PETSc.KSP().create(self.comm)
         self._ksp_helm.setOptionsPrefix("helmholtz_")
         opts = PETSc.Options()
-        opts["helmholtz_ksp_type"] = "cg"
+        opts["helmholtz_ksp_type"] = self.cfg.ksp_type
         opts["helmholtz_pc_type"] = self.cfg.pc_type
         opts["helmholtz_ksp_rtol"] = self.cfg.ksp_rtol
         opts["helmholtz_ksp_atol"] = self.cfg.ksp_atol

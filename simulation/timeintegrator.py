@@ -167,8 +167,7 @@ class TimeIntegrator:
         # Calculate new rate from owned DOFs only
         n_owned = get_owned_size(rho_new)
         rate_data = (rho_new.x.array[:n_owned] - rho_old.x.array[:n_owned]) / dt_curr
-        self.rho_rate_last.x.array[:n_owned] = rate_data
-        # Skip scatter - rate history is only used for owned DOF prediction
+        assign(self.rho_rate_last, rate_data, scatter=False)
 
         self.dt_prev = dt_curr
         self.step_count += 1

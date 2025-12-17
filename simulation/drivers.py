@@ -10,7 +10,7 @@ import ufl
 from simulation.config import Config
 from simulation.subsolvers import MechanicsSolver
 from simulation.logger import get_logger
-from simulation.utils import field_stats
+from simulation.utils import assign, field_stats, get_owned_size
 
 if TYPE_CHECKING:
     from simulation.loader import LoadingCase, Loader
@@ -133,8 +133,9 @@ class GaitDriver:
         # Recompute normalization each step (supports quick weight sweeps without re-instantiating).
         self._recompute_normalized_weights()
 
-        # Zero out averaged psi
-        self.psi.x.array[:] = 0.0
+        # Zero out averaged psi (owned DOFs only; scatter once at the end)
+        assign(self.psi, 0.0, scatter=False)
+        n_owned_psi = get_owned_size(self.psi)
         
         for case in self.loading_cases:
             w_norm = self._weights_norm.get(case.name, 0.0)
@@ -153,11 +154,16 @@ class GaitDriver:
             
             # Compute SED for this case
             self._psi_temp.interpolate(self._sed_expr)
-            self._psi_temp.x.scatter_forward()
             
             # Accumulate *normalized* weighted SED
             # (weights represent relative exposure; Σ w_norm = 1)
-            self.psi.x.array[:] += w_norm * self._psi_temp.x.array
+            assign(
+                self.psi,
+                self._psi_temp.x.array[:n_owned_psi],
+                scatter=False,
+                op="add",
+                alpha=w_norm,
+            )
             
             case_elapsed = self.comm.allreduce(MPI.Wtime() - case_start, op=MPI.MAX)
             phase_iters.append(int(its))

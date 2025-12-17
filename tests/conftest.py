@@ -388,43 +388,28 @@ def dummy_load(spaces, cfg):
     
     class MockLoader:
         """Mock Loader for testing without femur-specific dependencies."""
-        def __init__(self, V, load_tag: int = 2, cut_tag: int = 1):
+        def __init__(self, V, load_tag: int = 2):
             self.V = V
             self.load_tag = load_tag
-            self.cut_tag = cut_tag
             self.traction = fem.Function(V, name="Traction")
-            self.traction_cut = fem.Function(V, name="TractionCut")
             self._cache = {}
         
         def precompute_loading_cases(self, cases):
             """Precompute and cache traction arrays for all loading cases."""
             for case in cases:
-                # Apply a constant traction for testing (proximal)
-                traction_vec = np.array([0.0, -0.1, 0.05], dtype=np.float64)  # MPa
+                traction_vec = np.array([0.0, -0.1, 0.05], dtype=np.float64)
                 n_dofs = self.traction.x.array.size // 3
                 traction_array = np.tile(traction_vec, n_dofs)
-                
-                # Apply equilibrating traction on cut (reaction = -applied / area)
-                cut_traction = np.array([0.0, 0.1, -0.05], dtype=np.float64)  # MPa
-                traction_cut_array = np.tile(cut_traction, n_dofs)
-                
-                self._cache[case.name] = {
-                    "traction": traction_array.copy(),
-                    "traction_cut": traction_cut_array.copy(),
-                }
+                self._cache[case.name] = {"traction": traction_array.copy()}
         
         def set_loading_case(self, case_name: str) -> None:
             """Apply cached traction for named case."""
             cached = self._cache[case_name]
             self.traction.x.array[:] = cached["traction"]
             self.traction.x.scatter_forward()
-            self.traction_cut.x.array[:] = cached["traction_cut"]
-            self.traction_cut.x.scatter_forward()
     
-    loader = MockLoader(spaces.V, load_tag=2, cut_tag=1)
-    
-    # Simple loading case for testing
-    loading_case = LoadingCase(name="test_case", weight=1.0)
+    loader = MockLoader(spaces.V, load_tag=2)
+    loading_case = LoadingCase(name="test_case", weight=1.0, hip=None, muscles=[])
     
     return {
         "loader": loader,

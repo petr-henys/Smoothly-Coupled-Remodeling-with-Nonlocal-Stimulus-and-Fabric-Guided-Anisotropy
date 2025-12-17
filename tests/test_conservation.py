@@ -279,10 +279,16 @@ class TestConservation:
 
         # Solve one implicit diffusion step with natural BCs
         rho = Function(Q, name="rho")
+        # Initialize rho to rho_old (solver uses rho in stimulus calculation)
+        rho.x.array[:] = rho_old.x.array[:]
+        rho.x.scatter_forward()
+        
         psi_field = Function(Q, name="psi")
         
-        # Zero stimulus -> psi = psi_ref
-        psi_field.x.array[:] = cfg.psi_ref
+        # For zero stimulus S=0, we need Ψ/ρ = Ψ_ref/ρ_ref
+        # So psi = rho * (psi_ref / rho_ref) = rho * S_ref_specific
+        S_ref_specific = cfg.psi_ref / cfg.rho_ref
+        psi_field.interpolate(lambda x: (0.6 + 0.2 * np.sin(2*np.pi*x[0]) * np.cos(2*np.pi*x[1])) * S_ref_specific)
         psi_field.x.scatter_forward()
         
         dens = DensitySolver(rho, rho_old, psi_field, cfg)
