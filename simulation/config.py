@@ -15,7 +15,7 @@ class Config:
     """Simulation parameters. Units: mm, day, MPa, g/cm³."""
 
     # Material: E = E0 * (rho/rho_ref)^n
-    n: float = 1.8              # Power-law exponent
+    n: float = 2.0              # Power-law exponent
     E0: float = 6500.0         # Reference Young's modulus [MPa]
     nu0: float = 0.3           # Poisson ratio
 
@@ -28,14 +28,14 @@ class Config:
     # Remodeling: dρ/dt = k_rho * S, where S = (Ψ - Ψ_ref) / Ψ_ref
     k_rho: float = 7e-03        # Remodeling rate [1/day]
     D_rho: float = 0.01        # Diffusion coefficient [mm²/day]
-    psi_ref: float = 0.008       # Reference SED [MPa]
+    psi_ref: float = 0.015       # Reference SED [MPa]
 
     # Helmholtz filter: (ρ_filt, v) + L²(∇ρ_filt, ∇v) = (ρ_raw, v)
     # Physical length scale ~0.3mm (osteocyte mechanosensing range)
     helmholtz_L: float = 0.6       # Filter length [mm]
 
     # Time stepping
-    total_time: float = 1000.0    # Total time [days]
+    total_time: float = 500.0    # Total time [days]
     dt_initial: float = 25.0      # Initial timestep [days]
     adaptive_dt: bool = False     # Enable adaptive time stepping
     adaptive_rtol: float = 1e-2   # Relative error tolerance

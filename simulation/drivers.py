@@ -66,16 +66,40 @@ class GaitDriver:
         
         # Pre-compile SED expression
         self._sed_expr = self._build_sed_expression()
-        
-        # Total weight for normalization
-        self._total_weight = sum(case.weight for case in self.loading_cases)
-        if self._total_weight <= 0:
-            raise ValueError("Total weight of loading cases must be positive")
-        
+
+        # Cache normalized weights (treat weights as *relative exposure*, not amplitude).
+        # We recompute normalization at the beginning of every update_snapshots(), so users
+        # can run quick sweeps by editing case.weight without rebuilding the driver.
+        self._weights_norm: Dict[str, float] = {}
+        self._recompute_normalized_weights()
+
         # Precompute all loading cases (expensive interpolation done once)
         self.loader.precompute_loading_cases(self.loading_cases)
 
         self.logger.debug(f"GaitDriver initialized with {len(loading_cases)} loading case(s), loads precomputed")
+
+    def _recompute_normalized_weights(self) -> None:
+        """Recompute per-case normalized weights.
+
+        Conventions:
+        - weight >= 0
+        - at least one positive weight
+        - Σ w_norm = 1 over cases with weight > 0
+        """
+        weights: Dict[str, float] = {}
+        total = 0.0
+        for case in self.loading_cases:
+            w = float(case.weight)
+            if w < 0.0:
+                raise ValueError(f"Loading case '{case.name}' has negative weight {w}")
+            if w > 0.0:
+                weights[case.name] = w
+                total += w
+
+        if total <= 0.0:
+            raise ValueError("At least one loading case must have positive weight")
+
+        self._weights_norm = {name: (w / total) for name, w in weights.items()}
 
     def setup(self) -> None:
         """Initialize mechanics solver."""
@@ -106,10 +130,18 @@ class GaitDriver:
         phase_iters = []
         phase_times = []
         
+        # Recompute normalization each step (supports quick weight sweeps without re-instantiating).
+        self._recompute_normalized_weights()
+
         # Zero out averaged psi
         self.psi.x.array[:] = 0.0
         
         for case in self.loading_cases:
+            w_norm = self._weights_norm.get(case.name, 0.0)
+            if w_norm <= 0.0:
+                # Disabled case (weight == 0) → skip solve and do not count in timing.
+                continue
+
             case_start = MPI.Wtime()
             
             # Set cached loading case - copies precomputed traction arrays
@@ -123,15 +155,15 @@ class GaitDriver:
             self._psi_temp.interpolate(self._sed_expr)
             self._psi_temp.x.scatter_forward()
             
-            # Accumulate weighted SED
-            self.psi.x.array[:] += case.weight * self._psi_temp.x.array
+            # Accumulate *normalized* weighted SED
+            # (weights represent relative exposure; Σ w_norm = 1)
+            self.psi.x.array[:] += w_norm * self._psi_temp.x.array
             
             case_elapsed = self.comm.allreduce(MPI.Wtime() - case_start, op=MPI.MAX)
             phase_iters.append(int(its))
             phase_times.append(float(case_elapsed))
 
-        # Normalize by total weight
-        self.psi.x.array[:] /= self._total_weight
+        # No further normalization needed (Σ w_norm = 1)
         self.psi.x.scatter_forward()
 
         elapsed = self.comm.allreduce(MPI.Wtime() - start, op=MPI.MAX)

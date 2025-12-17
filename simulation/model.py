@@ -109,6 +109,7 @@ class Remodeller:
         # Boundary conditions - free body equilibrium (pure Neumann)
         # No Dirichlet BCs - the nullspace removal in MechanicsSolver handles rigid body modes
         bc_mech = []
+        #bc_mech = build_dirichlet_bcs(self.V, self.cfg.facet_tags, id_tag=self.loader.cut_tag, value=0.0)
 
         # Neumann BCs: 
         # - traction on proximal surface (hip + muscles) at loader.load_tag

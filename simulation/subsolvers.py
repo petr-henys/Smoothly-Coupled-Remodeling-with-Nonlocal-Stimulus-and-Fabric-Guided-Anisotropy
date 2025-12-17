@@ -169,7 +169,8 @@ class MechanicsSolver(_BaseLinearSolver):
         self._nullspace = build_nullspace(self.function_space)
         self.A.setBlockSize(self.gdim)
         self.A.setNearNullSpace(self._nullspace)
-        self.A.setNullSpace(self._nullspace)
+        if self.dirichlet_bcs == []:
+            self.A.setNullSpace(self._nullspace)
         self.A.setOption(PETSc.Mat.Option.SPD, True)
 
         ksp_options = {"ksp_type": "cg", "pc_type": self.cfg.pc_type}
@@ -196,7 +197,7 @@ class MechanicsSolver(_BaseLinearSolver):
         self.b.ghostUpdate(PETSc.InsertMode.ADD, PETSc.ScatterMode.REVERSE)
         set_bc(self.b, self.dirichlet_bcs)
         self.b.ghostUpdate(PETSc.InsertMode.INSERT, PETSc.ScatterMode.FORWARD)
-        if self._nullspace is not None:
+        if self._nullspace is not None and self.dirichlet_bcs == []:
             self._nullspace.remove(self.b)
 
     def solve(self):
