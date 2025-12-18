@@ -45,7 +45,7 @@ def driver_setup(spaces, cfg, bc_mech):
     rho.x.scatter_forward()
 
     loader = MockLoader(spaces.V, traction_value=0.1)
-    loading_cases = [LoadingCase(name="test", weight=1.0, hip=None, muscles=[])]
+    loading_cases = [LoadingCase(name="test", day_cycles=1.0, hip=None, muscles=[])]
     
     neumann_bcs = [(loader.traction, 2)]
     mech = MechanicsSolver(u, rho, cfg, bc_mech, neumann_bcs)
@@ -86,7 +86,7 @@ class TestGaitDriverUnitCube:
             rho.x.scatter_forward()
             
             loader = MockLoader(spaces.V, traction_value=0.1 * scale)
-            loading_cases = [LoadingCase(name="test", weight=1.0, hip=None, muscles=[])]
+            loading_cases = [LoadingCase(name="test", day_cycles=1.0, hip=None, muscles=[])]
             
             neumann_bcs = [(loader.traction, 2)]
             mech = MechanicsSolver(u, rho, cfg, bc_mech, neumann_bcs)
@@ -133,10 +133,10 @@ class TestGaitDriverUnitCube:
         
         loader = MockLoader(spaces.V, traction_value=0.1)
         
-        # Two identical loading cases with equal weight
+        # Two identical loading cases with equal day_cycles
         loading_cases = [
-            LoadingCase(name="case1", weight=1.0, hip=None, muscles=[]),
-            LoadingCase(name="case2", weight=1.0, hip=None, muscles=[]),
+            LoadingCase(name="case1", day_cycles=1.0, hip=None, muscles=[]),
+            LoadingCase(name="case2", day_cycles=1.0, hip=None, muscles=[]),
         ]
         
         neumann_bcs = [(loader.traction, 2)]

@@ -49,7 +49,7 @@ class MuscleLoadSpec:
 class LoadingCase:
     """One gait phase: hip load + zero or more muscle loads."""
     name: str
-    weight: float
+    day_cycles: float             # Number of loading cycles per day
     hip: HipLoadSpec | None       # Hip joint load (None if no hip load)
     muscles: List[MuscleLoadSpec] # Muscle loads (empty list if none)
 
@@ -69,7 +69,7 @@ MUSCLE_PATHS = {
 class CachedTraction:
     """Cached owned-DOF traction values for one loading case."""
     name: str
-    weight: float
+    day_cycles: float
     traction: np.ndarray  # Flat array for proximal traction
 
 
@@ -163,7 +163,7 @@ class Loader:
         n_owned = get_owned_size(self.traction)
         self._cache[case.name] = CachedTraction(
             name=case.name,
-            weight=case.weight,
+            day_cycles=case.day_cycles,
             traction=self.traction.x.array[:n_owned].copy(),
         )
     
@@ -172,9 +172,9 @@ class Loader:
         cached = self._cache[case_name]
         assign(self.traction, cached.traction, scatter=True)
     
-    def get_cached_weight(self, case_name: str) -> float:
-        """Get the weight of a cached loading case."""
-        return self._cache[case_name].weight
+    def get_cached_day_cycles(self, case_name: str) -> float:
+        """Get the day_cycles of a cached loading case."""
+        return self._cache[case_name].day_cycles
     
     def get_cached_names(self) -> List[str]:
         """Get list of precomputed loading case names."""

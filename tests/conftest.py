@@ -413,7 +413,7 @@ def dummy_load(spaces, cfg):
             self.traction.x.scatter_forward()
     
     loader = MockLoader(spaces.V, load_tag=2)
-    loading_case = LoadingCase(name="test_case", weight=1.0, hip=None, muscles=[])
+    loading_case = LoadingCase(name="test_case", day_cycles=1.0, hip=None, muscles=[])
     
     return {
         "loader": loader,

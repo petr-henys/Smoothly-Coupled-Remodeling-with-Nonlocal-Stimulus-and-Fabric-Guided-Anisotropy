@@ -17,11 +17,11 @@ if TYPE_CHECKING:
 
 
 class GaitDriver:
-    """Mechanics driver that computes averaged SED stimulus.
+    """Mechanics driver that computes accumulated SED stimulus.
 
-    For each enabled loading case: set cached traction, solve mechanics, compute
-    element-wise $\Psi=\tfrac12\sigma:\varepsilon$ (DG0), and accumulate with
-    normalized weights ($\sum w=1$ each call).
+    For each loading case: set cached traction, solve mechanics, compute
+    element-wise $\Psi=\tfrac12\sigma:\varepsilon$ (DG0), and accumulate
+    weighted by day_cycles (number of loading cycles per day).
     """
 
     def __init__(
@@ -52,37 +52,10 @@ class GaitDriver:
         # Pre-compile SED expression (reused every update)
         self._sed_expr = self._build_sed_expression()
 
-        # Normalized weights are recomputed each `update_snapshots()`.
-        self._weights_norm: Dict[str, float] = {}
-        self._recompute_normalized_weights()
-
         # Precompute all loading cases (expensive interpolation done once)
         self.loader.precompute_loading_cases(self.loading_cases)
 
         self.logger.debug(f"GaitDriver initialized with {len(loading_cases)} loading case(s), loads precomputed")
-
-    def _recompute_normalized_weights(self) -> None:
-        """Recompute per-case normalized weights.
-
-        Conventions:
-        - weight >= 0
-        - at least one positive weight
-        - Σ w_norm = 1 over cases with weight > 0
-        """
-        weights: Dict[str, float] = {}
-        total = 0.0
-        for case in self.loading_cases:
-            w = float(case.weight)
-            if w < 0.0:
-                raise ValueError(f"Loading case '{case.name}' has negative weight {w}")
-            if w > 0.0:
-                weights[case.name] = w
-                total += w
-
-        if total <= 0.0:
-            raise ValueError("At least one loading case must have positive weight")
-
-        self._weights_norm = {name: (w / total) for name, w in weights.items()}
 
     def setup(self) -> None:
         """Initialize mechanics solver."""
@@ -105,20 +78,16 @@ class GaitDriver:
         
         phase_iters = []
         phase_times = []
-        
-        # Recompute normalization each call (supports quick weight sweeps).
-        self._recompute_normalized_weights()
 
-        # Zero out averaged psi (owned DOFs only; single scatter at the end)
+        # Zero out accumulated psi (owned DOFs only; single scatter at the end)
         assign(self.psi, 0.0, scatter=False)
         n_owned_psi = get_owned_size(self.psi)
         p = float(self.cfg.stimulus_power_p)
 
-        
         for case in self.loading_cases:
-            w_norm = self._weights_norm.get(case.name, 0.0)
-            if w_norm <= 0.0:
-                # Disabled case (weight == 0) → skip solve and timing.
+            day_cycles = float(case.day_cycles)
+            if day_cycles <= 0.0:
+                # Disabled case (day_cycles == 0) → skip solve.
                 continue
 
             case_start = MPI.Wtime()
@@ -133,11 +102,11 @@ class GaitDriver:
             # Compute SED for this case
             self._psi_temp.interpolate(self._sed_expr)
             
-            # Accumulate multi-case stimulus via power-mean:
-            #   p = 1 → arithmetic mean (original behaviour)
-            #   p > 1 → increasingly peak-biased
+            # Accumulate stimulus weighted by day_cycles:
+            #   p = 1 → sum of day_cycles * Ψ
+            #   p > 1 → peak-biased accumulation
             contrib_p = self._psi_temp.x.array[:n_owned_psi] ** p
-            self.psi.x.array[:n_owned_psi] += w_norm * contrib_p
+            self.psi.x.array[:n_owned_psi] += day_cycles * contrib_p
 
             
             case_elapsed = self.comm.allreduce(MPI.Wtime() - case_start, op=MPI.MAX)
@@ -145,12 +114,10 @@ class GaitDriver:
             phase_times.append(float(case_elapsed))
 
 
-        # Finalize power-mean: take (.)^(1/p) after accumulation of Σ w Ψ^p
-
+        # Finalize: take (.)^(1/p) after accumulation of Σ day_cycles * Ψ^p
         owned = self.psi.x.array[:n_owned_psi]
         owned[:] = owned ** (1.0 / p)
 
-        # No further normalization needed (Σ w_norm = 1)
         self.psi.x.scatter_forward()
 
         elapsed = self.comm.allreduce(MPI.Wtime() - start, op=MPI.MAX)

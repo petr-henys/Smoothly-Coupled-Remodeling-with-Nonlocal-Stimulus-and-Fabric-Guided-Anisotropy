@@ -70,9 +70,9 @@ class SimpleLoaderStub:
 class SimpleLoadingCase:
     """Simple loading case for testing."""
     
-    def __init__(self, name: str, weight: float = 1.0, magnitude: float = 1000.0):
+    def __init__(self, name: str, day_cycles: float = 1.0, magnitude: float = 1000.0):
         self.name = name
-        self.weight = weight
+        self.day_cycles = day_cycles
         self.magnitude = magnitude
 
 
@@ -107,8 +107,8 @@ def simple_loader(unit_cube_mesh):
 def simple_loading_cases():
     """Create simple loading cases."""
     return [
-        SimpleLoadingCase("case1", weight=1.0, magnitude=1000.0),
-        SimpleLoadingCase("case2", weight=1.0, magnitude=1500.0),
+        SimpleLoadingCase("case1", day_cycles=1.0, magnitude=1000.0),
+        SimpleLoadingCase("case2", day_cycles=1.0, magnitude=1500.0),
     ]
 
 

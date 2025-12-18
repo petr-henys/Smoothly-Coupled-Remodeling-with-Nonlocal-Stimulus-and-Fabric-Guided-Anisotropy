@@ -52,7 +52,7 @@ def create_mock_loader(domain):
 
 def create_loading_cases():
     """Create loading cases for testing."""
-    return [LoadingCase(name="test", weight=1.0, hip=None, muscles=[])]
+    return [LoadingCase(name="test", day_cycles=1.0, hip=None, muscles=[])]
 
 # =============================================================================
 # Ghost Update Tests

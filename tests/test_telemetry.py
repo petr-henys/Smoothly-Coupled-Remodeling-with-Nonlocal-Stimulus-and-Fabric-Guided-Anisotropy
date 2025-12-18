@@ -209,7 +209,7 @@ class TestMonitoringIntegration:
     def _create_loading_cases(self):
         """Create loading cases for testing."""
         from simulation.loader import LoadingCase
-        return [LoadingCase(name="test", weight=1.0, hip=None, muscles=[])]
+        return [LoadingCase(name="test", day_cycles=1.0, hip=None, muscles=[])]
     
     @pytest.mark.parametrize("unit_cube", [6, 8], indirect=True)
     def test_telemetry_records_steps(self, unit_cube):

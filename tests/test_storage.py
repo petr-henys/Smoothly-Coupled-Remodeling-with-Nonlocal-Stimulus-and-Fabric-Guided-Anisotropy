@@ -323,7 +323,7 @@ class TestUnifiedStorage:
                     self.traction.x.array[:] = cached["traction"]
             
             loader = MockLoader()
-            loading_cases = [LoadingCase(name="test", weight=1.0, hip=None, muscles=[])]
+            loading_cases = [LoadingCase(name="test", day_cycles=1.0, hip=None, muscles=[])]
             
             with Remodeller(cfg, loader=loader, loading_cases=loading_cases) as rem:
                 # Storage should be initialized
