@@ -74,46 +74,25 @@ def build_dirichlet_bcs(
         bcs.append(fem.dirichletbc(default_scalar_type(value), dofs, Vi))
     return bcs
 
-def assign(
-    f: fem.Function,
-    v,
-    *,
-    scatter: bool = True,
-    op: str = "set",
-    alpha: float = 1.0,
-) -> None:
-    """Update owned DOFs of a Function.
+def assign(f: fem.Function, v, *, scatter: bool = True) -> None:
+    """Assign value to owned DOFs of a Function.
 
     Args:
         f: Target function.
         v: Source value (scalar, array-like, or Function).
         scatter: If True, update ghosts via scatter_forward().
-        op: "set" to overwrite, "add" to accumulate.
-        alpha: Scaling applied to v when op="add".
     """
     owned = f.function_space.dofmap.index_map.size_local * f.function_space.dofmap.index_map_bs
-
-    if op not in {"set", "add"}:
-        raise ValueError(f"assign: unknown op '{op}' (expected 'set' or 'add')")
     if isinstance(v, fem.Function):
-        if op == "set":
-            f.x.array[:owned] = v.x.array[:owned]
-        else:
-            f.x.array[:owned] += float(alpha) * v.x.array[:owned]
+        f.x.array[:owned] = v.x.array[:owned]
     else:
         arr = np.asarray(v, dtype=f.x.array.dtype)
         if arr.size == 1:
-            if op == "set":
-                f.x.array[:owned] = arr.item()
-            else:
-                f.x.array[:owned] += float(alpha) * arr.item()
+            f.x.array[:owned] = arr.item()
         else:
             if arr.size != owned:
                 raise ValueError(f"assign: size mismatch (got {arr.size}, need {owned})")
-            if op == "set":
-                f.x.array[:owned] = arr.ravel()
-            else:
-                f.x.array[:owned] += float(alpha) * arr.ravel()
+            f.x.array[:owned] = arr.ravel()
     if scatter:
         f.x.scatter_forward()
 

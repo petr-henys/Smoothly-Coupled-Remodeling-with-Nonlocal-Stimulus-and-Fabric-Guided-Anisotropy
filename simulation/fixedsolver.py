@@ -13,9 +13,9 @@ from simulation.logger import get_logger
 from simulation.anderson import _Anderson
 
 class FixedPointSolver:
-    """
-    Fixed-point iteration: mechanics → SED → density → Anderson mixing.
-    Converges when ||ρ_new - ρ_old|| / ||ρ|| < coupling_tol.
+    """Coupling loop (block Gauss–Seidel) with optional Anderson acceleration.
+
+    Convergence uses a global relative L2 change of the owned density DOFs.
     """
 
     def __init__(
@@ -100,15 +100,14 @@ class FixedPointSolver:
             self.anderson.reset()
 
         for itr in range(1, max_subiters + 1):
-            # Store previous iterate (skip scatter - rho is already synced from previous iter or init)
+            # Store previous iterate (rho already synced from previous iter/init)
             assign(rho_prev_iter, self.rho, scatter=False)
             
             # 1. Mechanics
-            # Driver solves equilibrium and updates its internal fields
-            # rho is already synced, no need to scatter in assemble_lhs
+            # Driver solves equilibrium and updates internal fields.
             self.driver.update_stiffness() 
             mech_stats = self.driver.update_snapshots()
-            # After this: u and psi are synced by driver
+            # After this: u and psi are synced by driver.
             
             self.mech_time_total += mech_stats["total_time"]
             self.mech_iters_total += sum(mech_stats["phase_iters"])
@@ -117,7 +116,7 @@ class FixedPointSolver:
             self.solver_stats["mech"]["iters"] += int(sum(mech_stats["phase_iters"]))
             
             # 2. Density
-            # psi was already scattered by driver, no need to scatter again
+            # psi already scattered by driver.
             t0 = MPI.Wtime()
             self.densolver.assemble_lhs()
             self.densolver.assemble_rhs()
@@ -131,7 +130,7 @@ class FixedPointSolver:
             self.solver_stats["dens"]["iters"] += dens_iters
             self.solver_stats["dens"]["reason"] = dens_reason
 
-            # 3. Anderson Acceleration (modifies owned DOFs, needs scatter)
+            # 3. Anderson acceleration (owned DOFs → scatter)
             n_owned = get_owned_size(self.rho)
             aa_info = {}
             if self.anderson:
@@ -145,7 +144,7 @@ class FixedPointSolver:
                     backtrack_max=self.cfg.backtrack_max
                 )
                 assign(self.rho, x_new_owned, scatter=True)
-            # Note: if no Anderson, rho is already synced from _solve()
+            # If no Anderson, rho is already synced from `densolver.solve()`.
             
             # 4. Convergence Check
             diff_owned = self.rho.x.array[:n_owned] - rho_prev_iter.x.array[:n_owned]

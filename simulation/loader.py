@@ -1,14 +1,10 @@
-"""MPI-parallel femur load interpolation with precomputed traction caching.
+"""MPI-parallel femur load mapping with traction caching.
 
-Provides:
-- HipLoadSpec, MuscleLoadSpec: Load specifications
-- LoadingCase: Configuration for one loading scenario (hip + muscles)
-- Loader: Precomputes and caches traction fields for all loading cases
+Rank 0 owns the PyVista geometry and evaluates surface tractions at gathered
+DOF coordinates; all ranks receive scattered values and assemble a DOLFINx
+traction field. Loading cases are precomputed once and then replayed cheaply.
 
-MPI pattern: Rank 0 owns pyvista geometry, computes loads; other ranks gather
-coordinates to rank 0, receive scattered tractions back.
-
-Units: mm, N, MPa
+Units: geometry in mm; input forces in N; traction output in MPa (N/mm²).
 """
 
 from __future__ import annotations
@@ -51,7 +47,7 @@ class MuscleLoadSpec:
 
 @dataclass 
 class LoadingCase:
-    """A loading case = hip + muscles for a specific gait phase."""
+    """One gait phase: hip load + zero or more muscle loads."""
     name: str
     weight: float
     hip: HipLoadSpec | None       # Hip joint load (None if no hip load)
@@ -71,28 +67,21 @@ MUSCLE_PATHS = {
 
 @dataclass
 class CachedTraction:
-    """Cached traction array for a single loading case."""
+    """Cached owned-DOF traction values for one loading case."""
     name: str
     weight: float
     traction: np.ndarray  # Flat array for proximal traction
 
 
 class Loader:
-    """MPI-parallel loader with precomputed traction caching.
-    
-    Computes hip + muscle loads on proximal surface. Mechanics uses Dirichlet 
-    BC on cut surface (clamped), so no equilibrating traction is needed.
+    """MPI-parallel traction loader with precomputed case cache.
+
+    Builds tractions on the proximal surface; the cut surface is clamped via
+    Dirichlet BCs in mechanics.
     """
     
     def __init__(self, mesh: dmesh.Mesh, facet_tags: dmesh.MeshTags, load_tag: int):
-        """
-        Initialize loader with mesh and facet tags.
-        
-        Args:
-            mesh: DOLFINx mesh
-            facet_tags: MeshTags for boundary facets
-            load_tag: Facet tag for proximal load surface (hip + muscles)
-        """
+        """Create loader for `mesh` and proximal surface tag `load_tag`."""
         self.mesh = mesh
         self.comm = mesh.comm
         self.rank = self.comm.rank
@@ -130,7 +119,7 @@ class Loader:
         self.comm.Barrier()
     
     def _init_geometry_rank0(self) -> None:
-        """Load femur geometry and create hip loader on rank 0."""
+        """Load femur geometry and initialize loaders (rank 0 only)."""
         import pyvista as pv
         
         self._femur_mesh = pv.read(str(FemurPaths.FEMUR_MESH_VTK))
@@ -141,7 +130,7 @@ class Loader:
         self._hip_loader = HIPJointLoad(self._femur_mesh, self._css, use_cell_data=False)
     
     def _init_interpolation_cache(self) -> None:
-        """Cache DOF coordinates and MPI communication patterns."""
+        """Cache owned DOF coordinates and Gatherv/Scatterv layout."""
         V = self.traction.function_space
         imap = V.dofmap.index_map
         self._n_owned = imap.size_local
@@ -154,7 +143,7 @@ class Loader:
         self._mpi_displs = [sum(all_n[:i]) for i in range(len(all_n))]
     
     def precompute_loading_cases(self, cases: List[LoadingCase]) -> None:
-        """Precompute and cache traction fields for all loading cases."""
+        """Precompute and cache tractions for all `cases` (collective)."""
         for case in cases:
             self._precompute_single_case(case)
         self.comm.Barrier()
@@ -179,7 +168,7 @@ class Loader:
         )
     
     def set_loading_case(self, case_name: str) -> None:
-        """Set traction field from precomputed cache."""
+        """Load cached traction into `self.traction` (owned DOFs + scatter)."""
         cached = self._cache[case_name]
         assign(self.traction, cached.traction, scatter=True)
     
@@ -226,7 +215,7 @@ class Loader:
         return self._muscle_loaders[name]
     
     def _interpolate_and_add(self, loader_obj) -> None:
-        """Interpolate load from loader_obj and add to traction field."""
+        """Gather coords → rank-0 evaluate → scatter → add into traction field."""
         counts = self._mpi_counts
         displs = self._mpi_displs
         
@@ -250,4 +239,4 @@ class Loader:
             local_values = np.empty((self._n_owned, 3), dtype=np.float64)
             self.comm.Scatterv(None, local_values, root=0)
         
-        assign(self.traction, local_values.flatten(), scatter=False, op="add")
+        self.traction.x.array[:self._n_owned * 3] += local_values.flatten()

@@ -14,10 +14,7 @@ from simulation.logger import get_logger
 
 
 class SimulationLoader:
-    """Load sweep run results: config, fields, metrics (MPI-parallel).
-    
-    Expected structure: config.json, steps.csv, field .npz files, optional .bp time series.
-    """
+    """Load one run directory (config, metrics, and saved fields; MPI-safe)."""
     
     __slots__ = (
         "output_dir", "comm", "logger", "_config", "_run_summary",
@@ -25,13 +22,7 @@ class SimulationLoader:
     )
     
     def __init__(self, output_dir: str | Path, comm: MPI.Comm, verbose: bool = True):
-        """Initialize loader.
-        
-        Args:
-            output_dir: Run directory path.
-            comm: MPI communicator.
-            verbose: Enable logging.
-        """
+        """Create loader for `output_dir` using `comm` (rank-0 does I/O)."""
         self.output_dir = Path(output_dir)
         self.comm = comm
         self.logger = get_logger(comm, name="SimulationLoader")

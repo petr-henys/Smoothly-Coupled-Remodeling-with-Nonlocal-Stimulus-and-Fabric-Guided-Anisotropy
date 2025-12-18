@@ -11,30 +11,18 @@ from typing import Optional
 import matplotlib.pyplot as plt
 import numpy as np
 
-# Add project root to path
+# Add project root to sys.path (analysis scripts import from repo root)
 project_root = Path(__file__).resolve().parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 
 # ============================================================================
-# CMAME Publication Settings
+# CMAME-style Matplotlib settings
 # ============================================================================
 
-# Configure matplotlib for CMAME journal standards
-# A4 width: 210mm = 8.27 inches
-# Two-column format: column width ~3.5 inches
-# Font: Times/Computer Modern for consistency with LaTeX
-#
-# CRITICAL FONT SIZE PRINCIPLE:
-# Font sizes are specified in POINTS (absolute units), NOT relative to figure size.
-# This ensures text appears at the SAME PHYSICAL SIZE when printed, regardless of
-# whether the figure is single-column (3.5") or double-column (8.0").
-# 
-# Standard for CMAME/Elsevier:
-# - Body text: 10pt
-# - Figure labels should match or be slightly smaller (8-10pt)
-# - This makes text equally readable in print for any figure size
+# Use absolute font sizes (points) so printed text size stays consistent across
+# single-/double-column figures.
 plt.rcParams.update({
     'font.family': 'serif',
     'font.serif': ['Times New Roman', 'DejaVu Serif'],

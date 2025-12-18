@@ -9,9 +9,10 @@ from simulation.logger import get_logger
 
 
 class _Anderson:
-    """
-    Anderson mixing: x_new = sum(alpha_k * (x_k + beta*r_k)).
-    Includes step limiting, backtracking, and auto-restart on stall/ill-conditioning.
+    """Anderson mixing for fixed-point iterations (MPI-aware).
+
+    Builds a global Gram matrix from residual history, computes mixing weights,
+    and applies safeguards (step limiting/backtracking/restart).
     """
 
     def __init__(
@@ -127,8 +128,7 @@ class _Anderson:
             "restart_reason": "",
         }
 
-        # --- SAFEGUARD BYPASS FOR FIRST STEP ---
-        # If history is small (p=1), disable safeguard to allow first step.
+        # First iterate: fall back to a Picard step (no safeguard).
         if p == 1:
             return self._picard_step(x_old, x_raw, r, mask_fixed, proj_residual_norm, 
                                      gamma, False, info)

@@ -12,10 +12,10 @@ from simulation.utils import assign, get_owned_size
 
 
 class TimeIntegrator:
-    """
-    AB2 predictor for error estimation, PI controller for dt adaptation.
-    WRMS error: sqrt(mean((ρ_corr - ρ_pred)² / (atol + rtol·|ρ|)²)).
-    Step accepted if WRMS ≤ 1.0.
+    """Adaptive time stepping for density updates.
+
+    Uses an AB2 predictor for error estimation and a Gustafsson PI controller.
+    Step is accepted if WRMS ≤ 1.
     """
 
     def __init__(self, comm: MPI.Intracomm, cfg: Config, Q: fem.FunctionSpace):
@@ -111,7 +111,7 @@ class TimeIntegrator:
             return False, next_dt, "diverged"
         
         if self.step_count == 0:
-            # zapamatuj si chybu jako historii, ale neodmítej
+            # Initialize PI history; do not reject the very first step.
             self.error_prev = max(error_norm, 1.0)
             return True, dt, "first step accepted (no rejection)"
 

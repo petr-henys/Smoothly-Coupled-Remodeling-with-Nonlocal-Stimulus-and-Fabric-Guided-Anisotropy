@@ -19,9 +19,9 @@ class Config:
     # [rho_trab_max, rho_cort_min].
     E0: float = 7500.0
     n_trab: float = 2.0
-    n_cort: float = 1.1
-    rho_trab_max: float = 0.8
-    rho_cort_min: float = 1.2
+    n_cort: float = 1.3
+    rho_trab_max: float = 1.
+    rho_cort_min: float = 1.25
     nu0: float = 0.3           # Poisson ratio
 
     # Density bounds and initial value
@@ -33,6 +33,9 @@ class Config:
     # Remodeling: dρ/dt = k_rho * S, where S = (Ψ - Ψ_ref) / Ψ_ref
     k_rho: float = 7e-03        # Remodeling rate [1/day]
     D_rho: float = 0.01        # Diffusion coefficient [mm²/day]
+
+    # stimulus computation
+    stimulus_power_p: float = 4.0  # Power-mean exponent (1=mean; higher→peak-biased)
     psi_ref: float = 0.015       # Reference SED [MPa]
 
     # Helmholtz filter: (ρ_filt, v) + L²(∇ρ_filt, ∇v) = (ρ_raw, v)
@@ -125,6 +128,13 @@ class Config:
         # Solver
         if self.accel_type not in ("anderson", "picard"):
             raise ValueError("accel_type must be 'anderson' or 'picard'.")
+        
+        # Stimulus
+        if self.psi_ref <= 0:
+            raise ValueError("Reference value psi_ref must be positive.")
+
+        if self.stimulus_power_p < 1.0:
+            raise ValueError("stimulus_power_p must be >= 1.0 (1=mean; larger biases toward peaks).")
 
     def _build_measures(self):
         """Create UFL integration measures with quadrature degree."""

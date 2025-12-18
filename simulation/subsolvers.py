@@ -1,4 +1,4 @@
-"""Linear subsolvers for mechanics and density evolution with Helmholtz filtering."""
+"""Linear subsolvers for mechanics and density evolution (optionally filtered)."""
 
 from __future__ import annotations
 
@@ -130,11 +130,11 @@ class _BaseLinearSolver:
 
 
 class MechanicsSolver(_BaseLinearSolver):
-    """Elasticity solver with density-dependent stiffness.
+    """Linear elasticity with density-dependent stiffness.
 
-    Uses the smooth lower clamp ρ̃ = smooth_max(ρ, ρ_min) and then
-    E(ρ) = E0 * (ρ̃/ρ_ref)^k(ρ), where k is a smooth trabecular→cortical
-    transition controlled by (n_trab, n_cort, rho_trab_max, rho_cort_min).
+    Uses $\tilde\rho=\max_\epsilon(\rho,\rho_{min})$ and
+    $E(\rho)=E_0(\tilde\rho/\rho_{ref})^{k(\rho)}$ with a smooth
+    trabecular→cortical transition for $k$.
     """
 
     def __init__(
@@ -167,8 +167,7 @@ class MechanicsSolver(_BaseLinearSolver):
         self.L_form = fem.form(L_ufl)
 
     def assemble_lhs(self) -> None:
-        # Mechanics stiffness depends on the current density field.
-        # Any in-place modifications of rho must be followed by a ghost update.
+        # Stiffness depends on current `rho` (ensure ghosts are current).
         self.rho.x.scatter_forward()
         super().assemble_lhs()
 
@@ -216,7 +215,7 @@ class MechanicsSolver(_BaseLinearSolver):
 
 
 class DensitySolver(_BaseLinearSolver):
-    """Density evolution: dρ/dt = D∇²ρ + k_rho*S with optional Helmholtz filtering."""
+    """Density evolution: $\partial_t\rho = D\nabla^2\rho + k_\rho S$ (optional filter)."""
 
     def __init__(
         self,
@@ -231,7 +230,7 @@ class DensitySolver(_BaseLinearSolver):
         self.psi_field = psi_field
         self.dt_c = fem.Constant(self.mesh, float(self.cfg.dt))
 
-        # Helmholtz filter length from config (physical parameter, ~0.3mm for bone)
+        # Helmholtz filter length scale (0 disables filtering).
         self.helmholtz_L = self.cfg.helmholtz_L
         self._use_helmholtz = self.helmholtz_L > 0.0
         

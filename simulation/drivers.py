@@ -17,18 +17,11 @@ if TYPE_CHECKING:
 
 
 class GaitDriver:
-    """
-    Solves mechanics and computes weighted-averaged Strain Energy Density Ψ = ½σ:ε.
-    
-    Workflow for each loading case:
-    1. Apply loads to traction field (via Loader, MPI-parallel)
-    2. Reassemble RHS and solve mechanics (MPI-parallel)
-    3. Compute element-wise SED (DG0)
-    4. Accumulate weighted SED
-    
-    Final stimulus: Ψ = Σ(wᵢ·Ψᵢ) / Σ(wᵢ)
-    
-    MPI: All operations are MPI-safe. Loader handles coordinate gather/scatter.
+    """Mechanics driver that computes averaged SED stimulus.
+
+    For each enabled loading case: set cached traction, solve mechanics, compute
+    element-wise $\Psi=\tfrac12\sigma:\varepsilon$ (DG0), and accumulate with
+    normalized weights ($\sum w=1$ each call).
     """
 
     def __init__(
@@ -38,15 +31,7 @@ class GaitDriver:
         loader: "Loader",
         loading_cases: List["LoadingCase"],
     ):
-        """
-        Initialize GaitDriver.
-        
-        Args:
-            mech: MechanicsSolver (already configured with Neumann BC pointing to loader.traction)
-            config: Simulation configuration
-            loader: Loader instance for applying loads
-            loading_cases: List of LoadingCase objects to average over
-        """
+        """Bind mechanics solver, loader, and list of loading cases."""
         self.mech = mech
         self.cfg = config
         self.loader = loader
@@ -61,15 +46,13 @@ class GaitDriver:
         self.V_psi = fem.functionspace(mesh, ("DG", 0))
         self.psi = fem.Function(self.V_psi, name="Stimulus_SED")
         
-        # Temporary SED for each loading case
+        # Temporary per-case SED (DG0)
         self._psi_temp = fem.Function(self.V_psi, name="Stimulus_SED_temp")
         
-        # Pre-compile SED expression
+        # Pre-compile SED expression (reused every update)
         self._sed_expr = self._build_sed_expression()
 
-        # Cache normalized weights (treat weights as *relative exposure*, not amplitude).
-        # We recompute normalization at the beginning of every update_snapshots(), so users
-        # can run quick sweeps by editing case.weight without rebuilding the driver.
+        # Normalized weights are recomputed each `update_snapshots()`.
         self._weights_norm: Dict[str, float] = {}
         self._recompute_normalized_weights()
 
@@ -114,60 +97,58 @@ class GaitDriver:
         self.mech.assemble_lhs()
 
     def update_snapshots(self) -> Dict:
-        """
-        Solve mechanics for each loading case and compute weighted-averaged SED.
-        
-        MPI-parallel: All ranks participate in loader.apply_loading_case() and mech.solve().
-        
-        Returns:
-            dict with keys:
-            - phase_iters: list of KSP iterations per case
-            - phase_times: list of wall-clock times per case
-            - total_time: total elapsed time (max across ranks)
+        """Solve all enabled phases and update averaged `psi` (collective).
+
+        Returns `phase_iters`, `phase_times`, and `total_time` (MPI max).
         """
         start = MPI.Wtime()
         
         phase_iters = []
         phase_times = []
         
-        # Recompute normalization each step (supports quick weight sweeps without re-instantiating).
+        # Recompute normalization each call (supports quick weight sweeps).
         self._recompute_normalized_weights()
 
-        # Zero out averaged psi (owned DOFs only; scatter once at the end)
+        # Zero out averaged psi (owned DOFs only; single scatter at the end)
         assign(self.psi, 0.0, scatter=False)
         n_owned_psi = get_owned_size(self.psi)
+        p = float(self.cfg.stimulus_power_p)
+
         
         for case in self.loading_cases:
             w_norm = self._weights_norm.get(case.name, 0.0)
             if w_norm <= 0.0:
-                # Disabled case (weight == 0) → skip solve and do not count in timing.
+                # Disabled case (weight == 0) → skip solve and timing.
                 continue
 
             case_start = MPI.Wtime()
             
-            # Set cached loading case - copies precomputed traction arrays
+            # Load cached traction (cheap, no geometry work)
             self.loader.set_loading_case(case.name)
             
-            # Reassemble RHS (traction field is already referenced in form)
+            # Reassemble RHS (traction is referenced in the form)
             self.mech.assemble_rhs()
             its, _ = self.mech.solve()
             
             # Compute SED for this case
             self._psi_temp.interpolate(self._sed_expr)
             
-            # Accumulate *normalized* weighted SED
-            # (weights represent relative exposure; Σ w_norm = 1)
-            assign(
-                self.psi,
-                self._psi_temp.x.array[:n_owned_psi],
-                scatter=False,
-                op="add",
-                alpha=w_norm,
-            )
+            # Accumulate multi-case stimulus via power-mean:
+            #   p = 1 → arithmetic mean (original behaviour)
+            #   p > 1 → increasingly peak-biased
+            contrib_p = self._psi_temp.x.array[:n_owned_psi] ** p
+            self.psi.x.array[:n_owned_psi] += w_norm * contrib_p
+
             
             case_elapsed = self.comm.allreduce(MPI.Wtime() - case_start, op=MPI.MAX)
             phase_iters.append(int(its))
             phase_times.append(float(case_elapsed))
+
+
+        # Finalize power-mean: take (.)^(1/p) after accumulation of Σ w Ψ^p
+
+        owned = self.psi.x.array[:n_owned_psi]
+        owned[:] = owned ** (1.0 / p)
 
         # No further normalization needed (Σ w_norm = 1)
         self.psi.x.scatter_forward()
@@ -199,11 +180,7 @@ class GaitDriver:
         }
 
     def _build_sed_expression(self) -> fem.Expression:
-        """
-        Build UFL expression for Strain Energy Density: Ψ = ½σ:ε.
-        
-        Uses max_value(..., 0) to clamp any numerical noise to non-negative.
-        """
+        """Build UFL expression for $\Psi=\tfrac12\sigma:\varepsilon$ (clamped ≥ 0)."""
         u = self.mech.u
         rho = self.mech.rho
         

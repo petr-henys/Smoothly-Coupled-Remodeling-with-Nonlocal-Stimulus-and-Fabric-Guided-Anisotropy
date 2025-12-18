@@ -1,4 +1,11 @@
-"""Remodelling orchestrator: couples mechanics and density solvers."""
+"""Top-level remodeling loop: couples mechanics, stimulus, and density.
+
+Orchestrates:
+- mechanics solve(s) via `GaitDriver` (multi-load SED averaging)
+- density solve via `DensitySolver`
+- fixed-point coupling with optional Anderson acceleration
+- adaptive time stepping via `TimeIntegrator`
+"""
 
 from __future__ import annotations
 
@@ -22,17 +29,10 @@ from simulation.loader import Loader, LoadingCase
 
 
 class Remodeller:
-    """Bone remodeling orchestrator with GaitDriver for multi-load SED averaging."""
+    """Orchestrates coupled mechanics↔density remodeling (MPI-parallel)."""
 
     def __init__(self, cfg: Config, loader: Loader, loading_cases: List[LoadingCase]):
-        """
-        Initialize with config, loader, and loading cases.
-        
-        Args:
-            cfg: Simulation configuration with mesh and facet_tags.
-            loader: Loader object for applying loads (contains load_tag and cut_tag).
-            loading_cases: List of LoadingCase objects defining load combinations.
-        """
+        """Initialize coupled solvers, I/O, and precomputed loading cases."""
         self.cfg = cfg
         self.domain = self.cfg.domain
         self.closed = False
@@ -174,7 +174,7 @@ class Remodeller:
         self.closed = True
 
     def _field_stats(self, field: fem.Function) -> Tuple[float, float, float]:
-        """MPI global min/max/mean."""
+        """MPI global min/max/mean (owned DOFs only)."""
         return field_stats(field, self.comm)
 
     def _collect_field_stats(self) -> Dict[str, float]:
@@ -194,8 +194,7 @@ class Remodeller:
     def _output(self, t: float, step: int, coupling_stats: Dict[str, float], 
                  dt: float, wrms_error: float, next_dt: float):
         """Collect stats, log, write fields."""
-        # Note: rho is already synced after fixedsolver.run()
-        # VTXWriter handles ghost DOFs correctly
+        # Note: `rho` is already synced after `fixedsolver.run()`.
         
         fields = self._collect_field_stats()
         s_stats = self.fixedsolver.solver_stats
