@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, fields
-from typing import Optional, TYPE_CHECKING, Any, Dict
+from typing import TYPE_CHECKING, Any
 
 from dolfinx import mesh
 import ufl
@@ -81,11 +81,11 @@ class Config:
     smooth_eps: float = 1e-6
 
     # Runtime state (not serialized)
-    domain: Optional[mesh.Mesh] = field(default=None, repr=False)
-    facet_tags: Optional[mesh.MeshTags] = field(default=None, repr=False)
-    telemetry: Optional["Telemetry"] = field(init=False, default=None, repr=False)
-    dx: Optional[ufl.Measure] = field(init=False, default=None, repr=False)
-    ds: Optional[ufl.Measure] = field(init=False, default=None, repr=False)
+    domain: mesh.Mesh | None = field(default=None, repr=False)
+    facet_tags: mesh.MeshTags | None = field(default=None, repr=False)
+    telemetry: Telemetry | None = field(init=False, default=None, repr=False)
+    dx: ufl.Measure | None = field(init=False, default=None, repr=False)
+    ds: ufl.Measure | None = field(init=False, default=None, repr=False)
     dt: float = field(init=False, default=1.0)
 
     def __post_init__(self):
@@ -155,21 +155,19 @@ class Config:
 
     def update_config_json(self):
         """Re-write config.json with current parameters (rank-0 only)."""
-        if self.telemetry is None:
-            return
         self.telemetry.write_metadata(
             self.to_json_dict(),
             filename="config.json",
             overwrite=True,
         )
 
-    def rebuild(self, domain: mesh.Mesh, facet_tags: Optional[mesh.MeshTags] = None):
+    def rebuild(self, domain: mesh.Mesh, facet_tags: mesh.MeshTags | None = None):
         """Rebuild measures after domain change."""
         self.domain = domain
         self.facet_tags = facet_tags
         self._build_measures()
 
-    def to_json_dict(self) -> Dict[str, Any]:
+    def to_json_dict(self) -> dict[str, Any]:
         """Serialize init-time parameters to JSON-compatible dict."""
         return {
             f.name: getattr(self, f.name)
