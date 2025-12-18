@@ -1,9 +1,9 @@
 """Parse FEBio .feb files and build DOLFINx meshes with boundary tags."""
 import xml.etree.ElementTree as ET
 from pathlib import Path
+import traceback
 
 import numpy as np
-import pyvista as pv
 from dolfinx import mesh
 from mpi4py import MPI
 from scipy.spatial import KDTree
@@ -14,34 +14,48 @@ from simulation.logger import get_logger
 class FEBio2Dolfinx:
     """Parse FEBio .feb file and build DOLFINx mesh with surface tags (units: mm)."""
 
-    def __init__(self, feb_file: str, log_file: str = None):
+    def __init__(self, feb_file: str, log_file: str = None, *, comm: MPI.Comm = MPI.COMM_WORLD):
         """Load .feb file and build mesh with surface tags."""
-        self.logger = get_logger(MPI.COMM_WORLD, name="FEBio2Dolfinx", log_file=log_file)
+        self.comm = comm
+        self.logger = get_logger(self.comm, name="FEBio2Dolfinx", log_file=log_file)
         self.feb_file = Path(feb_file)
         
-        comm = MPI.COMM_WORLD
-        rank = comm.Get_rank()
+        rank = self.comm.rank
 
         # Check file existence on rank 0 and broadcast status to avoid deadlock
         file_exists = None
         if rank == 0:
             file_exists = self.feb_file.exists()
-        file_exists = comm.bcast(file_exists, root=0)
+        file_exists = self.comm.bcast(file_exists, root=0)
         
         if not file_exists:
             raise FileNotFoundError(f"FEBio file not found: {self.feb_file}")
 
+        parse_error = None
         if rank == 0:
-            self.logger.info(f"Parsing FEBio file: {self.feb_file} (units: mm)")
-            tree = ET.parse(self.feb_file)
-            self.mesh_xml = tree.getroot().find("Mesh")
-            self._extract_nodes_and_elements()
-            self._extract_surfaces()
-            self._log_unit_hint()
-            # Clean up XML tree
-            del self.mesh_xml
-            del tree
-        else:
+            try:
+                self.logger.info(f"Parsing FEBio file: {self.feb_file} (units: mm)")
+                tree = ET.parse(self.feb_file)
+                self.mesh_xml = tree.getroot().find("Mesh")
+                if self.mesh_xml is None:
+                    raise ValueError("No <Mesh> section found in FEBio file")
+                self._extract_nodes_and_elements()
+                self._extract_surfaces()
+                self._log_unit_hint()
+            except Exception:
+                parse_error = traceback.format_exc()
+            finally:
+                # Clean up XML tree (even on failure)
+                if hasattr(self, "mesh_xml"):
+                    del self.mesh_xml
+                if "tree" in locals():
+                    del tree
+
+        parse_error = self.comm.bcast(parse_error, root=0)
+        if parse_error is not None:
+            raise RuntimeError(f"Failed to parse FEBio file on rank 0: {self.feb_file}\n{parse_error}")
+
+        if rank != 0:
             self.nodes = None
             self.elements = None
             self.surfaces = None
@@ -55,9 +69,9 @@ class FEBio2Dolfinx:
             self.logger.info(f"FEBio import complete: {len(self.surface_tags)} surfaces")
 
     def _broadcast_mesh_data(self):
-        """MPI broadcast nodes/surfaces from rank 0."""
-        comm = MPI.COMM_WORLD
-        rank = comm.Get_rank()
+        """MPI broadcast nodes/surfaces from rank 0 (elements stay on rank 0)."""
+        comm = self.comm
+        rank = comm.rank
 
         # Broadcast nodes (needed for surface matching)
         n_nodes = self.nodes.shape[0] if rank == 0 else None
@@ -87,8 +101,8 @@ class FEBio2Dolfinx:
         from basix.ufl import element as basix_element
         
         element = basix_element("Lagrange", "tetrahedron", 1, shape=(3,))
-        comm = MPI.COMM_WORLD
-        rank = comm.Get_rank()
+        comm = self.comm
+        rank = comm.rank
         
         # Only pass cells and nodes on rank 0 to let dolfinx distribute the mesh
         if rank == 0:
@@ -178,11 +192,8 @@ class FEBio2Dolfinx:
             displs_facets = None
             all_facets = None
 
-        comm.Gatherv(
-            boundary_facets_local.astype(np.int32),
-            [all_facets, counts_facets, displs_facets, MPI.INT],
-            root=0,
-        )
+        recvbuf_facets = [all_facets, counts_facets, displs_facets, MPI.INT] if rank == 0 else None
+        comm.Gatherv(boundary_facets_local.astype(np.int32), recvbuf_facets, root=0)
 
         # Gather facet midpoints (flattened) to rank 0
         local_midpoints_flat = facet_midpoints_local.ravel()
@@ -196,11 +207,8 @@ class FEBio2Dolfinx:
             displs_coords = None
             all_midpoints_flat = None
 
-        comm.Gatherv(
-            local_midpoints_flat,
-            [all_midpoints_flat, counts_coords, displs_coords, MPI.DOUBLE],
-            root=0,
-        )
+        recvbuf_midpoints = [all_midpoints_flat, counts_coords, displs_coords, MPI.DOUBLE] if rank == 0 else None
+        comm.Gatherv(local_midpoints_flat, recvbuf_midpoints, root=0)
 
         # --- 2) Global KDTree on rank 0 to match FEBio triangles to mesh facets ---
         if rank == 0:
@@ -263,8 +271,38 @@ class FEBio2Dolfinx:
             values_per_rank = []
             for r in range(size):
                 if per_rank_indices[r]:
-                    indices_per_rank.append(np.concatenate(per_rank_indices[r]))
-                    values_per_rank.append(np.concatenate(per_rank_values[r]))
+                    idx = np.concatenate(per_rank_indices[r])
+                    val = np.concatenate(per_rank_values[r])
+
+                    # Stable sort so "first match wins" in case of duplicates
+                    order = np.argsort(idx, kind="mergesort")
+                    idx = idx[order]
+                    val = val[order]
+
+                    # Deduplicate indices (DOLFINx expects unique local entity indices)
+                    if idx.size > 1:
+                        dup = idx[1:] == idx[:-1]
+                        if np.any(dup):
+                            # Warn on conflicting tags, keep the first occurrence
+                            conflicts = 0
+                            i = 0
+                            while i < idx.size:
+                                j = i + 1
+                                while j < idx.size and idx[j] == idx[i]:
+                                    j += 1
+                                if j - i > 1 and not np.all(val[i:j] == val[i]):
+                                    conflicts += 1
+                                i = j
+                            if conflicts:
+                                self.logger.warning(
+                                    f"Rank {r}: {conflicts} facet(s) matched multiple surface tags; keeping first match."
+                                )
+                            keep = np.concatenate(([True], ~dup))
+                            idx = idx[keep]
+                            val = val[keep]
+
+                    indices_per_rank.append(idx.astype(np.int32, copy=False))
+                    values_per_rank.append(val.astype(np.int32, copy=False))
                 else:
                     indices_per_rank.append(np.empty(0, dtype=np.int32))
                     values_per_rank.append(np.empty(0, dtype=np.int32))
@@ -292,50 +330,71 @@ class FEBio2Dolfinx:
         """Save surfaces from original FEBio data as VTK file (rank 0 only)."""
         output_path = Path(output_path)
         comm = self.mesh_dolfinx.comm
-        rank = comm.Get_rank()
+        rank = comm.rank
+        save_err = None
+
+        # Import pyvista only on rank 0; broadcast import errors to avoid MPI deadlocks.
+        import_err = None
+        if rank == 0:
+            try:
+                import pyvista as pv
+            except Exception:
+                import_err = traceback.format_exc()
+        import_err = comm.bcast(import_err, root=0)
+        if import_err is not None:
+            raise RuntimeError(f"pyvista import failed on rank 0 (needed for VTK export):\n{import_err}")
         
         # Gather all tag IDs from all ranks
         local_tag_ids = set(self.meshtags.values)
         all_local_tags = comm.gather(local_tag_ids, root=0)
         
         if rank == 0:
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            # Union of all tag IDs across ranks
-            matched_tag_ids = set().union(*all_local_tags)
-            inv_tags = {v: k for k, v in self.surface_tags.items()}
-            
-            # Collect triangles from matched surfaces
-            all_triangles = []
-            all_tags = []
-            
-            for surf_name, surf_triangles in self.surfaces.items():
-                tag_id = self.surface_tags[surf_name]
-                if tag_id not in matched_tag_ids:
-                    continue
-                for tri in surf_triangles:
-                    all_triangles.append(tri)
-                    all_tags.append(tag_id)
-            
-            if len(all_triangles) > 0:
-                all_triangles = np.array(all_triangles, dtype=np.int64)
-                all_tags = np.array(all_tags, dtype=np.int32)
-                
-                # Build PyVista mesh from FEBio nodes and connectivity
-                n_triangles = all_triangles.shape[0]
-                faces = np.hstack([np.full((n_triangles, 1), 3), all_triangles]).ravel()
-                
-                surface_mesh = pv.PolyData(self.nodes, faces)
-                surface_mesh.cell_data["SurfaceID"] = all_tags
-                surface_mesh.cell_data["SurfaceName"] = [inv_tags[int(tid)] for tid in all_tags]
-                surface_mesh.save(str(output_path))
-                
-                unique_verts = np.unique(all_triangles.ravel())
-                self.logger.info(f"Saved {n_triangles} surface facets ({len(unique_verts)} unique vertices) to {output_path}")
-            else:
-                surface_mesh = pv.PolyData(self.nodes)
-                surface_mesh.save(str(output_path))
-                self.logger.warning(f"Saved empty surface mesh (no tagged facets) to {output_path}")
+            try:
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+
+                # Union of all tag IDs across ranks
+                matched_tag_ids = set().union(*all_local_tags)
+                inv_tags = {v: k for k, v in self.surface_tags.items()}
+
+                # Collect triangles from matched surfaces
+                all_triangles = []
+                all_tags = []
+
+                for surf_name, surf_triangles in self.surfaces.items():
+                    tag_id = self.surface_tags[surf_name]
+                    if tag_id not in matched_tag_ids:
+                        continue
+                    for tri in surf_triangles:
+                        all_triangles.append(tri)
+                        all_tags.append(tag_id)
+
+                if len(all_triangles) > 0:
+                    all_triangles = np.array(all_triangles, dtype=np.int64)
+                    all_tags = np.array(all_tags, dtype=np.int32)
+
+                    # Build PyVista mesh from FEBio nodes and connectivity
+                    n_triangles = all_triangles.shape[0]
+                    faces = np.hstack([np.full((n_triangles, 1), 3), all_triangles]).ravel()
+
+                    surface_mesh = pv.PolyData(self.nodes, faces)
+                    surface_mesh.cell_data["SurfaceID"] = all_tags
+                    surface_mesh.cell_data["SurfaceName"] = [inv_tags[int(tid)] for tid in all_tags]
+                    surface_mesh.save(str(output_path))
+
+                    unique_verts = np.unique(all_triangles.ravel())
+                    self.logger.info(
+                        f"Saved {n_triangles} surface facets ({len(unique_verts)} unique vertices) to {output_path}"
+                    )
+                else:
+                    surface_mesh = pv.PolyData(self.nodes)
+                    surface_mesh.save(str(output_path))
+                    self.logger.warning(f"Saved empty surface mesh (no tagged facets) to {output_path}")
+            except Exception:
+                save_err = traceback.format_exc()
+        
+        save_err = comm.bcast(save_err, root=0)
+        if save_err is not None:
+            raise RuntimeError(f"Failed to write VTK file on rank 0: {output_path}\n{save_err}")
         
         comm.Barrier()
 

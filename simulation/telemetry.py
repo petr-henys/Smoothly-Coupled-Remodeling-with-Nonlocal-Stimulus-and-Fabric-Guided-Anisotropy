@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import gzip
 import json
+import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -32,8 +33,15 @@ class Telemetry:
         self.outdir = Path(outdir)
         self.logger = get_logger(comm, name="Telemetry")
 
+        mkdir_err = None
         if comm.rank == 0:
-            self.outdir.mkdir(parents=True, exist_ok=True)
+            try:
+                self.outdir.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                mkdir_err = traceback.format_exc()
+        mkdir_err = comm.bcast(mkdir_err, root=0)
+        if mkdir_err is not None:
+            raise RuntimeError(f"Failed to create telemetry output directory on rank 0: {self.outdir}\n{mkdir_err}")
         comm.Barrier()
 
         self._csv_files: Dict[str, object] = {}

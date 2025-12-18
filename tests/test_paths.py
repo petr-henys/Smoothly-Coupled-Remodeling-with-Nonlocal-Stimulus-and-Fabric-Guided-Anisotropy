@@ -94,7 +94,7 @@ class TestFemurPaths:
     
     def test_vastus_lateralis_json_path(self):
         """Test vastus lateralis JSON path."""
-        assert FemurPaths.VASTUS_LATERALIS_JSON == FEMUR_ANATOMY_DIR / "VASTUS_lateralis.mrk.json"
+        assert FemurPaths.VASTUS_LATERALIS_JSON == FEMUR_ANATOMY_DIR / "VASTUS_lateralis_short.mrk.json"
         assert FemurPaths.VASTUS_LATERALIS_JSON.suffix == ".json"
     
     def test_gl_med_json_path(self):

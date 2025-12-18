@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Dict, Tuple, List
 from pathlib import Path
+import traceback
 
 from mpi4py import MPI
 import basix.ufl
@@ -44,10 +45,17 @@ class Remodeller:
         self.rank = self.comm.rank
         
         # Ensure log directory exists (rank 0 creates, all ranks wait)
+        log_err = None
         if self.rank == 0:
-            log_path = Path(self.cfg.log_file)
-            if log_path.parent:
-                log_path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                log_path = Path(self.cfg.log_file)
+                if log_path.parent:
+                    log_path.parent.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                log_err = traceback.format_exc()
+        log_err = self.comm.bcast(log_err, root=0)
+        if log_err is not None:
+            raise RuntimeError(f"Failed to create log directory on rank 0: {self.cfg.log_file}\n{log_err}")
         self.comm.Barrier()
 
         self.logger = get_logger(self.comm, name="Remodeller", log_file=self.cfg.log_file)
@@ -314,23 +322,37 @@ class Remodeller:
         overall_start = MPI.Wtime()
 
         if self.rank == 0:
-            from rich.progress import Progress, TextColumn, BarColumn, TimeRemainingColumn, TimeElapsedColumn, SpinnerColumn
-            from rich.console import Console
-            console = Console(stderr=True, force_terminal=True)
-            self.progress = Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                BarColumn(bar_width=60),
-                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-                TimeElapsedColumn(),
-                TimeRemainingColumn(),
-                TextColumn("{task.fields[info]}"),
-                console=console,
-                transient=False,
-            )
-            self.main_task_id = self.progress.add_task("Remodeling", total=total_time, info=" " * 35)
-            self.sub_task_id = self.progress.add_task("  Coupling", total=self.cfg.max_subiters, info=" " * 35)
-            self.progress.start()
+            try:
+                from rich.progress import (
+                    Progress,
+                    TextColumn,
+                    BarColumn,
+                    TimeRemainingColumn,
+                    TimeElapsedColumn,
+                    SpinnerColumn,
+                )
+                from rich.console import Console
+
+                console = Console(stderr=True, force_terminal=True)
+                self.progress = Progress(
+                    SpinnerColumn(),
+                    TextColumn("[progress.description]{task.description}"),
+                    BarColumn(bar_width=60),
+                    TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                    TimeElapsedColumn(),
+                    TimeRemainingColumn(),
+                    TextColumn("{task.fields[info]}"),
+                    console=console,
+                    transient=False,
+                )
+                self.main_task_id = self.progress.add_task("Remodeling", total=total_time, info=" " * 35)
+                self.sub_task_id = self.progress.add_task("  Coupling", total=self.cfg.max_subiters, info=" " * 35)
+                self.progress.start()
+            except Exception as exc:
+                self.progress = None
+                self.main_task_id = None
+                self.sub_task_id = None
+                self.logger.warning(f"Progress bar disabled (rich unavailable): {exc}")
 
         while t < total_time:
             if t + dt > total_time:
