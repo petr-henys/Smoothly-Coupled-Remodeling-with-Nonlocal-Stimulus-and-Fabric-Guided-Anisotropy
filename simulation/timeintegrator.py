@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Tuple, Optional
+from typing import Tuple
 import numpy as np
 from mpi4py import MPI
 from dolfinx import fem
@@ -30,7 +30,7 @@ class TimeIntegrator:
 
         # Controller state
         self.step_count = 0
-        self.dt_prev: Optional[float] = None
+        self.dt_prev: float = 0.0
         self.error_prev = 1.0  # Initialize with 1.0
 
         # Controller parameters
@@ -48,7 +48,7 @@ class TimeIntegrator:
         assign(self.rho_rate_last, 0.0)
         assign(self.rho_rate_last2, 0.0)
         self.step_count = 0
-        self.dt_prev = None
+        self.dt_prev = 0.0
         self.error_prev = 1.0
 
     def predict(self, dt: float, rho_current: fem.Function) -> np.ndarray:
@@ -63,7 +63,7 @@ class TimeIntegrator:
         rate_last = self.rho_rate_last.x.array[:n_owned]
         rate_last2 = self.rho_rate_last2.x.array[:n_owned]
 
-        if self.step_count >= 2 and self.dt_prev is not None:
+        if self.step_count >= 2 and self.dt_prev > 0.0:
             # Variable-step AB2 Predictor
             r = dt_curr / self.dt_prev
             w1 = 1.0 + 0.5 * r

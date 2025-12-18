@@ -5,10 +5,9 @@ from __future__ import annotations
 import csv
 import gzip
 import json
-import traceback
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from mpi4py import MPI
 
@@ -27,27 +26,20 @@ class Telemetry:
         self,
         comm: MPI.Comm,
         outdir: str,
-        flush_interval: Optional[int] = None,
+        flush_interval: int = 20,
     ):
         self.comm = comm
         self.outdir = Path(outdir)
         self.logger = get_logger(comm, name="Telemetry")
 
-        mkdir_err = None
         if comm.rank == 0:
-            try:
-                self.outdir.mkdir(parents=True, exist_ok=True)
-            except Exception:
-                mkdir_err = traceback.format_exc()
-        mkdir_err = comm.bcast(mkdir_err, root=0)
-        if mkdir_err is not None:
-            raise RuntimeError(f"Failed to create telemetry output directory on rank 0: {self.outdir}\n{mkdir_err}")
+            self.outdir.mkdir(parents=True, exist_ok=True)
         comm.Barrier()
 
         self._csv_files: Dict[str, object] = {}
         self._csv_writers: Dict[str, object] = {}
         self._buffers: Dict[str, List[Dict]] = {}
-        self._flush_interval = max(1, int(20 if flush_interval is None else flush_interval))
+        self._flush_interval = max(1, flush_interval)
         self._start_time = datetime.now(timezone.utc)
 
         self.logger.debug("Telemetry initialized")

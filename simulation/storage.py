@@ -6,7 +6,6 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Dict, Optional, Sequence, TYPE_CHECKING
 
-import traceback
 from mpi4py import MPI
 from dolfinx import fem
 from dolfinx.io import VTXWriter
@@ -30,15 +29,8 @@ class FieldStorage:
         self._write_counts: Dict[str, int] = defaultdict(int)
         
         # Create output directory (rank 0 only, then barrier)
-        mkdir_err = None
         if comm.rank == 0:
-            try:
-                self.output_dir.mkdir(parents=True, exist_ok=True)
-            except Exception:
-                mkdir_err = traceback.format_exc()
-        mkdir_err = comm.bcast(mkdir_err, root=0)
-        if mkdir_err is not None:
-            raise RuntimeError(f"Failed to create results directory on rank 0: {self.output_dir}\n{mkdir_err}")
+            self.output_dir.mkdir(parents=True, exist_ok=True)
         comm.Barrier()
 
     def register(

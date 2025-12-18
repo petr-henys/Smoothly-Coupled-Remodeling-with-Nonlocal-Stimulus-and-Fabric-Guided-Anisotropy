@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, List, Tuple, Optional
+from typing import TYPE_CHECKING, List, Tuple
 
 from petsc4py import PETSc
 from dolfinx import fem
@@ -52,17 +52,17 @@ class _BaseLinearSolver:
         self.total_iters = 0
         self.ksp_steps = 0
         self.last_iters: int = 0
-        self.last_reason: Optional[int] = None
+        self.last_reason: int = 0
 
         self.dirichlet_bcs = dirichlet_bcs
         self.neumann_bcs = neumann_bcs
 
-        self.ksp: Optional[PETSc.KSP] = None
-        self.A: Optional[PETSc.Mat] = None
-        self.b: Optional[PETSc.Vec] = None
+        self.ksp: PETSc.KSP = None
+        self.A: PETSc.Mat = None
+        self.b: PETSc.Vec = None
 
-        self.a_form: Optional[fem.Form] = None
-        self.L_form: Optional[fem.Form] = None
+        self.a_form: fem.Form = None
+        self.L_form: fem.Form = None
 
     # --------------------------- lifecycle ---------------------------------
 
@@ -239,13 +239,13 @@ class DensitySolver(_BaseLinearSolver):
             self.logger.info(f"Helmholtz filter: L={self.helmholtz_L:.4f} mm")
 
         # Helmholtz filter resources (lazy init)
-        self._helm_tr: Optional[ufl.TrialFunction] = None
-        self._helm_ts: Optional[ufl.TestFunction] = None
-        self._a_helm_form: Optional[fem.Form] = None
-        self._L_helm_form: Optional[fem.Form] = None
-        self._A_helm: Optional[PETSc.Mat] = None
-        self._b_helm: Optional[PETSc.Vec] = None
-        self._ksp_helm: Optional[PETSc.KSP] = None
+        self._helm_tr: ufl.TrialFunction = None
+        self._helm_ts: ufl.TestFunction = None
+        self._a_helm_form: fem.Form = None
+        self._L_helm_form: fem.Form = None
+        self._A_helm: PETSc.Mat = None
+        self._b_helm: PETSc.Vec = None
+        self._ksp_helm: PETSc.KSP = None
 
         if self._use_helmholtz:
             self._setup_helmholtz_filter()

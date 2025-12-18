@@ -17,11 +17,11 @@ class Config:
     # Material: density-dependent exponent k(rho)
     # k(rho) = n_trab*(1-w(rho)) + n_cort*w(rho), with smoothstep w over
     # [rho_trab_max, rho_cort_min].
-    E0 = 7500.
-    n_trab = 2.0
-    n_cort = 1.1
-    rho_trab_max = 0.8
-    rho_cort_min = 1.2
+    E0: float = 7500.0
+    n_trab: float = 2.0
+    n_cort: float = 1.1
+    rho_trab_max: float = 0.8
+    rho_cort_min: float = 1.2
     nu0: float = 0.3           # Poisson ratio
 
     # Density bounds and initial value

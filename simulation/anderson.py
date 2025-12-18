@@ -131,7 +131,7 @@ class _Anderson:
         # If history is small (p=1), disable safeguard to allow first step.
         if p == 1:
             return self._picard_step(x_old, x_raw, r, mask_fixed, proj_residual_norm, 
-                                     gamma, False, info) # <--- Hardcoded False
+                                     gamma, False, info)
 
         # Anderson acceleration
         H = self._build_gram(list(self.r_hist))

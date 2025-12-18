@@ -16,7 +16,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Dict
 
-import traceback
 import numpy as np
 import dolfinx.fem as fem
 import dolfinx.mesh as dmesh
@@ -123,16 +122,9 @@ class Loader:
         # Precomputed traction cache: case_name -> CachedTraction
         self._cache: Dict[str, CachedTraction] = {}
         
-        # Initialize geometry
-        init_error = None
+        # Initialize geometry (rank 0 only)
         if self.rank == 0:
-            try:
-                self._init_geometry_rank0()
-            except Exception:
-                init_error = traceback.format_exc()
-        init_error = self.comm.bcast(init_error, root=0)
-        if init_error is not None:
-            raise RuntimeError(f"Loader geometry initialization failed on rank 0:\n{init_error}")
+            self._init_geometry_rank0()
         
         self._init_interpolation_cache()
         self.comm.Barrier()
@@ -201,40 +193,26 @@ class Loader:
     
     def _apply_hip_internal(self, spec: HipLoadSpec) -> None:
         """Apply hip load to traction field."""
-        err = None
         if self.rank == 0:
-            try:
-                v = vector_from_angles(spec.magnitude, spec.alpha_sag, spec.alpha_front)
-                self._hip_loader.apply_gaussian_load(
-                    force_vector_css=v,
-                    sigma_deg=spec.sigma_deg,
-                    flip=spec.flip,
-                )
-            except Exception:
-                err = traceback.format_exc()
-        err = self.comm.bcast(err, root=0)
-        if err is not None:
-            raise RuntimeError(f"Hip load evaluation failed on rank 0:\n{err}")
+            v = vector_from_angles(spec.magnitude, spec.alpha_sag, spec.alpha_front)
+            self._hip_loader.apply_gaussian_load(
+                force_vector_css=v,
+                sigma_deg=spec.sigma_deg,
+                flip=spec.flip,
+            )
         self._interpolate_and_add(self._hip_loader)
     
     def _apply_muscle_internal(self, spec: MuscleLoadSpec) -> None:
         """Apply muscle load to traction field."""
-        err = None
         loader = None
         if self.rank == 0:
-            try:
-                loader = self._get_muscle_loader(spec.name)
-                v = vector_from_angles(spec.magnitude, spec.alpha_sag, spec.alpha_front)
-                loader.apply_gaussian_load(
-                    force_vector_css=v,
-                    sigma=spec.sigma,
-                    flip=spec.flip,
-                )
-            except Exception:
-                err = traceback.format_exc()
-        err = self.comm.bcast(err, root=0)
-        if err is not None:
-            raise RuntimeError(f"Muscle load '{spec.name}' evaluation failed on rank 0:\n{err}")
+            loader = self._get_muscle_loader(spec.name)
+            v = vector_from_angles(spec.magnitude, spec.alpha_sag, spec.alpha_front)
+            loader.apply_gaussian_load(
+                force_vector_css=v,
+                sigma=spec.sigma,
+                flip=spec.flip,
+            )
         self._interpolate_and_add(loader)
     
     def _get_muscle_loader(self, name: str) -> MuscleLoad:
@@ -251,7 +229,6 @@ class Loader:
         """Interpolate load from loader_obj and add to traction field."""
         counts = self._mpi_counts
         displs = self._mpi_displs
-        err = None
         
         if self.rank == 0:
             total_n = sum(counts)
@@ -261,11 +238,7 @@ class Loader:
                 [recv_coords, [n * 3 for n in counts], [d * 3 for d in displs], MPI.DOUBLE],
                 root=0
             )
-            try:
-                computed_values = loader_obj(recv_coords)
-            except Exception:
-                err = traceback.format_exc()
-                computed_values = np.zeros_like(recv_coords)
+            computed_values = loader_obj(recv_coords)
             local_values = np.empty((self._n_owned, 3), dtype=np.float64)
             self.comm.Scatterv(
                 [computed_values, [n * 3 for n in counts], [d * 3 for d in displs], MPI.DOUBLE],
@@ -276,9 +249,5 @@ class Loader:
             self.comm.Gatherv(self._x_owned, None, root=0)
             local_values = np.empty((self._n_owned, 3), dtype=np.float64)
             self.comm.Scatterv(None, local_values, root=0)
-
-        err = self.comm.bcast(err, root=0)
-        if err is not None:
-            raise RuntimeError(f"Load interpolation failed on rank 0:\n{err}")
         
         assign(self.traction, local_values.flatten(), scatter=False, op="add")
