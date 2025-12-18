@@ -41,7 +41,15 @@ def _stub_vtx(monkeypatch):
 def test_model_initializes_with_traction(tmp_path, unit_cube, facet_tags, dummy_load):
     """Verify Remodeller initializes fields and storage correctly."""
     comm = MPI.COMM_WORLD
-    cfg = Config(domain=unit_cube, facet_tags=facet_tags, results_dir=str(tmp_path))
+    cfg = Config(
+        domain=unit_cube,
+        facet_tags=facet_tags,
+        n_trab=2.0,
+        n_cort=1.2,
+        rho_trab_max=0.8,
+        rho_cort_min=1.2,
+        results_dir=str(tmp_path),
+    )
 
     with Remodeller(cfg, loader=dummy_load["loader"], loading_cases=dummy_load["loading_cases"]) as rem:
         assert "scalars" in rem.storage.fields._writers
@@ -53,7 +61,15 @@ def test_mechanics_produces_displacement_under_load(tmp_path, unit_cube, facet_t
     """Mechanics solver must produce measurable displacement from applied loads."""
     comm = MPI.COMM_WORLD
     cfg = Config(
-        domain=unit_cube, facet_tags=facet_tags, results_dir=str(tmp_path), max_subiters=8, ksp_atol=1e-15
+        domain=unit_cube,
+        facet_tags=facet_tags,
+        n_trab=2.0,
+        n_cort=1.2,
+        rho_trab_max=0.8,
+        rho_cort_min=1.2,
+        results_dir=str(tmp_path),
+        max_subiters=8,
+        ksp_atol=1e-15,
     )
 
     with Remodeller(cfg, loader=dummy_load["loader"], loading_cases=dummy_load["loading_cases"]) as rem:
@@ -69,7 +85,16 @@ def test_mechanics_produces_displacement_under_load(tmp_path, unit_cube, facet_t
 
 def test_stimulus_responds_to_strain_energy(tmp_path, unit_cube, facet_tags, dummy_load):
     """Stimulus field should develop non-zero values driven by mechanical energy."""
-    cfg = Config(domain=unit_cube, facet_tags=facet_tags, results_dir=str(tmp_path), max_subiters=8)
+    cfg = Config(
+        domain=unit_cube,
+        facet_tags=facet_tags,
+        n_trab=2.0,
+        n_cort=1.2,
+        rho_trab_max=0.8,
+        rho_cort_min=1.2,
+        results_dir=str(tmp_path),
+        max_subiters=8,
+    )
 
     with Remodeller(cfg, loader=dummy_load["loader"], loading_cases=dummy_load["loading_cases"]) as rem:
         stats_init = rem.driver.get_stimulus_stats()
@@ -86,7 +111,15 @@ def test_density_evolves_with_stimulus(tmp_path, unit_cube, facet_tags, dummy_lo
     """Density should evolve from initial rho0 in response to stimulus."""
     comm = MPI.COMM_WORLD
     cfg = Config(
-        domain=unit_cube, facet_tags=facet_tags, results_dir=str(tmp_path), max_subiters=8, rho0=0.8
+        domain=unit_cube,
+        facet_tags=facet_tags,
+        n_trab=2.0,
+        n_cort=1.2,
+        rho_trab_max=0.8,
+        rho_cort_min=1.2,
+        results_dir=str(tmp_path),
+        max_subiters=8,
+        rho0=0.8,
     )
 
     with Remodeller(cfg, loader=dummy_load["loader"], loading_cases=dummy_load["loading_cases"]) as rem:
@@ -113,7 +146,16 @@ def test_density_evolves_with_stimulus(tmp_path, unit_cube, facet_tags, dummy_lo
 
 def test_model_single_step_records_metrics(tmp_path, unit_cube, facet_tags, dummy_load):
     """Single timestep execution with subiteration metrics collection."""
-    cfg = Config(domain=unit_cube, facet_tags=facet_tags, results_dir=str(tmp_path), max_subiters=6)
+    cfg = Config(
+        domain=unit_cube,
+        facet_tags=facet_tags,
+        n_trab=2.0,
+        n_cort=1.2,
+        rho_trab_max=0.8,
+        rho_cort_min=1.2,
+        results_dir=str(tmp_path),
+        max_subiters=6,
+    )
 
     with Remodeller(cfg, loader=dummy_load["loader"], loading_cases=dummy_load["loading_cases"]) as rem:
         rem.step(1.0, 0, 1.0)
@@ -126,6 +168,10 @@ def test_model_convergence_stability(tmp_path, unit_cube, facet_tags, dummy_load
     cfg = Config(
         domain=unit_cube,
         facet_tags=facet_tags,
+        n_trab=2.0,
+        n_cort=1.2,
+        rho_trab_max=0.8,
+        rho_cort_min=1.2,
         results_dir=str(tmp_path),
         max_subiters=12,
         coupling_tol=1e-6,
@@ -146,7 +192,15 @@ def test_model_convergence_stability(tmp_path, unit_cube, facet_tags, dummy_load
 def test_model_two_steps_energy_stability(tmp_path, unit_cube, facet_tags, dummy_load):
     """Energy should remain stable across consecutive timesteps."""
     cfg = Config(
-        domain=unit_cube, facet_tags=facet_tags, results_dir=str(tmp_path), max_subiters=6, ksp_atol=1e-15
+        domain=unit_cube,
+        facet_tags=facet_tags,
+        n_trab=2.0,
+        n_cort=1.2,
+        rho_trab_max=0.8,
+        rho_cort_min=1.2,
+        results_dir=str(tmp_path),
+        max_subiters=6,
+        ksp_atol=1e-15,
     )
 
     with Remodeller(cfg, loader=dummy_load["loader"], loading_cases=dummy_load["loading_cases"]) as rem:

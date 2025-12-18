@@ -16,7 +16,7 @@ from dolfinx.fem.petsc import (
 )
 import ufl
 
-from simulation.utils import build_nullspace, smooth_max
+from simulation.utils import build_nullspace, smooth_max, smoothstep01
 from simulation.logger import get_logger
 
 if TYPE_CHECKING:
@@ -130,7 +130,12 @@ class _BaseLinearSolver:
 
 
 class MechanicsSolver(_BaseLinearSolver):
-    """Elasticity solver with density-dependent stiffness E = E0*(ρ/ρ_ref)^n."""
+    """Elasticity solver with density-dependent stiffness.
+
+    Uses the smooth lower clamp ρ̃ = smooth_max(ρ, ρ_min) and then
+    E(ρ) = E0 * (ρ̃/ρ_ref)^k(ρ), where k is a smooth trabecular→cortical
+    transition controlled by (n_trab, n_cort, rho_trab_max, rho_cort_min).
+    """
 
     def __init__(
         self,
@@ -183,7 +188,13 @@ class MechanicsSolver(_BaseLinearSolver):
     def sigma(self, u, rho):
         rho_eff = smooth_max(rho, self.cfg.rho_min, self.smooth_eps)
         rho_rel = rho_eff / self.cfg.rho_ref
-        E = self.cfg.E0 * (rho_rel ** self.cfg.n)
+
+        denom = float(self.cfg.rho_cort_min - self.cfg.rho_trab_max)
+        t = (rho_eff - self.cfg.rho_trab_max) / denom
+        w = smoothstep01(t)
+        k = self.cfg.n_trab * (1.0 - w) + self.cfg.n_cort * w
+
+        E = self.cfg.E0 * (rho_rel ** k)
         nu = self.cfg.nu0
         mu = E / (2.0 * (1.0 + nu))
         lmbda = E * nu / ((1.0 + nu) * (1.0 - 2.0 * nu))

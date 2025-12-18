@@ -109,7 +109,7 @@ class TestDomainDecomposition:
         comm = MPI.COMM_WORLD
         domain = unit_cube
         facet_tags = build_facetag(domain)
-        cfg = Config(domain=domain, facet_tags=facet_tags)
+        cfg = Config(domain=domain, facet_tags=facet_tags, n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2)
         
         P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
         Q = functionspace(domain, P1)
@@ -169,7 +169,7 @@ class TestCollectiveOps:
         comm = MPI.COMM_WORLD
         domain = unit_cube
         facet_tags = build_facetag(domain)
-        cfg = Config(domain=domain, facet_tags=facet_tags)
+        cfg = Config(domain=domain, facet_tags=facet_tags, n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2)
         
         vol_local = fem.assemble_scalar(fem.form(1.0 * cfg.dx))
         vol_global = comm.allreduce(vol_local, op=MPI.SUM)
@@ -193,7 +193,7 @@ class TestMPIIO:
         
         import tempfile
         with tempfile.TemporaryDirectory() as tmpdir:
-            cfg = Config(domain=domain, facet_tags=facet_tags, results_dir=tmpdir)
+            cfg = Config(domain=domain, facet_tags=facet_tags, n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2, results_dir=tmpdir)
             
             # Telemetry should only write on rank 0
             if cfg.telemetry is not None:
@@ -209,7 +209,7 @@ class TestMPIIO:
         
         import tempfile
         with tempfile.TemporaryDirectory() as tmpdir:
-            cfg = Config(domain=domain, facet_tags=facet_tags, results_dir=tmpdir)
+            cfg = Config(domain=domain, facet_tags=facet_tags, n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2, results_dir=tmpdir)
             loader = create_mock_loader(domain)
             
             with Remodeller(cfg, loader=loader, loading_cases=create_loading_cases()) as rem:
@@ -254,7 +254,7 @@ class TestMPIIO:
         from pathlib import Path
         
         with tempfile.TemporaryDirectory() as tmpdir:
-            cfg = Config(domain=domain, facet_tags=facet_tags, results_dir=tmpdir)
+            cfg = Config(domain=domain, facet_tags=facet_tags, n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2, results_dir=tmpdir)
             loader = create_mock_loader(domain)
             
             with Remodeller(cfg, loader=loader, loading_cases=create_loading_cases()) as rem:
@@ -314,6 +314,10 @@ class TestFixedPointParallel:
         cfg = Config(
             domain=domain,
             facet_tags=facet_tags,
+            n_trab=2.0,
+            n_cort=1.2,
+            rho_trab_max=0.8,
+            rho_cort_min=1.2,
             accel_type="anderson",
             max_subiters=20,
             coupling_tol=1e-6
@@ -338,6 +342,10 @@ class TestFixedPointParallel:
         cfg = Config(
             domain=domain,
             facet_tags=facet_tags,
+            n_trab=2.0,
+            n_cort=1.2,
+            rho_trab_max=0.8,
+            rho_cort_min=1.2,
             accel_type="picard",
             max_subiters=30,
             coupling_tol=1e-5
@@ -369,7 +377,7 @@ class TestCrossRankComm:
         
         domain = unit_cube
         facet_tags = build_facetag(domain)
-        cfg = Config(domain=domain, facet_tags=facet_tags)
+        cfg = Config(domain=domain, facet_tags=facet_tags, n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2)
         
         P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3,))
         V = functionspace(domain, P1_vec)
@@ -405,7 +413,7 @@ class TestSolverIterations:
         for N in mesh_sizes:
             domain = mesh.create_unit_cube(comm, N, N, N, ghost_mode=mesh.GhostMode.shared_facet)
             facet_tags = build_facetag(domain)
-            cfg = Config(domain=domain, facet_tags=facet_tags)
+            cfg = Config(domain=domain, facet_tags=facet_tags, n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2)
             
             P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3,))
             P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
@@ -455,7 +463,7 @@ class TestPreconditioners:
         comm = MPI.COMM_WORLD
         domain = mesh.create_unit_cube(comm, 8, 8, 8, ghost_mode=mesh.GhostMode.shared_facet)
         facet_tags = build_facetag(domain)
-        cfg = Config(domain=domain, facet_tags=facet_tags)
+        cfg = Config(domain=domain, facet_tags=facet_tags, n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2)
         
         P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3,))
         P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
@@ -539,6 +547,10 @@ class TestTiming:
         cfg = Config(
             domain=domain,
             facet_tags=facet_tags,
+            n_trab=2.0,
+            n_cort=1.2,
+            rho_trab_max=0.8,
+            rho_cort_min=1.2,
             max_subiters=max_subiters
         )
         loader = create_mock_loader(domain)
@@ -558,7 +570,7 @@ class TestTiming:
         comm = MPI.COMM_WORLD
         domain = mesh.create_unit_cube(comm, 8, 8, 8, ghost_mode=mesh.GhostMode.shared_facet)
         facet_tags = build_facetag(domain)
-        cfg = Config(domain=domain, facet_tags=facet_tags, max_subiters=10)
+        cfg = Config(domain=domain, facet_tags=facet_tags, n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2, max_subiters=10)
         loader = create_mock_loader(domain)
         
         with Remodeller(cfg, loader=loader, loading_cases=create_loading_cases()) as rem:

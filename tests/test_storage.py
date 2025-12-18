@@ -59,6 +59,7 @@ class TestFieldStorage:
     def test_initialization_creates_directory(self, shared_tmpdir, unit_cube, facet_tags):
         """FieldStorage should create results directory on initialization."""
         cfg = Config(domain=unit_cube, facet_tags=facet_tags,
+                    n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2,
                     results_dir=shared_tmpdir / "test_init")
 
         storage = FieldStorage(cfg, comm)
@@ -72,6 +73,7 @@ class TestFieldStorage:
     def test_register_creates_writer(self, shared_tmpdir, unit_cube, facet_tags, spaces, fields):
         """register should create VTX writer."""
         cfg = Config(domain=unit_cube, facet_tags=facet_tags,
+                    n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2,
                     results_dir=shared_tmpdir / "test_register")
         storage = FieldStorage(cfg, comm)
 
@@ -86,6 +88,7 @@ class TestFieldStorage:
     def test_write_creates_displacement_file(self, shared_tmpdir, unit_cube, facet_tags, spaces, fields):
         """write should create VTX output file for displacement."""
         cfg = Config(domain=unit_cube, facet_tags=facet_tags,
+                    n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2,
                     results_dir=shared_tmpdir / "test_u")
         storage = FieldStorage(cfg, comm)
 
@@ -104,6 +107,7 @@ class TestFieldStorage:
     def test_write_creates_scalars_file(self, shared_tmpdir, unit_cube, facet_tags, spaces, fields):
         """write should create VTX output for density and stimulus."""
         cfg = Config(domain=unit_cube, facet_tags=facet_tags,
+                    n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2,
                     results_dir=shared_tmpdir / "test_scalars")
         storage = FieldStorage(cfg, comm)
 
@@ -127,6 +131,7 @@ class TestFieldStorage:
     def test_write_creates_tensor_file(self, shared_tmpdir, unit_cube, facet_tags, spaces, fields):
         """write should create VTX output for orientation tensor."""
         cfg = Config(domain=unit_cube, facet_tags=facet_tags,
+                    n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2,
                     results_dir=shared_tmpdir / "test_tensor")
         storage = FieldStorage(cfg, comm)
 
@@ -148,6 +153,7 @@ class TestFieldStorage:
     def test_write_all_fields_at_once(self, shared_tmpdir, unit_cube, facet_tags, spaces, fields):
         """Writing multiple field groups should work correctly."""
         cfg = Config(domain=unit_cube, facet_tags=facet_tags,
+                    n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2,
                     results_dir=shared_tmpdir / "test_all")
         storage = FieldStorage(cfg, comm)
 
@@ -180,6 +186,7 @@ class TestFieldStorage:
     def test_context_manager_closes_writers(self, shared_tmpdir, unit_cube, facet_tags, spaces, fields):
         """Context manager should properly close all writers."""
         cfg = Config(domain=unit_cube, facet_tags=facet_tags,
+                    n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2,
                     results_dir=shared_tmpdir / "test_ctx")
 
         with FieldStorage(cfg, comm) as storage:
@@ -194,6 +201,7 @@ class TestFieldStorage:
     def test_write_works_with_different_mesh_sizes(self, shared_tmpdir, unit_cube, facet_tags, spaces, fields):
         """Storage should handle different mesh resolutions."""
         cfg = Config(domain=unit_cube, facet_tags=facet_tags,
+                    n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2,
                     results_dir=shared_tmpdir / f"test_mesh_{unit_cube.topology.index_map(0).size_global}")
         storage = FieldStorage(cfg, comm)
 
@@ -216,6 +224,7 @@ class TestUnifiedStorage:
     def test_initialization_creates_field_storage(self, shared_tmpdir, unit_cube, facet_tags):
         """UnifiedStorage should initialize field storage."""
         cfg = Config(domain=unit_cube, facet_tags=facet_tags,
+                    n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2,
                     results_dir=shared_tmpdir / "test_unified")
 
         storage = UnifiedStorage(cfg)
@@ -228,6 +237,7 @@ class TestUnifiedStorage:
     def test_write_fields_delegates_to_field_storage(self, shared_tmpdir, unit_cube, facet_tags, spaces, fields):
         """write_fields should delegate to FieldStorage.write."""
         cfg = Config(domain=unit_cube, facet_tags=facet_tags,
+                    n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2,
                     results_dir=shared_tmpdir / "test_step")
 
         storage = UnifiedStorage(cfg)
@@ -259,6 +269,7 @@ class TestUnifiedStorage:
     def test_context_manager(self, shared_tmpdir, unit_cube, facet_tags, spaces, fields):
         """Context manager should properly initialize and cleanup."""
         cfg = Config(domain=unit_cube, facet_tags=facet_tags,
+                    n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2,
                     results_dir=shared_tmpdir / "test_ctx_unified")
 
         with UnifiedStorage(cfg) as storage:
@@ -279,7 +290,15 @@ class TestUnifiedStorage:
         facet_tags = build_facetag(domain)
         
         with tempfile.TemporaryDirectory() as tmpdir:
-            cfg = Config(domain=domain, facet_tags=facet_tags, results_dir=tmpdir)
+            cfg = Config(
+                domain=domain,
+                facet_tags=facet_tags,
+                n_trab=2.0,
+                n_cort=1.2,
+                rho_trab_max=0.8,
+                rho_cort_min=1.2,
+                results_dir=tmpdir,
+            )
             
             # Create mock loader
             P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(domain.geometry.dim,))

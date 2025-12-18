@@ -93,7 +93,7 @@ def unit_cube_mesh():
 def simple_config(unit_cube_mesh):
     """Create config with unit cube."""
     facet_tags = build_facetag(unit_cube_mesh)
-    return Config(domain=unit_cube_mesh, facet_tags=facet_tags)
+    return Config(domain=unit_cube_mesh, facet_tags=facet_tags, n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2)
 
 
 @pytest.fixture

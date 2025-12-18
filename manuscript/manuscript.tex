@@ -124,9 +124,23 @@ The orthotropic engineering constants are given by:
 \begin{aligned}
     E_i &= E_0 \, \widetilde{\rho}^{k(\rho)} \, m_i^p, \\
     G_{ij} &= G_0 \, \widetilde{\rho}^{k(\rho)} \, (m_i m_j)^{p/2}, \\
-    \nu_{ij} &= \nu_0,
+    \nu_{ij} &= \nu_0 \quad \text{for } i<j, \\
+    \nu_{ji} &= \nu_{ij}\,\frac{E_j}{E_i} \quad \text{for } i<j,
 \end{aligned}
 \end{equation}
+
+\paragraph{Orthotropic tensor construction and physical admissibility.}
+The coefficients \eqref{eq:zysset-curnier} define engineering constants in the \emph{principal fabric frame}.
+Let $\widehat{\mathbf{A}}$ denote the \emph{trace-safe unit-trace normalization} of the fabric tensor, defined by $\widehat{\mathbf{A}} \;:=\; \frac{\mathbf{A}+\varepsilon_A\,\mathbf{I}}{\mathrm{tr}\!\big(\mathbf{A}+\varepsilon_A\,\mathbf{I}\big)}$ (see also \eqref{eq:Ahat-blend-nd}), with a small $\varepsilon_A>0$ (isotropic fallback) used consistently throughout the model.
+We denote by $\{\mathbf{a}_i\}_{i=1}^3$ the orthonormal eigenvectors of $\widehat{\mathbf{A}}$ and by $\{m_i\}_{i=1}^3$ its eigenvalues (so $\sum_i m_i=1$).
+The stiffness tensor $\mathbb{C}(\rho,\mathbf{A})$ entering $\boldsymbol{\sigma}=\mathbb{C}:\boldsymbol{\varepsilon}$ is assembled by:
+(i) forming the orthotropic \emph{compliance} matrix $\mathbf{S}$ in this material frame from $\{E_i,G_{ij},\nu_{ij}\}$ (Voigt notation),
+(ii) enforcing reciprocity via $\nu_{ji}E_i=\nu_{ij}E_j$ (implemented explicitly through \eqref{eq:zysset-curnier}),
+(iii) inverting $\mathbf{S}$ to obtain the symmetric stiffness matrix $\mathbf{C}=\mathbf{S}^{-1}$, and
+(iv) rotating $\mathbf{C}$ to the spatial frame using the eigenbasis $\{\mathbf{a}_i\}$.
+This construction ensures that the resulting constitutive operator is \emph{conservative} (minor and major symmetries) and admits a standard strain energy density $U=\tfrac12\boldsymbol{\sigma}:\boldsymbol{\varepsilon}$.
+In addition to the lower-density clamp \eqref{eq:smooth-max-nd} (which guarantees strictly positive moduli in \eqref{eq:zysset-curnier}), we verify \emph{strong ellipticity} by requiring the assembled $\mathbf{C}$ to be symmetric positive definite; in practice this is satisfied for the parameter ranges used, and can be robustly enforced by a small eigenvalue floor on $\mathbf{C}$ if needed.
+
 where $E_0, G_0, \nu_0$ are reference moduli, $p$ is the fabric exponent, and $k(\rho)$ is a density-dependent exponent. To capture the distinct mechanical behavior of trabecular and cortical bone, $k(\rho)$ transitions smoothly from a trabecular exponent $n_{\mathrm{trab}}$ to a cortical exponent $n_{\mathrm{cort}}$:
 \begin{equation}\label{eq:variable-exponent}
 k(\rho) = n_{\mathrm{trab}} (1 - w(\rho)) + n_{\mathrm{cort}} w(\rho),
@@ -170,8 +184,14 @@ S(\cdot,0)=S_0\ \ \text{in }\Omega.
 \end{equation}
 Here $c_S>0$ denotes a temporal capacity, $\kappa_S\ge 0$ a diffusivity, and $\tau_S>0$ the reaction/turnover rate. The mechanical drive $\psi_{\mathrm{day}}$ is a cycle-averaged, normalized Specific Strain Energy Density (SED). For a gait cycle with $N_{\mathrm{cyc}}$ cycles per day, period $T_{\mathrm{cyc}}$, and weighting $w(t)$, it is defined as
 \begin{equation}\label{eq:stim-psi-nd}
-\psi_{\mathrm{day}}(x) \;=\; N_{\mathrm{cyc}} \int_0^{T_{\mathrm{cyc}}} w(t) \left( \frac{U(x,t)/\rho(x,t)}{\psi_{\mathrm{ref}}} \right)^m \,\frac{\mathrm{d}t}{T_{\mathrm{cyc}}},
+\psi_{\mathrm{day}}(x) \;=\; N_{\mathrm{cyc}} \int_0^{T_{\mathrm{cyc}}} \bar w(t)\,
+\left( \frac{U(x,t)/\widetilde{\rho}(x,t)}{\psi_{\mathrm{ref}}} \right)^m \,\mathrm{d}t,
+\qquad
+\bar w(t):=\frac{w(t)}{\int_0^{T_{\mathrm{cyc}}} w(s)\,\mathrm{d}s}\,,
 \end{equation}
+We use the normalized weight $\bar w(t)$ so that the continuous definition is consistent with its discrete quadrature approximation $\sum_i \bar w_i(\cdot)$, and so that the special case $w\equiv 1$ reduces to a simple cycle average.
+The division by $\widetilde{\rho}$ (rather than $\rho$) is used consistently to avoid artificial blow-up of $\psi_{\mathrm{day}}$ in near-void regions, while retaining the intended interpretation as a specific (density-normalized) strain energy density.
+
 where $U = \frac{1}{2}\boldsymbol{\sigma}:\boldsymbol{\varepsilon}$ is the strain energy density, $\psi_{\mathrm{ref}}$ is a reference specific energy (e.g., corresponding to homeostatic load), and $m$ is an empirical exponent. The specific SED $U/\rho$ is used to reflect the cellular sensation of strain energy per unit of bone mass.
 
 \paragraph{Quantitative analysis and biological interpretation.}
@@ -203,6 +223,8 @@ Directional transport is modeled by the symmetric diffusion tensor
 \begin{equation}\label{eq:Drho-nd}
 \mathbf{D}_\rho(x,t) \;=\; \beta_{\perp}\,\mathbf{I} \;+\; \big(\beta_{\parallel}-\beta_{\perp}\big)\,\widehat{\mathbf{A}}(x,t),
 \end{equation}
+We use the same unit-trace normalisation $\widehat{\mathbf{A}}$ as in \eqref{eq:Ahat-blend-nd} so that the diffusivity encodes \emph{directionality} without being affected by isotropic scaling of $\mathbf{A}$.
+
 where $\beta_{\parallel},\beta_{\perp}>0$ are diffusivities along and transverse to the fabric, respectively. Here $\widehat{\mathbf{A}}$ is the unit-trace normalization of the fabric tensor $\mathbf{A} = \exp(\mathbf{L})$,
 \begin{equation}\label{eq:Ahat-blend-nd}
 \widehat{\mathbf{A}} \;=\; \frac{\mathbf{A}+\varepsilon_A\,\mathbf{I}}{\mathrm{tr}(\mathbf{A}+\varepsilon_A\,\mathbf{I})},
@@ -212,16 +234,29 @@ ensuring that diffusion is guided by the principal directions of the microstruct
 \paragraph{Linear thermodynamic driver.}
 We replace the discontinuous mechanostat with a continuous, thermodynamically consistent driver. The density evolution is driven by the stimulus $S$ such that positive stimulus drives growth toward $\rho_{\max}$ and negative stimulus drives resorption toward $\rho_{\min}$. We employ smooth positive and negative part functions $S_\varepsilon^\pm$:
 \begin{equation}\label{eq:smooth-splits-nd}
-S_\varepsilon^+(S) := \tfrac12\left(S+\sqrt{S^2+\varepsilon^2}\right), \qquad S_\varepsilon^-(S) := \tfrac12\left(-S+\sqrt{S^2+\varepsilon^2}\right).
+\text{Let }\Delta_S>0\text{ denote the half-width of the (physiological) lazy zone and }\varepsilon_S>0\text{ a smoothing width.}
+\ \ \text{Define the $C^1$ ``smooth hinge'' } \phi_{\varepsilon_S}:\mathbb{R}\to\mathbb{R}_{\ge 0}\text{ by}
+\qquad
+\phi_{\varepsilon_S}(x):=
+\begin{cases}
+0, & x\le 0,\\[2pt]
+\dfrac{x^2}{2\varepsilon_S}, & 0<x<\varepsilon_S,\\[6pt]
+x-\dfrac{\varepsilon_S}{2}, & x\ge \varepsilon_S,
+\end{cases}
+\qquad
+S_\varepsilon^+(S) := \phi_{\varepsilon_S}(S-\Delta_S),\quad
+S_\varepsilon^-(S) := \phi_{\varepsilon_S}(-S-\Delta_S).
 \end{equation}
 The total evolution equation is:
 \begin{equation}\label{eq:density-strong-nd}
 \partial_t \rho - \nabla \cdot (\mathbf{D}_\rho \nabla \rho) = k_\rho \left[ S_\varepsilon^+(S) (\rho_{\max} - \rho) + S_\varepsilon^-(S) (\rho_{\min} - \rho) \right].
 \end{equation}
+This choice guarantees $S_\varepsilon^\pm(S)=0$ whenever $|S|\le \Delta_S$, so that the homeostatic state $\psi_{\mathrm{day}}=1$ (hence $S\approx 0$) does not induce spurious density drift; away from the lazy zone the response is asymptotically linear in the stimulus.
+
 This formulation ensures that density remains naturally bounded within $[\rho_{\min}, \rho_{\max}]$ without the need for hard constraints, as the driving force vanishes at the boundaries.
 
 \paragraph{Quantitative analysis and biological interpretation.}
-Equation \eqref{eq:density-strong-nd} represents a significant departure from discontinuous mechanostat models. Instead of a "lazy zone" with sharp thresholds, the linear thermodynamic driver provides a continuous response to mechanical stimulus, where the remodeling rate is proportional to the stimulus magnitude and the distance to the saturation limits. The terms $(\rho_{\max} - \rho)$ and $(\rho_{\min} - \rho)$ act as soft variational clamps, ensuring that the density remains strictly bounded within $[\rho_{\min}, \rho_{\max}]$ without imposing artificial hard constraints. As $\rho \to \rho_{\max}$, the growth rate naturally vanishes, and similarly for resorption as $\rho \to \rho_{\min}$. This formulation improves numerical stability and differentiability, facilitating the use of Newton-type solvers. The diffusion term $\nabla\!\cdot(\mathbf{D}_\rho\nabla\rho)$ introduces a spatial regularization length scale, preventing the formation of checkerboard patterns and ensuring mesh-independent solutions. The anisotropy of $\mathbf{D}_\rho$, guided by the fabric tensor $\widehat{\mathbf{A}}$, promotes the formation of continuous trabecular structures aligned with the principal stress trajectories.
+Equation \eqref{eq:density-strong-nd} departs from \emph{discontinuous} mechanostat switching by using a differentiable (smoothed) lazy zone around $S=0$, while retaining the biologically motivated notion of a thresholded response. Instead of a "lazy zone" with sharp thresholds, the linear thermodynamic driver provides a continuous response to mechanical stimulus, where the remodeling rate is proportional to the stimulus magnitude and the distance to the saturation limits. The terms $(\rho_{\max} - \rho)$ and $(\rho_{\min} - \rho)$ act as soft variational clamps, ensuring that the density remains strictly bounded within $[\rho_{\min}, \rho_{\max}]$ without imposing artificial hard constraints. As $\rho \to \rho_{\max}$, the growth rate naturally vanishes, and similarly for resorption as $\rho \to \rho_{\min}$. This formulation improves numerical stability and differentiability, facilitating the use of Newton-type solvers. The diffusion term $\nabla\!\cdot(\mathbf{D}_\rho\nabla\rho)$ introduces a spatial regularization length scale, preventing the formation of checkerboard patterns and ensuring mesh-independent solutions. The anisotropy of $\mathbf{D}_\rho$, guided by the fabric tensor $\widehat{\mathbf{A}}$, promotes the formation of continuous trabecular structures aligned with the principal stress trajectories.
 
 \begin{figure}[htbp]
     \centering
@@ -273,10 +308,11 @@ which is smooth in $\mathbf{M}$, symmetric, \emph{positive-definite for $\vareps
 \paragraph{Quantitative analysis and biological interpretation.}
 Figure \ref{fig:anisotropy_law} visualizes the fabric-dependent properties. Panel (a) presents polar plots of the directional stiffness $E(\theta)$ for isotropic, uniaxial, and shear fabric states. The uniaxial case shows a pronounced stiffening along the principal axis, while the shear case exhibits a rotated symmetry. Panel (b) shows the corresponding directional diffusability $D(\theta)$, which facilitates mass transport along the trabecular grain. Panel (c) demonstrates how the fabric exponent $p$ controls the sensitivity of stiffness to fabric eigenvalues; higher $p$ leads to a more eccentric stiffness profile. Panel (d) shows the effect of the transverse diffusivity ratio $\beta_{\perp}/\beta_{\parallel}$ on the transport anisotropy. Panel (e) plots the stiffness scaling factor $m^p$, which determines how eigenvalue variations translate to stiffness changes. Finally, Panel (f) maps the fabric tensors into the eigenvalue space of unit-trace tensors (Barycentric coordinates), illustrating the feasible region for fabric states ranging from isotropic (center) to perfectly uniaxial (corners). The reaction term $\frac{c_A}{\tau_A}(\widehat{\mathbf{M}}-\mathbf{A})$ in \eqref{eq:A-strong-nd} drives $\mathbf{A}$ toward the mechanically informed, unit-trace target, while the diffusion $-\frac{c_A \ell^2}{\tau_A}\Delta\mathbf{A}$ spreads directional information and regularizes spatial oscillations. The homogeneous Neumann boundary condition represents no flux of directional content across $\partial\Omega$. Symmetry is preserved by the dynamics; the choice of a unit-trace target ensures that, at steady state ($\partial_t\mathbf{A}=0$), the solution coincides with a spatially smoothed version of $\widehat{\mathbf{M}}$. Tracing \eqref{eq:A-strong-nd} and using $\mathrm{tr}\,\widehat{\mathbf{M}}=1$ gives
 \begin{equation*}
-\partial_t\big(\mathrm{tr}\,\mathbf{A}\big) - \frac{\ell^2}{\tau_A}\,\Delta\big(\mathrm{tr}\,\mathbf{A}\big) + \frac{1}{\tau_A}\,\mathrm{tr}\,\mathbf{A} \;=\; \frac{1}{\tau_A},
+\text{(Normalisation note.)}\quad \widehat{\mathbf{M}} \text{ is constructed with } \mathrm{tr}\,\widehat{\mathbf{M}}=1 \text{ by \eqref{eq:M-hat-nd}, and the log-Euclidean evolution \eqref{eq:L-strong-nd} guarantees } \mathbf{A}=\exp(\mathbf{L})\in\mathbb{S}^{3}_{++}.
 \end{equation*}
-so the spatial average of $\mathrm{tr}\,\mathbf{A}$ relaxes monotonically to $1$ under no-flux boundaries; pointwise, the relaxation term anchors $\mathrm{tr}\,\mathbf{A}$ toward unity while diffusion communicates this constraint across $\Omega$. The coupling \eqref{eq:M-def-nd}--\eqref{eq:M-hat-nd} aligns principal directions of $\mathbf{A}$ with those of a local strain metric, as visualized in Figure \ref{fig:fabric_orientation}, consistent with strain-adaptation hypotheses in trabecular microstructures, while maintaining global smoothness and avoiding non-differentiable thresholds.
-
+Because the evolution is posed for $\mathbf{L}=\ln\mathbf{A}$ and includes spatial transport, the trace or determinant of $\mathbf{A}$ is \emph{not} generally preserved by the PDE.
+To ensure that \emph{only anisotropy and orientation} (not an isotropic scaling of $\mathbf{A}$) influence the directional factors in \eqref{eq:zysset-curnier}, we evaluate the eigenvalues $\{m_i\}$ from the unit-trace, trace-safe normalisation $\widehat{\mathbf{A}}$ in \eqref{eq:Ahat-blend-nd}.
+This cleanly decouples density-driven isotropic stiffening (carried by $\widetilde{\rho}$) from fabric-driven directional redistribution of stiffness, while retaining global smoothness and maintaining differentiability at the mechanostat thresholds.
 \begin{figure}[htbp]
     \centering
     \includegraphics[width=\textwidth]{images/fabric_orientation.jpg}
@@ -285,14 +321,18 @@ so the spatial average of $\mathrm{tr}\,\mathbf{A}$ relaxes monotonically to $1$
 \end{figure}
 
 \paragraph{Regularization parameters and defaults.}
-Unless a sensitivity study dictates otherwise, we recommend using a unified smoothness $\varepsilon$ (and gate steepness $k$) across \eqref{eq:smooth-max-nd}, \eqref{eq:smooth-splits-nd}, \eqref{eq:Ahat-blend-nd}, and \eqref{eq:M-hat-nd} by setting $\varepsilon_B\!=\!\varepsilon_M\!=\!\varepsilon$ and $k_B\!=\!k_M\!=\!k$. With the Gram maps \eqref{eq:Ahat-blend-nd} and \eqref{eq:M-hat-nd}, both $\widehat{\mathbf{A}}$ and $\widehat{\mathbf{M}}$ are \emph{unit-trace and SPD} for any $\varepsilon>0$; the same $\mathcal{C}^\infty$ regularization supplies smooth clamps and lazy-zone weights in the density kinetics without explicit cone projections or case distinctions.
+Unless a sensitivity study dictates otherwise, we recommend using a unified smoothness $\varepsilon$ (and gate steepness $k$) across \eqref{eq:smooth-max-nd}, \eqref{eq:smooth-splits-nd}. For the mechanostat split we recommend choosing a lazy-zone half-width $\Delta_S$ in the range $0.05$--$0.15$ (interpretable as a $\pm 5$--$15\%$ band around $\psi_{\mathrm{day}}=1$ in \eqref{eq:stim-strong-nd}) and a smoothing width $\varepsilon_S\ll \Delta_S$ (e.g.\ $\varepsilon_S\approx 0.1\,\Delta_S$) to retain differentiability without introducing drift. , \eqref{eq:Ahat-blend-nd}, and \eqref{eq:M-hat-nd} by setting $\varepsilon_B\!=\!\varepsilon_M\!=\!\varepsilon$ and $k_B\!=\!k_M\!=\!k$. With the Gram maps \eqref{eq:Ahat-blend-nd} and \eqref{eq:M-hat-nd}, both $\widehat{\mathbf{A}}$ and $\widehat{\mathbf{M}}$ are \emph{unit-trace and SPD} for any $\varepsilon>0$; the same $\mathcal{C}^\infty$ regularization supplies smooth clamps and lazy-zone weights in the density kinetics without explicit cone projections or case distinctions.
 
 \section*{Constitutive Properties and Gait Integration}
 
 \subsection*{Gait Cycle Integration and Stimulus Accumulation}
 The daily mechanical stimulus $\psi_{\mathrm{day}}$ aggregates the loading history over a full gait cycle. Following the Carter--Beaupr\'e theory, we employ a specific-energy weighting:
 \begin{equation}
-    \psi_{\mathrm{day}}(x) = N_{\mathrm{cyc}} \frac{1}{T} \int_0^T \left( \frac{U(x,t)/\rho(x,t)}{\psi_{\mathrm{ref}}} \right)^m \, \mathrm{d}t \approx N_{\mathrm{cyc}} \frac{\sum_i w_i (U_i/\rho_i / \psi_{\mathrm{ref}})^m}{\sum_i w_i}.
+    \psi_{\mathrm{day}}(x) = N_{\mathrm{cyc}} \int_0^{T_{\mathrm{cyc}}} \bar w(t)\,
+    \left(\frac{U(x,t)/\widetilde{\rho}(x,t)}{\psi_{\mathrm{ref}}}\right)^m \,\mathrm{d}t
+    \;\approx\; N_{\mathrm{cyc}}\frac{\sum_i w_i (U_i/\widetilde{\rho}_i / \psi_{\mathrm{ref}})^m}{\sum_i w_i},
+    \qquad
+    \bar w(t):=\frac{w(t)}{\int_0^{T_{\mathrm{cyc}}} w(s)\,\mathrm{d}s}.
 \end{equation}
 The exponent $m$ plays a critical role in filtering the mechanical signal. For $m=1$, the stimulus is simply proportional to the average specific energy. However, empirical bone remodeling laws typically suggest $m \in [2, 4]$ or even higher. As $m$ increases, the stimulus becomes increasingly dominated by peak loads, while low-magnitude "background" loads contribute negligibly.
 
@@ -332,6 +372,8 @@ Let $\mathbf{D}_\rho(\widehat{\mathbf{A}}^{\,n})$ be as in \eqref{eq:Drho-nd}. F
 \frac{1}{\Delta t^n}\big(\rho^{n}-\rho^{n-1}\big)\;-\;\nabla\!\cdot\!\big(\mathbf{D}_\rho(\widehat{\mathbf{A}}^{\,n})\,\nabla \rho^{n}\big)
 \;=\; k_\rho \left[ S_+^n (\rho_{\max} - \rho^n) + S_-^n (\rho_{\min} - \rho^n) \right]\quad\text{in }\Omega,
 \end{equation}
+Here $S_+^n:=S_\varepsilon^+(S^n)$ and $S_-^n:=S_\varepsilon^-(S^n)$, so that the discrete update preserves the same (smoothed) mechanostat lazy zone as the continuous model.
+
 with the no--flux condition from \eqref{eq:density-bc-ic-nd} and $\rho^{0}=\rho_0$.
 
 \paragraph{Direction/fabric.}
@@ -382,7 +424,7 @@ With $\mathbf{D}_\rho(\widehat{\mathbf{A}}^{\,n})$ from \eqref{eq:Drho-nd}, find
 \;=\; \left(\frac{1}{\Delta t^n}\rho_h^{n-1}, p_h\right) \;+\; \big(k_\rho (S_+^n \rho_{\max} + S_-^n \rho_{\min}), p_h\big),
 \end{aligned}
 \end{equation}
-where $S_+^n = \max(0, S^n)$ and $S_-^n = \max(0, -S^n)$.
+where $S_+^n = S_\varepsilon^+(S^n)$ and $S_-^n = S_\varepsilon^-(S^n)$ with $S_\varepsilon^\pm$ defined in \eqref{eq:smooth-splits-nd}.
 
 \paragraph{Direction/fabric (Backward--Euler weak form).}
 With $\mathbf{L}_M(\mathbf{u}^{n})=\ln(\widehat{\mathbf{M}}(\mathbf{u}^{n}))$, find $\mathbf{L}_h^{n}\in T_h$ such that for all $\mathbf{Q}_h\in T_h$,

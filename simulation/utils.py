@@ -176,3 +176,12 @@ def smooth_max(x, y, eps=1e-4):
     return 0.5 * (x + y + smooth_abs(x - y, eps))
 
 
+def smoothstep01(t):
+    """Cubic smoothstep on [0,1] with hard clamping.
+
+    Returns 0 for t<=0, 1 for t>=1, and t^2(3-2t) in between.
+    """
+    t_clamped = ufl.conditional(ufl.le(t, 0.0), 0.0, ufl.conditional(ufl.ge(t, 1.0), 1.0, t))
+    return t_clamped * t_clamped * (3.0 - 2.0 * t_clamped)
+
+

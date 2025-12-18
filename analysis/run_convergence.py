@@ -46,14 +46,18 @@ def run_remodeller(
     facet_tags = build_facetag(domain)
     
     # Config
-    cfg = Config(
-        domain=domain,
-        facet_tags=facet_tags,
-        results_dir=str(output_path),
-        verbose=False,
-        coupling_tol=1e-8,
-        max_subiters=100,
-    )
+        cfg = Config(
+            domain=domain,
+            facet_tags=facet_tags,
+            n_trab=2.0,
+            n_cort=1.2,
+            rho_trab_max=0.8,
+            rho_cort_min=1.2,
+            results_dir=str(output_path),
+            verbose=False,
+            coupling_tol=1e-8,
+            max_subiters=100,
+        )
     
     # Run simulation (telemetry saves all metrics automatically)
     with Remodeller(cfg) as remodeller:

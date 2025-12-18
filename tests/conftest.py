@@ -173,7 +173,7 @@ def facet_tags(unit_cube) -> object:
 @pytest.fixture
 def cfg(unit_cube, facet_tags) -> object:
     from simulation.config import Config
-    return Config(domain=unit_cube, facet_tags=facet_tags)
+    return Config(domain=unit_cube, facet_tags=facet_tags, n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2)
 
 
 @pytest.fixture
@@ -325,6 +325,10 @@ def cfg_factory(unit_cube, facet_tags):
         return Config(
             domain=unit_cube,
             facet_tags=facet_tags,
+            n_trab=2.0,
+            n_cort=1.2,
+            rho_trab_max=0.8,
+            rho_cort_min=1.2,
             **params
         )
     
@@ -351,7 +355,7 @@ def femur_setup():
     P1_scalar = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
     V = fem.functionspace(domain, P1_vec)
     Q = fem.functionspace(domain, P1_scalar)
-    cfg = Config(domain=domain, facet_tags=facet_tags)
+    cfg = Config(domain=domain, facet_tags=facet_tags, n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2)
     return domain, facet_tags, V, Q, cfg
 
 

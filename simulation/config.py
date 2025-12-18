@@ -14,9 +14,14 @@ if TYPE_CHECKING:
 class Config:
     """Simulation parameters. Units: mm, day, MPa, g/cm³."""
 
-    # Material: E = E0 * (rho/rho_ref)^n
-    n: float = 2.0              # Power-law exponent
-    E0: float = 6500.0         # Reference Young's modulus [MPa]
+    # Material: density-dependent exponent k(rho)
+    # k(rho) = n_trab*(1-w(rho)) + n_cort*w(rho), with smoothstep w over
+    # [rho_trab_max, rho_cort_min].
+    E0 = 7500.
+    n_trab = 2.0
+    n_cort = 1.1
+    rho_trab_max = 0.8
+    rho_cort_min = 1.2
     nu0: float = 0.3           # Poisson ratio
 
     # Density bounds and initial value
@@ -98,8 +103,10 @@ class Config:
     def validate(self):
         """Validate configuration parameters."""
         # Material
-        if self.n <= 0:
-            raise ValueError("Exponent n must be positive.")
+        if self.n_trab <= 0 or self.n_cort <= 0:
+            raise ValueError("Material exponents must satisfy n_trab>0 and n_cort>0.")
+        if not (self.rho_trab_max < self.rho_cort_min):
+            raise ValueError("Require rho_trab_max < rho_cort_min for smoothstep transition.")
         
         # Density
         if not (0.0 <= self.rho_min < self.rho_max):

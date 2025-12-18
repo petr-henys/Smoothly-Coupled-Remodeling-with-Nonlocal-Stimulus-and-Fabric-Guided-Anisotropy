@@ -229,7 +229,7 @@ class TestPartitionInterfaces:
         """Verify global integral is same regardless of partition."""
         domain = create_test_mesh(8)
         facet_tags = build_facetag(domain)
-        cfg = Config(domain=domain, facet_tags=facet_tags)
+        cfg = Config(domain=domain, facet_tags=facet_tags, n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2)
         
         P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
         Q = functionspace(domain, P1)
@@ -263,7 +263,7 @@ class TestSolverGhostUpdates:
         
         domain = create_test_mesh(6)
         facet_tags = build_facetag(domain)
-        cfg = Config(domain=domain, facet_tags=facet_tags)
+        cfg = Config(domain=domain, facet_tags=facet_tags, n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2)
         
         P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3,))
         P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
@@ -298,7 +298,7 @@ class TestSolverGhostUpdates:
         
         domain = create_test_mesh(6)
         facet_tags = build_facetag(domain)
-        cfg = Config(domain=domain, facet_tags=facet_tags)
+        cfg = Config(domain=domain, facet_tags=facet_tags, n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2)
         cfg.set_dt(1.0)
         
         P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
@@ -468,7 +468,7 @@ class TestDGCGInterfaces:
         """Test projecting DG0 field to CG1 preserves global integral."""
         domain = create_test_mesh(8)
         facet_tags = build_facetag(domain)
-        cfg = Config(domain=domain, facet_tags=facet_tags)
+        cfg = Config(domain=domain, facet_tags=facet_tags, n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2)
         
         DG0 = basix.ufl.element("DG", domain.basix_cell(), 0)
         P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
@@ -536,7 +536,7 @@ class TestVectorAssemblyGhosts:
         """Verify RHS vector ghost update pattern: ADD-REVERSE then INSERT-FORWARD."""
         domain = create_test_mesh(6)
         facet_tags = build_facetag(domain)
-        cfg = Config(domain=domain, facet_tags=facet_tags)
+        cfg = Config(domain=domain, facet_tags=facet_tags, n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2)
         
         P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
         Q = functionspace(domain, P1)
@@ -654,6 +654,10 @@ class TestGhostIntegration:
         cfg = Config(
             domain=domain, 
             facet_tags=facet_tags,
+            n_trab=2.0,
+            n_cort=1.2,
+            rho_trab_max=0.8,
+            rho_cort_min=1.2,
             max_subiters=5,
             coupling_tol=1e-4
         )
@@ -833,7 +837,7 @@ class TestPartitionInterfaceArtifacts:
         
         domain = create_test_mesh(6)
         facet_tags = build_facetag(domain)
-        cfg = Config(domain=domain, facet_tags=facet_tags)
+        cfg = Config(domain=domain, facet_tags=facet_tags, n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2)
         
         # Create DG0 space (like stimulus/psi)
         DG0 = basix.ufl.element("DG", domain.basix_cell(), 0)

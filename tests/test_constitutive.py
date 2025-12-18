@@ -21,7 +21,7 @@ class TestConstitutiveLaw:
     def test_isotropic_stress_symmetry(self, unit_cube, facet_tags):
         """Verify stress tensor is symmetric for isotropic material."""
         comm = MPI.COMM_WORLD
-        cfg = Config(domain=unit_cube, facet_tags=facet_tags)
+        cfg = Config(domain=unit_cube, facet_tags=facet_tags, n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2)
         
         P1_vec = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3,))
         P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
@@ -76,12 +76,11 @@ class TestAdvancedConstitutiveLaws:
 
     @pytest.mark.parametrize("unit_cube", [6], indirect=True)
     def test_power_law_stiffness(self, unit_cube, facet_tags):
-        """Verify E(ρ) follows the power-law relationship E = E0 * (ρ/ρ_ref)^n."""
+        """Verify E(ρ) follows the variable-exponent law from the manuscript."""
         comm = MPI.COMM_WORLD
-        cfg = Config(domain=unit_cube, facet_tags=facet_tags)
+        cfg = Config(domain=unit_cube, facet_tags=facet_tags, n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2)
         
-        # Set exponent
-        cfg.n = 2.0
+        # Base stiffness scale
         cfg.E0 = 1000.0
         cfg.rho_ref = 1.0
         
@@ -97,7 +96,12 @@ class TestAdvancedConstitutiveLaws:
             # Use UFL expression from MechanicsSolver logic
             rho_eff = smooth_max(rho, cfg.rho_min, cfg.smooth_eps)
             rho_rel = rho_eff / cfg.rho_ref
-            E_expr = cfg.E0 * (rho_rel ** cfg.n)
+
+            t = (rho_eff - cfg.rho_trab_max) / (cfg.rho_cort_min - cfg.rho_trab_max)
+            w = ufl.conditional(ufl.le(t, 0.0), 0.0, ufl.conditional(ufl.ge(t, 1.0), 1.0, t))
+            w = w * w * (3.0 - 2.0 * w)
+            k = cfg.n_trab * (1.0 - w) + cfg.n_cort * w
+            E_expr = cfg.E0 * (rho_rel ** k)
             
             E_local = fem.assemble_scalar(fem.form(E_expr * cfg.dx))
             vol_local = fem.assemble_scalar(fem.form(1.0 * cfg.dx))
@@ -108,7 +112,13 @@ class TestAdvancedConstitutiveLaws:
         test_densities = [0.5, 1.0, 1.5]
         for rho_val in test_densities:
             E_computed = compute_E_eff(rho_val)
-            E_expected = cfg.E0 * ((rho_val / cfg.rho_ref) ** cfg.n)
+
+            # Python-side expected value (smooth_max ~ max for rho_val >> rho_min)
+            t = (rho_val - cfg.rho_trab_max) / (cfg.rho_cort_min - cfg.rho_trab_max)
+            t = max(0.0, min(1.0, t))
+            w = t * t * (3.0 - 2.0 * t)
+            k = cfg.n_trab * (1.0 - w) + cfg.n_cort * w
+            E_expected = cfg.E0 * ((rho_val / cfg.rho_ref) ** k)
             rel_err = abs(E_computed - E_expected) / E_expected
             assert rel_err < 0.01, \
                 f"Power law failed at ρ={rho_val}: E={E_computed:.2f}, expected {E_expected:.2f}"
@@ -117,7 +127,7 @@ class TestAdvancedConstitutiveLaws:
     def test_linear_driver_rate(self, unit_cube, facet_tags):
         """Verify density evolution rate follows specific energy stimulus."""
         comm = MPI.COMM_WORLD
-        cfg = Config(domain=unit_cube, facet_tags=facet_tags)
+        cfg = Config(domain=unit_cube, facet_tags=facet_tags, n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2)
         
         cfg.k_rho = 1.0
         cfg.dt = 0.1
