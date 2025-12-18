@@ -294,7 +294,7 @@ class FEBio2Dolfinx:
                                     conflicts += 1
                                 i = j
                             if conflicts:
-                                self.logger.warning(
+                                self.logger.debug(
                                     f"Rank {r}: {conflicts} facet(s) matched multiple surface tags; keeping first match."
                                 )
                             keep = np.concatenate(([True], ~dup))
