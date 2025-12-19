@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, fields
-from typing import TYPE_CHECKING, Any
+import json
+from pathlib import Path
+from typing import Any
 
 from dolfinx import mesh
 import ufl
-
-if TYPE_CHECKING:
-    from simulation.telemetry import Telemetry
 
 
 @dataclass
@@ -30,13 +29,26 @@ class Config:
     rho0: float = 1.          # Initial density [g/cm^3]
     rho_ref: float = 1.0       # Reference density [g/cm^3]
     
-    # Remodeling: d(rho)/dt = k_rho * S, where S = (psi - psi_ref) / psi_ref
+    # Remodeling: d(rho)/dt = k_rho * S, where S is a dimensionless stimulus field
     k_rho: float = 7e-03        # Remodeling rate [1/day]
-    D_rho: float = 0.01       # Diffusion coefficient [mm^2/day]
+    D_rho: float = 1e-5        # Diffusion coefficient [mm^2/day]
 
-    # stimulus computation
+    # Stimulus (osteocyte-inspired signal). Units: S is dimensionless.
+    #
+    # Mechanostat is computed on specific energy m = psi/rho_safe with reference m_ref = psi_ref/rho_ref:
+    #   delta = (m - m_ref)/m_ref  (dimensionless)
+    #
+    # The stimulus field S(x,t) is intended to satisfy (in weak/PDE form):
+    #   tau_S * dS/dt = D_S * Laplacian(S) - S + S_max * tanh(delta / kappa)
+    #
+    # This gives: time dynamics (tau_S), nonlocality (D_S), decay (-S), and saturation (tanh).
     stimulus_power_p: float = 4.0  # Power-mean exponent (1=mean; higher→peak-biased)
-    psi_ref: float = 0.015       # Reference SED [MPa]
+    psi_ref: float = 0.009         # Reference SED [MPa] used via m_ref = psi_ref / rho_ref
+    stimulus_tau: float = 0.0      # tau_S [days]; tau_S=0 gives quasi-static stimulus (no time derivative)
+    stimulus_D: float = 1e-3       # D_S [mm^2/day]; sets nonlocal length ~ sqrt(D_S * tau_S)
+    stimulus_S_max: float = 1.0    # S_max (dimensionless): cap on |S|
+    stimulus_kappa: float = 0.1    # kappa (dimensionless): saturation width in tanh(delta/kappa)
+
 
     # Time stepping
     total_time: float = 500.0    # Total time [days]
@@ -82,7 +94,6 @@ class Config:
     # Runtime state (not serialized)
     domain: mesh.Mesh | None = field(default=None, repr=False)
     facet_tags: mesh.MeshTags | None = field(default=None, repr=False)
-    telemetry: Telemetry | None = field(init=False, default=None, repr=False)
     dx: ufl.Measure | None = field(init=False, default=None, repr=False)
     ds: ufl.Measure | None = field(init=False, default=None, repr=False)
     dt: float = field(init=False, default=1.0)
@@ -92,12 +103,12 @@ class Config:
             raise ValueError("Config requires a valid 'domain' (dolfinx.mesh.Mesh).")
         
         # Resolve log_file path relative to results_dir
-        from pathlib import Path
         self.log_file = str(Path(self.results_dir) / self.log_file)
 
         self.validate()
         self._build_measures()
-        self._init_telemetry()
+        self._ensure_results_dir()
+        self.update_config_json()
 
     def validate(self):
         """Validate configuration parameters."""
@@ -114,6 +125,14 @@ class Config:
         # Stimulus
         if self.psi_ref <= 0:
             raise ValueError("Reference value psi_ref must be positive.")
+        if self.stimulus_tau < 0:
+            raise ValueError("stimulus_tau must be >= 0 (tau_S in days).")
+        if self.stimulus_D < 0:
+            raise ValueError("stimulus_D must be >= 0 (diffusion coefficient, mm^2/day).")
+        if self.stimulus_S_max <= 0:
+            raise ValueError("stimulus_S_max must be > 0 (dimensionless cap on |S|).")
+        if self.stimulus_kappa <= 0:
+            raise ValueError("stimulus_kappa must be > 0 (dimensionless saturation width).")
             
         # Elasticity
         if self.E0 <= 0:
@@ -124,11 +143,6 @@ class Config:
         # Solver
         if self.accel_type not in ("anderson", "picard"):
             raise ValueError("accel_type must be 'anderson' or 'picard'.")
-        
-        # Stimulus
-        if self.psi_ref <= 0:
-            raise ValueError("Reference value psi_ref must be positive.")
-
         if self.stimulus_power_p < 1.0:
             raise ValueError("stimulus_power_p must be >= 1.0 (1=mean; larger biases toward peaks).")
 
@@ -143,15 +157,12 @@ class Config:
             metadata=metadata,
         )
 
-    def _init_telemetry(self) -> None:
-        """Initialize telemetry and persist config.json (rank-0 only)."""
-        from simulation.telemetry import Telemetry
-
-        self.telemetry = Telemetry(
-            comm=self.domain.comm,
-            outdir=self.results_dir,
-        )
-        self.update_config_json()
+    def _ensure_results_dir(self) -> None:
+        """Ensure results directory exists (rank-0 only)."""
+        outdir = Path(self.results_dir)
+        if self.domain.comm.rank == 0:
+            outdir.mkdir(parents=True, exist_ok=True)
+        self.domain.comm.Barrier()
 
     def set_dt(self, dt_days: float):
         """Update timestep in days."""
@@ -161,11 +172,11 @@ class Config:
 
     def update_config_json(self):
         """Re-write config.json with current parameters (rank-0 only)."""
-        self.telemetry.write_metadata(
-            self.to_json_dict(),
-            filename="config.json",
-            overwrite=True,
-        )
+        if self.domain.comm.rank == 0:
+            path = Path(self.results_dir) / "config.json"
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(self.to_json_dict(), f, indent=2)
+        self.domain.comm.Barrier()
 
     def rebuild(self, domain: mesh.Mesh, facet_tags: mesh.MeshTags | None = None):
         """Rebuild measures after domain change."""

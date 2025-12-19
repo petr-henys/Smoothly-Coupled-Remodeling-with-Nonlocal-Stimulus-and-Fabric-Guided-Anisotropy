@@ -1,8 +1,14 @@
-"""Adaptive AB2 predictor with Gustafsson PI control."""
+"""Adaptive AB2 predictor with Gustafsson PI control.
+
+The integrator is field-agnostic: it can predict and estimate error for an
+arbitrary set of coupled state fields (e.g., ``S`` and ``rho``).
+"""
 
 from __future__ import annotations
 
-from typing import Tuple
+from dataclasses import dataclass
+from typing import Mapping, Tuple
+
 import numpy as np
 from mpi4py import MPI
 from dolfinx import fem
@@ -11,22 +17,26 @@ from simulation.config import Config
 from simulation.utils import assign, get_owned_size
 
 
+@dataclass
+class _FieldHistory:
+    f: fem.Function
+    n_owned: int
+    N_global: int
+    rate_last: fem.Function
+    rate_last2: fem.Function
+
+
 class TimeIntegrator:
-    """Adaptive time stepping for density updates.
+    """Adaptive time stepping for state-field updates.
 
     Uses an AB2 predictor for error estimation and a Gustafsson PI controller.
     Step is accepted if WRMS ≤ 1.
     """
 
-    def __init__(self, comm: MPI.Intracomm, cfg: Config, Q: fem.FunctionSpace):
-        """Initialize with MPI comm, config, and density function space."""
+    def __init__(self, comm: MPI.Intracomm, cfg: Config, state_fields: Mapping[str, fem.Function]):
+        """Initialize with MPI comm, config, and a mapping of state fields."""
         self.comm = comm
         self.cfg = cfg
-        self.Q = Q
-
-        # History for AB2 predictor
-        self.rho_rate_last = fem.Function(Q, name="rho_rate_last")
-        self.rho_rate_last2 = fem.Function(Q, name="rho_rate_last2")
 
         # Controller state
         self.step_count = 0
@@ -41,67 +51,107 @@ class TimeIntegrator:
         self.kp = 0.20
         self.ki = 0.40
 
+        self._fields: dict[str, _FieldHistory] = {}
+        self._N_total: int = 0
+
+        self.set_state_fields(state_fields)
+
+    # ---------------------------- field management ----------------------------
+
+    def set_state_fields(self, state_fields: Mapping[str, fem.Function]) -> None:
+        """(Re)configure which fields are integrated.
+
+        This resets the predictor history, since adding/removing fields makes
+        the AB history inconsistent.
+        """
+        if not state_fields:
+            raise ValueError("TimeIntegrator requires at least one state field.")
+
+        fields: dict[str, _FieldHistory] = {}
+        N_total = 0
+        for name, f in state_fields.items():
+            if not isinstance(name, str) or not name:
+                raise ValueError(f"Invalid field name {name!r}; expected non-empty str.")
+
+            n_owned = int(get_owned_size(f))
+            N_global = int(self.comm.allreduce(n_owned, op=MPI.SUM))
+
+            rate_last = fem.Function(f.function_space, name=f"{name}_rate_last")
+            rate_last2 = fem.Function(f.function_space, name=f"{name}_rate_last2")
+
+            fields[name] = _FieldHistory(
+                f=f,
+                n_owned=n_owned,
+                N_global=N_global,
+                rate_last=rate_last,
+                rate_last2=rate_last2,
+            )
+            N_total += N_global
+
+        self._fields = fields
+        self._N_total = int(N_total)
         self.reset_history()
 
-    def reset_history(self):
-        """Reset predictor history."""
-        assign(self.rho_rate_last, 0.0)
-        assign(self.rho_rate_last2, 0.0)
+    # ---------------------------- AB predictor/error ---------------------------
+
+    def reset_history(self) -> None:
+        """Reset predictor history for all configured fields."""
+        for hist in self._fields.values():
+            assign(hist.rate_last, 0.0)
+            assign(hist.rate_last2, 0.0)
         self.step_count = 0
         self.dt_prev = 0.0
         self.error_prev = 1.0
 
-    def predict(self, dt: float, rho_current: fem.Function) -> np.ndarray:
-        """AB2 (or AB1) prediction for owned DOFs."""
+    def predict(self, dt: float) -> dict[str, np.ndarray]:
+        """AB2 (or AB1) prediction for owned DOFs of all state fields."""
         dt_curr = float(dt)
+        out: dict[str, np.ndarray] = {}
 
-        # Get owned DOF count
-        n_owned = get_owned_size(rho_current)
+        for name, hist in self._fields.items():
+            n_owned = hist.n_owned
+            vals = hist.f.x.array[:n_owned]
+            rate_last = hist.rate_last.x.array[:n_owned]
+            rate_last2 = hist.rate_last2.x.array[:n_owned]
 
-        # Current values (owned)
-        rho_vals = rho_current.x.array[:n_owned]
-        rate_last = self.rho_rate_last.x.array[:n_owned]
-        rate_last2 = self.rho_rate_last2.x.array[:n_owned]
+            if self.step_count >= 2 and self.dt_prev > 0.0:
+                r = dt_curr / self.dt_prev
+                w1 = 1.0 + 0.5 * r
+                w2 = 0.5 * r
+                pred = vals + dt_curr * (w1 * rate_last - w2 * rate_last2)
+            else:
+                pred = vals + dt_curr * rate_last
 
-        if self.step_count >= 2 and self.dt_prev > 0.0:
-            # Variable-step AB2 Predictor
-            r = dt_curr / self.dt_prev
-            w1 = 1.0 + 0.5 * r
-            w2 = 0.5 * r
-            pred = rho_vals + dt_curr * (w1 * rate_last - w2 * rate_last2)
-        else:
-            # Forward Euler (AB1) for first steps
-            pred = rho_vals + dt_curr * rate_last
+            out[name] = np.asarray(pred, dtype=hist.f.x.array.dtype).copy()
 
-        return pred
+        return out
 
-    def compute_wrms_error(self, x_pred: np.ndarray, x_corr: fem.Function) -> float:
-        """WRMS error between prediction and correction."""
-        n_owned = get_owned_size(x_corr)
+    def compute_wrms_error(self, x_pred: Mapping[str, np.ndarray]) -> float:
+        """WRMS error between prediction and corrected state (current field values)."""
+        if self._N_total <= 0:
+            return 0.0
 
-        # Get owned arrays
-        val_corr = x_corr.x.array[:n_owned]
-        val_pred = x_pred[:n_owned]
+        atol = float(self.cfg.adaptive_atol)
+        rtol = float(self.cfg.adaptive_rtol)
 
-        # Calculate weights
-        atol = self.cfg.adaptive_atol
-        rtol = self.cfg.adaptive_rtol
+        sq_error_local = 0.0
+        for name, hist in self._fields.items():
+            pred = x_pred.get(name, None)
+            if pred is None:
+                raise KeyError(f"Missing prediction for field {name!r}.")
 
-        scale = rtol * np.abs(val_corr) + atol
+            n_owned = hist.n_owned
+            val_corr = hist.f.x.array[:n_owned]
+            val_pred = np.asarray(pred, dtype=val_corr.dtype)[:n_owned]
 
-        diff = val_corr - val_pred
-        sq_error_local = np.sum((diff / scale) ** 2)
+            scale = rtol * np.abs(val_corr) + atol
+            diff = val_corr - val_pred
+            sq_error_local += float(np.sum(np.abs(diff / scale) ** 2))
 
-        # Global sum
-        sq_error_global = self.comm.allreduce(sq_error_local, op=MPI.SUM)
+        sq_error_global = float(self.comm.allreduce(sq_error_local, op=MPI.SUM))
+        return float(np.sqrt(sq_error_global / float(self._N_total)))
 
-        # Total number of DOFs
-        N_global = self.Q.dofmap.index_map.size_global * self.Q.dofmap.index_map_bs
-        
-        # Avoid division by zero if empty mesh (unlikely)
-        if N_global == 0: return 0.0
-
-        return np.sqrt(sq_error_global / N_global)
+    # ----------------------------- time-step control ---------------------------
 
     def suggest_dt(self, dt: float, converged: bool, error_norm: float) -> Tuple[bool, float, str]:
         """PI controller: returns (accepted, next_dt, reason)."""
@@ -157,17 +207,21 @@ class TimeIntegrator:
 
         return True, next_dt, "accepted"
 
-    def commit_step(self, dt: float, rho_new: fem.Function, rho_old: fem.Function):
-        """Update AB2 history after accepted step."""
+    def commit_step(self, dt: float, new_fields: Mapping[str, fem.Function], old_fields: Mapping[str, fem.Function]) -> None:
+        """Update AB2 history after an accepted step."""
         dt_curr = float(dt)
 
-        # Shift history (internal fields, only owned DOFs matter)
-        assign(self.rho_rate_last2, self.rho_rate_last, scatter=False)
+        for name, hist in self._fields.items():
+            f_new = new_fields.get(name, None)
+            f_old = old_fields.get(name, None)
+            if f_new is None or f_old is None:
+                raise KeyError(f"commit_step requires both new and old fields for {name!r}.")
 
-        # Calculate new rate from owned DOFs only
-        n_owned = get_owned_size(rho_new)
-        rate_data = (rho_new.x.array[:n_owned] - rho_old.x.array[:n_owned]) / dt_curr
-        assign(self.rho_rate_last, rate_data, scatter=False)
+            assign(hist.rate_last2, hist.rate_last, scatter=False)
+
+            n_owned = hist.n_owned
+            rate_data = (f_new.x.array[:n_owned] - f_old.x.array[:n_owned]) / dt_curr
+            assign(hist.rate_last, rate_data, scatter=False)
 
         self.dt_prev = dt_curr
         self.step_count += 1

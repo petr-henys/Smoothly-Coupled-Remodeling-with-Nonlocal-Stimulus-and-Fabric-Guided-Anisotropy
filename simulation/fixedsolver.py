@@ -1,189 +1,226 @@
-"""Block Gauss-Seidel with Anderson acceleration."""
+"""Fixed-point coupling solver (block Gauss–Seidel) for an arbitrary set of fields.
+
+Design constraints (intentional):
+- The coupling loop is agnostic to the number of state fields.
+- No callbacks, no per-call options, no special cases per field.
+- Each block must implement:
+    - `state_fields` : tuple[fem.Function, ...]  (fields that belong to the coupled state)
+    - `sweep()`      : performs one block update
+
+Anderson acceleration (if enabled) operates on a packed, block-wise normalized
+state vector built from those `state_fields`.
+
+Notes:
+- Blocks with `state_fields == ()` are allowed. They participate in the Gauss–Seidel
+  sweep (side effects), but do not contribute any entries to the coupled state vector.
+  This is how the mechanics driver can recompute `psi`/`u` each subiteration without
+  being part of the Anderson-mixed fixed-point state.
+"""
 
 from __future__ import annotations
-from typing import Dict, List
+
+from dataclasses import dataclass
+from typing import Dict, List, Sequence, Tuple
 
 import numpy as np
 from mpi4py import MPI
 from dolfinx import fem
 
 from simulation.config import Config
-from simulation.utils import assign, get_owned_size
+from simulation.utils import get_owned_size
 from simulation.logger import get_logger
-from simulation.anderson import _Anderson
+from simulation.anderson import Anderson
+
+
+@dataclass(frozen=True)
+class _FieldSpec:
+    f: fem.Function
+    n_owned: int
+    N_global: int
+    inv_sqrt_N: float
+    offset: int
+    name: str
+
 
 class FixedPointSolver:
-    """Coupling loop (block Gauss–Seidel) with optional Anderson acceleration.
+    """Block Gauss–Seidel + optional Anderson acceleration."""
 
-    Convergence uses a global relative L2 change of the owned density DOFs.
-    """
-
-    def __init__(
-        self, 
-        comm: MPI.Comm, 
-        cfg: Config,
-        driver,
-        densolver,
-        rho: fem.Function, 
-        rho_old: fem.Function
-    ):
+    def __init__(self, comm: MPI.Comm, cfg: Config, blocks: Sequence[object]):
         self.comm = comm
         self.cfg = cfg
-        self.driver = driver
-        self.densolver = densolver
-        self.rho = rho
-        self.rho_old = rho_old
-        
+        self.blocks = tuple(blocks)
+
         self.logger = get_logger(self.comm, name="FixedPoint", log_file=self.cfg.log_file)
-        
-        # Stats
-        self.mech_time_total = 0.0
-        self.dens_time_total = 0.0
-        self.mech_iters_total = 0
+
         self.subiter_metrics: List[Dict] = []
-        
-        self.solver_stats = {
-            "mech": {"time": 0.0, "iters": 0, "reason": 0},
-            "dens": {"time": 0.0, "iters": 0, "reason": 0}
-        }
-        
-        self.anderson = None
+
+        # Collect coupled state fields (deduplicate by object identity, preserve order)
+        fields: List[fem.Function] = []
+        seen = set()
+        for blk in self.blocks:
+            if not hasattr(blk, "state_fields"):
+                raise AttributeError(f"Block {type(blk).__name__} missing required attribute `state_fields`.")
+            for f in tuple(blk.state_fields):
+                if id(f) not in seen:
+                    seen.add(id(f))
+                    fields.append(f)
+
+        if len(fields) == 0:
+            raise ValueError("No coupled state fields provided by blocks (empty state_fields).")
+
+        self._specs: List[_FieldSpec] = []
+        off = 0
+        for f in fields:
+            n_owned = int(get_owned_size(f))
+            N_global = int(self.comm.allreduce(n_owned, op=MPI.SUM))
+            inv_sqrt_N = 1.0 / max(np.sqrt(float(N_global)), 1e-30)
+            name = getattr(f, "name", "field")
+            self._specs.append(_FieldSpec(f=f, n_owned=n_owned, N_global=N_global, inv_sqrt_N=inv_sqrt_N, offset=off, name=name))
+            off += n_owned
+
+        self._n_state = int(off)
+
+        # Per-field normalization scales (set on the first sweep each timestep)
+        self._scales: np.ndarray | None = None
+
+        # Anderson accelerator (optional)
+        self.anderson: Anderson | None = None
         if self.cfg.accel_type == "anderson":
-            self.anderson = _Anderson(
+            self.anderson = Anderson(
                 comm=self.comm,
-                m=self.cfg.m,
-                beta=self.cfg.beta,
-                lam=self.cfg.lam,
-                restart_on_reject_k=self.cfg.restart_on_reject_k,
-                restart_on_stall=self.cfg.restart_on_stall,
-                restart_on_cond=self.cfg.restart_on_cond,
-                step_limit_factor=self.cfg.step_limit_factor,
+                m=int(self.cfg.m),
+                beta=float(self.cfg.beta),
+                lam=float(self.cfg.lam),
+                gamma=float(self.cfg.gamma),
+                safeguard=True,
+                backtrack_max=int(self.cfg.backtrack_max),
+                restart_on_reject_k=int(self.cfg.restart_on_reject_k),
+                restart_on_stall=float(self.cfg.restart_on_stall),
+                restart_on_cond=float(self.cfg.restart_on_cond),
+                step_limit_factor=float(self.cfg.step_limit_factor),
+                verbose=False,
             )
 
-        
-    def proj_residual_norm(self, x_old_vec: np.ndarray,
-                            x_trial_vec: np.ndarray,
-                            x_ref_vec: np.ndarray) -> float:
-        """Relative step: ||x_trial - x_old|| / ||x_ref|| (global L2)."""
-        diff = x_trial_vec - x_old_vec
-        diff_loc = float(np.dot(diff, diff))
-        ref_loc  = float(np.dot(x_ref_vec, x_ref_vec))
-        diff_glob = self.comm.allreduce(diff_loc, op=MPI.SUM)
-        ref_glob  = self.comm.allreduce(ref_loc,  op=MPI.SUM)
+    # ------------------------------- packing --------------------------------
 
-        if ref_glob <= 1e-30:
-            return np.sqrt(diff_glob)
-        return np.sqrt(diff_glob / ref_glob)
+    def _pack_unscaled(self) -> np.ndarray:
+        x = np.empty(self._n_state, dtype=float)
+        for sp in self._specs:
+            x[sp.offset : sp.offset + sp.n_owned] = sp.f.x.array[: sp.n_owned]
+        return x
 
-    def run(self, *, progress=None, task_id=None) -> bool:
-        """Run fixed-point loop. Returns True if converged."""
+    def _compute_field_rms(self, values_owned: np.ndarray, N_global: int) -> float:
+        loc = float(np.dot(values_owned, values_owned))
+        glob = float(self.comm.allreduce(loc, op=MPI.SUM))
+        if N_global <= 0:
+            return 0.0
+        return float(np.sqrt(glob / float(N_global)))
+
+    def _init_scales(self, x_old: np.ndarray, x_raw: np.ndarray) -> None:
+        scales = np.empty(len(self._specs), dtype=float)
+        tiny = 1e-30
+        for i, sp in enumerate(self._specs):
+            sl = slice(sp.offset, sp.offset + sp.n_owned)
+            rms_old = self._compute_field_rms(x_old[sl], sp.N_global)
+            rms_raw = self._compute_field_rms(x_raw[sl], sp.N_global)
+            scales[i] = max(rms_old, rms_raw, tiny)
+        self._scales = scales
+
+    def _pack_scaled(self, x_unscaled: np.ndarray) -> np.ndarray:
+        if self._scales is None:
+            raise RuntimeError("Internal error: scales are not initialized.")
+        y = np.empty_like(x_unscaled)
+        for i, sp in enumerate(self._specs):
+            sl = slice(sp.offset, sp.offset + sp.n_owned)
+            y[sl] = (x_unscaled[sl] / self._scales[i]) * sp.inv_sqrt_N
+        return y
+
+    def _unpack_scaled_into_fields(self, x_scaled: np.ndarray) -> None:
+        if self._scales is None:
+            raise RuntimeError("Internal error: scales are not initialized.")
+        for i, sp in enumerate(self._specs):
+            sl = slice(sp.offset, sp.offset + sp.n_owned)
+            sp.f.x.array[: sp.n_owned] = (x_scaled[sl] / sp.inv_sqrt_N) * self._scales[i]
+            sp.f.x.scatter_forward()
+
+    # ----------------------------- norms/metrics ----------------------------
+
+    def _gdot(self, a: np.ndarray, b: np.ndarray) -> float:
+        return float(self.comm.allreduce(float(np.dot(a, b)), op=MPI.SUM))
+
+    def _proj_step(self, x_old: np.ndarray, x_trial: np.ndarray, x_ref: np.ndarray) -> float:
+        """Relative step: ||x_trial-x_old|| / ||x_ref|| in global L2 (all inputs scaled)."""
+        d = x_trial - x_old
+        d2 = self._gdot(d, d)
+        r2 = self._gdot(x_ref, x_ref)
+        if r2 <= 1e-300:
+            return float(np.sqrt(d2))
+        return float(np.sqrt(d2 / r2))
+
+    # ------------------------------- main loop ------------------------------
+
+    def run(self, progress, task_id) -> bool:
         tol = float(self.cfg.coupling_tol)
         max_subiters = int(self.cfg.max_subiters)
         min_subiters = int(self.cfg.min_subiters)
-        
-        self.mech_time_total = 0.0
-        self.dens_time_total = 0.0
-        self.mech_iters_total = 0
-        self.subiter_metrics = []
-        
-        # Reset solver stats for this step
-        self.solver_stats["mech"] = {"time": 0.0, "iters": 0, "reason": 0}
-        self.solver_stats["dens"] = {"time": 0.0, "iters": 0, "reason": 0}
 
-        rho_prev_iter = fem.Function(self.rho.function_space)
-        
+        self.subiter_metrics = []
+
+        self._scales = None
+        if self.anderson is not None:
+            self.anderson.reset()
+
         if progress is not None and task_id is not None:
             progress.reset(task_id, total=max_subiters)
             progress.start_task(task_id)
 
-        if self.anderson:
-            self.anderson.reset()
+        converged = False
 
         for itr in range(1, max_subiters + 1):
-            # Store previous iterate (rho already synced from previous iter/init)
-            assign(rho_prev_iter, self.rho, scatter=False)
-            
-            # 1. Mechanics
-            # Driver solves equilibrium and updates internal fields.
-            self.driver.update_stiffness() 
-            mech_stats = self.driver.update_snapshots()
-            # After this: u and psi are synced by driver.
-            
-            self.mech_time_total += mech_stats["total_time"]
-            self.mech_iters_total += sum(mech_stats["phase_iters"])
-            
-            self.solver_stats["mech"]["time"] += mech_stats["total_time"]
-            self.solver_stats["mech"]["iters"] += int(sum(mech_stats["phase_iters"]))
-            
-            # 2. Density
-            # psi already scattered by driver.
-            t0 = MPI.Wtime()
-            self.densolver.assemble_lhs()
-            self.densolver.assemble_rhs()
-            dens_iters, dens_reason = self.densolver.solve()
-            # After solve: rho is synced by _solve()
-            
-            elapsed = self.comm.allreduce(MPI.Wtime() - t0, op=MPI.MAX)
-            self.dens_time_total += elapsed
-            
-            self.solver_stats["dens"]["time"] += elapsed
-            self.solver_stats["dens"]["iters"] += dens_iters
-            self.solver_stats["dens"]["reason"] = dens_reason
+            # Snapshot old iterate (unscaled, owned DOFs)
+            x_old = self._pack_unscaled()
 
-            # 3. Anderson acceleration (owned DOFs → scatter)
-            n_owned = get_owned_size(self.rho)
-            aa_info = {}
-            if self.anderson:
-                x_new_owned, aa_info = self.anderson.mix(
-                    x_old=rho_prev_iter.x.array[:n_owned],
-                    x_raw=self.rho.x.array[:n_owned],
-                    mask_fixed=None,
-                    proj_residual_norm=self.proj_residual_norm,
-                    gamma=self.cfg.gamma,
-                    use_safeguard=self.cfg.safeguard,
-                    backtrack_max=self.cfg.backtrack_max
-                )
-                assign(self.rho, x_new_owned, scatter=True)
-            # If no Anderson, rho is already synced from `densolver.solve()`.
-            
-            # 4. Convergence Check
-            diff_owned = self.rho.x.array[:n_owned] - rho_prev_iter.x.array[:n_owned]
-            diff_norm_sq = self.comm.allreduce(np.dot(diff_owned, diff_owned), op=MPI.SUM)
-            rho_owned = self.rho.x.array[:n_owned]
-            rho_norm_sq = self.comm.allreduce(np.dot(rho_owned, rho_owned), op=MPI.SUM)
-            
-            rel_error = np.sqrt(diff_norm_sq) / max(np.sqrt(rho_norm_sq), 1e-10)
-            
-            log_msg = f"   Substep {itr}: rel_err={rel_error:.3e}"
-            if aa_info:
-                hist = aa_info.get('aa_hist', 0)
-                acc = "acc" if aa_info.get('accepted', True) else "rej"
-                bt = aa_info.get('backtracks', 0)
-                log_msg += f" | AA({hist}) {acc}"
-                if bt > 0:
-                    log_msg += f" bt={bt}"
-                if aa_info.get('restart_reason'):
-                    log_msg += f" | Rst: {aa_info['restart_reason']}"
-            
-            self.logger.debug(log_msg)
-            
-            if progress is not None and task_id is not None:
-                prog_info = f"err={rel_error:.1e}"
-                if aa_info:
-                    prog_info += f" AA({aa_info.get('aa_hist',0)})"
-                progress.update(task_id, advance=1, info=prog_info)
+            # One Gauss–Seidel sweep of all blocks
+            for blk in self.blocks:
+                blk.sweep()
+
+            # Raw iterate after the sweep
+            x_raw = self._pack_unscaled()
+
+            if self._scales is None:
+                self._init_scales(x_old, x_raw)
+
+            x_old_s = self._pack_scaled(x_old)
+            x_raw_s = self._pack_scaled(x_raw)
+
+            if self.anderson is not None:
+                x_new_s, aa = self.anderson.mix(x_old_s, x_raw_s)
+            else:
+                x_new_s, aa = x_raw_s, {"aa_hist": 0, "accepted": True, "backtracks": 0, "restart_reason": ""}
+
+            proj_res = self._proj_step(x_old_s, x_new_s, x_raw_s)
+
+            self._unpack_scaled_into_fields(x_new_s)
 
             rec = {
-                "iter": itr,
-                "proj_res": float(rel_error),
-                "mech_time": float(mech_stats["total_time"]),
-                "dens_time": float(elapsed),
-                "mech_iters": int(sum(mech_stats["phase_iters"])),
-                "dens_iters": int(dens_iters)
+                "iter": int(itr),
+                "proj_res": float(proj_res),
+                "aa_hist": int(aa.get("aa_hist", 0)),
+                "aa_accepted": bool(aa.get("accepted", True)),
+                "aa_backtracks": int(aa.get("backtracks", 0)),
+                "aa_restart": str(aa.get("restart_reason", "")),
             }
             self.subiter_metrics.append(rec)
-            
-            if rel_error < tol and itr >= min_subiters:
-                return True
-        
-        return False
+
+            if progress is not None and task_id is not None:
+                progress.update(task_id, advance=1)
+
+            if itr >= min_subiters and proj_res <= tol:
+                converged = True
+                break
+
+        if progress is not None and task_id is not None:
+            progress.update(task_id, completed=True)
+            progress.stop_task(task_id)
+
+        return converged

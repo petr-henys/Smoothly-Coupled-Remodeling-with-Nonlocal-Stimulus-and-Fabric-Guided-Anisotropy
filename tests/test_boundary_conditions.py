@@ -135,7 +135,7 @@ def test_mechanics_uniform_extension():
     mech = MechanicsSolver(u, rho, cfg, bcs, [])
     mech.setup()
     mech.assemble_rhs()
-    its, reason = mech.solve()
+    reason = mech.solve()
     assert reason > 0, f"KSP failed to converge, reason={reason}"
 
     # Check solution is nonzero (should have extension)

@@ -51,8 +51,8 @@ np.random.seed(1234)
 class TestSolverStatistics:
     """Test solver statistics tracking."""
     
-    def test_ksp_iteration_counting(self, cfg, spaces, fields, bc_mech):
-        """Verify KSP iteration counts are tracked correctly."""
+    def test_ksp_reason_tracking(self, cfg, spaces, fields, bc_mech):
+        """Verify KSP convergence reason is exposed after a solve."""
         from dolfinx import fem
         import numpy as np
         V, Q, T = spaces.V, spaces.Q, spaces.T
@@ -68,19 +68,10 @@ class TestSolverStatistics:
         mech = MechanicsSolver(u, rho, cfg, bc_mech, [(t_load, 2)])
         
         mech.setup()
-        
-        # Check initial stats
-        assert mech.total_iters == 0, "Initial total_iters should be 0"
-        assert mech.ksp_steps == 0, "Initial ksp_steps should be 0"
-        
-        # Solve
-        its, reason = mech.solve()
-        
-        # Check stats updated
-        assert mech.total_iters == its, f"total_iters ({mech.total_iters}) ≠ returned iters ({its})"
-        assert mech.ksp_steps == 1, f"ksp_steps should be 1 after one solve"
-        assert mech.last_iters == its, f"last_iters not set"
-        assert mech.last_reason == reason, f"last_reason not set"
+
+        reason = mech.solve()
+        assert isinstance(reason, int)
+        assert mech.last_reason == reason, "last_reason not set"
 
 
 # =============================================================================

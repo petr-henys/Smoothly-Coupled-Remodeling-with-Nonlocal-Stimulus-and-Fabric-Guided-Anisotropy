@@ -12,16 +12,15 @@ from __future__ import annotations
 from typing import Dict, Tuple, List
 from pathlib import Path
 
-from mpi4py import MPI
 import basix.ufl
 from dolfinx import fem
 from dolfinx.fem import Function, functionspace
 
 from simulation.storage import UnifiedStorage
 from simulation.logger import get_logger
-from simulation.utils import build_dirichlet_bcs, assign, current_memory_mb, field_stats
+from simulation.utils import build_dirichlet_bcs, assign
 from simulation.config import Config
-from simulation.subsolvers import MechanicsSolver, DensitySolver
+from simulation.subsolvers import MechanicsSolver, StimulusSolver, DensitySolver
 from simulation.fixedsolver import FixedPointSolver
 from simulation.drivers import GaitDriver
 from simulation.timeintegrator import TimeIntegrator
@@ -54,28 +53,6 @@ class Remodeller:
         self.logger.debug("Initializing Remodeller...")
 
         self.storage = UnifiedStorage(cfg)
-        self.telemetry = self.cfg.telemetry
-
-        if self.telemetry is not None:
-            self.telemetry.register_csv(
-                "steps",
-                [
-                    "step",
-                    "time_days",
-                    "dt_days",
-                    "tol",
-                    "used_subiters",
-                    "mech_time_s",
-                    "dens_time_s",
-                    "solve_time_s_total",
-                    "proj_res_last",
-                    "num_dofs_total",
-                    "rss_mem_mb",
-                    "mech_iters",
-                    "dens_iters",
-                ],
-                filename="steps.csv",
-            )
 
         self.dx = self.cfg.dx
         self.ds = self.cfg.ds
@@ -96,14 +73,7 @@ class Remodeller:
         self.rho = Function(self.Q, name="rho")
         self.rho_old = Function(self.Q, name="rho_old")
 
-        # Time Integrator
-        self.integrator = TimeIntegrator(self.comm, self.cfg, self.Q)
-
         assign(self.rho, self.cfg.rho0)
-
-        # Register fields for output
-        self.storage.fields.register("scalars", [self.rho], filename="scalars.bp")
-        self.storage.fields.register("loads", [self.loader.traction], filename="loads.bp")
 
         # Dirichlet BC: clamp cut surface (u=0)
         bc_mech = build_dirichlet_bcs(self.V, self.cfg.facet_tags, id_tag=1, value=0.0)
@@ -119,36 +89,91 @@ class Remodeller:
             mechsolver, self.cfg, 
             loader=self.loader,
             loading_cases=self.loading_cases,
-            storage=self.storage,
         )
-        
-        # Save each loading case's traction fields (static, done once)
-        for i, case in enumerate(self.loading_cases):
-            self.loader.set_loading_case(case.name)
-            self.storage.fields.write("loads", float(i))
 
-        # 3. Density Solver
+        # 3. Stimulus field and solver (temporal filter, no spatial PDE)
+        # Use the same DG0 space as psi (cell-wise SED driver output).
+        self.S = fem.Function(self.driver.V_psi, name="S")
+        self.S_old = fem.Function(self.driver.V_psi, name="S_old")
+        assign(self.S, 0.0)
+        assign(self.S_old, 0.0)
+
+        # Register all fields for output in a single VTX file
+        self.storage.fields.register(
+            "fields",
+            [self.rho, self.S, self.driver.psi],
+            filename="fields.bp",
+        )
+
+        self.stimsolver = StimulusSolver(
+            self.S,
+            self.S_old,
+            self.driver.stimulus_field(),
+            self.rho,
+            self.cfg,
+        )
+
+        # 4. Density Solver
         self.densolver = DensitySolver(
             self.rho, 
             self.rho_old, 
-            self.driver.stimulus_field(),
+            self.S,
             self.cfg
         )
-
         self.fixedsolver = FixedPointSolver(
             self.comm,
             self.cfg,
-            self.driver,
-            self.densolver,
-            self.rho,
-            self.rho_old,
+            # Only (S, rho) are in the coupled state vector (see each block's `state_fields`):
+            # - driver: updates quasi-static mechanics and recomputes psi, but contributes no state fields
+            # - stimsolver: updates S
+            # - densolver: updates rho
+            blocks=(self.driver, self.stimsolver, self.densolver),
         )
+
+        # State fields for time integration (S, rho) with their old-step counterparts.
+        self.state_fields = {
+            "S": self.S,
+            "rho": self.rho,
+        }
+        self.state_fields_old = {
+            "S": self.S_old,
+            "rho": self.rho_old,
+        }
+        self.integrator = TimeIntegrator(self.comm, self.cfg, self.state_fields)
 
         self.solvers_initialized = False
         self._current_dt: float = 0.0
 
         # Persist initial configuration
         self.cfg.update_config_json()
+
+    def _setup_blocks(self) -> None:
+        """Call setup() on all coupling blocks."""
+        for blk in self.fixedsolver.blocks:
+            blk.setup()
+
+    def _assemble_blocks_lhs(self) -> None:
+        """Reassemble LHS matrices for all coupling blocks."""
+        for blk in self.fixedsolver.blocks:
+            blk.assemble_lhs()
+
+    def _ensure_solvers_initialized(self, dt: float) -> None:
+        """Initialize solver objects and (re)assemble dt-dependent operators."""
+        dt = float(dt)
+        if dt <= 0.0:
+            raise ValueError(f"dt must be positive, got dt={dt}.")
+
+        if not self.solvers_initialized:
+            self.cfg.set_dt(dt)
+            self._current_dt = dt
+            self._setup_blocks()
+            self.solvers_initialized = True
+            return
+
+        if abs(dt - self._current_dt) > 1e-12:
+            self.cfg.set_dt(dt)
+            self._current_dt = dt
+            self._assemble_blocks_lhs()
 
     def close(self):
         """Release PETSc resources and close I/O."""
@@ -160,7 +185,7 @@ class Remodeller:
         if hasattr(self, "driver") and self.driver is not None:
             self.driver.destroy()
 
-        for attr in ("densolver",):
+        for attr in ("stimsolver", "densolver"):
             solver = getattr(self, attr, None)
             if solver is not None:
                 solver.destroy()
@@ -168,190 +193,77 @@ class Remodeller:
         if self.storage is not None:
             self.storage.close()
 
-        if self.telemetry is not None:
-            self.telemetry.close()
-
         self.comm.Barrier()
         self.closed = True
 
-    def _field_stats(self, field: fem.Function) -> Tuple[float, float, float]:
-        """MPI global min/max/mean (owned DOFs only)."""
-        return field_stats(field, self.comm)
+    def _output(self, t: float) -> None:
+        """Write fields to storage."""
+        self.storage.fields.write("fields", float(t))
 
-    def _collect_field_stats(self) -> Dict[str, float]:
-        """Gather field min/max/mean for reporting."""
-        rho_min, rho_max, rho_mean = self._field_stats(self.rho)
-
-        psi_stats = self.driver.get_stimulus_stats()
-        psi_avg = psi_stats["psi_avg"]
-        psi_min = psi_stats["psi_min"]
-        psi_max = psi_stats["psi_max"]
-
-        return dict(
-            rho_min=rho_min, rho_max=rho_max, rho_mean=rho_mean,
-            psi_avg=psi_avg, psi_min=psi_min, psi_max=psi_max,
-        )
-
-    def _output(self, t: float, step: int, coupling_stats: Dict[str, float], 
-                 dt: float, wrms_error: float, next_dt: float):
-        """Collect stats, log, write fields."""
-        # Note: `rho` is already synced after `fixedsolver.run()`.
-        
-        fields = self._collect_field_stats()
-        s_stats = self.fixedsolver.solver_stats
-        mem_mb = self.comm.allreduce(current_memory_mb(), op=MPI.SUM)
-
-        if self.progress is not None and self.main_task_id is not None:
-            info_str = f"t={t:5.1f}d dt={dt:5.1f} err={wrms_error:.1e}"
-            self.progress.update(self.main_task_id, info=f"{info_str:<35}")
-
-        self.logger.info(f"Step {step:3d} | t={t:7.2f}d | dt={dt:7.2f}d | WRMS={wrms_error:.2e} | GS={coupling_stats['iters']:2d}")
-
-        def format_table():
-            lines = []
-            lines.append("=" * 100)
-            lines.append(f"  TIME STEPPING: dt={dt:8.3f}d | next_dt={next_dt:8.3f}d | WRMS error={wrms_error:.3e}")
-            lines.append("-" * 100)
-            lines.append(f"{'Field':>10} | {'Min':>12} | {'Max':>12} | {'Mean':>12} |")
-            lines.append("-" * 100)
-            lines.append(f"{'rho':>10} | {fields['rho_min']:12.4f} | {fields['rho_max']:12.4f} | {fields['rho_mean']:12.4f} |")
-            lines.append(f"{'psi':>10} | {fields['psi_min']:12.3e} | {fields['psi_max']:12.3e} | {fields['psi_avg']:12.3e} |")
-            lines.append("-" * 100)
-            lines.append(f"{'Solver':>10} | {'Tot Time':>12} | {'Avg Time':>12} | {'Tot Iters':>12} | {'Avg Iters':>12} | {'Reason':>12} |")
-            lines.append("-" * 100)
-            
-            gs_iters = max(1, coupling_stats['iters'])
-            for name, key in [("Mechanics", "mech"), ("Density", "dens")]:
-                st = s_stats[key]
-                n_solves = gs_iters
-                    
-                avg_its = st['iters'] / max(1, n_solves)
-                avg_time = st['time'] / max(1, n_solves)
-                lines.append(f"{name:>10} | {st['time']:12.2f} | {avg_time:12.4f} | {st['iters']:12d} | {avg_its:12.1f} | {st['reason']:12d} |")
-            
-            lines.append("-" * 100)
-            lines.append(f"  Memory (RSS): {mem_mb:.1f} MB | Coupling iters: {coupling_stats['iters']} | Solve time: {coupling_stats['time']:.2f}s")
-            lines.append("=" * 100)
-            return "\n" + "\n".join(lines)
-
-        self.logger.debug(format_table())
-        self.storage.fields.write("scalars", float(t))
-        self.driver.save_case_snapshots(float(t))
-
-    def step(self, dt: float, step_index: int, time_days: float) -> Tuple[float, Dict]:
+    def step(self, dt: float) -> Tuple[float, Dict]:
         """Single timestep attempt."""
-        # rho is synced from previous step or init, skip redundant scatter
-        assign(self.rho_old, self.rho, scatter=True)
+        for name, f in self.state_fields.items():
+            assign(self.state_fields_old[name], f, scatter=True)
 
-        if not self.solvers_initialized:
-            self.driver.setup()
-            self.densolver.setup()
-            self.solvers_initialized = True
+        self._ensure_solvers_initialized(dt)
 
-        x_pred = self.integrator.predict(dt, self.rho)
-        assign(self.rho, x_pred, scatter=True)
+        x_pred = self.integrator.predict(dt)
+        for name, pred in x_pred.items():
+            assign(self.state_fields[name], pred, scatter=True)
 
-        if abs(float(dt) - self._current_dt) > 1e-12:
-            self.cfg.set_dt(float(dt))
-            self._current_dt = float(dt)
-        
         converged = self.fixedsolver.run(
-            progress=self.progress if self.rank == 0 else None,
-            task_id=getattr(self, 'sub_task_id', None) if self.rank == 0 else None
+            self.progress if self.rank == 0 else None,
+            getattr(self, 'sub_task_id', None) if self.rank == 0 else None,
         )
 
-        error_norm = self.integrator.compute_wrms_error(x_pred, self.rho)
+        error_norm = self.integrator.compute_wrms_error(x_pred)
         metrics = list(self.fixedsolver.subiter_metrics)
         used_subiters = len(metrics)
-        last_rec = metrics[-1] if metrics else None
-        total_time = (float(self.fixedsolver.mech_time_total) + float(self.fixedsolver.dens_time_total))
-
-        if self.telemetry is not None:
-            rss_mb_local = current_memory_mb()
-            rss_mb_total = self.comm.allreduce(float(rss_mb_local), op=MPI.SUM)
-            payload = {
-                "step": step_index,
-                "dt_days": float(dt),
-                "tol": float(self.cfg.coupling_tol),
-                "used_subiters": used_subiters,
-                "mech_time_s": float(self.fixedsolver.mech_time_total),
-                "dens_time_s": float(self.fixedsolver.dens_time_total),
-                "solve_time_s_total": total_time,
-                "num_dofs_total": self.num_dofs_total,
-                "rss_mem_mb": rss_mb_total,
-                "mech_iters": self.fixedsolver.mech_iters_total,
-                "dens_iters": self.fixedsolver.solver_stats["dens"]["iters"],
-                "wrms_error": float(error_norm),
-                "converged": converged
-            }
-            payload["time_days"] = float(time_days)
-            if last_rec is not None:
-                proj_val = last_rec.get("proj_res")
-                if proj_val is not None:
-                    payload["proj_res_last"] = float(proj_val)
-            self.telemetry.record("steps", payload, csv_event=True)
 
         return error_norm, {"converged": converged, "iters": used_subiters}
 
-    def simulate(self, dt_initial: float = None, total_time: float = None) -> None:
+    def simulate(self, dt_initial: float, total_time: float) -> None:
         """Run remodeling loop.
         
         Args:
-            dt_initial: Initial timestep [days]. If None, uses cfg.dt_initial.
-            total_time: Total simulation time [days]. If None, uses cfg.total_time.
+            dt_initial: Initial timestep [days].
+            total_time: Total simulation time [days].
         """
         t = 0.0
-        dt = dt_initial if dt_initial is not None else self.cfg.dt_initial
-        total_time = total_time if total_time is not None else self.cfg.total_time
+        dt = float(dt_initial)
+        total_time = float(total_time)
         step_idx = 0
 
-        self.cfg.set_dt(float(dt))
-
-        self.driver.setup()
-        self.densolver.setup()
-        self.solvers_initialized = True
-
         self.comm.Barrier()
-        overall_start = MPI.Wtime()
 
         if self.rank == 0:
-            try:
-                from rich.progress import (
-                    Progress,
-                    TextColumn,
-                    BarColumn,
-                    TimeRemainingColumn,
-                    TimeElapsedColumn,
-                    SpinnerColumn,
-                )
-                from rich.console import Console
+            from rich.progress import (
+                Progress,
+                TextColumn,
+                BarColumn,
+                SpinnerColumn,
+            )
+            from rich.console import Console
 
-                console = Console(stderr=True, force_terminal=True)
-                self.progress = Progress(
-                    SpinnerColumn(),
-                    TextColumn("[progress.description]{task.description}"),
-                    BarColumn(bar_width=60),
-                    TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-                    TimeElapsedColumn(),
-                    TimeRemainingColumn(),
-                    TextColumn("{task.fields[info]}"),
-                    console=console,
-                    transient=False,
-                )
-                self.main_task_id = self.progress.add_task("Remodeling", total=total_time, info=" " * 35)
-                self.sub_task_id = self.progress.add_task("  Coupling", total=self.cfg.max_subiters, info=" " * 35)
-                self.progress.start()
-            except Exception as exc:
-                self.progress = None
-                self.main_task_id = None
-                self.sub_task_id = None
-                self.logger.warning(f"Progress bar disabled (rich unavailable): {exc}")
+            console = Console(stderr=True, force_terminal=True)
+            self.progress = Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(bar_width=60),
+                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                TextColumn("{task.fields[info]}"),
+                console=console,
+                transient=False,
+            )
+            self.main_task_id = self.progress.add_task("Remodeling", total=total_time, info=" " * 35)
+            self.sub_task_id = self.progress.add_task("  Coupling", total=self.cfg.max_subiters, info=" " * 35)
+            self.progress.start()
 
         while t < total_time:
             if t + dt > total_time:
                 dt = total_time - t
             
-            error, metrics = self.step(dt, step_idx, t + dt)
+            error, metrics = self.step(dt)
             
             if self.cfg.adaptive_dt:
                 # Adaptive time stepping with PI controller
@@ -363,16 +275,12 @@ class Remodeller:
                 reason = "fixed dt"
             
             if accepted:
-                self.integrator.commit_step(dt, self.rho, self.rho_old)
+                self.integrator.commit_step(dt, self.state_fields, self.state_fields_old)
                 t += dt
                 step_idx += 1
                 
-                if (step_idx) % self.cfg.saving_interval == 0:
-                    coupling_stats = {
-                        "iters": metrics["iters"],
-                        "time": float(self.fixedsolver.mech_time_total + self.fixedsolver.dens_time_total)
-                    }
-                    self._output(t, step_idx, coupling_stats, dt=dt, wrms_error=error, next_dt=next_dt)
+                if step_idx % self.cfg.saving_interval == 0:
+                    self._output(t)
                 
                 if self.progress is not None and self.main_task_id is not None:
                     info_str = f"t={t:5.1f}d dt={next_dt:5.1f} err={error:.1e}"
@@ -380,8 +288,8 @@ class Remodeller:
                 
                 dt = next_dt
             else:
-                self.logger.debug(f"Step {step_idx} rejected (t={t:.4f}, dt={dt:.4e}): {reason}")
-                assign(self.rho, self.rho_old)
+                for name in self.state_fields:
+                    assign(self.state_fields[name], self.state_fields_old[name])
                 if not metrics["converged"]:
                      self.integrator.reset_history()
                 dt = next_dt
@@ -391,21 +299,6 @@ class Remodeller:
             self.progress.update(self.main_task_id, completed=t, info=f"{info_str:<35}")
             self.progress.stop()
             self.progress = None
-
-        self.comm.Barrier()
-        overall_elapsed = MPI.Wtime() - overall_start
-        overall_elapsed = self.comm.allreduce(float(overall_elapsed), op=MPI.MAX)
-
-        if self.telemetry is not None:
-            summary = {
-                "status": "completed",
-                "total_time_days": float(t),
-                "wall_time_seconds": overall_elapsed,
-                "steps_completed": step_idx,
-            }
-            self.telemetry.write_metadata(summary, filename="run_summary.json")
-
-        self.logger.info(f"Simulation completed in {overall_elapsed:.2f} s")
 
     def __enter__(self) -> "Remodeller":
         return self

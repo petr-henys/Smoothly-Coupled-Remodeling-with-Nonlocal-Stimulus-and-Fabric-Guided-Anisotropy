@@ -1,4 +1,12 @@
-"""Linear subsolvers for mechanics and density evolution (optionally filtered)."""
+"""Linear subsolvers for mechanics, stimulus update, and density evolution.
+
+This module contains:
+- MechanicsSolver: linear elasticity with rho-dependent stiffness.
+- StimulusSolver: diffusion/decay of an osteocyte-inspired stimulus S with saturating production.
+- DensitySolver: implicit Euler diffusion-reaction update for rho driven by S.
+
+No Helmholtz filter is used anywhere in this file.
+"""
 
 from __future__ import annotations
 
@@ -28,7 +36,7 @@ class _BaseLinearSolver:
 
     def __init__(
         self,
-        cfg: Config,
+        cfg: "Config",
         state_function: fem.Function,
         dirichlet_bcs: List[fem.DirichletBC],
         neumann_bcs: List[Tuple[fem.Function, int]],
@@ -49,9 +57,6 @@ class _BaseLinearSolver:
         self.trial = ufl.TrialFunction(self.function_space)
         self.test = ufl.TestFunction(self.function_space)
 
-        self.total_iters = 0
-        self.ksp_steps = 0
-        self.last_iters: int = 0
         self.last_reason: int = 0
 
         self.dirichlet_bcs = dirichlet_bcs
@@ -63,8 +68,6 @@ class _BaseLinearSolver:
 
         self.a_form: fem.Form = None
         self.L_form: fem.Form = None
-
-    # --------------------------- lifecycle ---------------------------------
 
     def destroy(self):
         if self.ksp is not None:
@@ -91,18 +94,16 @@ class _BaseLinearSolver:
         if self.ksp is not None:
             self.ksp.setOperators(self.A)
 
-    def _solve(self) -> Tuple[int, int]:
+    def assemble_rhs(self) -> None:
+        raise NotImplementedError
+
+    def _solve(self) -> int:
         self.ksp.solve(self.b, self.state.x.petsc_vec)
         self.state.x.scatter_forward()
 
-        its = self.ksp.getIterationNumber()
-        reason = self.ksp.getConvergedReason()
-
-        self.total_iters += its
-        self.ksp_steps += 1
-        self.last_iters = its
+        reason = int(self.ksp.getConvergedReason())
         self.last_reason = reason
-        return its, reason
+        return reason
 
     def _maybe_warn(self, reason: int, label: str):
         if reason < 0:
@@ -130,18 +131,13 @@ class _BaseLinearSolver:
 
 
 class MechanicsSolver(_BaseLinearSolver):
-    """Linear elasticity with density-dependent stiffness.
-
-    Uses rho_eff = smooth_max(rho, rho_min, smooth_eps) and
-    E(rho) = E0 * (rho_eff / rho_ref) ** k(rho), with a smooth
-    trabecular-to-cortical transition for k.
-    """
+    """Linear elasticity with density-dependent stiffness."""
 
     def __init__(
         self,
         u: fem.Function,
         rho: fem.Function,
-        config: Config,
+        config: "Config",
         dirichlet_bcs: List[fem.DirichletBC],
         neumann_bcs: List[Tuple[fem.Function, int]],
     ):
@@ -167,7 +163,6 @@ class MechanicsSolver(_BaseLinearSolver):
         self.L_form = fem.form(L_ufl)
 
     def assemble_lhs(self) -> None:
-        # Stiffness depends on current `rho` (ensure ghosts are current).
         self.rho.x.scatter_forward()
         super().assemble_lhs()
 
@@ -209,45 +204,158 @@ class MechanicsSolver(_BaseLinearSolver):
         self.b.ghostUpdate(PETSc.InsertMode.INSERT, PETSc.ScatterMode.FORWARD)
 
     def solve(self):
-        its, reason = self._solve()
+        reason = self._solve()
         self._maybe_warn(reason, "Mechanics")
-        return its, reason
+        return int(reason)
+
+    # Fixed interface expected by the coupling solver
+    @property
+    def state_fields(self):
+        return ()
+
+    def sweep(self):
+        reason = self._solve()
+        self._maybe_warn(reason, "Mechanics")
+        return {"label": "mech", "reason": int(reason)}
+
+
+class StimulusSolver(_BaseLinearSolver):
+    """Osteocyte-inspired stimulus field with saturation, nonlocality, and time dynamics.
+
+    Mechanostat input uses specific energy:
+        m = psi / rho_safe,    rho_safe = smooth_max(rho, rho_min, smooth_eps)
+        m_ref = psi_ref / rho_ref
+        delta = (m - m_ref) / m_ref   (dimensionless)
+
+    We evolve a dimensionless stimulus field S(x,t) using a production–diffusion–decay model:
+        tau_S * dS/dt = D_S * Laplacian(S) - S + S_max * tanh(delta / kappa)
+
+    Time discretization:
+    - implicit Euler for (diffusion + decay + time term),
+    - explicit-in-time production term (evaluated from current psi and rho),
+      yielding a linear solve per step.
+
+    This is intended as a biologically interpretable alternative to purely local temporal filtering.
+    """
+
+    def __init__(
+        self,
+        S: fem.Function,
+        S_old: fem.Function,
+        psi_field,
+        rho: fem.Function,
+        config: "Config",
+    ):
+        super().__init__(config, S, [], [])
+        self.S = self.state
+        self.S_old = S_old
+        self.psi = psi_field
+        self.rho = rho
+
+        self.logger = get_logger(self.comm, name="Stimulus", log_file=self.cfg.log_file)
+
+        # Time step is adaptive, so keep dt as a Constant (updates reassemble the LHS).
+        self.dt_c = fem.Constant(self.mesh, float(self.cfg.dt))
+
+        # Stimulus parameters (Constants for UFL forms)
+        self.tau_c = fem.Constant(self.mesh, float(self.cfg.stimulus_tau))
+        self.D_c = fem.Constant(self.mesh, float(self.cfg.stimulus_D))
+        self.S_max_c = fem.Constant(self.mesh, float(self.cfg.stimulus_S_max))
+        self.kappa_c = fem.Constant(self.mesh, float(self.cfg.stimulus_kappa))
+
+        # Compile-time flag: avoid forming grad-grad if D_S is identically zero (helps DG spaces).
+        self._use_diffusion = float(self.cfg.stimulus_D) > 0.0
+
+    def _compile_forms(self):
+        dt = self.dt_c
+        tau = self.tau_c
+
+        S_trial = ufl.TrialFunction(self.function_space)
+        v = ufl.TestFunction(self.function_space)
+
+        # (tau/dt) * S^{n+1} + S^{n+1}  on the LHS, plus diffusion if enabled.
+        alpha = tau / dt
+        a_ufl = (alpha + 1.0) * S_trial * v * self.dx
+        if self._use_diffusion:
+            a_ufl += self.D_c * ufl.dot(ufl.grad(S_trial), ufl.grad(v)) * self.dx
+        self.a_form = fem.form(a_ufl)
+
+        # Production term (explicit in time): S_max * tanh(delta/kappa)
+        rho_safe = smooth_max(self.rho, self.cfg.rho_min, self.cfg.smooth_eps)
+        m = self.psi / rho_safe
+        m_ref = float(self.cfg.psi_ref) / float(self.cfg.rho_ref)
+        delta = (m - m_ref) / m_ref
+        drive = self.S_max_c * ufl.tanh(delta / self.kappa_c)
+
+        L_ufl = (alpha * self.S_old + drive) * v * self.dx
+        self.L_form = fem.form(L_ufl)
+
+    def _setup_ksp(self):
+        self.A.setOption(PETSc.Mat.Option.SPD, True)
+        ksp_options = {"ksp_type": self.cfg.ksp_type, "pc_type": self.cfg.pc_type}
+        self.create_ksp(prefix="stimulus", ksp_options=ksp_options)
+
+    def assemble_lhs(self) -> None:
+        # dt may change between steps; update Constant and reassemble LHS
+        self.dt_c.value = float(self.cfg.dt)
+        super().assemble_lhs()
+
+    def assemble_rhs(self):
+        self.S_old.x.scatter_forward()
+        if hasattr(self.psi, "x"):
+            self.psi.x.scatter_forward()
+        self.rho.x.scatter_forward()
+
+        with self.b.localForm() as b_local:
+            b_local.set(0.0)
+        assemble_vector(self.b, self.L_form)
+        self.b.ghostUpdate(PETSc.InsertMode.ADD, PETSc.ScatterMode.REVERSE)
+        self.b.ghostUpdate(PETSc.InsertMode.INSERT, PETSc.ScatterMode.FORWARD)
+
+    @property
+    def state_fields(self):
+        return (self.S,)
+
+    def solve(self) -> int:
+        self.assemble_rhs()
+        reason = self._solve()
+        self._maybe_warn(reason, "Stimulus")
+        return int(reason)
+
+    def sweep(self):
+        reason = self.solve()
+        return {"label": "stim", "reason": int(reason)}
 
 
 class DensitySolver(_BaseLinearSolver):
-    """Density evolution: d(rho)/dt = D * Laplacian(rho) + k_rho * S."""
+    """Density evolution (implicit Euler diffusion + reaction driven by stimulus S).
+
+    d(rho)/dt = D * Laplacian(rho) + k_rho * S
+    """
 
     def __init__(
         self,
         rho: fem.Function,
         rho_old: fem.Function,
-        psi_field: fem.Function,
-        config: Config,
+        stimulus: fem.Function,
+        config: "Config",
     ):
         super().__init__(config, rho, [], [])
         self.rho = self.state
         self.rho_old = rho_old
-        self.psi_field = psi_field
+        self.S = stimulus
         self.dt_c = fem.Constant(self.mesh, float(self.cfg.dt))
 
     def _compile_forms(self):
         dt = self.dt_c
-        rho_safe = smooth_max(self.rho, self.cfg.rho_min, self.smooth_eps)
 
-        # Specific energy stimulus: S = (psi/rho - psi_ref/rho_ref) / (psi_ref/rho_ref)
-        S_specific = self.psi_field / rho_safe
-        S_ref_specific = self.cfg.psi_ref / self.cfg.rho_ref
-        S = (S_specific - S_ref_specific) / S_ref_specific
-
-        # Implicit Euler: (rho_new/dt)*v + D*grad(rho_new)·grad(v) = (rho_old/dt)*v + (k*S)*v
         a_ufl = (
             (self.trial / dt) * self.test * self.dx
             + self.cfg.D_rho * ufl.inner(ufl.grad(self.trial), ufl.grad(self.test)) * self.dx
         )
         self.a_form = fem.form(a_ufl)
 
-        source_term = self.cfg.k_rho * S
-        L_ufl = ((self.rho_old / dt) + source_term) * self.test * self.dx
+        L_ufl = ((self.rho_old / dt) + (self.cfg.k_rho * self.S)) * self.test * self.dx
         self.L_form = fem.form(L_ufl)
 
     def _setup_ksp(self):
@@ -260,28 +368,34 @@ class DensitySolver(_BaseLinearSolver):
         super().assemble_lhs()
 
     def assemble_rhs(self):
-        # RHS uses psi_field and rho_old as coefficients; keep their ghosts synced.
-        self.psi_field.x.scatter_forward()
+        self.S.x.scatter_forward()
         self.rho_old.x.scatter_forward()
-        self.dt_c.value = float(self.cfg.dt)
+
         with self.b.localForm() as b_local:
             b_local.set(0.0)
         assemble_vector(self.b, self.L_form)
         self.b.ghostUpdate(PETSc.InsertMode.ADD, PETSc.ScatterMode.REVERSE)
         self.b.ghostUpdate(PETSc.InsertMode.INSERT, PETSc.ScatterMode.FORWARD)
 
-    def destroy(self):
-        super().destroy()
+    @property
+    def state_fields(self):
+        return (self.rho,)
 
-    def solve(self):
-        its, reason = self._solve()
+    def solve(self) -> int:
+        self.assemble_rhs()
+        reason = self._solve()
         self._maybe_warn(reason, "Density")
 
-        # Clamp to physical bounds
-        rho_min, rho_max = self.cfg.rho_min, self.cfg.rho_max
+        # Clamp to physical bounds (owned DOFs)
+        rho_min, rho_max = float(self.cfg.rho_min), float(self.cfg.rho_max)
         with self.rho.x.petsc_vec.localForm() as loc:
             arr = loc.array
             arr[arr < rho_min] = rho_min
             arr[arr > rho_max] = rho_max
         self.rho.x.scatter_forward()
-        return its, reason
+
+        return int(reason)
+
+    def sweep(self):
+        reason = self.solve()
+        return {"label": "dens", "reason": int(reason)}

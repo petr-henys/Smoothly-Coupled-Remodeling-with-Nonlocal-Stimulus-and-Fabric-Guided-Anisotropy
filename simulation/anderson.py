@@ -1,68 +1,101 @@
-"""Anderson acceleration with safeguard and restart."""
+"""Anderson acceleration with a fixed API (no per-call options).
+
+Key points:
+- Public surface area is intentionally minimal: `reset()` and `mix()`.
+- `mix()` takes only (x_old, x_raw) and returns (x_new, info).
+- No callbacks and no runtime option plumbing.
+
+The mixing is MPI-aware: all inner products / norms are global.
+
+This class assumes you already provided a *well-scaled* state vector.
+If you are coupling multiple physical fields (rho, stimulus, ...), the
+recommended pattern is to pack a concatenated vector in a dimensionless
+metric (e.g., block-wise RMS normalization) and pass that to Anderson.
+"""
+
+from __future__ import annotations
 
 from collections import deque
-from typing import Callable, Dict, Optional, Sequence, Tuple
+from typing import Deque, Dict, Sequence, Tuple
+
 import numpy as np
 from mpi4py import MPI
 
 from simulation.logger import get_logger
 
 
-class _Anderson:
-    """Anderson mixing for fixed-point iterations (MPI-aware).
+class Anderson:
+    """MPI-aware Anderson acceleration with safeguard + restart.
 
-    Builds a global Gram matrix from residual history, computes mixing weights,
-    and applies safeguards (step limiting/backtracking/restart).
+    Constructor arguments are intentionally explicit: no defaults.
     """
 
     def __init__(
         self,
         comm: MPI.Comm,
-        m: int = 8,
-        beta: float = 1.0,
-        lam: float = 1e-10,
-        restart_on_reject_k: int = 2,
-        restart_on_stall: float = 1.10,
-        restart_on_cond: float = 1e12,
-        step_limit_factor: float = 2.0,
-        safeguard_abs_floor: float = 1e-10,
-        gamma_decay_p: float = 0.5,
+        m: int,
+        beta: float,
+        lam: float,
+        gamma: float,
+        safeguard: bool,
+        backtrack_max: int,
+        restart_on_reject_k: int,
+        restart_on_stall: float,
+        restart_on_cond: float,
+        step_limit_factor: float,
+        verbose: bool,
     ):
         self.comm = comm
-        self.m = m
-        self.beta = beta
-        self.lam = lam
-        self.logger = get_logger(comm, name="Anderson")
+        self.m = int(m)
+        self.beta = float(beta)
+        self.lam = float(lam)
 
-        # History buffers
-        self.x_hist: deque[np.ndarray] = deque(maxlen=m + 1)
-        self.r_hist: deque[np.ndarray] = deque(maxlen=m + 1)
+        self.gamma = float(gamma)
+        self.safeguard = bool(safeguard)
+        self.backtrack_max = int(backtrack_max)
 
-        # Restart tracking
+        self.restart_on_reject_k = int(restart_on_reject_k)
+        self.restart_on_stall = float(restart_on_stall)
+        self.restart_on_cond = float(restart_on_cond)
+
+        self.step_limit_factor = float(step_limit_factor)
+        self.verbose = bool(verbose)
+
+        self.logger = get_logger(self.comm, name="Anderson")
+
+        self.x_hist: Deque[np.ndarray] = deque(maxlen=self.m + 1)
+        self.r_hist: Deque[np.ndarray] = deque(maxlen=self.m + 1)
+
         self.reject_streak = 0
-        self.best_picard_res = np.inf
+        self.best_picard = np.inf
         self.pending_reset = False
-        
-        # Restart thresholds
-        self.restart_on_reject_k = restart_on_reject_k
-        self.restart_on_stall = restart_on_stall
-        self.restart_on_cond = restart_on_cond
-        
-        # Step control
-        self.step_limit_factor = step_limit_factor
-        self.safeguard_abs_floor = safeguard_abs_floor
-        self.gamma_decay_p = gamma_decay_p
+
+        # Numerical floors (internal constants; not exposed as knobs)
+        self._tiny = 1e-300
+        self._eig_floor = 1e-15
 
     def reset(self) -> None:
-        """Clear history."""
         self.x_hist.clear()
         self.r_hist.clear()
         self.reject_streak = 0
-        self.best_picard_res = np.inf
+        self.best_picard = np.inf
         self.pending_reset = False
 
+    # ------------------------- linear algebra helpers -------------------------
+
+    def _gdot(self, a: np.ndarray, b: np.ndarray) -> float:
+        return float(self.comm.allreduce(float(np.dot(a, b)), op=MPI.SUM))
+
+    def _rel_step(self, x_old: np.ndarray, x_trial: np.ndarray, x_ref: np.ndarray) -> float:
+        """Relative step: ||x_trial-x_old|| / ||x_ref|| in global L2."""
+        d = x_trial - x_old
+        d2 = self._gdot(d, d)
+        r2 = self._gdot(x_ref, x_ref)
+        if r2 <= self._tiny:
+            return float(np.sqrt(d2))
+        return float(np.sqrt(d2 / r2))
+
     def _build_gram(self, r_list: Sequence[np.ndarray]) -> np.ndarray:
-        """Global Gram matrix H = R R^T."""
         if len(r_list) == 0:
             return np.zeros((0, 0), dtype=float)
         R_loc = np.vstack(r_list)
@@ -71,104 +104,88 @@ class _Anderson:
 
     def _solve_kkt(self, H: np.ndarray, lam_eff: float) -> np.ndarray:
         """Solve min ||alpha||_H s.t. 1^T alpha = 1."""
-        p = H.shape[0]
+        p = int(H.shape[0])
         if p == 0:
             return np.zeros(0, dtype=float)
+
         Hp = H + lam_eff * np.eye(p)
         one = np.ones(p, dtype=float)
+
         try:
             y = np.linalg.solve(Hp, one)
         except np.linalg.LinAlgError:
-            w, V = np.linalg.eigh(Hp + 1e-15 * np.eye(p))
-            w = np.clip(w, 1e-15, None)
+            w, V = np.linalg.eigh(Hp + self._eig_floor * np.eye(p))
+            w = np.clip(w, self._eig_floor, None)
             y = V @ (V.T @ one / w)
+
         denom = float(one @ y)
-        if abs(denom) < 1e-30:
+        if abs(denom) <= 1e-30:
             return np.full(p, 1.0 / p, dtype=float)
         return y / denom
 
-    def _condition_number(self, H: np.ndarray, lam_eff: float) -> float:
-        """Condition number of H + lam*I."""
-        p = H.shape[0]
+    def _cond_number(self, H: np.ndarray, lam_eff: float) -> float:
+        p = int(H.shape[0])
         if p == 0:
             return 1.0
         w = np.linalg.eigvalsh(H + lam_eff * np.eye(p))
         w = np.clip(w, 0.0, None)
-        return float(np.max(w) / max(np.min(w), 1e-30))
+        return float(np.max(w) / max(float(np.min(w)), 1e-30))
 
-    def mix(
-        self,
-        x_old: np.ndarray,
-        x_raw: np.ndarray,
-        mask_fixed: Optional[np.ndarray] = None,
-        proj_residual_norm: Optional[Callable[[np.ndarray, np.ndarray, np.ndarray], float]] = None,
-        gamma: float = 0.05,
-        use_safeguard: bool = True,
-        backtrack_max: int = 6,
-    ) -> Tuple[np.ndarray, Dict]:
-        
+    # ------------------------------ main update ------------------------------
+
+    def mix(self, x_old: np.ndarray, x_raw: np.ndarray) -> Tuple[np.ndarray, Dict]:
+        """Return accelerated iterate based on stored history."""
         if self.pending_reset:
             self.reset()
 
         r = x_raw - x_old
-        if mask_fixed is not None:
-            r = r.copy()
-            r[mask_fixed] = 0.0
 
         self.x_hist.append(x_old.copy())
-        self.r_hist.append(r)
+        self.r_hist.append(r.copy())
         p = len(self.r_hist)
 
         info: Dict = {
-            "aa_hist": p,
+            "aa_hist": int(p),
             "accepted": True,
             "backtracks": 0,
+            "restart_reason": "",
+            "condH": None,
             "r_norm": None,
             "r_proxy_norm": None,
-            "restart_reason": "",
         }
 
-        # First iterate: fall back to a Picard step (no safeguard).
-        if p == 1:
-            return self._picard_step(x_old, x_raw, r, mask_fixed, proj_residual_norm, 
-                                     gamma, False, info)
-
-        # Anderson acceleration
         H = self._build_gram(list(self.r_hist))
-        lam_eff = self.lam * max(float(np.trace(H)) / p, 1.0)
+        tr = float(np.trace(H)) if p > 0 else 0.0
+        lam_eff = self.lam * max(tr / max(p, 1), 1.0)
+
         alpha = self._solve_kkt(H, lam_eff)
 
+        # Anderson combination (Walker-Ni form)
         y = np.zeros_like(x_old)
-        for a_i, xi, ri in zip(alpha, self.x_hist, self.r_hist):
-            y += a_i * (xi + self.beta * ri)
+        for a_i, x_i, r_i in zip(alpha, self.x_hist, self.r_hist):
+            y += float(a_i) * (x_i + self.beta * r_i)
+
         s = y - x_old
 
-        # Compute r_norm once (used for step limiting and safeguard)
-        r_norm = None
-        if proj_residual_norm is not None:
-            r_norm = proj_residual_norm(x_old, x_raw, x_raw)
-            s_proxy = proj_residual_norm(x_old, x_old + s, x_raw)
-            r_proxy = r_norm + 1e-300  # Reuse r_norm instead of recomputing
-            if s_proxy > self.step_limit_factor * r_proxy:
-                s *= (self.step_limit_factor * r_proxy) / max(s_proxy, 1e-300)
+        # Step limiting relative to Picard step length
+        r_norm = self._rel_step(x_old, x_raw, x_raw)
+        s_norm = self._rel_step(x_old, x_old + s, x_raw)
+        if s_norm > self.step_limit_factor * max(r_norm, self._tiny):
+            s *= (self.step_limit_factor * max(r_norm, self._tiny)) / max(s_norm, self._tiny)
 
         x_cand = x_old + s
 
-        if proj_residual_norm is not None:
-            rp_norm = proj_residual_norm(x_old, x_cand, x_raw)
-            info["r_norm"] = r_norm
-            info["r_proxy_norm"] = rp_norm
-            info["condH"] = self._condition_number(H, lam_eff)
+        # Safeguard: accept if proxy step is sufficiently smaller than Picard step
+        rp_norm = self._rel_step(x_old, x_cand, x_raw)
+        info["r_norm"] = float(r_norm)
+        info["r_proxy_norm"] = float(rp_norm)
+        info["condH"] = float(self._cond_number(H, lam_eff))
+        self.best_picard = min(self.best_picard, float(r_norm))
 
-            self.best_picard_res = min(self.best_picard_res, r_norm)
-
-            gamma_eff = gamma * (r_norm / (r_norm + self.safeguard_abs_floor)) ** self.gamma_decay_p
-            
-            if use_safeguard and r_norm > self.safeguard_abs_floor and rp_norm > (1.0 - gamma_eff) * r_norm:
-                x_cand, accepted, bt = self._backtrack(
-                    x_old, s, x_raw, r_norm, gamma_eff, proj_residual_norm, backtrack_max
-                )
-                info["backtracks"] = bt
+        if self.safeguard and r_norm > self._tiny:
+            if rp_norm > (1.0 - self.gamma) * r_norm:
+                x_cand, accepted, bt = self._backtrack(x_old, s, x_raw, r_norm)
+                info["backtracks"] = int(bt)
                 if not accepted:
                     info["accepted"] = False
                     self.reject_streak += 1
@@ -177,46 +194,9 @@ class _Anderson:
             else:
                 self.reject_streak = 0
 
-            self._check_restart(r_norm, info["condH"], info)
-
-        if mask_fixed is not None and mask_fixed.any():
-            x_cand[mask_fixed] = x_raw[mask_fixed]
+            self._check_restart(float(r_norm), float(info["condH"]), info)
 
         return x_cand, info
-
-    def _picard_step(
-        self,
-        x_old: np.ndarray,
-        x_raw: np.ndarray,
-        r: np.ndarray,
-        mask_fixed: Optional[np.ndarray],
-        proj_residual_norm: Optional[Callable],
-        gamma: float,
-        use_safeguard: bool,
-        info: Dict,
-    ) -> Tuple[np.ndarray, Dict]:
-        """Damped Picard: x_new = x_old + beta*r."""
-        x_new = x_old + self.beta * r
-        
-        if mask_fixed is not None and mask_fixed.any():
-            x_new[mask_fixed] = x_raw[mask_fixed]
-
-        if proj_residual_norm is not None:
-            r_norm = proj_residual_norm(x_old, x_raw, x_raw)
-            rp_norm = proj_residual_norm(x_old, x_new, x_raw)
-            info["r_norm"] = r_norm
-            info["r_proxy_norm"] = rp_norm
-            self.best_picard_res = min(self.best_picard_res, r_norm)
-
-            gamma_eff = gamma * (r_norm / (r_norm + self.safeguard_abs_floor)) ** self.gamma_decay_p
-            if use_safeguard and r_norm > self.safeguard_abs_floor and rp_norm > (1.0 - gamma_eff) * r_norm:
-                x_new = x_raw.copy()
-                info["accepted"] = False
-                self.reject_streak += 1
-            else:
-                self.reject_streak = 0
-
-        return x_new, info
 
     def _backtrack(
         self,
@@ -224,26 +204,23 @@ class _Anderson:
         s: np.ndarray,
         x_raw: np.ndarray,
         r_norm: float,
-        gamma_eff: float,
-        proj_residual_norm: Callable,
-        backtrack_max: int,
     ) -> Tuple[np.ndarray, bool, int]:
         theta = 0.5
-        for bt in range(backtrack_max):
+        for bt in range(self.backtrack_max):
             x_try = x_old + theta * s
-            rp_try = proj_residual_norm(x_old, x_try, x_raw)
-            if rp_try <= (1.0 - gamma_eff) * r_norm:
+            rp_try = self._rel_step(x_old, x_try, x_raw)
+            if rp_try <= (1.0 - self.gamma) * r_norm:
                 return x_try, True, bt
             theta *= 0.5
-        return x_raw.copy(), False, backtrack_max
+        return x_raw.copy(), False, self.backtrack_max
 
     def _check_restart(self, r_norm: float, condH: float, info: Dict) -> None:
         if self.reject_streak >= self.restart_on_reject_k:
             self.pending_reset = True
             info["restart_reason"] = f"reject_streak>={self.restart_on_reject_k}"
-        elif r_norm > self.restart_on_stall * self.best_picard_res:
+        elif r_norm > self.restart_on_stall * self.best_picard:
             self.pending_reset = True
-            info["restart_reason"] = f"stall>(x{self.restart_on_stall:.2f})"
+            info["restart_reason"] = f"stall>x{self.restart_on_stall:.2f}"
         elif condH > self.restart_on_cond:
             self.pending_reset = True
             info["restart_reason"] = f"illcond~{condH:.1e}"

@@ -149,7 +149,7 @@ class TestConservation:
         
         mech2 = MechanicsSolver(u, rho, cfg, bc_mech, neumanns)
         mech2.setup()
-        its, reason = mech2.solve()
+        reason = mech2.solve()
         
         # Check solver converged
         assert reason > 0, f"KSP failed to converge, reason={reason}"

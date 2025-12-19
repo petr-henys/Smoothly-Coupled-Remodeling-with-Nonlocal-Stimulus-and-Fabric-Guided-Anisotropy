@@ -1,5 +1,4 @@
 from typing import List, Tuple
-import resource
 
 from mpi4py import MPI
 from dolfinx import fem, la, mesh, default_scalar_type
@@ -136,12 +135,6 @@ def collect_dirichlet_dofs(bcs, n_owned: int) -> np.ndarray:
         return np.empty(0, dtype=np.int64)
     return np.unique(np.concatenate(chunks))
 
-
-def current_memory_mb() -> float:
-    """Process RSS in MB."""
-    mem_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    return mem_kb / 1024.0
-
 def smooth_abs(x, eps=1e-4):
     """C¹ approximation of |x|: sqrt(x² + eps²) - eps."""
     return ufl.sqrt(x**2 + eps**2) - eps
@@ -162,5 +155,4 @@ def smoothstep01(t):
     """
     t_clamped = ufl.conditional(ufl.le(t, 0.0), 0.0, ufl.conditional(ufl.ge(t, 1.0), 1.0, t))
     return t_clamped * t_clamped * (3.0 - 2.0 * t_clamped)
-
 
