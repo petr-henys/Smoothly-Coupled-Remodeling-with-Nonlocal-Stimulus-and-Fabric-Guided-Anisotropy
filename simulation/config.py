@@ -31,7 +31,7 @@ class Config:
     
     # Remodeling: d(rho)/dt = k_rho * S, where S is a dimensionless stimulus field
     k_rho: float = 7e-03        # Remodeling rate [1/day]
-    D_rho: float = 1e-5        # Diffusion coefficient [mm^2/day]
+    D_rho: float = 1e-3        # Diffusion coefficient [mm^2/day]
 
     # Stimulus (osteocyte-inspired signal). Units: S is dimensionless.
     #
