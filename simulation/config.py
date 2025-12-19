@@ -32,11 +32,11 @@ class Config:
     
     # Remodeling: d(rho)/dt = k_rho * S, where S = (psi - psi_ref) / psi_ref
     k_rho: float = 7e-03        # Remodeling rate [1/day]
-    D_rho: float = 1e-5        # Diffusion coefficient [mm^2/day]
+    D_rho: float = 0.01       # Diffusion coefficient [mm^2/day]
 
     # stimulus computation
     stimulus_power_p: float = 4.0  # Power-mean exponent (1=mean; higher→peak-biased)
-    psi_ref: float = 0.009       # Reference SED [MPa]
+    psi_ref: float = 0.015       # Reference SED [MPa]
 
     # Time stepping
     total_time: float = 500.0    # Total time [days]
