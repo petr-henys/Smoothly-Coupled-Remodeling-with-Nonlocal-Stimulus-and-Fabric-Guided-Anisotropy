@@ -242,9 +242,6 @@ class TestCalibrateMechanostat:
         # k_rho keys
         assert "k_rho" in result
         assert "tau_eff" in result
-        
-        # helmholtz_L should be passed through from config
-        assert "helmholtz_L" in result
     
     def test_calibrate_updates_config(self, simple_config, simple_loader,
                                        simple_loading_cases, constant_rho0):
@@ -259,8 +256,6 @@ class TestCalibrateMechanostat:
         # psi_ref and k_rho should be updated
         assert simple_config.psi_ref == result["psi_ref"]
         assert simple_config.k_rho == result["k_rho"]
-        # helmholtz_L is NOT calibrated, stays from config
-        assert simple_config.helmholtz_L == result["helmholtz_L"]
     
     def test_calibrate_respects_update_config_false(self, simple_config, simple_loader,
                                                      simple_loading_cases, constant_rho0):
@@ -269,7 +264,6 @@ class TestCalibrateMechanostat:
         
         old_psi = simple_config.psi_ref
         old_k = simple_config.k_rho
-        old_L = simple_config.helmholtz_L
         
         calibrate_mechanostat(
             simple_config, simple_loader, simple_loading_cases, constant_rho0,
@@ -279,7 +273,6 @@ class TestCalibrateMechanostat:
         # Config should be unchanged
         assert simple_config.psi_ref == old_psi
         assert simple_config.k_rho == old_k
-        assert simple_config.helmholtz_L == old_L
 
 
 # =============================================================================

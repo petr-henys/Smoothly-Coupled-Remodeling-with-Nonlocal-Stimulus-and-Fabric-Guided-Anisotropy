@@ -132,9 +132,9 @@ class _BaseLinearSolver:
 class MechanicsSolver(_BaseLinearSolver):
     """Linear elasticity with density-dependent stiffness.
 
-    Uses $\tilde\rho=\max_\epsilon(\rho,\rho_{min})$ and
-    $E(\rho)=E_0(\tilde\rho/\rho_{ref})^{k(\rho)}$ with a smooth
-    trabecular→cortical transition for $k$.
+    Uses rho_eff = smooth_max(rho, rho_min, smooth_eps) and
+    E(rho) = E0 * (rho_eff / rho_ref) ** k(rho), with a smooth
+    trabecular-to-cortical transition for k.
     """
 
     def __init__(
@@ -215,7 +215,7 @@ class MechanicsSolver(_BaseLinearSolver):
 
 
 class DensitySolver(_BaseLinearSolver):
-    """Density evolution: $\partial_t\rho = D\nabla^2\rho + k_\rho S$ (optional filter)."""
+    """Density evolution: d(rho)/dt = D * Laplacian(rho) + k_rho * S."""
 
     def __init__(
         self,
@@ -230,35 +230,16 @@ class DensitySolver(_BaseLinearSolver):
         self.psi_field = psi_field
         self.dt_c = fem.Constant(self.mesh, float(self.cfg.dt))
 
-        # Helmholtz filter length scale (0 disables filtering).
-        self.helmholtz_L = self.cfg.helmholtz_L
-        self._use_helmholtz = self.helmholtz_L > 0.0
-        
-        if self.rank == 0 and self._use_helmholtz:
-            self.logger.info(f"Helmholtz filter: L={self.helmholtz_L:.4f} mm")
-
-        # Helmholtz filter resources (lazy init)
-        self._helm_tr: ufl.TrialFunction = None
-        self._helm_ts: ufl.TestFunction = None
-        self._a_helm_form: fem.Form = None
-        self._L_helm_form: fem.Form = None
-        self._A_helm: PETSc.Mat = None
-        self._b_helm: PETSc.Vec = None
-        self._ksp_helm: PETSc.KSP = None
-
-        if self._use_helmholtz:
-            self._setup_helmholtz_filter()
-
     def _compile_forms(self):
         dt = self.dt_c
         rho_safe = smooth_max(self.rho, self.cfg.rho_min, self.smooth_eps)
 
-        # Specific energy stimulus: S = (Ψ/ρ - Ψ_ref/ρ_ref) / (Ψ_ref/ρ_ref)
+        # Specific energy stimulus: S = (psi/rho - psi_ref/rho_ref) / (psi_ref/rho_ref)
         S_specific = self.psi_field / rho_safe
         S_ref_specific = self.cfg.psi_ref / self.cfg.rho_ref
         S = (S_specific - S_ref_specific) / S_ref_specific
 
-        # Implicit Euler: (ρ^{n+1}/dt, v) + D(∇ρ^{n+1}, ∇v) = (ρ^n/dt, v) + (k*S, v)
+        # Implicit Euler: (rho_new/dt)*v + D*grad(rho_new)·grad(v) = (rho_old/dt)*v + (k*S)*v
         a_ufl = (
             (self.trial / dt) * self.test * self.dx
             + self.cfg.D_rho * ufl.inner(ufl.grad(self.trial), ufl.grad(self.test)) * self.dx
@@ -289,70 +270,12 @@ class DensitySolver(_BaseLinearSolver):
         self.b.ghostUpdate(PETSc.InsertMode.ADD, PETSc.ScatterMode.REVERSE)
         self.b.ghostUpdate(PETSc.InsertMode.INSERT, PETSc.ScatterMode.FORWARD)
 
-    def _setup_helmholtz_filter(self):
-        """Assemble Helmholtz filter: (ρ_filt, v) + L²(∇ρ_filt, ∇v) = (ρ_raw, v)."""
-        if not self._use_helmholtz:
-            return
-
-        self._helm_tr = ufl.TrialFunction(self.function_space)
-        self._helm_ts = ufl.TestFunction(self.function_space)
-        L2 = self.helmholtz_L ** 2
-
-        a_h = (
-            self._helm_tr * self._helm_ts * self.dx
-            + L2 * ufl.inner(ufl.grad(self._helm_tr), ufl.grad(self._helm_ts)) * self.dx
-        )
-        self._a_helm_form = fem.form(a_h)
-
-        L_h = self.rho * self._helm_ts * self.dx
-        self._L_helm_form = fem.form(L_h)
-
-        self._A_helm = create_matrix(self._a_helm_form)
-        assemble_matrix(self._A_helm, self._a_helm_form, bcs=[])
-        self._A_helm.assemble()
-        self._A_helm.setOption(PETSc.Mat.Option.SPD, True)
-        self._b_helm = create_vector(self.function_space)
-
-        self._ksp_helm = PETSc.KSP().create(self.comm)
-        self._ksp_helm.setOptionsPrefix("helmholtz_")
-        opts = PETSc.Options()
-        opts["helmholtz_ksp_type"] = self.cfg.ksp_type
-        opts["helmholtz_pc_type"] = self.cfg.pc_type
-        opts["helmholtz_ksp_rtol"] = self.cfg.ksp_rtol
-        opts["helmholtz_ksp_atol"] = self.cfg.ksp_atol
-        opts["helmholtz_ksp_max_it"] = self.cfg.ksp_max_it
-        self._ksp_helm.setOperators(self._A_helm)
-        self._ksp_helm.setFromOptions()
-        self._ksp_helm.setUp()
-
-    def _apply_helmholtz_filter(self):
-        """Apply Helmholtz filter to ρ in-place."""
-        if not self._use_helmholtz:
-            return
-        with self._b_helm.localForm() as b_local:
-            b_local.set(0.0)
-        assemble_vector(self._b_helm, self._L_helm_form)
-        self._b_helm.ghostUpdate(PETSc.InsertMode.ADD, PETSc.ScatterMode.REVERSE)
-        self._b_helm.ghostUpdate(PETSc.InsertMode.INSERT, PETSc.ScatterMode.FORWARD)
-        self._ksp_helm.solve(self._b_helm, self.rho.x.petsc_vec)
-        self.rho.x.scatter_forward()
-
     def destroy(self):
         super().destroy()
-        if self._ksp_helm is not None:
-            self._ksp_helm.destroy()
-            self._ksp_helm = None
-        if self._A_helm is not None:
-            self._A_helm.destroy()
-            self._A_helm = None
-        if self._b_helm is not None:
-            self._b_helm.destroy()
-            self._b_helm = None
 
     def solve(self):
         its, reason = self._solve()
         self._maybe_warn(reason, "Density")
-        self._apply_helmholtz_filter()
 
         # Clamp to physical bounds
         rho_min, rho_max = self.cfg.rho_min, self.cfg.rho_max

@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 @dataclass
 class Config:
-    """Simulation parameters. Units: mm, day, MPa, g/cm³."""
+    """Simulation parameters. Units: mm, day, MPa, g/cm^3."""
 
     # Material: density-dependent exponent k(rho)
     # k(rho) = n_trab*(1-w(rho)) + n_cort*w(rho), with smoothstep w over
@@ -25,22 +25,18 @@ class Config:
     nu0: float = 0.3           # Poisson ratio
 
     # Density bounds and initial value
-    rho_min: float = 0.1       # Min density [g/cm³]
-    rho_max: float = 2.        # Max density [g/cm³]
-    rho0: float = 1.          # Initial density [g/cm³]
-    rho_ref: float = 1.0       # Reference density [g/cm³]
+    rho_min: float = 0.1       # Min density [g/cm^3]
+    rho_max: float = 2.        # Max density [g/cm^3]
+    rho0: float = 1.          # Initial density [g/cm^3]
+    rho_ref: float = 1.0       # Reference density [g/cm^3]
     
-    # Remodeling: dρ/dt = k_rho * S, where S = (Ψ - Ψ_ref) / Ψ_ref
+    # Remodeling: d(rho)/dt = k_rho * S, where S = (psi - psi_ref) / psi_ref
     k_rho: float = 7e-03        # Remodeling rate [1/day]
-    D_rho: float = 0.01        # Diffusion coefficient [mm²/day]
+    D_rho: float = 1e-5        # Diffusion coefficient [mm^2/day]
 
     # stimulus computation
     stimulus_power_p: float = 4.0  # Power-mean exponent (1=mean; higher→peak-biased)
-    psi_ref: float = 0.015       # Reference SED [MPa]
-
-    # Helmholtz filter: (ρ_filt, v) + L²(∇ρ_filt, ∇v) = (ρ_raw, v)
-    # Physical length scale ~0.3mm (osteocyte mechanosensing range)
-    helmholtz_L: float = 0.6       # Filter length [mm]
+    psi_ref: float = 0.009       # Reference SED [MPa]
 
     # Time stepping
     total_time: float = 500.0    # Total time [days]

@@ -119,6 +119,7 @@ class Remodeller:
             mechsolver, self.cfg, 
             loader=self.loader,
             loading_cases=self.loading_cases,
+            storage=self.storage,
         )
         
         # Save each loading case's traction fields (static, done once)
@@ -235,6 +236,7 @@ class Remodeller:
 
         self.logger.debug(format_table())
         self.storage.fields.write("scalars", float(t))
+        self.driver.save_case_snapshots(float(t))
 
     def step(self, dt: float, step_index: int, time_days: float) -> Tuple[float, Dict]:
         """Single timestep attempt."""

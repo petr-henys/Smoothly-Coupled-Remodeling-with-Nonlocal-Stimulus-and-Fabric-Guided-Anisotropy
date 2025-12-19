@@ -1,7 +1,7 @@
 """GaitDriver: mechanics + averaged SED stimulus over multiple loading cases."""
 
 from __future__ import annotations
-from typing import Dict, List, TYPE_CHECKING
+from typing import Dict, List, TYPE_CHECKING, Optional
 
 from mpi4py import MPI
 from dolfinx import fem
@@ -14,13 +14,14 @@ from simulation.utils import assign, field_stats, get_owned_size
 
 if TYPE_CHECKING:
     from simulation.loader import LoadingCase, Loader
+    from simulation.storage import UnifiedStorage
 
 
 class GaitDriver:
     """Mechanics driver that computes accumulated SED stimulus.
 
     For each loading case: set cached traction, solve mechanics, compute
-    element-wise $\Psi=\tfrac12\sigma:\varepsilon$ (DG0), and accumulate
+    element-wise psi = 0.5 * sigma : epsilon (DG0), and accumulate
     weighted by day_cycles (number of loading cycles per day).
     """
 
@@ -30,12 +31,14 @@ class GaitDriver:
         config: Config,
         loader: "Loader",
         loading_cases: List["LoadingCase"],
+        storage: Optional["UnifiedStorage"] = None,
     ):
         """Bind mechanics solver, loader, and list of loading cases."""
         self.mech = mech
         self.cfg = config
         self.loader = loader
         self.loading_cases = loading_cases
+        self.storage = storage
 
         mesh = self.mech.u.function_space.mesh
         self.comm = mesh.comm
@@ -49,6 +52,21 @@ class GaitDriver:
         # Temporary per-case SED (DG0)
         self._psi_temp = fem.Function(self.V_psi, name="Stimulus_SED_temp")
         
+        # Storage for per-case psi fields
+        self.case_psi_functions: Dict[str, fem.Function] = {}
+        if self.storage:
+            all_psi_funcs = []
+            for case in self.loading_cases:
+                func = fem.Function(self.V_psi, name=f"psi_{case.name}")
+                self.case_psi_functions[case.name] = func
+                all_psi_funcs.append(func)
+            
+            # Also save the total accumulated stimulus
+            all_psi_funcs.append(self.psi)
+            
+            if all_psi_funcs:
+                self.storage.fields.register("psi_cases", all_psi_funcs, filename="psi_cases.bp")
+
         # Pre-compile SED expression (reused every update)
         self._sed_expr = self._build_sed_expression()
 
@@ -66,7 +84,7 @@ class GaitDriver:
         self.mech.destroy()
 
     def update_stiffness(self) -> None:
-        """Reassemble stiffness matrix K(ρ)."""
+        """Reassemble stiffness matrix K(rho)."""
         self.mech.assemble_lhs()
 
     def update_snapshots(self) -> Dict:
@@ -102,8 +120,12 @@ class GaitDriver:
             # Compute SED for this case
             self._psi_temp.interpolate(self._sed_expr)
             
+            # Store per-case psi if storage is enabled
+            if self.storage and case.name in self.case_psi_functions:
+                self.case_psi_functions[case.name].x.array[:] = self._psi_temp.x.array[:]
+
             # Accumulate stimulus weighted by day_cycles:
-            #   p = 1 → sum of day_cycles * Ψ
+            #   p = 1 -> sum of day_cycles * psi
             #   p > 1 → peak-biased accumulation
             contrib_p = self._psi_temp.x.array[:n_owned_psi] ** p
             self.psi.x.array[:n_owned_psi] += day_cycles * contrib_p
@@ -114,7 +136,7 @@ class GaitDriver:
             phase_times.append(float(case_elapsed))
 
 
-        # Finalize: take (.)^(1/p) after accumulation of Σ day_cycles * Ψ^p
+        # Finalize: take (.)^(1/p) after accumulation of sum(day_cycles * psi^p)
         owned = self.psi.x.array[:n_owned_psi]
         owned[:] = owned ** (1.0 / p)
 
@@ -129,12 +151,19 @@ class GaitDriver:
         }
 
     def stimulus_field(self) -> fem.Function:
-        """Return the averaged Ψ function (DG0 field)."""
+        """Return the averaged psi function (DG0 field)."""
         return self.psi
+
+    def save_case_snapshots(self, t: float) -> None:
+        """Write per-case psi fields to storage."""
+        if not self.storage:
+            return
+        if self.case_psi_functions:
+            self.storage.fields.write("psi_cases", t)
 
     def get_stimulus_stats(self) -> Dict[str, float]:
         """
-        Return global min/max/mean of Ψ across all MPI ranks.
+        Return global min/max/mean of psi across all MPI ranks.
         
         Returns:
             dict with psi_avg, psi_min, psi_max
@@ -147,7 +176,7 @@ class GaitDriver:
         }
 
     def _build_sed_expression(self) -> fem.Expression:
-        """Build UFL expression for $\Psi=\tfrac12\sigma:\varepsilon$ (clamped ≥ 0)."""
+        """Build UFL expression for psi = 0.5 * sigma : epsilon (clamped >= 0)."""
         u = self.mech.u
         rho = self.mech.rho
         
