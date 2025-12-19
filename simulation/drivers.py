@@ -41,11 +41,11 @@ class GaitDriver:
         self.rank = self.comm.rank
         self.logger = get_logger(self.comm, name="Driver", log_file=self.cfg.log_file)
 
-        # Stimulus field (DG0 - element-wise constant)
+        # Stimulus field (CG1 - nodal values)
         self.V_psi = fem.functionspace(mesh, ("DG", 0))
         self.psi = fem.Function(self.V_psi, name="psi")
         
-        # Temporary per-case SED (DG0)
+        # Temporary per-case SED (CG1)
         self._psi_temp = fem.Function(self.V_psi, name="psi_temp")
 
         # Pre-compile SED expression (reused every update)
@@ -106,7 +106,7 @@ class GaitDriver:
         return {}
 
     def stimulus_field(self) -> fem.Function:
-        """Return the averaged psi function (DG0 field)."""
+        """Return the averaged psi function (CG1 field)."""
         return self.psi
 
 
@@ -120,7 +120,7 @@ class GaitDriver:
 
         - Reassemble stiffness K(rho)
         - Solve each enabled loading case
-        - Update averaged psi (DG0)
+        - Update averaged psi (CG1)
         """
         self.assemble_lhs()
         self.update_snapshots()

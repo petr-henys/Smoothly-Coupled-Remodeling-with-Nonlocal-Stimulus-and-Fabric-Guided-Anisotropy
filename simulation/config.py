@@ -45,7 +45,7 @@ class Config:
     stimulus_power_p: float = 4.0  # Power-mean exponent (1=mean; higher→peak-biased)
     psi_ref: float = 0.009         # Reference SED [MPa] used via m_ref = psi_ref / rho_ref
     stimulus_tau: float = 0.0      # tau_S [days]; tau_S=0 gives quasi-static stimulus (no time derivative)
-    stimulus_D: float = 1e-3       # D_S [mm^2/day]; sets nonlocal length ~ sqrt(D_S * tau_S)
+    stimulus_D: float = 1.       # D_S [mm^2/day]; sets nonlocal length ~ sqrt(D_S * tau_S)
     stimulus_S_max: float = 1.0    # S_max (dimensionless): cap on |S|
     stimulus_kappa: float = 0.1    # kappa (dimensionless): saturation width in tanh(delta/kappa)
 

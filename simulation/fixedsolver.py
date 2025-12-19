@@ -213,7 +213,12 @@ class FixedPointSolver:
             self.subiter_metrics.append(rec)
 
             if progress is not None and task_id is not None:
-                progress.update(task_id, advance=1)
+                info_str = f"res={proj_res:.1e} m={rec['aa_hist']}"
+                if not rec["aa_accepted"]:
+                    info_str += " REJ"
+                if rec["aa_restart"]:
+                    info_str += " RST"
+                progress.update(task_id, advance=1, info=f"{info_str:<35}")
 
             if itr >= min_subiters and proj_res <= tol:
                 converged = True

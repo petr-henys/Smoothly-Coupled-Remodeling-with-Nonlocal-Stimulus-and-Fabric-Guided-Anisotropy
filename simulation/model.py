@@ -92,9 +92,9 @@ class Remodeller:
         )
 
         # 3. Stimulus field and solver (temporal filter, no spatial PDE)
-        # Use the same DG0 space as psi (cell-wise SED driver output).
-        self.S = fem.Function(self.driver.V_psi, name="S")
-        self.S_old = fem.Function(self.driver.V_psi, name="S_old")
+        # Use CG1 space (same as rho) for all scalar fields.
+        self.S = fem.Function(self.Q, name="S")
+        self.S_old = fem.Function(self.Q, name="S_old")
         assign(self.S, 0.0)
         assign(self.S_old, 0.0)
 
@@ -222,16 +222,11 @@ class Remodeller:
 
         return error_norm, {"converged": converged, "iters": used_subiters}
 
-    def simulate(self, dt_initial: float, total_time: float) -> None:
-        """Run remodeling loop.
-        
-        Args:
-            dt_initial: Initial timestep [days].
-            total_time: Total simulation time [days].
-        """
+    def simulate(self) -> None:
+        """Run remodeling loop using dt_initial and total_time from Config."""
         t = 0.0
-        dt = float(dt_initial)
-        total_time = float(total_time)
+        dt = float(self.cfg.dt_initial)
+        total_time = float(self.cfg.total_time)
         step_idx = 0
 
         self.comm.Barrier()
@@ -272,7 +267,6 @@ class Remodeller:
                 # Fixed time stepping - always accept, keep dt constant
                 accepted = True
                 next_dt = dt
-                reason = "fixed dt"
             
             if accepted:
                 self.integrator.commit_step(dt, self.state_fields, self.state_fields_old)
