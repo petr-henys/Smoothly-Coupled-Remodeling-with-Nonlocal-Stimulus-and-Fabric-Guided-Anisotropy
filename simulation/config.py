@@ -21,6 +21,23 @@ class Config:
     rho_trab_max: float = 1.0
     rho_cort_min: float = 1.25
     nu0: float = 0.3  # Poisson ratio
+    nu12: float | None = None
+    nu23: float | None = None
+    nu31: float | None = None
+
+    # Anisotropy / fabric mechanics
+    stiff_pE: float = 1.
+    stiff_pG: float = 1.
+
+    # Fabric evolution (log-fabric tensor L: CG1 tensor 3×3)
+    fabric_tau: float = 50.0
+    fabric_D: float = 1.0
+    fabric_cA: float = 1.0
+    fabric_gammaF: float = 1.0
+    fabric_epsQ: float = 1e-12
+    fabric_m_min: float = 0.2
+    fabric_m_max: float = 5.0
+    fabric_norm_mode: str = "trace"  # "trace" or "det"
 
     # Density [g/cm^3].
     rho_min: float = 0.1  # Lower bound
@@ -48,7 +65,7 @@ class Config:
     # Stimulus PDE (see StimulusSolver): dS/dt = D_S ΔS - (1/tau_S) S + (1/tau_S) S_max tanh(delta/kappa).
     # If tau_S == 0, we use the local quasi-static limit: S = S_max tanh(delta/kappa).
     stimulus_power_p: float = 4.0  # Power-mean exponent (1=mean; higher→peak-biased)
-    psi_ref: float = 0.025         # Reference SED [MPa] used via m_ref = psi_ref / rho_ref
+    psi_ref: float = 0.01         # Reference SED [MPa] used via m_ref = psi_ref / rho_ref
     stimulus_tau: float = 25.0      # tau_S [days]; tau_S=0 gives quasi-static stimulus (no time derivative)
     stimulus_D: float = 1.0         # D_S [mm^2/day]; nonlocal length ~ sqrt(D_S * tau_S)
     stimulus_S_max: float = 1.0     # S_max (dimensionless): cap on |S|
@@ -77,6 +94,7 @@ class Config:
     ksp_rtol: float = 1e-6
     ksp_atol: float = 1e-7
     ksp_max_it: int = 100
+    ksp_reuse_pc: bool = True
 
     # Fixed-point iteration (Anderson/Picard)
     accel_type: str = "anderson"
@@ -107,6 +125,14 @@ class Config:
     def __post_init__(self):
         if self.domain is None:
             raise ValueError("Config requires a valid 'domain' (dolfinx.mesh.Mesh).")
+
+        # Defaults for orthotropic Poisson ratios
+        if self.nu12 is None:
+            self.nu12 = float(self.nu0)
+        if self.nu23 is None:
+            self.nu23 = float(self.nu0)
+        if self.nu31 is None:
+            self.nu31 = float(self.nu0)
         
         # Resolve log_file relative to results_dir.
         self.log_file = str(Path(self.results_dir) / self.log_file)
@@ -157,7 +183,34 @@ class Config:
             raise ValueError("Young's modulus E0 must be positive.")
         if not (-1.0 < self.nu0 < 0.5):
             raise ValueError("Poisson ratio nu0 must be in range (-1, 0.5).")
-        
+        for name in ("nu12", "nu23", "nu31"):
+            nu = getattr(self, name)
+            if nu is None:
+                continue
+            if not (-1.0 < float(nu) < 0.5):
+                raise ValueError(f"{name} must be in range (-1, 0.5).")
+
+        if self.stiff_pE < 0 or self.stiff_pG < 0:
+            raise ValueError("stiff_pE and stiff_pG must be >= 0.")
+
+        # Fabric (L)
+        if self.fabric_tau <= 0:
+            raise ValueError("fabric_tau must be > 0.")
+        if self.fabric_D < 0:
+            raise ValueError("fabric_D must be >= 0.")
+        if self.fabric_cA <= 0:
+            raise ValueError("fabric_cA must be > 0.")
+        if self.fabric_gammaF <= 0:
+            raise ValueError("fabric_gammaF must be > 0.")
+        if self.fabric_epsQ <= 0:
+            raise ValueError("fabric_epsQ must be > 0.")
+        if self.fabric_m_min <= 0:
+            raise ValueError("fabric_m_min must be > 0.")
+        if self.fabric_m_max <= self.fabric_m_min:
+            raise ValueError("fabric_m_max must be > fabric_m_min.")
+        if self.fabric_norm_mode not in ("trace", "det"):
+            raise ValueError("fabric_norm_mode must be 'trace' or 'det'.")
+
         # Solver
         if self.accel_type not in ("anderson", "picard"):
             raise ValueError("accel_type must be 'anderson' or 'picard'.")

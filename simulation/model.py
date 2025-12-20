@@ -20,7 +20,7 @@ from simulation.storage import UnifiedStorage
 from simulation.logger import get_logger
 from simulation.utils import build_dirichlet_bcs, assign
 from simulation.config import Config
-from simulation.subsolvers import MechanicsSolver, StimulusSolver, DensitySolver
+from simulation.subsolvers import MechanicsSolver, FabricSolver, StimulusSolver, DensitySolver
 from simulation.fixedsolver import FixedPointSolver
 from simulation.drivers import GaitDriver
 from simulation.timeintegrator import TimeIntegrator
@@ -60,20 +60,29 @@ class Remodeller:
 
         P1_vec = basix.ufl.element("Lagrange", self.domain.basix_cell(), 1, shape=(self.gdim,))
         P1 = basix.ufl.element("Lagrange", self.domain.basix_cell(), 1)
+        P1_ten = basix.ufl.element("Lagrange", self.domain.basix_cell(), 1, shape=(self.gdim, self.gdim))
 
         self.V = functionspace(self.domain, P1_vec)
         self.Q = functionspace(self.domain, P1)
+        self.T = functionspace(self.domain, P1_ten)
 
         # Total DOFs
         dofs_V = self.V.dofmap.index_map.size_global * self.V.dofmap.index_map_bs
         dofs_Q = self.Q.dofmap.index_map.size_global * self.Q.dofmap.index_map_bs
-        self.num_dofs_total = int(dofs_V + dofs_Q)
+        dofs_T = self.T.dofmap.index_map.size_global * self.T.dofmap.index_map_bs
+        self.num_dofs_total = int(dofs_V + dofs_Q + dofs_T)
 
         u = Function(self.V, name="u")
         self.rho = Function(self.Q, name="rho")
         self.rho_old = Function(self.Q, name="rho_old")
 
         assign(self.rho, self.cfg.rho0)
+
+        # Log-fabric tensor state (CG1 tensor 3×3).
+        self.L = Function(self.T, name="L")
+        self.L_old = Function(self.T, name="L_old")
+        assign(self.L, 0.0)
+        assign(self.L_old, 0.0)
 
         # Dirichlet BC: clamp cut surface (u=0)
         bc_mech = build_dirichlet_bcs(self.V, self.cfg.facet_tags, id_tag=1, value=0.0)
@@ -82,7 +91,7 @@ class Remodeller:
         neumann_bcs = [(self.loader.traction, self.loader.load_tag)]
 
         # 1. Mechanics Solver
-        mechsolver = MechanicsSolver(u, self.rho, self.cfg, bc_mech, neumann_bcs)
+        mechsolver = MechanicsSolver(u, self.rho, self.cfg, bc_mech, neumann_bcs, L=self.L)
 
         # 2. Driver with loading cases
         self.driver = GaitDriver(
@@ -91,7 +100,15 @@ class Remodeller:
             loading_cases=self.loading_cases,
         )
 
-        # 3. Stimulus field and solver (implicit Euler diffusion/decay + explicit drive).
+        # 3. Fabric solver (implicit Euler reaction–diffusion) targeting L_target(Qbar).
+        self.fabricsolver = FabricSolver(
+            self.L,
+            self.L_old,
+            self.driver.Qbar_field(),
+            self.cfg,
+        )
+
+        # 4. Stimulus field and solver (implicit Euler diffusion/decay + explicit drive).
         self.S = fem.Function(self.Q, name="S")
         self.S_old = fem.Function(self.Q, name="S_old")
         assign(self.S, 0.0)
@@ -100,7 +117,7 @@ class Remodeller:
         # Register all fields for output in a single VTX file
         self.storage.fields.register(
             "fields",
-            [self.rho, self.S, self.driver.psi],
+            [self.rho, self.S, self.driver.psi, self.driver.Qbar, self.L],
             filename="fields.bp",
         )
 
@@ -112,29 +129,32 @@ class Remodeller:
             self.cfg,
         )
 
-        # 4. Density Solver
+        # 5. Density Solver
         self.densolver = DensitySolver(
             self.rho, 
             self.rho_old, 
             self.S,
-            self.cfg
+            self.cfg,
         )
         self.fixedsolver = FixedPointSolver(
             self.comm,
             self.cfg,
-            # Only (S, rho) are in the coupled state vector (see each block's `state_fields`):
-            # - driver: updates quasi-static mechanics and recomputes psi, but contributes no state fields
+            # (L, S, rho) are in the coupled state vector (see each block's `state_fields`):
+            # - driver: updates quasi-static mechanics and recomputes psi/Qbar, but contributes no state fields
+            # - fabricsolver: updates L
             # - stimsolver: updates S
             # - densolver: updates rho
-            blocks=(self.driver, self.stimsolver, self.densolver),
+            blocks=(self.driver, self.fabricsolver, self.stimsolver, self.densolver),
         )
 
-        # State fields for time integration (S, rho) with their old-step counterparts.
+        # State fields for time integration (L, S, rho) with their old-step counterparts.
         self.state_fields = {
+            "L": self.L,
             "S": self.S,
             "rho": self.rho,
         }
         self.state_fields_old = {
+            "L": self.L_old,
             "S": self.S_old,
             "rho": self.rho_old,
         }
@@ -184,7 +204,7 @@ class Remodeller:
         if hasattr(self, "driver") and self.driver is not None:
             self.driver.destroy()
 
-        for attr in ("stimsolver", "densolver"):
+        for attr in ("fabricsolver", "stimsolver", "densolver"):
             solver = getattr(self, attr, None)
             if solver is not None:
                 solver.destroy()

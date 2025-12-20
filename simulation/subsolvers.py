@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, List, Tuple
 
+import numpy as np
 from petsc4py import PETSc
 from dolfinx import fem
 from dolfinx.fem.petsc import (
@@ -21,6 +22,89 @@ from simulation.logger import get_logger
 
 if TYPE_CHECKING:
     from simulation.config import Config
+
+
+def clamp(x, a, b):
+    return ufl.conditional(ufl.lt(x, a), a, ufl.conditional(ufl.gt(x, b), b, x))
+
+
+def symm(X):
+    return 0.5 * (X + ufl.transpose(X))
+
+
+def invariants(X):
+    Xs = symm(X)
+    I1 = ufl.tr(Xs)
+    I2 = 0.5 * (I1 * I1 - ufl.tr(ufl.dot(Xs, Xs)))
+    I3 = ufl.det(Xs)
+    return I1, I2, I3
+
+
+def eigenvalues_sym3(X, *, eps_p: float = 1e-18, eps_r: float = 1e-12, tol: float = 1e-14):
+    """Eigenvalues of a symmetric 3×3 tensor via invariant formula (robust, no eigenvectors)."""
+    Xs = symm(X)
+    I = ufl.Identity(3)
+
+    q = ufl.tr(Xs) / 3.0
+    B = Xs - q * I
+
+    p2 = ufl.tr(ufl.dot(B, B)) / 6.0
+    iso = ufl.lt(p2, tol)
+
+    p = ufl.sqrt(ufl.max_value(p2, eps_p))
+    r = ufl.det(B) / (2.0 * p * p * p)
+    r_clamped = clamp(r, -1.0 + eps_r, 1.0 - eps_r)
+
+    phi = ufl.acos(r_clamped) / 3.0
+    two_pi_over_3 = 2.0 * ufl.pi / 3.0
+
+    l1_raw = q + 2.0 * p * ufl.cos(phi)
+    l2_raw = q + 2.0 * p * ufl.cos(phi + two_pi_over_3)
+    l3_raw = q + 2.0 * p * ufl.cos(phi + 2.0 * two_pi_over_3)
+
+    l1 = ufl.conditional(iso, q, l1_raw)
+    l2 = ufl.conditional(iso, q, l2_raw)
+    l3 = ufl.conditional(iso, q, l3_raw)
+    return l1, l2, l3
+
+
+def projectors_sylvester(X, l1, l2, l3, *, eps_d: float = 1e-12, tol: float = 1e-14):
+    """Spectral projectors for a symmetric 3×3 tensor using Sylvester formula (robust denominators)."""
+    Xs = symm(X)
+    I = ufl.Identity(3)
+
+    q = ufl.tr(Xs) / 3.0
+    B = Xs - q * I
+    p2 = ufl.tr(ufl.dot(B, B)) / 6.0
+    iso = ufl.lt(p2, tol)
+
+    def _sign(a):
+        return ufl.conditional(ufl.ge(a, 0.0), 1.0, -1.0)
+
+    def _safe_denom(a):
+        abs_a = ufl.sqrt(a * a)
+        return _sign(a) * ufl.max_value(abs_a, eps_d)
+
+    def _cond_tensor(A_true, A_false):
+        return ufl.as_tensor([[ufl.conditional(iso, A_true[i, j], A_false[i, j]) for j in range(3)] for i in range(3)])
+
+    X_l2 = Xs - l2 * I
+    X_l3 = Xs - l3 * I
+    X_l1 = Xs - l1 * I
+
+    P1_raw = ufl.dot(X_l2, X_l3) / _safe_denom((l1 - l2) * (l1 - l3))
+    P2_raw = ufl.dot(X_l1, X_l3) / _safe_denom((l2 - l1) * (l2 - l3))
+    P3_raw = ufl.dot(X_l1, X_l2) / _safe_denom((l3 - l1) * (l3 - l2))
+
+    P1_raw = symm(P1_raw)
+    P2_raw = symm(P2_raw)
+    P3_raw = symm(P3_raw)
+
+    I3 = I / 3.0
+    P1 = _cond_tensor(I3, P1_raw)
+    P2 = _cond_tensor(I3, P2_raw)
+    P3 = _cond_tensor(I3, P3_raw)
+    return P1, P2, P3
 
 
 class _BaseLinearSolver:
@@ -115,6 +199,8 @@ class _BaseLinearSolver:
         opts[f"{prefix}_ksp_max_it"] = self.cfg.ksp_max_it
 
         self.ksp.setInitialGuessNonzero(True)
+        if hasattr(self.ksp, "setReusePreconditioner"):
+            self.ksp.setReusePreconditioner(bool(getattr(self.cfg, "ksp_reuse_pc", False)))
         if self.A is not None:
             self.ksp.setOperators(self.A)
         self.ksp.setFromOptions()
@@ -132,14 +218,16 @@ class MechanicsSolver(_BaseLinearSolver):
         config: "Config",
         dirichlet_bcs: List[fem.DirichletBC],
         neumann_bcs: List[Tuple[fem.Function, int]],
+        L: fem.Function | None = None,
     ):
         super().__init__(config, u, dirichlet_bcs, neumann_bcs)
         self.u = self.state
         self.rho = rho
+        self.L = L
         self._nullspace = None
 
     def _compile_forms(self):
-        a_ufl = ufl.inner(self.sigma(self.trial, self.rho), self.eps(self.test)) * self.dx
+        a_ufl = ufl.inner(self.sigma(self.trial, self.rho, self.L), self.eps(self.test)) * self.dx
         self.a_form = fem.form(a_ufl)
 
         zero_vec = fem.Constant(self.mesh, (0.0,) * self.gdim)
@@ -156,6 +244,8 @@ class MechanicsSolver(_BaseLinearSolver):
 
     def assemble_lhs(self) -> None:
         self.rho.x.scatter_forward()
+        if isinstance(self.L, fem.Function):
+            self.L.x.scatter_forward()
         super().assemble_lhs()
 
     def _setup_ksp(self):
@@ -171,7 +261,7 @@ class MechanicsSolver(_BaseLinearSolver):
     def eps(u):
         return ufl.sym(ufl.grad(u))
 
-    def sigma(self, u, rho):
+    def _E_iso(self, rho):
         rho_eff = smooth_max(rho, self.cfg.rho_min, self.smooth_eps)
         rho_rel = rho_eff / self.cfg.rho_ref
 
@@ -180,11 +270,89 @@ class MechanicsSolver(_BaseLinearSolver):
         w = smoothstep01(t)
         k = self.cfg.n_trab * (1.0 - w) + self.cfg.n_cort * w
 
-        E = self.cfg.E0 * (rho_rel ** k)
-        nu = self.cfg.nu0
-        mu = E / (2.0 * (1.0 + nu))
-        lmbda = E * nu / ((1.0 + nu) * (1.0 - 2.0 * nu))
-        return 2.0 * mu * self.eps(u) + lmbda * ufl.tr(self.eps(u)) * ufl.Identity(self.gdim)
+        return self.cfg.E0 * (rho_rel ** k)
+
+    def sigma(self, u, rho, L: fem.Function | None = None):
+        eps = self.eps(u)
+
+        E_iso = self._E_iso(rho)
+        nu0 = float(self.cfg.nu0)
+        mu_iso = E_iso / (2.0 * (1.0 + nu0))
+        lmbda_iso = E_iso * nu0 / ((1.0 + nu0) * (1.0 - 2.0 * nu0))
+        sigma_iso = 2.0 * mu_iso * eps + lmbda_iso * ufl.tr(eps) * ufl.Identity(self.gdim)
+
+        if L is None:
+            return sigma_iso
+
+        if self.gdim != 3:
+            raise ValueError("Anisotropic MechanicsSolver currently requires gdim==3.")
+
+        Ls = symm(L)
+        l1, l2, l3 = eigenvalues_sym3(Ls)
+        P1, P2, P3 = projectors_sylvester(Ls, l1, l2, l3)
+
+        mean_l = (l1 + l2 + l3) / 3.0
+        a1_hat = ufl.exp(l1 - mean_l)
+        a2_hat = ufl.exp(l2 - mean_l)
+        a3_hat = ufl.exp(l3 - mean_l)
+
+        pE = float(getattr(self.cfg, "stiff_pE", 0.0))
+        pG = float(getattr(self.cfg, "stiff_pG", 0.0))
+
+        E1 = E_iso * (a1_hat**pE)
+        E2 = E_iso * (a2_hat**pE)
+        E3 = E_iso * (a3_hat**pE)
+
+        G_iso = E_iso / (2.0 * (1.0 + nu0))
+        G12 = G_iso * ((a1_hat * a2_hat) ** (0.5 * pG))
+        G23 = G_iso * ((a2_hat * a3_hat) ** (0.5 * pG))
+        G31 = G_iso * ((a3_hat * a1_hat) ** (0.5 * pG))
+
+        nu12_v = getattr(self.cfg, "nu12", None)
+        nu23_v = getattr(self.cfg, "nu23", None)
+        nu31_v = getattr(self.cfg, "nu31", None)
+        nu12 = nu0 if nu12_v is None else float(nu12_v)
+        nu23 = nu0 if nu23_v is None else float(nu23_v)
+        nu31 = nu0 if nu31_v is None else float(nu31_v)
+
+        nu21 = nu12 * E2 / E1
+        nu32 = nu23 * E3 / E2
+        nu13 = nu31 * E1 / E3
+
+        Sn = ufl.as_matrix(
+            [
+                [1.0 / E1, -nu21 / E2, -nu31 / E3],
+                [-nu12 / E1, 1.0 / E2, -nu32 / E3],
+                [-nu13 / E1, -nu23 / E2, 1.0 / E3],
+            ]
+        )
+        Cn = ufl.inv(Sn)
+
+        e1 = ufl.inner(P1, eps)
+        e2 = ufl.inner(P2, eps)
+        e3 = ufl.inner(P3, eps)
+        e = ufl.as_vector([e1, e2, e3])
+        s = ufl.dot(Cn, e)
+
+        sigma_normal = s[0] * P1 + s[1] * P2 + s[2] * P3
+
+        def _P_eps_P(A, B):
+            return ufl.dot(A, ufl.dot(eps, B))
+
+        sigma_shear = (
+            2.0 * G12 * (_P_eps_P(P1, P2) + _P_eps_P(P2, P1))
+            + 2.0 * G23 * (_P_eps_P(P2, P3) + _P_eps_P(P3, P2))
+            + 2.0 * G31 * (_P_eps_P(P3, P1) + _P_eps_P(P1, P3))
+        )
+
+        sigma_aniso = sigma_normal + sigma_shear
+
+        # Robust isotropic fallback when L is nearly spherical (avoid 0/0 in projectors).
+        q = ufl.tr(Ls) / 3.0
+        B = Ls - q * ufl.Identity(3)
+        p2 = ufl.tr(ufl.dot(B, B)) / 6.0
+        iso_L = ufl.lt(p2, 1e-14)
+        return ufl.as_tensor([[ufl.conditional(iso_L, sigma_iso[i, j], sigma_aniso[i, j]) for j in range(3)] for i in range(3)])
 
     def assemble_rhs(self):
         with self.b.localForm() as b_loc:
@@ -209,6 +377,137 @@ class MechanicsSolver(_BaseLinearSolver):
         reason = self._solve()
         self._maybe_warn(reason, "Mechanics")
         return {"label": "mech", "reason": int(reason)}
+
+
+class FabricSolver(_BaseLinearSolver):
+    """Log-fabric evolution: implicit Euler reaction–diffusion towards L_target(Qbar)."""
+
+    def __init__(
+        self,
+        L: fem.Function,
+        L_old: fem.Function,
+        Qbar: fem.Function,
+        config: "Config",
+    ):
+        super().__init__(config, L, [], [])
+        self.L = self.state
+        self.L_old = L_old
+        self.Qbar = Qbar
+
+        self.logger = get_logger(self.comm, name="Fabric", log_file=self.cfg.log_file)
+
+        self.dt_c = fem.Constant(self.mesh, float(self.cfg.dt))
+        self.cA_c = fem.Constant(self.mesh, float(getattr(self.cfg, "fabric_cA", 1.0)))
+        self.tau_c = fem.Constant(self.mesh, float(getattr(self.cfg, "fabric_tau", 1.0)))
+        self.D_c = fem.Constant(self.mesh, float(getattr(self.cfg, "fabric_D", 0.0)))
+
+        self._use_diffusion = float(self.D_c.value) > 0.0
+
+    def _compile_forms(self):
+        dt = self.dt_c
+        cA = self.cA_c
+        tau = self.tau_c
+        D = self.D_c
+
+        L_trial = ufl.TrialFunction(self.function_space)
+        T = ufl.TestFunction(self.function_space)
+
+        alpha = cA / dt
+        beta = cA / tau
+
+        a_ufl = (alpha + beta) * ufl.inner(L_trial, T) * self.dx
+        if self._use_diffusion:
+            a_ufl += (cA * D) * ufl.inner(ufl.grad(L_trial), ufl.grad(T)) * self.dx
+        self.a_form = fem.form(a_ufl)
+
+        L_target = self._L_target_from_Qbar()
+        rhs_ufl = (alpha * ufl.inner(self.L_old, T) + beta * ufl.inner(L_target, T)) * self.dx
+        self.L_form = fem.form(rhs_ufl)
+
+    def _L_target_from_Qbar(self):
+        gdim = self.mesh.geometry.dim
+        if gdim != 3:
+            raise ValueError("FabricSolver currently requires gdim==3.")
+
+        epsQ = float(getattr(self.cfg, "fabric_epsQ", 1e-12))
+        gammaF = float(getattr(self.cfg, "fabric_gammaF", 1.0))
+        m_min = float(getattr(self.cfg, "fabric_m_min", 0.2))
+        m_max = float(getattr(self.cfg, "fabric_m_max", 5.0))
+        norm_mode = str(getattr(self.cfg, "fabric_norm_mode", "trace"))
+
+        I = ufl.Identity(3)
+        Q = symm(self.Qbar) + epsQ * I
+
+        lam1, lam2, lam3 = eigenvalues_sym3(Q)
+        P1, P2, P3 = projectors_sylvester(Q, lam1, lam2, lam3)
+
+        prod = ufl.max_value(lam1 * lam2 * lam3, 1e-30)
+        geo = ufl.exp((1.0 / 3.0) * ufl.ln(prod))
+
+        a1 = lam1 / geo
+        a2 = lam2 / geo
+        a3 = lam3 / geo
+
+        m1 = clamp(a1**gammaF, m_min, m_max)
+        m2 = clamp(a2**gammaF, m_min, m_max)
+        m3 = clamp(a3**gammaF, m_min, m_max)
+
+        if norm_mode == "det":
+            mprod = ufl.max_value(m1 * m2 * m3, 1e-30)
+            s = ufl.exp((1.0 / 3.0) * ufl.ln(mprod))
+        else:
+            s = (m1 + m2 + m3) / 3.0
+
+        m1n = m1 / s
+        m2n = m2 / s
+        m3n = m3 / s
+
+        L_target = ufl.ln(m1n) * P1 + ufl.ln(m2n) * P2 + ufl.ln(m3n) * P3
+        return symm(L_target)
+
+    def _setup_ksp(self):
+        self.A.setOption(PETSc.Mat.Option.SPD, True)
+        ksp_options = {"ksp_type": self.cfg.ksp_type, "pc_type": self.cfg.pc_type}
+        self.create_ksp(prefix="fabric", ksp_options=ksp_options)
+
+    def assemble_lhs(self) -> None:
+        self.dt_c.value = float(self.cfg.dt)
+        super().assemble_lhs()
+
+    def assemble_rhs(self):
+        self.L_old.x.scatter_forward()
+        with self.b.localForm() as b_local:
+            b_local.set(0.0)
+        assemble_vector(self.b, self.L_form)
+        self.b.ghostUpdate(PETSc.InsertMode.ADD, PETSc.ScatterMode.REVERSE)
+        self.b.ghostUpdate(PETSc.InsertMode.INSERT, PETSc.ScatterMode.FORWARD)
+
+    def _symmetrize_L(self) -> None:
+        bs = int(self.function_space.dofmap.index_map_bs)
+        n_owned = int(self.function_space.dofmap.index_map.size_local * bs)
+        if n_owned <= 0:
+            return
+        gdim = self.mesh.geometry.dim
+        A = self.L.x.array[:n_owned].reshape(-1, gdim, gdim)
+        A[:] = 0.5 * (A + np.swapaxes(A, 1, 2))
+        self.L.x.scatter_forward()
+
+    @property
+    def state_fields(self):
+        return (self.L,)
+
+    def solve(self) -> int:
+        if float(self.dt_c.value) != float(self.cfg.dt):
+            self.assemble_lhs()
+        self.assemble_rhs()
+        reason = self._solve()
+        self._symmetrize_L()
+        self._maybe_warn(reason, "Fabric")
+        return int(reason)
+
+    def sweep(self):
+        reason = self.solve()
+        return {"label": "fab", "reason": int(reason)}
 
 
 class StimulusSolver(_BaseLinearSolver):
