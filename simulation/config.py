@@ -51,7 +51,7 @@ class Config:
 
 
     # Time stepping
-    total_time: float = 500.0    # Total time [days]
+    total_time: float = 500.0     # Total time [days]
     dt_initial: float = 25.0      # Initial timestep [days]
     adaptive_dt: bool = False     # Enable adaptive time stepping
     adaptive_rtol: float = 1e-2   # Relative error tolerance
