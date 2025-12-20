@@ -130,18 +130,67 @@ class Loader:
         self._hip_loader = HIPJointLoad(self._femur_mesh, self._css, use_cell_data=False)
     
     def _init_interpolation_cache(self) -> None:
-        """Cache owned DOF coordinates and Gatherv/Scatterv layout."""
+        """Cache owned DOF coordinates and Gatherv/Scatterv layout.
+
+        For efficiency and robustness, we evaluate tractions only at DOFs that live on
+        facets marked with `self.load_tag` (typically the proximal surface).
+
+        DOLFINx has historically differed in whether `tabulate_dof_coordinates()` returns
+        coordinates per *block* DOF (one row per node) or per *scalar* DOF (duplicated
+        per component). We detect the layout and cache one coordinate per *block* DOF.
+        """
         V = self.traction.function_space
         imap = V.dofmap.index_map
-        self._n_owned = imap.size_local
-        
-        all_coords = V.tabulate_dof_coordinates()
-        self._x_owned = np.ascontiguousarray(all_coords[:self._n_owned])
-        
+        bs = int(V.dofmap.index_map_bs)
+        n_blocks_total = int(imap.size_local + imap.num_ghosts)
+
+        # --- 1) Find DOFs on the loaded facets and map them to unique block indices
+        tdim = self.mesh.topology.dim
+        fdim = tdim - 1
+        facets = self.facet_tags.find(self.load_tag)
+
+        if facets.size == 0:
+            dofs = np.empty(0, dtype=np.int32)
+        else:
+            dofs = fem.locate_dofs_topological(V, fdim, facets)
+
+        if dofs.size == 0:
+            block_ids = np.empty(0, dtype=np.int32)
+        else:
+            # If DOF indices range beyond the number of blocks, they are scalar indices.
+            if bs > 1 and int(dofs.max()) >= n_blocks_total:
+                block_ids = np.unique(dofs // bs).astype(np.int32, copy=False)
+            else:
+                block_ids = np.unique(dofs).astype(np.int32, copy=False)
+
+        # Keep only owned (non-ghost) blocks; we will populate ghosts via scatter.
+        self._owned_blocks = np.ascontiguousarray(block_ids[block_ids < imap.size_local], dtype=np.int32)
+        self._n_owned = int(self._owned_blocks.size)
+
+        # --- 2) Cache coordinates for owned blocks
+        coords = V.tabulate_dof_coordinates()
+        n_coords = int(coords.shape[0])
+
+        if n_coords == n_blocks_total:
+            # One coordinate per block DOF
+            block_coords = coords
+        elif bs > 1 and n_coords == n_blocks_total * bs:
+            # One coordinate per scalar DOF (duplicated per component); take first in each block
+            block_coords = coords[::bs]
+        else:
+            # Fallback: try a conservative stride interpretation, else assume block layout
+            if bs > 1 and n_coords % n_blocks_total == 0 and (n_coords // n_blocks_total) == bs:
+                block_coords = coords[::bs]
+            else:
+                block_coords = coords[:n_blocks_total]
+
+        self._x_owned = np.ascontiguousarray(block_coords[self._owned_blocks])
+
+        # --- 3) MPI gather/scatter layout in "number of points" (NOT multiplied by gdim here)
         all_n = self.comm.allgather(self._n_owned)
         self._mpi_counts = all_n
         self._mpi_displs = [sum(all_n[:i]) for i in range(len(all_n))]
-    
+
     def precompute_loading_cases(self, cases: List[LoadingCase]) -> None:
         """Precompute and cache tractions for all `cases` (collective)."""
         for case in cases:
@@ -215,28 +264,56 @@ class Loader:
         return self._muscle_loaders[name]
     
     def _interpolate_and_add(self, loader_obj) -> None:
-        """Gather coords → rank-0 evaluate → scatter → add into traction field."""
+        """Gather coords → rank-0 evaluate → scatter → add into traction field.
+
+        We evaluate only at DOFs that live on facets marked with `self.load_tag`.
+        """
         counts = self._mpi_counts
         displs = self._mpi_displs
-        
+
+        gdim = int(self.gdim)
+        V = self.traction.function_space
+        bs = int(V.dofmap.index_map_bs)
+        if bs != gdim:
+            raise RuntimeError(f"Traction space block size (bs={bs}) must match gdim={gdim}.")
+
+        # --- Gather coordinates, evaluate on rank 0, scatter back values
         if self.rank == 0:
-            total_n = sum(counts)
-            recv_coords = np.empty((total_n, 3), dtype=np.float64)
+            total_n = int(sum(counts))
+            recv_coords = np.empty((total_n, gdim), dtype=np.float64)
+
             self.comm.Gatherv(
                 self._x_owned,
-                [recv_coords, [n * 3 for n in counts], [d * 3 for d in displs], MPI.DOUBLE],
-                root=0
+                [recv_coords, [n * gdim for n in counts], [d * gdim for d in displs], MPI.DOUBLE],
+                root=0,
             )
-            computed_values = loader_obj(recv_coords)
-            local_values = np.empty((self._n_owned, 3), dtype=np.float64)
+
+            computed_values = loader_obj(recv_coords) if loader_obj is not None else np.zeros((total_n, gdim), dtype=np.float64)
+
+            computed_values = np.asarray(computed_values, dtype=np.float64)
+            if computed_values.shape != (total_n, gdim):
+                raise ValueError(
+                    f"Loader returned array of shape {computed_values.shape}, expected {(total_n, gdim)}."
+                )
+            if not np.isfinite(computed_values).all():
+                bad = np.where(~np.isfinite(computed_values))
+                raise ValueError(f"Loader produced non-finite traction values at indices {bad}.")
+
+            local_values = np.empty((self._n_owned, gdim), dtype=np.float64)
             self.comm.Scatterv(
-                [computed_values, [n * 3 for n in counts], [d * 3 for d in displs], MPI.DOUBLE],
+                [computed_values, [n * gdim for n in counts], [d * gdim for d in displs], MPI.DOUBLE],
                 local_values,
-                root=0
+                root=0,
             )
         else:
             self.comm.Gatherv(self._x_owned, None, root=0)
-            local_values = np.empty((self._n_owned, 3), dtype=np.float64)
+            local_values = np.empty((self._n_owned, gdim), dtype=np.float64)
             self.comm.Scatterv(None, local_values, root=0)
-        
-        self.traction.x.array[:self._n_owned * 3] += local_values.flatten()
+
+        # --- Add into the traction field (owned scalar DOFs only); ghosts handled by scatter_forward
+        if self._n_owned > 0:
+            blocks = self._owned_blocks
+            # scalar dof indices for these blocks (flattened)
+            dof_idx = (blocks[:, None] * bs + np.arange(bs, dtype=np.int32)[None, :]).ravel()
+            self.traction.x.array[dof_idx] += local_values[:, :bs].ravel()
+
