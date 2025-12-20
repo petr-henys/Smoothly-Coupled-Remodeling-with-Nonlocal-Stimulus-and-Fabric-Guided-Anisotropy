@@ -83,7 +83,7 @@ class FixedPointSolver:
                 beta=float(self.cfg.beta),
                 lam=float(self.cfg.lam),
                 gamma=float(self.cfg.gamma),
-                safeguard=True,
+                safeguard=bool(self.cfg.safeguard),
                 backtrack_max=int(self.cfg.backtrack_max),
                 restart_on_reject_k=int(self.cfg.restart_on_reject_k),
                 restart_on_stall=float(self.cfg.restart_on_stall),
@@ -184,18 +184,26 @@ class FixedPointSolver:
             x_old_s = self._pack_scaled(x_old)
             x_raw_s = self._pack_scaled(x_raw)
 
+            # Picard residual: ||x_raw - x_old|| / ||x_raw|| (scaled global L2)
+            picard_res = self._proj_step(x_old_s, x_raw_s, x_raw_s)
+
             if self.anderson is not None:
                 x_new_s, aa = self.anderson.mix(x_old_s, x_raw_s)
             else:
-                x_new_s, aa = x_raw_s, {"aa_hist": 0, "accepted": True, "backtracks": 0, "restart_reason": ""}
+                beta = float(self.cfg.beta)
+                x_new_s = x_old_s + beta * (x_raw_s - x_old_s)
+                aa = {"aa_hist": 0, "accepted": True, "backtracks": 0, "restart_reason": ""}
 
-            proj_res = self._proj_step(x_old_s, x_new_s, x_raw_s)
+            aa_step_res = self._proj_step(x_old_s, x_new_s, x_raw_s)
 
             self._unpack_scaled_into_fields(x_new_s)
 
             rec = {
                 "iter": int(itr),
-                "proj_res": float(proj_res),
+                # Keep `proj_res` as the convergence residual used for stopping/postprocessing.
+                "proj_res": float(picard_res),
+                "picard_res": float(picard_res),
+                "aa_step_res": float(aa_step_res),
                 "aa_hist": int(aa.get("aa_hist", 0)),
                 "aa_accepted": bool(aa.get("accepted", True)),
                 "aa_backtracks": int(aa.get("backtracks", 0)),
@@ -204,14 +212,14 @@ class FixedPointSolver:
             self.subiter_metrics.append(rec)
 
             if progress is not None and task_id is not None:
-                info_str = f"res={proj_res:.1e} m={rec['aa_hist']}"
+                info_str = f"res={picard_res:.1e} m={rec['aa_hist']}"
                 if not rec["aa_accepted"]:
                     info_str += " REJ"
                 if rec["aa_restart"]:
                     info_str += " RST"
                 progress.update(task_id, advance=1, info=f"{info_str:<35}")
 
-            if itr >= min_subiters and proj_res <= tol:
+            if itr >= min_subiters and picard_res <= tol:
                 converged = True
                 break
 

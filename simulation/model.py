@@ -236,6 +236,8 @@ class Remodeller:
                 TextColumn,
                 BarColumn,
                 SpinnerColumn,
+                TimeRemainingColumn,
+                TimeElapsedColumn,
             )
             from rich.console import Console
 
@@ -245,6 +247,8 @@ class Remodeller:
                 TextColumn("[progress.description]{task.description}"),
                 BarColumn(bar_width=60),
                 TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                TimeElapsedColumn(),
+                TimeRemainingColumn(compact=True),
                 TextColumn("{task.fields[info]}"),
                 console=console,
                 transient=False,

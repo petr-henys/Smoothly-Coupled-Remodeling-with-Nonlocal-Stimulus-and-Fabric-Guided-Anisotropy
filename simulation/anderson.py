@@ -79,13 +79,16 @@ class Anderson:
         return float(self.comm.allreduce(float(np.dot(a, b)), op=MPI.SUM))
 
     def _rel_step(self, x_old: np.ndarray, x_trial: np.ndarray, x_ref: np.ndarray) -> float:
-        """Relative step: ||x_trial-x_old|| / ||x_ref|| in global L2."""
-        d = x_trial - x_old
-        d2 = self._gdot(d, d)
-        r2 = self._gdot(x_ref, x_ref)
-        if r2 <= self._tiny:
-            return float(np.sqrt(d2))
-        return float(np.sqrt(d2 / r2))
+            """Relative step: ||x_trial-x_old|| / (||x_ref|| + eps) globally."""
+            d = x_trial - x_old
+            d2 = self._gdot(d, d)
+            r2 = self._gdot(x_ref, x_ref)
+            
+            # Ochrana proti dělení nulou u vyhasínajících polí
+            # epsilon 1e-10 je dostatečně malé pro přesnost, ale brání explozi chyby
+            epsilon = 1e-20 
+            
+            return float(np.sqrt(d2 / (r2 + epsilon)))
 
     def _build_gram(self, r_list: Sequence[np.ndarray]) -> np.ndarray:
         if len(r_list) == 0:
@@ -152,6 +155,28 @@ class Anderson:
 
         alpha = self._solve_kkt(H, lam_eff)
 
+        # Current residual (Picard step) norm and Gram-matrix residual proxies.
+        r_norm = self._rel_step(x_old, x_raw, x_raw)
+        r2_curr = float(H[-1, -1]) if p > 0 else 0.0
+        r2_pred = float(alpha @ H @ alpha) if p > 0 else 0.0
+
+        # Safeguard (residual-based): accept acceleration only if predicted residual
+        # is sufficiently smaller than the current residual.
+        info["r_norm"] = float(r_norm)
+        info["condH"] = float(self._cond_number(H, lam_eff))
+        info["r2_curr"] = float(r2_curr)
+        info["r2_pred"] = float(r2_pred)
+        self.best_picard = min(self.best_picard, float(r_norm))
+
+        if self.safeguard and p >= 2 and r2_curr > self._tiny:
+            if (not np.isfinite(r2_pred)) or (r2_pred > ((1.0 - self.gamma) ** 2) * r2_curr):
+                x_pic = x_old + self.beta * r
+                info["accepted"] = False
+                info["r_proxy_norm"] = float(self._rel_step(x_old, x_pic, x_raw))
+                self.reject_streak += 1
+                self._check_restart(float(r_norm), float(info["condH"]), info)
+                return x_pic, info
+
         # Anderson combination (Walker-Ni form)
         y = np.zeros_like(x_old)
         for a_i, x_i, r_i in zip(alpha, self.x_hist, self.r_hist):
@@ -160,19 +185,15 @@ class Anderson:
         s = y - x_old
 
         # Step limiting relative to Picard step length
-        r_norm = self._rel_step(x_old, x_raw, x_raw)
         s_norm = self._rel_step(x_old, x_old + s, x_raw)
         if s_norm > self.step_limit_factor * max(r_norm, self._tiny):
             s *= (self.step_limit_factor * max(r_norm, self._tiny)) / max(s_norm, self._tiny)
 
         x_cand = x_old + s
 
-        # Safeguard: accept if proxy step is sufficiently smaller than Picard step
+        # Safeguard (step-proxy): accept if proxy step is sufficiently smaller than Picard step
         rp_norm = self._rel_step(x_old, x_cand, x_raw)
-        info["r_norm"] = float(r_norm)
         info["r_proxy_norm"] = float(rp_norm)
-        info["condH"] = float(self._cond_number(H, lam_eff))
-        self.best_picard = min(self.best_picard, float(r_norm))
 
         if self.safeguard and r_norm > self._tiny:
             if rp_norm > (1.0 - self.gamma) * r_norm:
@@ -204,7 +225,8 @@ class Anderson:
             if rp_try <= (1.0 - self.gamma) * r_norm:
                 return x_try, True, bt
             theta *= 0.5
-        return x_raw.copy(), False, self.backtrack_max
+        # Fall back to (possibly damped) Picard step to keep beta-consistent meaning.
+        return x_old + self.beta * (x_raw - x_old), False, self.backtrack_max
 
     def _check_restart(self, r_norm: float, condH: float, info: Dict) -> None:
         if self.reject_streak >= self.restart_on_reject_k:
