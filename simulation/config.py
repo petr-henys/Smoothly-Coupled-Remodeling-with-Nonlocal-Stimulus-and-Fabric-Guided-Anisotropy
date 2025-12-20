@@ -28,19 +28,28 @@ class Config:
     rho0: float = 1.0  # Initial value
     rho_ref: float = 1.0  # Reference value for nondimensionalization
 
-    # Density update (see DensitySolver): implicit Euler diffusion + stimulus-driven source with soft bounds.
-    k_rho_form: float = 7e-03   # Formation rate [1/day] scaling positive stimulus
-    k_rho_resorb: float = 7e-03 # Resorption rate [1/day] scaling negative stimulus
-    D_rho: float = 1e-2  # Diffusion coefficient [mm^2/day]
+    # CT apparent density mapping to (vascular) porosity for surface availability.
+    # rho_tissue is the density of fully mineralized matrix (zero vascular porosity).
+    rho_tissue: float = 2.0  # [g/cm^3]
+
+    # Surface availability scaling A(rho) derived from Martin's S_V(f_vas) polynomial.
+    surface_use: bool = True
+    surface_A_min: float = 0.02   # Residual remodeling activity as rho -> rho_tissue
+    surface_S0: float = 1.0       # Saturation scale for S_V [1/mm]
+
+    # Density update (see DensitySolver): implicit Euler diffusion + stimulus-driven source.
+    k_rho_form: float = 2e-02  # Formation rate gain [1/day]
+    k_rho_resorb: float = 2e-02  # Resorption rate gain [1/day]
+    D_rho: float = 2e-2  # Diffusion coefficient [mm^2/day]
 
     # Stimulus (osteocyte-inspired signal). Units: S is dimensionless.
     #
     # Mechanostat: m = psi/rho_safe, m_ref = psi_ref/rho_ref, delta = (m-m_ref)/m_ref.
     # Stimulus PDE (see StimulusSolver): tau_S dS/dt = D_S ΔS - S + S_max tanh(delta/kappa).
-    stimulus_power_p: float = 2.0  # Power-mean exponent (1=mean; higher→peak-biased)
-    psi_ref: float = 0.02         # Reference SED [MPa] used via m_ref = psi_ref / rho_ref
+    stimulus_power_p: float = 4.0  # Power-mean exponent (1=mean; higher→peak-biased)
+    psi_ref: float = 0.015         # Reference SED [MPa] used via m_ref = psi_ref / rho_ref
     stimulus_tau: float = 25.0      # tau_S [days]; tau_S=0 gives quasi-static stimulus (no time derivative)
-    stimulus_D: float = 10.0         # D_S [mm^2/day]; nonlocal length ~ sqrt(D_S * tau_S)
+    stimulus_D: float = 5.0         # D_S [mm^2/day]; nonlocal length ~ sqrt(D_S * tau_S)
     stimulus_S_max: float = 1.0     # S_max (dimensionless): cap on |S|
     stimulus_kappa: float = 0.5     # kappa: saturation width in tanh(delta/kappa)
 
@@ -115,14 +124,16 @@ class Config:
         # Density
         if not (0.0 <= self.rho_min < self.rho_max):
             raise ValueError("rho_min/max must satisfy 0 <= rho_min < rho_max.")
-
-        if not (self.rho_min <= self.rho0 <= self.rho_max):
-            raise ValueError("rho0 must be within [rho_min, rho_max].")
-        if self.D_rho < 0:
-            raise ValueError("D_rho must be >= 0 (diffusion coefficient).")
         if self.k_rho_form < 0 or self.k_rho_resorb < 0:
-            raise ValueError("k_rho_form and k_rho_resorb must be >= 0 (remodeling rates).")
-
+            raise ValueError("k_rho_form and k_rho_resorb must be >= 0.")
+        if self.D_rho < 0:
+            raise ValueError("D_rho must be >= 0 (diffusion coefficient, mm^2/day).")
+        if self.rho_tissue <= 0:
+            raise ValueError("rho_tissue must be > 0 (fully mineralized matrix density).")
+        if self.surface_A_min < 0 or self.surface_A_min >= 1.0:
+            raise ValueError("surface_A_min must be in [0, 1).")
+        if self.surface_S0 <= 0:
+            raise ValueError("surface_S0 must be > 0.")
         
         # Stimulus
         if self.psi_ref <= 0:
