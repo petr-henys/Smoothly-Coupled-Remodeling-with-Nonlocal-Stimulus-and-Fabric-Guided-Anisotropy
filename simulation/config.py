@@ -28,20 +28,21 @@ class Config:
     rho0: float = 1.0  # Initial value
     rho_ref: float = 1.0  # Reference value for nondimensionalization
 
-    # Density update (see DensitySolver): implicit Euler diffusion + stimulus-driven source.
-    k_rho: float = 7e-03  # Remodeling rate [1/day]
+    # Density update (see DensitySolver): implicit Euler diffusion + stimulus-driven source with soft bounds.
+    k_rho_form: float = 7e-03   # Formation rate [1/day] scaling positive stimulus
+    k_rho_resorb: float = 7e-03 # Resorption rate [1/day] scaling negative stimulus
     D_rho: float = 1e-2  # Diffusion coefficient [mm^2/day]
 
     # Stimulus (osteocyte-inspired signal). Units: S is dimensionless.
     #
     # Mechanostat: m = psi/rho_safe, m_ref = psi_ref/rho_ref, delta = (m-m_ref)/m_ref.
     # Stimulus PDE (see StimulusSolver): tau_S dS/dt = D_S ΔS - S + S_max tanh(delta/kappa).
-    stimulus_power_p: float = 4.0  # Power-mean exponent (1=mean; higher→peak-biased)
-    psi_ref: float = 0.015         # Reference SED [MPa] used via m_ref = psi_ref / rho_ref
+    stimulus_power_p: float = 2.0  # Power-mean exponent (1=mean; higher→peak-biased)
+    psi_ref: float = 0.02         # Reference SED [MPa] used via m_ref = psi_ref / rho_ref
     stimulus_tau: float = 25.0      # tau_S [days]; tau_S=0 gives quasi-static stimulus (no time derivative)
-    stimulus_D: float = 5.0         # D_S [mm^2/day]; nonlocal length ~ sqrt(D_S * tau_S)
+    stimulus_D: float = 10.0         # D_S [mm^2/day]; nonlocal length ~ sqrt(D_S * tau_S)
     stimulus_S_max: float = 1.0     # S_max (dimensionless): cap on |S|
-    stimulus_kappa: float = 0.1     # kappa: saturation width in tanh(delta/kappa)
+    stimulus_kappa: float = 0.5     # kappa: saturation width in tanh(delta/kappa)
 
     # Time stepping
     total_time: float = 500.0     # Total time [days]
@@ -114,6 +115,14 @@ class Config:
         # Density
         if not (0.0 <= self.rho_min < self.rho_max):
             raise ValueError("rho_min/max must satisfy 0 <= rho_min < rho_max.")
+
+        if not (self.rho_min <= self.rho0 <= self.rho_max):
+            raise ValueError("rho0 must be within [rho_min, rho_max].")
+        if self.D_rho < 0:
+            raise ValueError("D_rho must be >= 0 (diffusion coefficient).")
+        if self.k_rho_form < 0 or self.k_rho_resorb < 0:
+            raise ValueError("k_rho_form and k_rho_resorb must be >= 0 (remodeling rates).")
+
         
         # Stimulus
         if self.psi_ref <= 0:

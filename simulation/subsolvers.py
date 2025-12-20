@@ -172,7 +172,7 @@ class MechanicsSolver(_BaseLinearSolver):
         return ufl.sym(ufl.grad(u))
 
     def sigma(self, u, rho):
-        rho_eff = smooth_max(rho, self.cfg.rho_min, self.smooth_eps)
+        rho_eff = smooth_max(rho, self.cfg.smooth_eps, self.smooth_eps)
         rho_rel = rho_eff / self.cfg.rho_ref
 
         denom = float(self.cfg.rho_cort_min - self.cfg.rho_trab_max)
@@ -309,9 +309,14 @@ class StimulusSolver(_BaseLinearSolver):
 
 
 class DensitySolver(_BaseLinearSolver):
-    """Density evolution (implicit Euler diffusion + reaction driven by stimulus S).
+    """Density evolution with soft bounds.
 
-    d(rho)/dt = D * Laplacian(rho) + k_rho * S
+    Model:
+      d(rho)/dt = D_rho Δrho
+                 + k_form * S_pos * (1 - rho/rho_max)
+                 - k_resorb * S_neg * ((rho - rho_min)/rho_min)
+
+    where S_pos = max(S, 0) and S_neg = max(-S, 0) (smoothed).
     """
 
     def __init__(
@@ -330,14 +335,27 @@ class DensitySolver(_BaseLinearSolver):
     def _compile_forms(self):
         dt = self.dt_c
 
+        rho_min = float(self.cfg.rho_min)
+        rho_max = float(self.cfg.rho_max)
+
+        # Split stimulus into formation/resorption drives (smoothed).
+        S_pos = smooth_max(self.S, 0.0, self.cfg.smooth_eps)
+        S_neg = smooth_max(-self.S, 0.0, self.cfg.smooth_eps)
+
+        # Reaction coefficient (keeps the scheme linear in the unknown rho).
+        reaction = (self.cfg.k_rho_form / rho_max) * S_pos + (self.cfg.k_rho_resorb / rho_min) * S_neg
+        source = self.cfg.k_rho_form * S_pos + self.cfg.k_rho_resorb * S_neg
+
         a_ufl = (
             (self.trial / dt) * self.test * self.dx
             + self.cfg.D_rho * ufl.inner(ufl.grad(self.trial), ufl.grad(self.test)) * self.dx
+            + reaction * self.trial * self.test * self.dx
         )
         self.a_form = fem.form(a_ufl)
 
-        L_ufl = ((self.rho_old / dt) + (self.cfg.k_rho * self.S)) * self.test * self.dx
+        L_ufl = ((self.rho_old / dt) + source) * self.test * self.dx
         self.L_form = fem.form(L_ufl)
+
 
     def _setup_ksp(self):
         self.A.setOption(PETSc.Mat.Option.SPD, True)
@@ -363,19 +381,35 @@ class DensitySolver(_BaseLinearSolver):
         return (self.rho,)
 
     def solve(self) -> int:
+        # Ensure coefficient fields are up to date on this rank.
+        self.S.x.scatter_forward()
+        self.rho_old.x.scatter_forward()
+
+        # LHS depends on dt and on S via the reaction term -> reassemble each step.
+        self.assemble_lhs()
         self.assemble_rhs()
         reason = self._solve()
         self._maybe_warn(reason, "Density")
 
-        # Clamp to physical bounds (owned DOFs)
+        # Sanity check (no hard clamping): report excursions beyond nominal bounds.
         rho_min, rho_max = float(self.cfg.rho_min), float(self.cfg.rho_max)
         with self.rho.x.petsc_vec.localForm() as loc:
             arr = loc.array
-            arr[arr < rho_min] = rho_min
-            arr[arr > rho_max] = rho_max
-        self.rho.x.scatter_forward()
+            if arr.size:
+                rmin = float(arr.min())
+                rmax = float(arr.max())
+            else:
+                rmin, rmax = rho_min, rho_max
+
+        if (rmin < rho_min - 1e-12) or (rmax > rho_max + 1e-12):
+            self.logger.warning(
+                f"Density left nominal bounds on owned DOFs: min={rmin:.6g}, max={rmax:.6g} "
+                f"(expected within [{rho_min:.6g}, {rho_max:.6g}]). "
+                "Consider reducing dt or tuning k_rho_form/k_rho_resorb."
+            )
 
         return int(reason)
+
 
     def sweep(self):
         reason = self.solve()
