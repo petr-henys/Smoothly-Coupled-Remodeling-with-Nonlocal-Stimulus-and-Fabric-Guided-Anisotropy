@@ -215,7 +215,8 @@ class StimulusSolver(_BaseLinearSolver):
     """Update stimulus field `S` via diffusion/decay with a saturating drive.
 
     Model (dimensionless `S`):
-      tau_S dS/dt = D_S ΔS - S + S_max tanh(delta/kappa),
+      dS/dt = D_S ΔS - (1/tau_S) S + (1/tau_S) S_max tanh(delta/kappa),
+      with the local quasi-static limit S = S_max tanh(delta/kappa) for tau_S=0.
     where delta is computed from the specific energy `m = psi/rho_safe` relative to `m_ref`.
     """
 
@@ -243,6 +244,7 @@ class StimulusSolver(_BaseLinearSolver):
         self.D_c = fem.Constant(self.mesh, float(self.cfg.stimulus_D))
         self.S_max_c = fem.Constant(self.mesh, float(self.cfg.stimulus_S_max))
         self.kappa_c = fem.Constant(self.mesh, float(self.cfg.stimulus_kappa))
+        self.delta0_c = fem.Constant(self.mesh, float(self.cfg.stimulus_delta0))
 
         # Compile-time flag: avoid forming grad-grad if D_S is identically zero (helps DG spaces).
         self._use_diffusion = float(self.cfg.stimulus_D) > 0.0
@@ -258,15 +260,22 @@ class StimulusSolver(_BaseLinearSolver):
         alpha = tau / dt
         a_ufl = (alpha + 1.0) * S_trial * v * self.dx
         if self._use_diffusion:
-            a_ufl += self.D_c * ufl.dot(ufl.grad(S_trial), ufl.grad(v)) * self.dx
+            a_ufl += (tau * self.D_c) * ufl.dot(ufl.grad(S_trial), ufl.grad(v)) * self.dx
         self.a_form = fem.form(a_ufl)
 
-        # Production term (explicit in time): S_max * tanh(delta/kappa)
-        rho_safe = smooth_max(self.rho, self.cfg.rho_min, self.cfg.smooth_eps)
+        # Production term (explicit in time): lazy-zone + saturation
+        #   delta = (m - m_ref) / m_ref
+        #   |delta| <= delta0 -> drive = 0
+        #   otherwise drive = S_max * tanh((|delta|-delta0)/kappa) * sign(delta)
+        eps = float(self.cfg.smooth_eps)
+        rho_safe = smooth_max(self.rho, self.cfg.rho_min, eps)
         m = self.psi / rho_safe
         m_ref = float(self.cfg.psi_ref) / float(self.cfg.rho_ref)
         delta = (m - m_ref) / m_ref
-        drive = self.S_max_c * ufl.tanh(delta / self.kappa_c)
+        delta_abs = ufl.sqrt(delta * delta + eps * eps)
+        delta_excess = smooth_max(delta_abs - self.delta0_c, 0.0, eps)
+        sgn = delta / delta_abs
+        drive = self.S_max_c * ufl.tanh(delta_excess / self.kappa_c) * sgn
 
         L_ufl = (alpha * self.S_old + drive) * v * self.dx
         self.L_form = fem.form(L_ufl)
@@ -298,6 +307,9 @@ class StimulusSolver(_BaseLinearSolver):
         return (self.S,)
 
     def solve(self) -> int:
+        # Reassemble LHS when dt changes (adaptive stepping).
+        if float(self.dt_c.value) != float(self.cfg.dt):
+            self.assemble_lhs()
         self.assemble_rhs()
         reason = self._solve()
         self._maybe_warn(reason, "Stimulus")
@@ -359,7 +371,9 @@ class DensitySolver(_BaseLinearSolver):
 
             A_min = float(self.cfg.surface_A_min)
             S0 = float(self.cfg.surface_S0)
-            A_surf = A_min + (1.0 - A_min) * (S_v / (S_v + S0))
+            x = S_v / S0
+            x = smooth_min(x, 1.0, eps)  # linear in S_v, capped
+            A_surf = A_min + (1.0 - A_min) * x
         else:
             A_surf = 1.0
 

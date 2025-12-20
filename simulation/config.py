@@ -35,23 +35,26 @@ class Config:
     # Surface availability scaling A(rho) derived from Martin's S_V(f_vas) polynomial.
     surface_use: bool = True
     surface_A_min: float = 0.02   # Residual remodeling activity as rho -> rho_tissue
-    surface_S0: float = 1.0       # Saturation scale for S_V [1/mm]
+    surface_S0: float = 1.0       # Reference S_V [1/mm] at which A_surf reaches ~1 (linear ramp, capped)
 
     # Density update (see DensitySolver): implicit Euler diffusion + stimulus-driven source.
-    k_rho_form: float = 2e-02  # Formation rate gain [1/day]
-    k_rho_resorb: float = 2e-02  # Resorption rate gain [1/day]
-    D_rho: float = 2e-2  # Diffusion coefficient [mm^2/day]
+    k_rho_form: float = 2e-02  # Formation rate gain [g/cm^3/day]
+    k_rho_resorb: float = 2e-02  # Resorption rate gain [g/cm^3/day]
+    D_rho: float = 1e-2  # Diffusion coefficient [mm^2/day]
 
     # Stimulus (osteocyte-inspired signal). Units: S is dimensionless.
     #
     # Mechanostat: m = psi/rho_safe, m_ref = psi_ref/rho_ref, delta = (m-m_ref)/m_ref.
-    # Stimulus PDE (see StimulusSolver): tau_S dS/dt = D_S ΔS - S + S_max tanh(delta/kappa).
+    # Stimulus PDE (see StimulusSolver): dS/dt = D_S ΔS - (1/tau_S) S + (1/tau_S) S_max tanh(delta/kappa).
+    # If tau_S == 0, we use the local quasi-static limit: S = S_max tanh(delta/kappa).
     stimulus_power_p: float = 4.0  # Power-mean exponent (1=mean; higher→peak-biased)
-    psi_ref: float = 0.015         # Reference SED [MPa] used via m_ref = psi_ref / rho_ref
+    psi_ref: float = 0.025         # Reference SED [MPa] used via m_ref = psi_ref / rho_ref
     stimulus_tau: float = 25.0      # tau_S [days]; tau_S=0 gives quasi-static stimulus (no time derivative)
-    stimulus_D: float = 5.0         # D_S [mm^2/day]; nonlocal length ~ sqrt(D_S * tau_S)
+    stimulus_D: float = 1.0         # D_S [mm^2/day]; nonlocal length ~ sqrt(D_S * tau_S)
     stimulus_S_max: float = 1.0     # S_max (dimensionless): cap on |S|
     stimulus_kappa: float = 0.5     # kappa: saturation width in tanh(delta/kappa)
+
+    stimulus_delta0: float = 0.10   # Lazy-zone half-width in delta (dimensionless)
 
     # Time stepping
     total_time: float = 500.0     # Total time [days]
@@ -146,6 +149,8 @@ class Config:
             raise ValueError("stimulus_S_max must be > 0 (dimensionless cap on |S|).")
         if self.stimulus_kappa <= 0:
             raise ValueError("stimulus_kappa must be > 0 (dimensionless saturation width).")
+        if self.stimulus_delta0 < 0:
+            raise ValueError("stimulus_delta0 must be >= 0 (dimensionless lazy-zone half-width in delta).")
             
         # Elasticity
         if self.E0 <= 0:
