@@ -11,44 +11,37 @@ import ufl
 
 @dataclass
 class Config:
-    """Simulation parameters. Units: mm, day, MPa, g/cm^3."""
+    """Simulation parameters (mm, day, MPa, g/cm^3)."""
 
-    # Material: density-dependent exponent k(rho)
-    # k(rho) = n_trab*(1-w(rho)) + n_cort*w(rho), with smoothstep w over
-    # [rho_trab_max, rho_cort_min].
+    # Material: density-dependent exponent k(rho) blended from trabecular to cortical:
+    # k = n_trab*(1-w) + n_cort*w, w = smoothstep01((rho-rho_trab_max)/(rho_cort_min-rho_trab_max)).
     E0: float = 7500.0
     n_trab: float = 2.0
     n_cort: float = 1.3
-    rho_trab_max: float = 1.
+    rho_trab_max: float = 1.0
     rho_cort_min: float = 1.25
-    nu0: float = 0.3           # Poisson ratio
+    nu0: float = 0.3  # Poisson ratio
 
-    # Density bounds and initial value
-    rho_min: float = 0.1       # Min density [g/cm^3]
-    rho_max: float = 2.        # Max density [g/cm^3]
-    rho0: float = 1.          # Initial density [g/cm^3]
-    rho_ref: float = 1.0       # Reference density [g/cm^3]
-    
-    # Remodeling: d(rho)/dt = k_rho * S, where S is a dimensionless stimulus field
-    k_rho: float = 7e-03        # Remodeling rate [1/day]
-    D_rho: float = 1e-4        # Diffusion coefficient [mm^2/day]
+    # Density [g/cm^3].
+    rho_min: float = 0.1  # Lower bound
+    rho_max: float = 2.0  # Upper bound
+    rho0: float = 1.0  # Initial value
+    rho_ref: float = 1.0  # Reference value for nondimensionalization
+
+    # Density update (see DensitySolver): implicit Euler diffusion + stimulus-driven source.
+    k_rho: float = 7e-03  # Remodeling rate [1/day]
+    D_rho: float = 1e-3  # Diffusion coefficient [mm^2/day]
 
     # Stimulus (osteocyte-inspired signal). Units: S is dimensionless.
     #
-    # Mechanostat is computed on specific energy m = psi/rho_safe with reference m_ref = psi_ref/rho_ref:
-    #   delta = (m - m_ref)/m_ref  (dimensionless)
-    #
-    # The stimulus field S(x,t) is intended to satisfy (in weak/PDE form):
-    #   tau_S * dS/dt = D_S * Laplacian(S) - S + S_max * tanh(delta / kappa)
-    #
-    # This gives: time dynamics (tau_S), nonlocality (D_S), decay (-S), and saturation (tanh).
+    # Mechanostat: m = psi/rho_safe, m_ref = psi_ref/rho_ref, delta = (m-m_ref)/m_ref.
+    # Stimulus PDE (see StimulusSolver): tau_S dS/dt = D_S ΔS - S + S_max tanh(delta/kappa).
     stimulus_power_p: float = 4.0  # Power-mean exponent (1=mean; higher→peak-biased)
     psi_ref: float = 0.015         # Reference SED [MPa] used via m_ref = psi_ref / rho_ref
     stimulus_tau: float = 25.0      # tau_S [days]; tau_S=0 gives quasi-static stimulus (no time derivative)
-    stimulus_D: float = 5.         # D_S [mm^2/day]; sets nonlocal length ~ sqrt(D_S * tau_S)
-    stimulus_S_max: float = 1.0    # S_max (dimensionless): cap on |S|
-    stimulus_kappa: float = 0.1    # kappa (dimensionless): saturation width in tanh(delta/kappa)
-
+    stimulus_D: float = 5.0         # D_S [mm^2/day]; nonlocal length ~ sqrt(D_S * tau_S)
+    stimulus_S_max: float = 1.0     # S_max (dimensionless): cap on |S|
+    stimulus_kappa: float = 0.1     # kappa: saturation width in tanh(delta/kappa)
 
     # Time stepping
     total_time: float = 500.0     # Total time [days]
@@ -102,7 +95,7 @@ class Config:
         if self.domain is None:
             raise ValueError("Config requires a valid 'domain' (dolfinx.mesh.Mesh).")
         
-        # Resolve log_file path relative to results_dir
+        # Resolve log_file relative to results_dir.
         self.log_file = str(Path(self.results_dir) / self.log_file)
 
         self.validate()
@@ -111,7 +104,7 @@ class Config:
         self.update_config_json()
 
     def validate(self):
-        """Validate configuration parameters."""
+        """Validate parameter ranges and basic invariants."""
         # Material
         if self.n_trab <= 0 or self.n_cort <= 0:
             raise ValueError("Material exponents must satisfy n_trab>0 and n_cort>0.")
@@ -147,7 +140,7 @@ class Config:
             raise ValueError("stimulus_power_p must be >= 1.0 (1=mean; larger biases toward peaks).")
 
     def _build_measures(self):
-        """Create UFL integration measures with quadrature degree."""
+        """Create UFL measures with the configured quadrature degree."""
         metadata = {"quadrature_degree": int(self.quadrature_degree)}
         self.dx = ufl.Measure("dx", domain=self.domain, metadata=metadata)
         self.ds = ufl.Measure(
@@ -158,20 +151,20 @@ class Config:
         )
 
     def _ensure_results_dir(self) -> None:
-        """Ensure results directory exists (rank-0 only)."""
+        """Create results directory on rank 0 and barrier."""
         outdir = Path(self.results_dir)
         if self.domain.comm.rank == 0:
             outdir.mkdir(parents=True, exist_ok=True)
         self.domain.comm.Barrier()
 
     def set_dt(self, dt_days: float):
-        """Update timestep in days."""
+        """Set the timestep `dt` in days."""
         if dt_days <= 0:
             raise ValueError(f"Timestep dt_days={dt_days} must be positive.")
         self.dt = float(dt_days)
 
     def update_config_json(self):
-        """Re-write config.json with current parameters (rank-0 only)."""
+        """Write `config.json` in `results_dir` (rank 0 only)."""
         if self.domain.comm.rank == 0:
             path = Path(self.results_dir) / "config.json"
             with open(path, "w", encoding="utf-8") as f:
@@ -179,13 +172,13 @@ class Config:
         self.domain.comm.Barrier()
 
     def rebuild(self, domain: mesh.Mesh, facet_tags: mesh.MeshTags | None = None):
-        """Rebuild measures after domain change."""
+        """Update mesh and rebuild integration measures."""
         self.domain = domain
         self.facet_tags = facet_tags
         self._build_measures()
 
     def to_json_dict(self) -> dict[str, Any]:
-        """Serialize init-time parameters to JSON-compatible dict."""
+        """Serialize init-time parameters to a JSON-compatible dict."""
         return {
             f.name: getattr(self, f.name)
             for f in fields(self)

@@ -1,12 +1,4 @@
-"""Linear subsolvers for mechanics, stimulus update, and density evolution.
-
-This module contains:
-- MechanicsSolver: linear elasticity with rho-dependent stiffness.
-- StimulusSolver: diffusion/decay of an osteocyte-inspired stimulus S with saturating production.
-- DensitySolver: implicit Euler diffusion-reaction update for rho driven by S.
-
-No Helmholtz filter is used anywhere in this file.
-"""
+"""Linear subsolvers for mechanics, stimulus, and density."""
 
 from __future__ import annotations
 
@@ -220,22 +212,11 @@ class MechanicsSolver(_BaseLinearSolver):
 
 
 class StimulusSolver(_BaseLinearSolver):
-    """Osteocyte-inspired stimulus field with saturation, nonlocality, and time dynamics.
+    """Update stimulus field `S` via diffusion/decay with a saturating drive.
 
-    Mechanostat input uses specific energy:
-        m = psi / rho_safe,    rho_safe = smooth_max(rho, rho_min, smooth_eps)
-        m_ref = psi_ref / rho_ref
-        delta = (m - m_ref) / m_ref   (dimensionless)
-
-    We evolve a dimensionless stimulus field S(x,t) using a production–diffusion–decay model:
-        tau_S * dS/dt = D_S * Laplacian(S) - S + S_max * tanh(delta / kappa)
-
-    Time discretization:
-    - implicit Euler for (diffusion + decay + time term),
-    - explicit-in-time production term (evaluated from current psi and rho),
-      yielding a linear solve per step.
-
-    This is intended as a biologically interpretable alternative to purely local temporal filtering.
+    Model (dimensionless `S`):
+      tau_S dS/dt = D_S ΔS - S + S_max tanh(delta/kappa),
+    where delta is computed from the specific energy `m = psi/rho_safe` relative to `m_ref`.
     """
 
     def __init__(

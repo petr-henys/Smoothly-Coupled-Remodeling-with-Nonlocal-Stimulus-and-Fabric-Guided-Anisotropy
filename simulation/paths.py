@@ -1,9 +1,11 @@
+"""Filesystem paths for anatomy inputs and simulation outputs."""
+
 from pathlib import Path
 import shutil
 
 PROJECT_ROOT = Path(__file__).parent.parent
 
-# Use anatomy/ directory instead of data/
+# Anatomy input directories.
 ANATOMY_DIR = PROJECT_ROOT / "anatomy"
 ANATOMY_RAW_DIR = ANATOMY_DIR / "raw"
 ANATOMY_PROCESSED_DIR = ANATOMY_DIR / "processed"

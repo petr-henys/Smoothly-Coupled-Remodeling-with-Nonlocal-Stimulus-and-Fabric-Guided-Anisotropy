@@ -1,20 +1,11 @@
-"""Fixed-point coupling solver (block Gauss–Seidel) for an arbitrary set of fields.
+"""Fixed-point coupling via block Gauss–Seidel + optional Anderson acceleration.
 
-Design constraints (intentional):
-- The coupling loop is agnostic to the number of state fields.
-- No callbacks, no per-call options, no special cases per field.
-- Each block must implement:
-    - `state_fields` : tuple[fem.Function, ...]  (fields that belong to the coupled state)
-    - `sweep()`      : performs one block update
+Each block must provide:
+- `state_fields`: tuple of fields that form the coupled state
+- `sweep()`: perform one block update
 
-Anderson acceleration (if enabled) operates on a packed, block-wise normalized
-state vector built from those `state_fields`.
-
-Notes:
-- Blocks with `state_fields == ()` are allowed. They participate in the Gauss–Seidel
-  sweep (side effects), but do not contribute any entries to the coupled state vector.
-  This is how the mechanics driver can recompute `psi`/`u` each subiteration without
-  being part of the Anderson-mixed fixed-point state.
+Blocks with `state_fields == ()` may still run each sweep (side effects), but do
+not contribute entries to the Anderson-mixed state vector.
 """
 
 from __future__ import annotations

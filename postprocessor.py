@@ -196,10 +196,10 @@ class SimulationLoader:
     # ========================================================================
     
     def _get_field_times(self) -> Dict[str, np.ndarray]:
-        """Extract available time checkpoints from steps.csv.
-        
-        Returns:
-            Dictionary mapping field names to arrays of available times
+        """Return time checkpoints from `steps.csv` for field-loading APIs.
+
+        Note: the current NPZ snapshot format is single-state; time selection is
+        not applied when reading `*.npz`.
         """
         if self._field_times is None:
             steps_df = self.get_steps_metrics()
@@ -216,31 +216,21 @@ class SimulationLoader:
         return self._field_times
     
     def get_available_times(self) -> np.ndarray:
-        """Get array of all available field checkpoint times.
-        
-        Returns:
-            Sorted array of time values in days
-        """
+        """Return the available times (days) from `steps.csv`."""
         times_dict = self._get_field_times()
         return times_dict["u"]  # All fields have same times
     
     def _load_field_raw(self, field_name: str, time_days: float) -> np.ndarray:
-        """Load field snapshot from NPZ file at exact checkpoint time.
-        
-        Args:
-            field_name: Field name ('u', 'rho', 'S', 'A')
-            time_days: Time checkpoint (must exist exactly)
-            
-        Returns:
-            DOF values array (1D, including ghost DOFs)
+        """Load a field snapshot from `output_dir/{field_name}.npz`.
+
+        The current NPZ format stores a single `values` array. `time_days` is
+        accepted for API compatibility but is not used to select data.
         """
         npz_file = self.output_dir / f"{field_name}.npz"
         if not npz_file.exists():
             raise FileNotFoundError(f"Field snapshot not found: {npz_file}")
         
-        # NPZ files contain all checkpoints - need to implement time selection
-        # For now, assume NPZ contains only final state (as in run_anderson.py)
-        # Full time series loading would require VTX reader or extended NPZ format
+        # NPZ snapshots are treated as single-state files containing `values`.
         
         if self.comm.rank == 0:
             with np.load(npz_file) as data:
@@ -256,20 +246,21 @@ class SimulationLoader:
         time_days: float,
         fields: Optional[List[str]] = None,
     ) -> Dict[str, np.ndarray]:
-        """Load all fields at requested time.
-        
+        """Load field arrays for a given time checkpoint.
+
+        The requested time is validated against `steps.csv`. NPZ loading itself
+        currently returns a single snapshot per field and does not select by
+        time.
+
         Args:
-            time_days: Target time in days (must match a checkpoint)
-            fields: List of field names to load (default: all four fields)
+            time_days: Target time in days (must match a `steps.csv` checkpoint).
+            fields: Field names to load (default: `["u", "rho", "S", "A"]`).
             
         Returns:
-            Dictionary mapping field names to DOF value arrays
+            Mapping from field name to DOF value array.
             
         Raises:
-            ValueError: If requested time does not match any checkpoint
-            
-        Note:
-            Current implementation loads final state from NPZ files.
+            ValueError: If `time_days` is not present in `steps.csv`.
         """
         if fields is None:
             fields = ["u", "rho", "S", "A"]
@@ -300,15 +291,15 @@ class SimulationLoader:
         field_name: str,
         time_days: Optional[float] = None,
     ) -> None:
-        """Load field snapshot into a DOLFINx function.
-        
+        """Load an NPZ snapshot into a DOLFINx function.
+
         Uses coordinate-based DOF matching from analysis.utils.load_npz_field,
         making loading MPI-independent (works with any mesh partition).
         
         Args:
             target: DOLFINx Function to populate (must have compatible element)
             field_name: Field name ('u', 'rho', 'S', 'A')
-            time_days: Target time (default: use final checkpoint)
+            time_days: Target time in days (used only for the default and logs)
             
         Raises:
             RuntimeError: If element type mismatch between stored and target

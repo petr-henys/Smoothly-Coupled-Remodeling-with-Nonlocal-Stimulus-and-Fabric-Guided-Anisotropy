@@ -112,14 +112,14 @@ class Parametrizer:
         csv_file = self.sweep.base_output_dir / "sweep_summary.csv"
         json_file = self.sweep.base_output_dir / "sweep_summary.json"
         
-        # CSV summary
+        # Write CSV summary.
         header = list(runs_data[0].keys())
         with open(csv_file, "w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=header)
             writer.writeheader()
             writer.writerows(runs_data)
         
-        # JSON summary
+        # Write JSON summary.
         summary = {
             "metadata": self.sweep.metadata,
             "total_runs": len(runs_data),

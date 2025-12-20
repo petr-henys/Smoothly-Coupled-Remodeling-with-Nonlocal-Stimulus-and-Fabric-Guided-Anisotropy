@@ -41,11 +41,11 @@ class GaitDriver:
         self.rank = self.comm.rank
         self.logger = get_logger(self.comm, name="Driver", log_file=self.cfg.log_file)
 
-        # Stimulus field (CG1 - nodal values)
+        # Accumulated SED (DG0 - cellwise values).
         self.V_psi = fem.functionspace(mesh, ("DG", 0))
         self.psi = fem.Function(self.V_psi, name="psi")
         
-        # Temporary per-case SED (CG1)
+        # Temporary per-case SED (DG0).
         self._psi_temp = fem.Function(self.V_psi, name="psi_temp")
 
         # Pre-compile SED expression (reused every update)
@@ -69,8 +69,7 @@ class GaitDriver:
         self.mech.destroy()
 
     def update_snapshots(self) -> Dict:
-        """Solve all enabled phases and update averaged `psi` (collective).
-        """
+        """Solve all enabled loading cases and update the averaged `psi` (collective)."""
         # Zero out accumulated psi (owned DOFs only; single scatter at the end)
         assign(self.psi, 0.0, scatter=False)
         n_owned_psi = get_owned_size(self.psi)
@@ -106,7 +105,7 @@ class GaitDriver:
         return {}
 
     def stimulus_field(self) -> fem.Function:
-        """Return the averaged psi function (CG1 field)."""
+        """Return the averaged `psi` function (DG0 field)."""
         return self.psi
 
 
@@ -120,7 +119,7 @@ class GaitDriver:
 
         - Reassemble stiffness K(rho)
         - Solve each enabled loading case
-        - Update averaged psi (CG1)
+        - Update averaged psi (DG0)
         """
         self.assemble_lhs()
         self.update_snapshots()

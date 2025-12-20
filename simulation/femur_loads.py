@@ -4,7 +4,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-# Add repository root to path to allow importing simulation package
+# Allow running this module directly by adding the repo root to `sys.path`.
 repo_root = Path(__file__).parent.parent
 if str(repo_root) not in sys.path:
     sys.path.insert(0, str(repo_root))
@@ -44,10 +44,10 @@ def vector_from_angles(magnitude: float, alpha_sag: float = 0.0, alpha_front: fl
     return vector
 
 def gait_interpolator(gait_vs_force: np.ndarray) -> np.ndarray:
-    """
-    Returns a cubic interpolator for gait vs force data.
-    Input: (N,4) array of [gait, Fx, Fy, Fz].
-    Output: callable interpolator: gait -> [Fx, Fy, Fz].
+    """Build a cubic interpolator mapping gait phase to a 3D force vector.
+
+    Expects an array shaped `(N, 4)` with columns `[gait, Fx, Fy, Fz]` and
+    returns `interp1d(gait) -> (Fx, Fy, Fz)`.
     """
     if not isinstance(gait_vs_force, np.ndarray):
         raise TypeError("Input must be a numpy ndarray.")
@@ -56,11 +56,9 @@ def gait_interpolator(gait_vs_force: np.ndarray) -> np.ndarray:
     if gait_vs_force.shape[0] < 2:
         raise ValueError("At least two data points are required for interpolation.")
 
-    # Sort by gait cycle/time
+    # Sort by gait phase.
     pts = gait_vs_force[gait_vs_force[:, 0].argsort()]
-    # +x: anterior->Orthoload y+
-    # +z: medial->Orthoload x+
-    # +y: superior->Orthoload z+
+    # Force components are interpolated as provided.
     t_interp = interp1d(pts[:, 0], pts[:, 1:], axis=0, kind='cubic', fill_value='extrapolate')
     return t_interp
 
@@ -78,8 +76,7 @@ class GaussianSurfaceLoad:
         self._interp: Optional[RBFInterpolator] = None
         self._gait_interpolator: Optional[interp1d] = None
         
-        # Prepare surface mesh
-        # create a class‐named logger for this instance
+        # Prepare surface meshes and logger.
         self.logger = get_logger(MPI.COMM_WORLD, name="GaussianSurfaceLoad")
 
         self.logger.debug(f"Init {self.__class__.__name__} (use_cell_data={use_cell_data})")

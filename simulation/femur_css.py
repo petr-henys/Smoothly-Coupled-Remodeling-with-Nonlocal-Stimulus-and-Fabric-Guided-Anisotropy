@@ -121,12 +121,10 @@ class FemurCSS:
     # ------------------------------------------------------------------
 
     def _transformation_matrix(self, *, world_to_css: bool) -> NDArrayF:
-        """4×4 homogeneous matrix.
+        """Return a 4×4 homogeneous transform matrix.
 
-        Parameters
-        ----------
-        world_to_css
-            ``True`` → W → CSS, ``False`` → CSS → W.
+        Args:
+            world_to_css: If True, return world→CSS; otherwise CSS→world.
         """
         R = np.vstack([self.axes[a] for a in ("x", "y", "z")])
         T = np.eye(4)

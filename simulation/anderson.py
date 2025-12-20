@@ -1,16 +1,8 @@
-"""Anderson acceleration with a fixed API (no per-call options).
+"""MPI-aware Anderson acceleration with a fixed interface.
 
-Key points:
-- Public surface area is intentionally minimal: `reset()` and `mix()`.
-- `mix()` takes only (x_old, x_raw) and returns (x_new, info).
-- No callbacks and no runtime option plumbing.
-
-The mixing is MPI-aware: all inner products / norms are global.
-
-This class assumes you already provided a *well-scaled* state vector.
-If you are coupling multiple physical fields (rho, stimulus, ...), the
-recommended pattern is to pack a concatenated vector in a dimensionless
-metric (e.g., block-wise RMS normalization) and pass that to Anderson.
+Exposes `reset()` and `mix(x_old, x_raw) -> (x_new, info)`. Inner products are
+global (MPI reductions). The caller is responsible for scaling/normalizing the
+state vector before mixing.
 """
 
 from __future__ import annotations

@@ -1,8 +1,4 @@
-"""Shared plotting utilities for analysis scripts.
-
-Provides common styling, helper functions, and figure management
-to avoid code duplication across plotting scripts.
-"""
+"""Shared Matplotlib styling and helpers for analysis plots."""
 
 import sys
 from pathlib import Path
@@ -11,18 +7,15 @@ from typing import Optional
 import matplotlib.pyplot as plt
 import numpy as np
 
-# Add project root to sys.path (analysis scripts import from repo root)
+# Allow running analysis scripts from this directory.
 project_root = Path(__file__).resolve().parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 
-# ============================================================================
-# CMAME-style Matplotlib settings
-# ============================================================================
+# --- CMAME-style Matplotlib settings ---
 
-# Use absolute font sizes (points) so printed text size stays consistent across
-# single-/double-column figures.
+# Use absolute font sizes (points) for consistent printed size.
 plt.rcParams.update({
     'font.family': 'serif',
     'font.serif': ['Times New Roman', 'DejaVu Serif'],
@@ -50,22 +43,20 @@ plt.rcParams.update({
     'savefig.pad_inches': 0.05,
 })
 
-# Figure size presets for CMAME (A4 paper)
+# Figure size presets for CMAME (A4 paper).
 FIGSIZE_SINGLE_COLUMN = (3.5, 2.8)      # Single column width
 FIGSIZE_DOUBLE_COLUMN = (8.0, 6.0)      # Double column width (larger for readability)
 FIGSIZE_FULL_WIDTH = (8.0, 6.0)         # Full A4 width
 FIGSIZE_TALL = (8.0, 10.0)              # Tall format (3x2 subplots)
 
-# DPI for publication quality
+# DPI presets.
 PUBLICATION_DPI = 600
 DEFAULT_DPI = 300
 
 
-# ============================================================================
-# Shared styling configuration
-# ============================================================================
+# --- Shared styling configuration ---
 
-# Field styling (for convergence plots) - CONSISTENT ACROSS ALL PLOTS
+# Field styling (convergence plots).
 FIELD_NAMES = ["u", "rho", "S", "A"]
 FIELD_LABELS = {
     "u": r"$\mathbf{u}$ (displacement)",
@@ -73,7 +64,7 @@ FIELD_LABELS = {
     "S": r"$S$ (stimulus)",
     "A": r"$\mathbf{A}$ (orientation)",
 }
-# Color-blind friendly palette
+# Color-blind friendly palette.
 FIELD_COLORS = {
     "u": "#0173B2",      # Blue (mechanics)
     "rho": "#DE8F05",    # Orange (density)
@@ -87,7 +78,7 @@ FIELD_MARKERS = {
     "A": "D",
 }
 
-# Subsolver styling - SAME as field colors for consistency
+# Subsolver styling (aligned with field colors).
 SUBSOLVER_NAMES = ["mech", "stim", "dens", "dir"]
 SUBSOLVER_LABELS = {
     "mech": r"$\mathbf{u}$ (mechanics)",
@@ -108,7 +99,7 @@ SUBSOLVER_MARKERS = {
     "dir": FIELD_MARKERS["A"],
 }
 
-# Timestep styling (for performance/anderson plots) - grayscale for print compatibility
+# Timestep styling (performance/Anderson plots): grayscale for print.
 DT_COLORS = {
     6.25: "#000000",   # Black
     12.5: "#404040",   # Dark gray
@@ -131,18 +122,18 @@ DT_LINESTYLES = {
     100.0: "-",
 }
 
-# Reference line styling
+# Reference line styling.
 REFERENCE_COLOR = "#808080"
 REFERENCE_ALPHA = 0.6
 REFERENCE_LINESTYLE = "--"
 REFERENCE_LINEWIDTH = 1.0
 
-# Plot styling constants (CONSISTENT ACROSS ALL PLOTS)
+# Plot styling constants.
 PLOT_LINEWIDTH = 1.2
 PLOT_MARKERSIZE = 3
 PLOT_ALPHA_OVERLAY = 0.5  # For overlapping curves
 
-# Legend styling constants (CONSISTENT ACROSS ALL PLOTS)
+# Legend styling constants.
 LEGEND_FONTSIZE = 7  # Matches rcParams['legend.fontsize']
 LEGEND_FRAMEALPHA = 0.95
 LEGEND_EDGECOLOR = "black"
@@ -151,9 +142,7 @@ LEGEND_FANCYBOX = False
 DEFAULT_FIGURE_FORMAT = "png"
 
 
-# ============================================================================
-# Helper functions
-# ============================================================================
+# --- Helper functions ---
 
 def setup_axis_style(
     ax: plt.Axes,
@@ -163,15 +152,15 @@ def setup_axis_style(
     loglog: bool = False,
     grid: bool = True,
 ) -> None:
-    """Apply consistent axis styling for CMAME publication.
-    
+    """Apply consistent axis styling.
+
     Args:
-        ax: Matplotlib axis
-        xlabel: X-axis label
-        ylabel: Y-axis label
-        title: Subplot title
-        loglog: Use log-log scale
-        grid: Show grid
+        ax: Matplotlib axis.
+        xlabel: X-axis label.
+        ylabel: Y-axis label.
+        title: Subplot title.
+        loglog: If True, use log-log scale.
+        grid: If True, draw a background grid.
     """
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
@@ -206,15 +195,15 @@ def create_unified_legend(
     loc: str = "upper left",
     bbox_to_anchor: Optional[tuple] = None,
 ) -> None:
-    """Create unified legend for figure.
-    
+    """Create a single legend for a figure.
+
     Args:
-        fig: Matplotlib figure
-        handles: Legend handles
-        labels: Legend labels
-        ncol: Number of columns (auto if None)
-        loc: Legend location
-        bbox_to_anchor: Custom anchor position (default based on loc)
+        fig: Matplotlib figure.
+        handles: Legend handles.
+        labels: Legend labels.
+        ncol: Number of columns (auto if None).
+        loc: Legend location.
+        bbox_to_anchor: Optional custom anchor position.
     """
     if ncol is None:
         ncol = min(len(handles), 5)
@@ -241,11 +230,11 @@ def create_unified_legend(
 
 
 def add_subplot_legend(ax: plt.Axes, loc: str = "upper left") -> None:
-    """Add consistent legend to subplot.
-    
+    """Add a legend to a subplot with consistent styling.
+
     Args:
-        ax: Matplotlib axis
-        loc: Legend location
+        ax: Matplotlib axis.
+        loc: Legend location.
     """
     ax.legend(
         loc=loc,
@@ -263,13 +252,13 @@ def save_figure(
     dpi: int = PUBLICATION_DPI,
     close: bool = True,
 ) -> None:
-    """Save figure with CMAME publication settings (PNG only).
-    
+    """Save a figure using project defaults (PNG).
+
     Args:
-        fig: Matplotlib figure
-        output_file: Output path (PNG format)
-        dpi: Resolution for raster output
-        close: Close figure after saving
+        fig: Matplotlib figure.
+        output_file: Output path.
+        dpi: Raster resolution.
+        close: If True, close the figure after saving.
     """
     output_file.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_file, format="png", dpi=dpi, bbox_inches="tight", pad_inches=0.05)
@@ -280,18 +269,16 @@ def save_figure(
 
 def estimate_convergence_order(x: np.ndarray, y: np.ndarray, n_pts: int = 3, from_start: bool = False) -> float:
     """Estimate convergence order from log-log data via linear regression.
-    
-    Fits log(y) = log(C) + p*log(x) and returns slope p.
-    
+
     Args:
-        x: Independent variable (h or dt)
-        y: Dependent variable (error)
-        n_pts: Number of points to use (for robustness)
+        x: Independent variable (h or dt).
+        y: Dependent variable (error).
+        n_pts: Number of points to use.
         from_start: If True, use first n points (smallest x, finest resolution).
-                   If False, use last n points (largest x).
-        
+            If False, use last n points (largest x).
+
     Returns:
-        Estimated convergence order (slope)
+        Estimated convergence order (slope).
     """
     if len(x) < 2 or len(y) < 2:
         return np.nan
@@ -322,15 +309,15 @@ def add_reference_line(
     label: str,
     linestyle: str = REFERENCE_LINESTYLE,
 ) -> None:
-    """Add power-law reference line to log-log plot.
-    
+    """Add a power-law reference line to a log-log plot.
+
     Args:
-        ax: Matplotlib axis
-        x_range: (x_min, x_max) for reference line
-        order: Power-law exponent
-        ref_scale: Scaling constant for vertical positioning
-        label: Legend label
-        linestyle: Line style
+        ax: Matplotlib axis.
+        x_range: `(x_min, x_max)` for the reference line.
+        order: Power-law exponent.
+        ref_scale: Scaling constant for vertical positioning.
+        label: Legend label.
+        linestyle: Line style.
     """
     x_ref = np.array(x_range)
     C = ref_scale / (x_ref[1] ** order)
@@ -347,14 +334,14 @@ def add_reference_line(
 
 
 def print_banner(title: str, width: int = 80) -> None:
-    """Print formatted banner for console output."""
+    """Print a simple console banner."""
     print("=" * width)
     print(title)
     print("=" * width)
 
 
 def format_dt_label(dt: float) -> str:
-    """Format dt value for legend labels."""
+    """Format `dt` for legend labels."""
     if dt == int(dt):
         return f"dt={int(dt)} days"
     else:

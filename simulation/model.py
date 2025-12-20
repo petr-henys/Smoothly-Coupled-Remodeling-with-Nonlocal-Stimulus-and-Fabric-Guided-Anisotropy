@@ -91,8 +91,7 @@ class Remodeller:
             loading_cases=self.loading_cases,
         )
 
-        # 3. Stimulus field and solver (temporal filter, no spatial PDE)
-        # Use CG1 space (same as rho) for all scalar fields.
+        # 3. Stimulus field and solver (implicit Euler diffusion/decay + explicit drive).
         self.S = fem.Function(self.Q, name="S")
         self.S_old = fem.Function(self.Q, name="S_old")
         assign(self.S, 0.0)

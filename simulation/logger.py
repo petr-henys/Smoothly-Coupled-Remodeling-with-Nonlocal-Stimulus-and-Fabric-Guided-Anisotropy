@@ -1,4 +1,4 @@
-"""MPI-safe logging: rank-0 output via PETSc.Sys.Print."""
+"""MPI-safe logging with rank-0 output via `PETSc.Sys.Print`."""
 
 from enum import IntEnum
 from typing import Any, Callable, Union
@@ -15,7 +15,7 @@ class Level(IntEnum):
 
 
 class Logger:
-    """Rank-0 logger with lazy evaluation."""
+    """Rank-0 logger with optional lazy message evaluation."""
 
     __slots__ = ("comm", "console_level", "file_level", "name", "prefix", "log_file")
 
@@ -28,16 +28,16 @@ class Logger:
         self.log_file = log_file
 
     def is_enabled_for(self, lvl: Level) -> bool:
-        """Check if level enabled."""
+        """Return True if `lvl` is enabled for console or file output."""
         return lvl >= self.console_level or (self.log_file is not None and lvl >= self.file_level)
 
     def _format(self, msg: Union[str, Callable[[], str]], args: tuple) -> str:
-        """Format message (evaluate if callable)."""
+        """Format a message, evaluating callables lazily."""
         text = msg() if callable(msg) else str(msg)
         return self.prefix + (text.format(*args) if args else text)
 
     def log(self, lvl: Level, msg: Union[str, Callable[[], str]], *args: Any) -> None:
-        """Log message (rank-0 only)."""
+        """Log a message to console and optionally to a file (rank 0 only)."""
         formatted = None
         
         # Console output
@@ -65,8 +65,7 @@ class Logger:
 
 
 def get_logger(comm: MPI.Comm, name: str = "", log_file: str = None) -> Logger:
-    """Create logger (console: WARNING+, file: DEBUG+)."""
+    """Create a logger with default levels (console: WARNING, file: DEBUG)."""
     console_level = Level.WARNING
     file_level = Level.DEBUG
     return Logger(comm, console_level, file_level, name, log_file)
-

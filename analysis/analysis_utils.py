@@ -1,5 +1,4 @@
-"""
-Utilities for convergence-analysis post-processing.
+"""Utilities for convergence-analysis post-processing.
 
 Provides MPI-independent NPZ I/O, cross-mesh interpolation, error norms, and
 Richardson/GCI helpers used by the convergence scripts and plotting.
@@ -41,16 +40,10 @@ ERROR_SPACE_RAISE = 2  # P1 -> P3 by default
 # ============================================================================
 
 def save_function_npz(func: fem.Function, path: Path, comm: MPI.Comm) -> None:
-    """Save function to NPZ with DOF coordinates and element metadata.
-    
-    Stores:
-    - DOF coordinates (for KDTree matching on load)
-    - DOF values
-    - Element family, degree, shape
-    - Block size
-    
-    Rank 0 gathers all data and writes single NPZ file.
-    Loading is MPI-independent via coordinate-based DOF matching.
+    """Save a function snapshot to NPZ (rank 0 writes).
+
+    Stores owned-DOF coordinates and values plus element metadata so loads can
+    match DOFs by coordinates and remain MPI-independent.
     """
     space = func.function_space
     element = space.element
@@ -93,12 +86,10 @@ def save_function_npz(func: fem.Function, path: Path, comm: MPI.Comm) -> None:
 
 
 def load_npz_field(comm: MPI.Comm, npz_file: Path, target: fem.Function) -> None:
-    """Load NPZ snapshot into target function using coordinate matching.
-    
-    Uses KDTree to match stored DOF coordinates with target space DOFs,
-    making loading MPI-independent (works with any rank count/partition).
-    
-    Validates element compatibility (family, degree, shape).
+    """Load an NPZ snapshot into `target` via DOF coordinate matching.
+
+    Validates element compatibility and uses a KDTree to map stored coordinates
+    onto the current MPI partition.
     """
     # Rank 0 loads data
     if comm.rank == 0:
@@ -268,7 +259,6 @@ def load_sweep_records(
 
     records = comm.bcast(records, root=0)
     return records
-
 
 
 
