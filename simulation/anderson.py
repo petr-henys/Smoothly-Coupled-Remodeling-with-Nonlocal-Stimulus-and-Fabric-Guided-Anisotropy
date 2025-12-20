@@ -79,22 +79,36 @@ class Anderson:
         return float(self.comm.allreduce(float(np.dot(a, b)), op=MPI.SUM))
 
     def _rel_step(self, x_old: np.ndarray, x_trial: np.ndarray, x_ref: np.ndarray) -> float:
-            """Relative step: ||x_trial-x_old|| / (||x_ref|| + eps) globally."""
-            d = x_trial - x_old
-            d2 = self._gdot(d, d)
-            r2 = self._gdot(x_ref, x_ref)
-            
-            # Ochrana proti dělení nulou u vyhasínajících polí
-            # epsilon 1e-10 je dostatečně malé pro přesnost, ale brání explozi chyby
-            epsilon = 1e-20 
-            
-            return float(np.sqrt(d2 / (r2 + epsilon)))
+        """Relative step: ||x_trial-x_old|| / (||x_ref|| + eps) globally."""
+        d = x_trial - x_old
+        d2 = self._gdot(d, d)
+        r2 = self._gdot(x_ref, x_ref)
+
+        # Guard against division by ~0 for vanishing reference fields.
+        epsilon = 1e-20
+
+        return float(np.sqrt(d2 / (r2 + epsilon)))
 
     def _build_gram(self, r_list: Sequence[np.ndarray]) -> np.ndarray:
-        if len(r_list) == 0:
+        """Build the global Gram matrix H_ij = <r_i, r_j>.
+
+        This avoids stacking residuals into a (m × n) dense matrix (which can
+        double peak memory for large state vectors). We compute the local Gram
+        entries directly and perform a single MPI allreduce on the (m × m) matrix.
+        """
+        p = len(r_list)
+        if p == 0:
             return np.zeros((0, 0), dtype=float)
-        R_loc = np.vstack(r_list)
-        H_loc = R_loc @ R_loc.T
+
+        H_loc = np.empty((p, p), dtype=float)
+        for i in range(p):
+            ri = r_list[i]
+            # symmetry
+            for j in range(i, p):
+                val = float(np.dot(ri, r_list[j]))
+                H_loc[i, j] = val
+                H_loc[j, i] = val
+
         return self.comm.allreduce(H_loc, op=MPI.SUM)
 
     def _solve_kkt(self, H: np.ndarray, lam_eff: float) -> np.ndarray:
