@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from dolfinx import mesh
 import ufl
 
@@ -21,9 +23,6 @@ class Config:
     rho_trab_max: float = 1.0
     rho_cort_min: float = 1.25
     nu0: float = 0.3  # Poisson ratio
-    nu12: float | None = None
-    nu23: float | None = None
-    nu31: float | None = None
 
     # Anisotropy / fabric mechanics
     stiff_pE: float = 1.
@@ -37,7 +36,6 @@ class Config:
     fabric_epsQ: float = 1e-12
     fabric_m_min: float = 0.2
     fabric_m_max: float = 5.0
-    fabric_norm_mode: str = "trace"  # "trace" or "det"
 
     # Density [g/cm^3].
     rho_min: float = 0.1  # Lower bound
@@ -126,14 +124,6 @@ class Config:
         if self.domain is None:
             raise ValueError("Config requires a valid 'domain' (dolfinx.mesh.Mesh).")
 
-        # Defaults for orthotropic Poisson ratios
-        if self.nu12 is None:
-            self.nu12 = float(self.nu0)
-        if self.nu23 is None:
-            self.nu23 = float(self.nu0)
-        if self.nu31 is None:
-            self.nu31 = float(self.nu0)
-        
         # Resolve log_file relative to results_dir.
         self.log_file = str(Path(self.results_dir) / self.log_file)
 
@@ -153,6 +143,8 @@ class Config:
         # Density
         if not (0.0 <= self.rho_min < self.rho_max):
             raise ValueError("rho_min/max must satisfy 0 <= rho_min < rho_max.")
+        if not (self.rho_min <= self.rho0 <= self.rho_max):
+            raise ValueError("rho0 must satisfy rho_min <= rho0 <= rho_max.")
         if self.k_rho_form < 0 or self.k_rho_resorb < 0:
             raise ValueError("k_rho_form and k_rho_resorb must be >= 0.")
         if self.D_rho < 0:
@@ -183,12 +175,6 @@ class Config:
             raise ValueError("Young's modulus E0 must be positive.")
         if not (-1.0 < self.nu0 < 0.5):
             raise ValueError("Poisson ratio nu0 must be in range (-1, 0.5).")
-        for name in ("nu12", "nu23", "nu31"):
-            nu = getattr(self, name)
-            if nu is None:
-                continue
-            if not (-1.0 < float(nu) < 0.5):
-                raise ValueError(f"{name} must be in range (-1, 0.5).")
 
         if self.stiff_pE < 0 or self.stiff_pG < 0:
             raise ValueError("stiff_pE and stiff_pG must be >= 0.")
@@ -208,8 +194,6 @@ class Config:
             raise ValueError("fabric_m_min must be > 0.")
         if self.fabric_m_max <= self.fabric_m_min:
             raise ValueError("fabric_m_max must be > fabric_m_min.")
-        if self.fabric_norm_mode not in ("trace", "det"):
-            raise ValueError("fabric_norm_mode must be 'trace' or 'det'.")
 
         # Solver
         if self.accel_type not in ("anderson", "picard"):

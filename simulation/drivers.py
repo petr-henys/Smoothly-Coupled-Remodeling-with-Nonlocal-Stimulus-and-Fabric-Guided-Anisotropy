@@ -1,4 +1,4 @@
-"""GaitDriver: mechanics + averaged SED stimulus over multiple loading cases."""
+"""GaitDriver: mechanics + cycle-weighted power-mean SED over multiple loading cases."""
 
 from __future__ import annotations
 from typing import Dict, List, TYPE_CHECKING
@@ -7,9 +7,9 @@ from dolfinx import fem
 import ufl
 
 from simulation.config import Config
-from simulation.subsolvers import MechanicsSolver, symm
+from simulation.subsolvers import MechanicsSolver
 from simulation.logger import get_logger
-from simulation.utils import assign, get_owned_size
+from simulation.utils import assign, get_owned_size, symm
 
 if TYPE_CHECKING:
     from simulation.loader import LoadingCase, Loader
@@ -104,18 +104,20 @@ class GaitDriver:
             self._psi_temp.interpolate(self._sed_expr)
             self._Q_temp.interpolate(self._Q_expr)
 
-            # Accumulate stimulus weighted by day_cycles:
-            #   p = 1 -> sum of day_cycles * psi
-            #   p > 1 → peak-biased accumulation
+            # Accumulate stimulus as a cycle-weighted power mean:
+            #   psi = ( sum_i day_cycles_i * psi_i^p / sum_i day_cycles_i )^(1/p)
+            #   p = 1 -> cycle-weighted mean; p > 1 -> peak-biased
             contrib_p = self._psi_temp.x.array[:n_owned_psi] ** p
             self.psi.x.array[:n_owned_psi] += day_cycles * contrib_p
 
             # Accumulate Qbar as a plain weighted average (no power-mean).
             self.Qbar.x.array[:n_owned_Q] += day_cycles * self._Q_temp.x.array[:n_owned_Q]
 
-        # Finalize: take (.)^(1/p) after accumulation of sum(day_cycles * psi^p)
+        # Finalize: psi = ( sum(day_cycles * psi^p) / sum(day_cycles) )^(1/p)
+        if sum_cycles <= tiny:
+            raise ValueError("Total day_cycles is zero; cannot compute cycle-weighted stimulus.")
         owned = self.psi.x.array[:n_owned_psi]
-        owned[:] = owned ** (1.0 / p)
+        owned[:] = (owned / sum_cycles) ** (1.0 / p)
 
         # Finalize Qbar average and scatter.
         self.Qbar.x.array[:n_owned_Q] *= 1.0 / max(sum_cycles, tiny)
@@ -153,8 +155,7 @@ class GaitDriver:
         """Build UFL expression for psi = 0.5 * sigma : epsilon (clamped >= 0)."""
         u = self.mech.u
         rho = self.mech.rho
-        
-        L = getattr(self.mech, "L", None)
+        L = self.mech.L
         sig = self.mech.sigma(u, rho, L)
         eps = self.mech.eps(u)
         
@@ -167,7 +168,7 @@ class GaitDriver:
         """Build UFL expression for Q_case = sym(sigma*sigma^T) (DG0 tensor 3×3)."""
         u = self.mech.u
         rho = self.mech.rho
-        L = getattr(self.mech, "L", None)
+        L = self.mech.L
 
         sig = self.mech.sigma(u, rho, L)
         Q = ufl.dot(sig, ufl.transpose(sig))

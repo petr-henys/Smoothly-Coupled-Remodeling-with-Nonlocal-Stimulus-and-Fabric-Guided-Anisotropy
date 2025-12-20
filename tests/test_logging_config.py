@@ -1,9 +1,9 @@
 """
-Tests for logging_config.py module.
+Tests for logger.py module (standard logging utilities).
 
 Tests cover:
 - setup_logging() with various configurations
-- get_logger() name processing
+- get_std_logger() name processing
 - get_class_logger() for class instances
 - Log level configuration
 - File output
@@ -13,7 +13,7 @@ Tests cover:
 
 import logging
 import sys
-from simulation.logging_config import setup_logging, get_logger, get_class_logger
+from simulation.logger import setup_logging, get_std_logger, get_class_logger
 
 
 class TestSetupLogging:
@@ -178,37 +178,37 @@ class TestSetupLogging:
 
 
 class TestGetLogger:
-    """Test get_logger() function."""
+    """Test get_std_logger() function."""
     
     def test_get_logger_basic(self):
         """Test basic logger retrieval."""
-        logger = get_logger("my_module")
+        logger = get_std_logger("my_module")
         
         assert isinstance(logger, logging.Logger)
         assert logger.name == "my_module"
     
     def test_get_logger_removes_src_prefix(self):
         """Test that 'src.' prefix is removed from logger names."""
-        logger = get_logger("src.module.submodule")
+        logger = get_std_logger("src.module.submodule")
         
         assert logger.name == "module.submodule"
     
     def test_get_logger_nested_module(self):
         """Test logger for nested module structure."""
-        logger = get_logger("femurloader.process_gait_data")
+        logger = get_std_logger("femurloader.process_gait_data")
         
         assert logger.name == "femurloader.process_gait_data"
     
     def test_get_logger_preserves_non_src_prefix(self):
         """Test that non-src prefixes are preserved."""
-        logger = get_logger("tests.test_module")
+        logger = get_std_logger("tests.test_module")
         
         assert logger.name == "tests.test_module"
     
     def test_get_logger_returns_same_instance(self):
         """Test that get_logger returns the same instance for same name."""
-        logger1 = get_logger("my_module")
-        logger2 = get_logger("my_module")
+        logger1 = get_std_logger("my_module")
+        logger2 = get_std_logger("my_module")
         
         assert logger1 is logger2
 
@@ -278,7 +278,7 @@ class TestLoggingFunctionality:
     
     def test_log_message_output(self, caplog):
         """Test that log messages are actually output."""
-        logger = get_logger("test_module")
+        logger = get_std_logger("test_module")
         
         with caplog.at_level(logging.INFO):
             logger.info("Test info message")
@@ -289,7 +289,7 @@ class TestLoggingFunctionality:
         """Test that log levels are respected."""
         log_file = tmp_path / "test.log"
         setup_logging(level="WARNING", log_file=str(log_file))
-        logger = get_logger("test_module")
+        logger = get_std_logger("test_module")
         
         logger.debug("Debug message")
         logger.info("Info message")
@@ -309,8 +309,8 @@ class TestLoggingFunctionality:
     
     def test_log_hierarchy(self, caplog):
         """Test that logger hierarchy works correctly."""
-        parent_logger = get_logger("parent")
-        child_logger = get_logger("parent.child")
+        parent_logger = get_std_logger("parent")
+        child_logger = get_std_logger("parent.child")
         
         with caplog.at_level(logging.INFO):
             parent_logger.info("Parent message")
@@ -330,7 +330,7 @@ class TestEdgeCases:
     
     def test_empty_logger_name(self):
         """Test get_logger with empty name returns root logger."""
-        logger = get_logger("")
+        logger = get_std_logger("")
         
         assert isinstance(logger, logging.Logger)
         # Empty name returns root logger
@@ -394,7 +394,7 @@ class TestIntegration:
         setup_logging(level="DEBUG", log_file=str(log_file))
         
         # Get different types of loggers
-        module_logger = get_logger("my_module")
+        module_logger = get_std_logger("my_module")
         
         class TestClass:
             pass
@@ -426,8 +426,8 @@ class TestIntegration:
         setup_logging()
         
         # Get logger multiple times
-        logger1 = get_logger("test.module")
-        logger2 = get_logger("test.module")
+        logger1 = get_std_logger("test.module")
+        logger2 = get_std_logger("test.module")
         logger3 = logging.getLogger("test.module")
         
         # All should be the same instance

@@ -156,3 +156,88 @@ def smoothstep01(t):
     t_clamped = ufl.conditional(ufl.le(t, 0.0), 0.0, ufl.conditional(ufl.ge(t, 1.0), 1.0, t))
     return t_clamped * t_clamped * (3.0 - 2.0 * t_clamped)
 
+
+# ---------------------------------------------------------------------------
+# UFL tensor utilities
+# ---------------------------------------------------------------------------
+
+def clamp(x, a, b):
+    """UFL clamp: max(a, min(x, b))."""
+    return ufl.conditional(ufl.lt(x, a), a, ufl.conditional(ufl.gt(x, b), b, x))
+
+
+def symm(X):
+    """Symmetric part of a tensor: (X + X^T) / 2."""
+    return 0.5 * (X + ufl.transpose(X))
+
+
+def eigenvalues_sym3(X, *, eps_p: float = 1e-18, eps_r: float = 1e-12, tol: float = 1e-14):
+    """Eigenvalues of a symmetric 3×3 tensor via invariant formula (robust, no eigenvectors)."""
+    Xs = symm(X)
+    I = ufl.Identity(3)
+
+    q = ufl.tr(Xs) / 3.0
+    B = Xs - q * I
+
+    p2 = ufl.tr(ufl.dot(B, B)) / 6.0
+    # Scale-aware isotropy detection (relative to tensor magnitude)
+    scale2 = ufl.max_value(q * q + p2, 1.0)
+    iso = ufl.lt(p2, tol * scale2)
+
+    p = ufl.sqrt(ufl.max_value(p2, eps_p * scale2))
+    r = ufl.det(B) / (2.0 * p * p * p)
+    r_clamped = clamp(r, -1.0 + eps_r, 1.0 - eps_r)
+
+    phi = ufl.acos(r_clamped) / 3.0
+    two_pi_over_3 = 2.0 * ufl.pi / 3.0
+
+    l1_raw = q + 2.0 * p * ufl.cos(phi)
+    l2_raw = q + 2.0 * p * ufl.cos(phi + two_pi_over_3)
+    l3_raw = q + 2.0 * p * ufl.cos(phi + 2.0 * two_pi_over_3)
+
+    l1 = ufl.conditional(iso, q, l1_raw)
+    l2 = ufl.conditional(iso, q, l2_raw)
+    l3 = ufl.conditional(iso, q, l3_raw)
+    return l1, l2, l3
+
+
+def projectors_sylvester(X, l1, l2, l3, *, eps_d: float = 1e-12, tol: float = 1e-14):
+    """Spectral projectors for a symmetric 3×3 tensor using Sylvester formula (robust denominators)."""
+    Xs = symm(X)
+    I = ufl.Identity(3)
+
+    q = ufl.tr(Xs) / 3.0
+    B = Xs - q * I
+    p2 = ufl.tr(ufl.dot(B, B)) / 6.0
+    scale2 = ufl.max_value(q * q + p2, 1.0)
+    iso = ufl.lt(p2, tol * scale2)
+    eps_d_scaled = eps_d * scale2
+
+    def _sign(a):
+        return ufl.conditional(ufl.ge(a, 0.0), 1.0, -1.0)
+
+    def _safe_denom(a):
+        abs_a = ufl.sqrt(a * a)
+        return _sign(a) * ufl.max_value(abs_a, eps_d_scaled)
+
+    def _cond_tensor(A_true, A_false):
+        return ufl.as_tensor([[ufl.conditional(iso, A_true[i, j], A_false[i, j]) for j in range(3)] for i in range(3)])
+
+    X_l2 = Xs - l2 * I
+    X_l3 = Xs - l3 * I
+    X_l1 = Xs - l1 * I
+
+    P1_raw = ufl.dot(X_l2, X_l3) / _safe_denom((l1 - l2) * (l1 - l3))
+    P2_raw = ufl.dot(X_l1, X_l3) / _safe_denom((l2 - l1) * (l2 - l3))
+    P3_raw = ufl.dot(X_l1, X_l2) / _safe_denom((l3 - l1) * (l3 - l2))
+
+    P1_raw = symm(P1_raw)
+    P2_raw = symm(P2_raw)
+    P3_raw = symm(P3_raw)
+
+    I3 = I / 3.0
+    P1 = _cond_tensor(I3, P1_raw)
+    P2 = _cond_tensor(I3, P2_raw)
+    P3 = _cond_tensor(I3, P3_raw)
+    return P1, P2, P3
+

@@ -17,94 +17,19 @@ from dolfinx.fem.petsc import (
 )
 import ufl
 
-from simulation.utils import build_nullspace, smooth_max, smoothstep01
+from simulation.utils import (
+    build_nullspace,
+    smooth_max,
+    smoothstep01,
+    clamp,
+    symm,
+    eigenvalues_sym3,
+    projectors_sylvester,
+)
 from simulation.logger import get_logger
 
 if TYPE_CHECKING:
     from simulation.config import Config
-
-
-def clamp(x, a, b):
-    return ufl.conditional(ufl.lt(x, a), a, ufl.conditional(ufl.gt(x, b), b, x))
-
-
-def symm(X):
-    return 0.5 * (X + ufl.transpose(X))
-
-
-def invariants(X):
-    Xs = symm(X)
-    I1 = ufl.tr(Xs)
-    I2 = 0.5 * (I1 * I1 - ufl.tr(ufl.dot(Xs, Xs)))
-    I3 = ufl.det(Xs)
-    return I1, I2, I3
-
-
-def eigenvalues_sym3(X, *, eps_p: float = 1e-18, eps_r: float = 1e-12, tol: float = 1e-14):
-    """Eigenvalues of a symmetric 3×3 tensor via invariant formula (robust, no eigenvectors)."""
-    Xs = symm(X)
-    I = ufl.Identity(3)
-
-    q = ufl.tr(Xs) / 3.0
-    B = Xs - q * I
-
-    p2 = ufl.tr(ufl.dot(B, B)) / 6.0
-    iso = ufl.lt(p2, tol)
-
-    p = ufl.sqrt(ufl.max_value(p2, eps_p))
-    r = ufl.det(B) / (2.0 * p * p * p)
-    r_clamped = clamp(r, -1.0 + eps_r, 1.0 - eps_r)
-
-    phi = ufl.acos(r_clamped) / 3.0
-    two_pi_over_3 = 2.0 * ufl.pi / 3.0
-
-    l1_raw = q + 2.0 * p * ufl.cos(phi)
-    l2_raw = q + 2.0 * p * ufl.cos(phi + two_pi_over_3)
-    l3_raw = q + 2.0 * p * ufl.cos(phi + 2.0 * two_pi_over_3)
-
-    l1 = ufl.conditional(iso, q, l1_raw)
-    l2 = ufl.conditional(iso, q, l2_raw)
-    l3 = ufl.conditional(iso, q, l3_raw)
-    return l1, l2, l3
-
-
-def projectors_sylvester(X, l1, l2, l3, *, eps_d: float = 1e-12, tol: float = 1e-14):
-    """Spectral projectors for a symmetric 3×3 tensor using Sylvester formula (robust denominators)."""
-    Xs = symm(X)
-    I = ufl.Identity(3)
-
-    q = ufl.tr(Xs) / 3.0
-    B = Xs - q * I
-    p2 = ufl.tr(ufl.dot(B, B)) / 6.0
-    iso = ufl.lt(p2, tol)
-
-    def _sign(a):
-        return ufl.conditional(ufl.ge(a, 0.0), 1.0, -1.0)
-
-    def _safe_denom(a):
-        abs_a = ufl.sqrt(a * a)
-        return _sign(a) * ufl.max_value(abs_a, eps_d)
-
-    def _cond_tensor(A_true, A_false):
-        return ufl.as_tensor([[ufl.conditional(iso, A_true[i, j], A_false[i, j]) for j in range(3)] for i in range(3)])
-
-    X_l2 = Xs - l2 * I
-    X_l3 = Xs - l3 * I
-    X_l1 = Xs - l1 * I
-
-    P1_raw = ufl.dot(X_l2, X_l3) / _safe_denom((l1 - l2) * (l1 - l3))
-    P2_raw = ufl.dot(X_l1, X_l3) / _safe_denom((l2 - l1) * (l2 - l3))
-    P3_raw = ufl.dot(X_l1, X_l2) / _safe_denom((l3 - l1) * (l3 - l2))
-
-    P1_raw = symm(P1_raw)
-    P2_raw = symm(P2_raw)
-    P3_raw = symm(P3_raw)
-
-    I3 = I / 3.0
-    P1 = _cond_tensor(I3, P1_raw)
-    P2 = _cond_tensor(I3, P2_raw)
-    P3 = _cond_tensor(I3, P3_raw)
-    return P1, P2, P3
 
 
 class _BaseLinearSolver:
@@ -199,8 +124,6 @@ class _BaseLinearSolver:
         opts[f"{prefix}_ksp_max_it"] = self.cfg.ksp_max_it
 
         self.ksp.setInitialGuessNonzero(True)
-        if hasattr(self.ksp, "setReusePreconditioner"):
-            self.ksp.setReusePreconditioner(bool(getattr(self.cfg, "ksp_reuse_pc", False)))
         if self.A is not None:
             self.ksp.setOperators(self.A)
         self.ksp.setFromOptions()
@@ -296,8 +219,8 @@ class MechanicsSolver(_BaseLinearSolver):
         a2_hat = ufl.exp(l2 - mean_l)
         a3_hat = ufl.exp(l3 - mean_l)
 
-        pE = float(getattr(self.cfg, "stiff_pE", 0.0))
-        pG = float(getattr(self.cfg, "stiff_pG", 0.0))
+        pE = float(self.cfg.stiff_pE)
+        pG = float(self.cfg.stiff_pG)
 
         E1 = E_iso * (a1_hat**pE)
         E2 = E_iso * (a2_hat**pE)
@@ -308,12 +231,11 @@ class MechanicsSolver(_BaseLinearSolver):
         G23 = G_iso * ((a2_hat * a3_hat) ** (0.5 * pG))
         G31 = G_iso * ((a3_hat * a1_hat) ** (0.5 * pG))
 
-        nu12_v = getattr(self.cfg, "nu12", None)
-        nu23_v = getattr(self.cfg, "nu23", None)
-        nu31_v = getattr(self.cfg, "nu31", None)
-        nu12 = nu0 if nu12_v is None else float(nu12_v)
-        nu23 = nu0 if nu23_v is None else float(nu23_v)
-        nu31 = nu0 if nu31_v is None else float(nu31_v)
+        # Orthotropic Poisson ratios: use nu0 for all directions.
+        # With reciprocity, nu_ij/E_j = nu_ji/E_i.
+        nu12 = nu0
+        nu23 = nu0
+        nu31 = nu0
 
         nu21 = nu12 * E2 / E1
         nu32 = nu23 * E3 / E2
@@ -397,9 +319,9 @@ class FabricSolver(_BaseLinearSolver):
         self.logger = get_logger(self.comm, name="Fabric", log_file=self.cfg.log_file)
 
         self.dt_c = fem.Constant(self.mesh, float(self.cfg.dt))
-        self.cA_c = fem.Constant(self.mesh, float(getattr(self.cfg, "fabric_cA", 1.0)))
-        self.tau_c = fem.Constant(self.mesh, float(getattr(self.cfg, "fabric_tau", 1.0)))
-        self.D_c = fem.Constant(self.mesh, float(getattr(self.cfg, "fabric_D", 0.0)))
+        self.cA_c = fem.Constant(self.mesh, float(self.cfg.fabric_cA))
+        self.tau_c = fem.Constant(self.mesh, float(self.cfg.fabric_tau))
+        self.D_c = fem.Constant(self.mesh, float(self.cfg.fabric_D))
 
         self._use_diffusion = float(self.D_c.value) > 0.0
 
@@ -429,11 +351,10 @@ class FabricSolver(_BaseLinearSolver):
         if gdim != 3:
             raise ValueError("FabricSolver currently requires gdim==3.")
 
-        epsQ = float(getattr(self.cfg, "fabric_epsQ", 1e-12))
-        gammaF = float(getattr(self.cfg, "fabric_gammaF", 1.0))
-        m_min = float(getattr(self.cfg, "fabric_m_min", 0.2))
-        m_max = float(getattr(self.cfg, "fabric_m_max", 5.0))
-        norm_mode = str(getattr(self.cfg, "fabric_norm_mode", "trace"))
+        epsQ = float(self.cfg.fabric_epsQ)
+        gammaF = float(self.cfg.fabric_gammaF)
+        m_min = float(self.cfg.fabric_m_min)
+        m_max = float(self.cfg.fabric_m_max)
 
         I = ufl.Identity(3)
         Q = symm(self.Qbar) + epsQ * I
@@ -452,11 +373,8 @@ class FabricSolver(_BaseLinearSolver):
         m2 = clamp(a2**gammaF, m_min, m_max)
         m3 = clamp(a3**gammaF, m_min, m_max)
 
-        if norm_mode == "det":
-            mprod = ufl.max_value(m1 * m2 * m3, 1e-30)
-            s = ufl.exp((1.0 / 3.0) * ufl.ln(mprod))
-        else:
-            s = (m1 + m2 + m3) / 3.0
+        # Normalize by trace (ensures tr(M) = 3, i.e., tr(L_target) = 0).
+        s = (m1 + m2 + m3) / 3.0
 
         m1n = m1 / s
         m2n = m2 / s
@@ -472,6 +390,9 @@ class FabricSolver(_BaseLinearSolver):
 
     def assemble_lhs(self) -> None:
         self.dt_c.value = float(self.cfg.dt)
+        # Qbar (from driver) is referenced in L_target; L_old in the RHS.
+        self.Qbar.x.scatter_forward()
+        self.L_old.x.scatter_forward()
         super().assemble_lhs()
 
     def assemble_rhs(self):
@@ -488,6 +409,11 @@ class FabricSolver(_BaseLinearSolver):
         if n_owned <= 0:
             return
         gdim = self.mesh.geometry.dim
+        if bs != gdim * gdim:
+            raise ValueError(
+                f"Unexpected tensor block size for L: bs={bs}, expected gdim*gdim={gdim*gdim}. "
+                "This symmetrization assumes contiguous (gdim,gdim) blocks per DOF."
+            )
         A = self.L.x.array[:n_owned].reshape(-1, gdim, gdim)
         A[:] = 0.5 * (A + np.swapaxes(A, 1, 2))
         self.L.x.scatter_forward()
@@ -620,9 +546,15 @@ class StimulusSolver(_BaseLinearSolver):
 
 
 class DensitySolver(_BaseLinearSolver):
-    """Density evolution (implicit Euler diffusion + reaction driven by stimulus S).
+    """Density evolution (implicit Euler diffusion + bounded formation/resorption kinetics).
 
-    d(rho)/dt = D * Laplacian(rho) + k_rho * S
+    Continuous model implemented (up to smoothing of clamps):
+
+        dρ/dt = Dρ Δρ
+               + k_form S_+ (1 - ρ/ρ_max)
+               - k_res  S_- (1 - ρ/ρ_min),
+
+    optionally scaled by a surface availability A(ρ_old) when cfg.surface_use=True.
     """
 
     def __init__(
@@ -703,6 +635,9 @@ class DensitySolver(_BaseLinearSolver):
 
     def assemble_lhs(self) -> None:
         self.dt_c.value = float(self.cfg.dt)
+        # Coefficient fields appear in the bilinear form -> must be ghost-synchronized before matrix assembly.
+        self.S.x.scatter_forward()
+        self.rho_old.x.scatter_forward()
         super().assemble_lhs()
 
     def assemble_rhs(self):
