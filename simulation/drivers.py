@@ -15,6 +15,56 @@ if TYPE_CHECKING:
     from simulation.loader import LoadingCase, Loader
 
 
+class StimulusCalculator:
+    """Calculates SED and fabric tensor from mechanics solution."""
+
+    def __init__(self, mech: MechanicsSolver):
+        """Initialize with mechanics solver to access state fields."""
+        self.mech = mech
+        self.mesh = mech.u.function_space.mesh
+        self.gdim = self.mesh.geometry.dim
+
+        # Function spaces for output
+        self.V_psi = fem.functionspace(self.mesh, ("DG", 0))
+        self.V_Q = fem.functionspace(self.mesh, ("DG", 0, (self.gdim, self.gdim)))
+
+        # Pre-compile expressions
+        self._sed_expr = self._build_sed_expression()
+        self._Q_expr = self._build_Q_expression()
+
+    def compute_sed(self, target: fem.Function) -> None:
+        """Compute SED (psi) and interpolate into target function."""
+        target.interpolate(self._sed_expr)
+
+    def compute_Q(self, target: fem.Function) -> None:
+        """Compute fabric tensor (Q) and interpolate into target function."""
+        target.interpolate(self._Q_expr)
+
+    def _build_sed_expression(self) -> fem.Expression:
+        """Build UFL expression for psi = 0.5 * sigma : epsilon (clamped >= 0)."""
+        u = self.mech.u
+        rho = self.mech.rho
+        L = self.mech.L
+        sig = self.mech.sigma(u, rho, L)
+        eps = self.mech.eps(u)
+        
+        Psi = 0.5 * ufl.inner(sig, eps)
+        Psi_safe = ufl.max_value(Psi, 0.0)
+
+        return fem.Expression(Psi_safe, self.V_psi.element.interpolation_points)
+
+    def _build_Q_expression(self) -> fem.Expression:
+        """Build UFL expression for Q_case = sym(sigma*sigma^T) (DG0 tensor 3×3)."""
+        u = self.mech.u
+        rho = self.mech.rho
+        L = self.mech.L
+
+        sig = self.mech.sigma(u, rho, L)
+        Q = ufl.dot(sig, ufl.transpose(sig))
+        Q_sym = symm(Q)
+        return fem.Expression(Q_sym, self.V_Q.element.interpolation_points)
+
+
 class GaitDriver:
     """Mechanics driver that computes accumulated SED stimulus.
 
@@ -41,22 +91,20 @@ class GaitDriver:
         self.rank = self.comm.rank
         self.logger = get_logger(self.comm, name="Driver", log_file=self.cfg.log_file)
 
+        # Physics calculator
+        self.calculator = StimulusCalculator(self.mech)
+
         # Accumulated SED (DG0 - cellwise values).
-        self.V_psi = fem.functionspace(mesh, ("DG", 0))
+        self.V_psi = self.calculator.V_psi
         self.psi = fem.Function(self.V_psi, name="psi")
         
         # Temporary per-case SED (DG0).
         self._psi_temp = fem.Function(self.V_psi, name="psi_temp")
 
         # Weighted average of Q_case = sigma*sigma^T (DG0 tensor 3×3).
-        gdim = mesh.geometry.dim
-        self.V_Q = fem.functionspace(mesh, ("DG", 0, (gdim, gdim)))
+        self.V_Q = self.calculator.V_Q
         self.Qbar = fem.Function(self.V_Q, name="Qbar")
         self._Q_temp = fem.Function(self.V_Q, name="Q_temp")
-
-        # Pre-compile SED expression (reused every update)
-        self._sed_expr = self._build_sed_expression()
-        self._Q_expr = self._build_Q_expression()
 
         # Precompute all loading cases (expensive interpolation done once)
         self.loader.precompute_loading_cases(self.loading_cases)
@@ -101,8 +149,8 @@ class GaitDriver:
             self.mech.solve()
             
             # Compute SED + Q_case for this case
-            self._psi_temp.interpolate(self._sed_expr)
-            self._Q_temp.interpolate(self._Q_expr)
+            self.calculator.compute_sed(self._psi_temp)
+            self.calculator.compute_Q(self._Q_temp)
 
             # Accumulate stimulus as a cycle-weighted power mean:
             #   psi = ( sum_i day_cycles_i * psi_i^p / sum_i day_cycles_i )^(1/p)
@@ -166,27 +214,3 @@ class GaitDriver:
         self.assemble_lhs()
         self.update_snapshots()
         return {"label": "mech", "reason": int(self.mech.last_reason)}
-
-    def _build_sed_expression(self) -> fem.Expression:
-        """Build UFL expression for psi = 0.5 * sigma : epsilon (clamped >= 0)."""
-        u = self.mech.u
-        rho = self.mech.rho
-        L = self.mech.L
-        sig = self.mech.sigma(u, rho, L)
-        eps = self.mech.eps(u)
-        
-        Psi = 0.5 * ufl.inner(sig, eps)
-        Psi_safe = ufl.max_value(Psi, 0.0)
-
-        return fem.Expression(Psi_safe, self.V_psi.element.interpolation_points)
-
-    def _build_Q_expression(self) -> fem.Expression:
-        """Build UFL expression for Q_case = sym(sigma*sigma^T) (DG0 tensor 3×3)."""
-        u = self.mech.u
-        rho = self.mech.rho
-        L = self.mech.L
-
-        sig = self.mech.sigma(u, rho, L)
-        Q = ufl.dot(sig, ufl.transpose(sig))
-        Q_sym = symm(Q)
-        return fem.Expression(Q_sym, self.V_Q.element.interpolation_points)

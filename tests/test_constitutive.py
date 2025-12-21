@@ -7,9 +7,9 @@ import basix
 import ufl
 
 from simulation.config import Config
-from simulation.params import MaterialParams, DensityParams, NumericsParams, StimulusParams
-from simulation.utils import build_dirichlet_bcs
-from simulation.subsolvers import MechanicsSolver, smooth_max, DensitySolver
+from simulation.params import MaterialParams, DensityParams
+from simulation.subsolvers import DensitySolver, MechanicsSolver
+from simulation.utils import build_dirichlet_bcs, smooth_max
 
 # =============================================================================
 # Constitutive Law Tests
@@ -129,13 +129,15 @@ class TestAdvancedConstitutiveLaws:
     def test_linear_driver_rate(self, unit_cube, facet_tags):
         """Verify density evolution rate follows specific energy stimulus."""
         comm = MPI.COMM_WORLD
-        cfg = Config(domain=unit_cube, facet_tags=facet_tags,
-                    material=MaterialParams(n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2))
-        
         # Note: k_rho is now in density params, but we set dt on cfg
         k_rho = 1.0  # Local test value
-        cfg.set_dt(0.1)
         
+        cfg = Config(domain=unit_cube, facet_tags=facet_tags,
+                    material=MaterialParams(n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2),
+                    density=DensityParams(k_rho_form=k_rho, k_rho_resorb=k_rho, surface_use=False))
+
+        cfg.set_dt(0.1)
+    
         P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
         Q = functionspace(unit_cube, P1)
         
@@ -165,16 +167,23 @@ class TestAdvancedConstitutiveLaws:
             
             return (dM / vol) / cfg.dt
         
-        # DensitySolver uses: ∂ρ/∂t = k_rho * (psi/rho - psi_ref/rho_ref) / (psi_ref/rho_ref)
-        # With rho = rho_ref, this simplifies to: k_rho * (psi - psi_ref) / psi_ref
-        
-        # Case 1: psi = 2*psi_ref → S = 1.0
-        rate_pos = get_rate(2.0 * cfg.stimulus.psi_ref)
-        expected_pos = k_rho * 1.0
+        # DensitySolver expects dimensionless stimulus S, not SED psi.
+        # Case 1: S = 1.0
+        print(f"DEBUG: k_rho_form={cfg.density.k_rho_form}, k_rho_resorb={cfg.density.k_rho_resorb}")
+        rate_pos = get_rate(1.0)
+        # With S=1.0, rho=1.0, rho_max=2.0, k=1.0:
+        # Rate approx k * S * (1 - rho/rho_max) = 1.0 * 1.0 * 0.5 = 0.5
+        expected_pos = k_rho * 1.0 * (1.0 - rho_val / cfg.density.rho_max)
         assert abs(rate_pos - expected_pos) < 0.05, f"Positive rate mismatch: got {rate_pos}, expected {expected_pos}"
         
-        # Case 2: psi = 0.5*psi_ref → S = -0.5
-        rate_neg = get_rate(0.5 * cfg.stimulus.psi_ref)
-        expected_neg = k_rho * (-0.5)
+        # Case 2: S = -0.5
+        rate_neg = get_rate(-0.5)
+        # With S=-0.5, rho=1.0, rho_min=0.1, k=1.0:
+        # Rate approx k_res * S_neg * (1 - rho/rho_min)
+        # S_neg = 0.5
+        # (1 - rho/rho_min) = (1 - 1.0/0.1) = -9.0
+        # Rate = 1.0 * 0.5 * (-9.0) = -4.5
+        expected_neg = k_rho * 0.5 * (1.0 - rho_val / cfg.density.rho_min)
         assert abs(rate_neg - expected_neg) < 0.05, f"Negative rate mismatch: got {rate_neg}, expected {expected_neg}"
+
 

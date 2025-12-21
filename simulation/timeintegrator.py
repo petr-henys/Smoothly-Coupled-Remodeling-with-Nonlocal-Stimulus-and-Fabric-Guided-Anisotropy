@@ -13,7 +13,6 @@ import numpy as np
 from mpi4py import MPI
 from dolfinx import fem
 
-from simulation.config import Config
 from simulation.utils import assign, get_owned_size
 
 
@@ -33,10 +32,21 @@ class TimeIntegrator:
     Step is accepted if WRMS ≤ 1.
     """
 
-    def __init__(self, comm: MPI.Intracomm, cfg: Config, state_fields: Mapping[str, fem.Function]):
-        """Initialize with MPI comm, config, and a mapping of state fields."""
+    def __init__(
+        self,
+        comm: MPI.Intracomm,
+        state_fields: Mapping[str, fem.Function],
+        dt_min: float = 1e-3,
+        dt_max: float = 10.0,
+        adaptive_rtol: float = 1e-3,
+        adaptive_atol: float = 1e-4,
+    ):
+        """Initialize with MPI comm, parameters, and a mapping of state fields."""
         self.comm = comm
-        self.cfg = cfg
+        self.dt_min = dt_min
+        self.dt_max = dt_max
+        self.rtol = adaptive_rtol
+        self.atol = adaptive_atol
 
         # Controller state
         self.step_count = 0
@@ -131,8 +141,8 @@ class TimeIntegrator:
         if self._N_total <= 0:
             return 0.0
 
-        atol = float(self.cfg.time.adaptive_atol)
-        rtol = float(self.cfg.time.adaptive_rtol)
+        atol = float(self.atol)
+        rtol = float(self.rtol)
 
         sq_error_local = 0.0
         for name, hist in self._fields.items():
@@ -157,7 +167,7 @@ class TimeIntegrator:
         """PI controller: returns (accepted, next_dt, reason)."""
         if not converged:
             # Divergence: Cut aggressively
-            next_dt = max(self.cfg.time.dt_min, dt * 0.5)
+            next_dt = max(self.dt_min, dt * 0.5)
             return False, next_dt, "diverged"
         
         if self.step_count == 0:
@@ -171,7 +181,7 @@ class TimeIntegrator:
             factor = self.safety * (1.0 / error_norm) ** (1.0 / self.k_exp)
             factor = max(self.shrink_factor, min(0.9, factor))  # Ensure reduction
             
-            next_dt = max(self.cfg.time.dt_min, dt * factor)
+            next_dt = max(self.dt_min, dt * factor)
             
             # Reset PI history on rejection to avoid bad memory
             self.error_prev = error_norm
@@ -200,7 +210,7 @@ class TimeIntegrator:
              factor = max(1.0, factor)
 
         next_dt = dt * factor
-        next_dt = max(self.cfg.time.dt_min, min(self.cfg.time.dt_max, next_dt))
+        next_dt = max(self.dt_min, min(self.dt_max, next_dt))
 
         # Store error for next step
         self.error_prev = safe_error

@@ -27,6 +27,7 @@ from simulation.storage import UnifiedStorage
 from simulation.subsolvers import DensitySolver, FabricSolver, MechanicsSolver, StimulusSolver
 from simulation.timeintegrator import TimeIntegrator
 from simulation.utils import assign, build_dirichlet_bcs
+from simulation.factory import SolverFactory, DefaultSolverFactory
 
 if TYPE_CHECKING:
     from mpi4py import MPI
@@ -40,6 +41,7 @@ class Remodeller:
         cfg: Config,
         loader: Loader,
         loading_cases: List[LoadingCase],
+        factory: SolverFactory | None = None,
     ):
         """Initialize coupled solvers, I/O, and precomputed loading cases."""
         self.cfg = cfg
@@ -50,6 +52,7 @@ class Remodeller:
 
         self.loader = loader
         self.loading_cases = loading_cases
+        self.factory = factory or DefaultSolverFactory(cfg)
 
         # Ensure log directory exists (rank 0 creates, all ranks wait)
         self._ensure_log_dir()
@@ -115,42 +118,38 @@ class Remodeller:
 
     def _build_solvers(self) -> None:
         """Wire up the solver graph: mechanics → fabric → stimulus → density."""
-        # Boundary conditions
-        bc_mech = build_dirichlet_bcs(self.V, self.cfg.facet_tags, id_tag=self.cfg.geometry.fix_tag, value=0.0)
-        neumann_bcs = [(self.loader.traction, self.loader.load_tag)]
-
         # =====================================================================
         # Block registration - add/remove blocks here
         # =====================================================================
         self.registry = BlockRegistry(self.comm, self.cfg)
 
         # 1. Mechanics solver (wrapped by GaitDriver)
-        mechsolver = MechanicsSolver(
-            self.u, self.rho, self.cfg, bc_mech, neumann_bcs, L=self.L
+        mechsolver = self.factory.create_mechanics_solver(
+            self.u, self.rho, self.L, self.loader
         )
 
         # 2. GaitDriver: mechanics + multi-load SED averaging
-        self.driver = GaitDriver(
-            mechsolver, self.cfg,
-            loader=self.loader,
-            loading_cases=self.loading_cases,
+        self.driver = self.factory.create_driver(
+            mechsolver, self.loader, self.loading_cases
         )
         self.registry.register(self.driver)
 
         # 3. Fabric solver: log-fabric evolution L -> L_target(Qbar)
-        self.fabricsolver = FabricSolver(
-            self.L, self.L_old, self.driver.Qbar_field(), self.cfg
+        self.fabricsolver = self.factory.create_fabric_solver(
+            self.L, self.L_old, self.driver.Qbar_field()
         )
         self.registry.register(self.fabricsolver)
 
         # 4. Stimulus solver: S(psi, rho)
-        self.stimsolver = StimulusSolver(
-            self.S, self.S_old, self.driver.stimulus_field(), self.rho, self.cfg
+        self.stimsolver = self.factory.create_stimulus_solver(
+            self.S, self.S_old, self.driver.stimulus_field(), self.rho
         )
         self.registry.register(self.stimsolver)
 
         # 5. Density solver: rho(S)
-        self.densolver = DensitySolver(self.rho, self.rho_old, self.S, self.cfg)
+        self.densolver = self.factory.create_density_solver(
+            self.rho, self.rho_old, self.S
+        )
         self.registry.register(self.densolver)
 
         # =====================================================================
@@ -169,7 +168,14 @@ class Remodeller:
         )
 
         # Time integrator (uses auto-discovered state fields)
-        self.integrator = TimeIntegrator(self.comm, self.cfg, self.state_fields)
+        self.integrator = TimeIntegrator(
+            self.comm, 
+            self.state_fields,
+            dt_min=self.cfg.time.dt_min,
+            dt_max=self.cfg.time.dt_max,
+            adaptive_rtol=self.cfg.time.adaptive_rtol,
+            adaptive_atol=self.cfg.time.adaptive_atol,
+        )
 
     def _setup_blocks(self) -> None:
         """Call setup() on all coupling blocks."""
