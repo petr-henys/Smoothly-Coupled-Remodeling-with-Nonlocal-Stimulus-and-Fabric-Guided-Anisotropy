@@ -288,15 +288,13 @@ class TestConservation:
         rho.x.array[:] = rho_old.x.array[:]
         rho.x.scatter_forward()
         
-        psi_field = Function(Q, name="psi")
+        # For zero stimulus S=0, we pass a zero function.
+        # (DensitySolver expects dimensionless stimulus S, not SED psi)
+        S_field = Function(Q, name="S")
+        S_field.x.array[:] = 0.0
+        S_field.x.scatter_forward()
         
-        # For zero stimulus S=0, we need Ψ/ρ = Ψ_ref/ρ_ref
-        # So psi = rho * (psi_ref / rho_ref) = rho * S_ref_specific
-        S_ref_specific = cfg.stimulus.psi_ref / cfg.density.rho_ref
-        psi_field.interpolate(lambda x: (0.6 + 0.2 * np.sin(2*np.pi*x[0]) * np.cos(2*np.pi*x[1])) * S_ref_specific)
-        psi_field.x.scatter_forward()
-        
-        dens = DensitySolver(rho, rho_old, psi_field, cfg)
+        dens = DensitySolver(rho, rho_old, S_field, cfg)
         dens.setup()
         dens.assemble_rhs()
         dens.solve()

@@ -15,7 +15,7 @@ from mpi4py import MPI
 from dolfinx import fem
 
 from simulation.config import Config
-from simulation.params import MaterialParams, DensityParams, SolverParams, OutputParams
+from simulation.params import MaterialParams, DensityParams, SolverParams, OutputParams, FabricParams
 from simulation.model import Remodeller
 
 
@@ -188,3 +188,30 @@ def test_model_two_steps_energy_stability(tmp_path, unit_cube, facet_tags, dummy
 
         rel_diff = abs(psi2 - psi1) / max(abs(psi1), 1e-12)
         assert rel_diff < 0.5
+
+
+def test_fabric_evolves_with_load(tmp_path, unit_cube, facet_tags, dummy_load):
+    """Fabric tensor should evolve from isotropic state under anisotropic load."""
+    comm = MPI.COMM_WORLD
+    cfg = Config(
+        domain=unit_cube,
+        facet_tags=facet_tags,
+        material=MaterialParams(n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2),
+        output=OutputParams(results_dir=str(tmp_path)),
+        solver=SolverParams(max_subiters=8),
+        fabric=FabricParams(fabric_tau=5.0), # Fast evolution
+    )
+
+    with Remodeller(cfg, loader=dummy_load["loader"], loading_cases=dummy_load["loading_cases"]) as rem:
+        L = rem.state_fields["L"]
+        
+        # Initial state is isotropic (L=0)
+        L_norm_init = comm.allreduce(np.linalg.norm(L.x.array), op=MPI.SUM)
+        assert L_norm_init < 1e-10
+        
+        # Step forward
+        rem.step(5.0)
+        
+        # Should develop anisotropy (L != 0)
+        L_norm_final = comm.allreduce(np.linalg.norm(L.x.array), op=MPI.SUM)
+        assert L_norm_final > 1e-6, f"Fabric did not evolve: {L_norm_final:.3e}"

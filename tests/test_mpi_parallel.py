@@ -223,10 +223,6 @@ class TestMPIIO:
                 # Should complete without hanging
                 comm.Barrier()
 
-    @pytest.mark.parametrize("unit_cube", [6], indirect=True)
-    def test_csv_metrics_rank0(self, unit_cube):
-        pytest.skip("CSV metrics removed (telemetry disabled)")
-
 
 # =============================================================================
 # Fixed-Point Solver Parallelism Tests
@@ -315,28 +311,6 @@ class TestCrossRankComm:
         all_norms = comm.allgather(u_norm_sq)
         for i, n in enumerate(all_norms):
             assert abs(n - u_norm_sq) < 1e-14, f"Rank {i} has different norm: {n} vs {u_norm_sq}"
-
-
-# =============================================================================
-# Performance and Solver Efficiency Tests
-# =============================================================================
-
-class TestSolverIterations:
-    """Test solver iteration counts scale reasonably with problem size."""
-    
-    def test_mechanics_iterations_bounded(self):
-        pytest.skip("KSP iteration telemetry removed")
-
-
-# =============================================================================
-# Preconditioner Effectiveness Tests
-# =============================================================================
-
-class TestPreconditioners:
-    """Test preconditioner update logic and effectiveness (skipped)."""
-    
-    def test_preconditioner_reuse_efficiency(self):
-        pytest.skip("KSP iteration telemetry removed")
 
 
 # =============================================================================

@@ -168,22 +168,29 @@ class TestAdvancedConstitutiveLaws:
             return (dM / vol) / cfg.dt
         
         # DensitySolver expects dimensionless stimulus S, not SED psi.
+        
+        def expected_rate_implicit(S_val, rho_val, k, limit):
+            # Rate = (A - B*rho) / (1 + B*dt) for implicit Euler
+            # Rate_explicit = k * |S| * (1 - rho/limit) = k*|S| - (k*|S|/limit)*rho
+            # So A = k*|S|, B = k*|S|/limit
+            S_abs = abs(S_val)
+            A = k * S_abs
+            B = k * S_abs / limit
+            numerator = A - B * rho_val
+            denominator = 1.0 + B * cfg.dt
+            return numerator / denominator
+
         # Case 1: S = 1.0
         print(f"DEBUG: k_rho_form={cfg.density.k_rho_form}, k_rho_resorb={cfg.density.k_rho_resorb}")
         rate_pos = get_rate(1.0)
         # With S=1.0, rho=1.0, rho_max=2.0, k=1.0:
-        # Rate approx k * S * (1 - rho/rho_max) = 1.0 * 1.0 * 0.5 = 0.5
-        expected_pos = k_rho * 1.0 * (1.0 - rho_val / cfg.density.rho_max)
+        expected_pos = expected_rate_implicit(1.0, rho_val, k_rho, cfg.density.rho_max)
         assert abs(rate_pos - expected_pos) < 0.05, f"Positive rate mismatch: got {rate_pos}, expected {expected_pos}"
         
         # Case 2: S = -0.5
         rate_neg = get_rate(-0.5)
         # With S=-0.5, rho=1.0, rho_min=0.1, k=1.0:
-        # Rate approx k_res * S_neg * (1 - rho/rho_min)
-        # S_neg = 0.5
-        # (1 - rho/rho_min) = (1 - 1.0/0.1) = -9.0
-        # Rate = 1.0 * 0.5 * (-9.0) = -4.5
-        expected_neg = k_rho * 0.5 * (1.0 - rho_val / cfg.density.rho_min)
+        expected_neg = expected_rate_implicit(-0.5, rho_val, k_rho, cfg.density.rho_min)
         assert abs(rate_neg - expected_neg) < 0.05, f"Negative rate mismatch: got {rate_neg}, expected {expected_neg}"
 
 
