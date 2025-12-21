@@ -7,6 +7,7 @@ import ufl
 import basix
 
 from simulation.config import Config
+from simulation.params import MaterialParams
 from simulation.utils import build_dirichlet_bcs, build_facetag, collect_dirichlet_dofs
 from simulation.subsolvers import MechanicsSolver
 from dolfinx import mesh
@@ -27,7 +28,8 @@ class TestBoundaryConditions:
         comm = MPI.COMM_WORLD
         domain = unit_cube
         facet_tags = build_facetag(domain)
-        cfg = Config.from_flat_kwargs(domain=domain, facet_tags=facet_tags, n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2)
+        cfg = Config(domain=domain, facet_tags=facet_tags,
+                    material=MaterialParams(n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2))
         
         P1_vec = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3,))
         P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
@@ -64,7 +66,8 @@ class TestBoundaryConditions:
         comm = MPI.COMM_WORLD
         domain = unit_cube
         facet_tags = build_facetag(domain)
-        cfg = Config.from_flat_kwargs(domain=domain, facet_tags=facet_tags, n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2)
+        cfg = Config(domain=domain, facet_tags=facet_tags,
+                    material=MaterialParams(n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2))
         
         P1_vec = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3,))
         P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
@@ -112,7 +115,8 @@ def test_mechanics_uniform_extension():
     rho.x.scatter_forward()
 
     # Config
-    cfg = Config.from_flat_kwargs(domain=m, facet_tags=facets, n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2)
+    cfg = Config(domain=m, facet_tags=facets,
+                material=MaterialParams(n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2))
 
     # Simple extension test: clamp x=0, prescribe u_x=0.01 on x=1
     fdim = m.topology.dim - 1

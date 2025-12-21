@@ -14,6 +14,7 @@ from dolfinx.fem import functionspace, Function
 import basix.ufl
 
 from simulation.config import Config
+from simulation.params import MaterialParams
 from simulation.utils import build_facetag, assign
 
 
@@ -93,7 +94,8 @@ def unit_cube_mesh():
 def simple_config(unit_cube_mesh):
     """Create config with unit cube."""
     facet_tags = build_facetag(unit_cube_mesh)
-    return Config.from_flat_kwargs(domain=unit_cube_mesh, facet_tags=facet_tags, n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2)
+    return Config(domain=unit_cube_mesh, facet_tags=facet_tags,
+                 material=MaterialParams(n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2))
 
 
 @pytest.fixture
@@ -118,7 +120,7 @@ def constant_rho0(simple_config):
     P1 = basix.ufl.element("Lagrange", simple_config.domain.basix_cell(), 1)
     Q = functionspace(simple_config.domain, P1)
     rho0 = Function(Q, name="rho0")
-    assign(rho0, simple_config.rho0)
+    assign(rho0, simple_config.density.rho0)
     return rho0
 
 

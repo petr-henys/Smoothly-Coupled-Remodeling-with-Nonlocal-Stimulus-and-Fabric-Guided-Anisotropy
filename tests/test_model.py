@@ -15,6 +15,7 @@ from mpi4py import MPI
 from dolfinx import fem
 
 from simulation.config import Config
+from simulation.params import MaterialParams, DensityParams, SolverParams, OutputParams
 from simulation.model import Remodeller
 
 
@@ -41,36 +42,29 @@ def _stub_vtx(monkeypatch):
 def test_model_initializes_with_traction(tmp_path, unit_cube, facet_tags, dummy_load):
     """Verify Remodeller initializes fields and storage correctly."""
     comm = MPI.COMM_WORLD
-    cfg = Config.from_flat_kwargs(
+    cfg = Config(
         domain=unit_cube,
         facet_tags=facet_tags,
-        n_trab=2.0,
-        n_cort=1.2,
-        rho_trab_max=0.8,
-        rho_cort_min=1.2,
-        results_dir=str(tmp_path),
+        material=MaterialParams(n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2),
+        output=OutputParams(results_dir=str(tmp_path)),
     )
 
     with Remodeller(cfg, loader=dummy_load["loader"], loading_cases=dummy_load["loading_cases"]) as rem:
         assert "fields" in rem.storage.fields._writers
         rho = rem.state_fields["rho"]
         rho_mean = comm.allreduce(np.mean(rho.x.array), op=MPI.SUM) / comm.size
-        assert abs(rho_mean - cfg.rho0) < 1e-10
+        assert abs(rho_mean - cfg.density.rho0) < 1e-10
 
 
 def test_mechanics_produces_displacement_under_load(tmp_path, unit_cube, facet_tags, dummy_load):
     """Mechanics solver must produce measurable displacement from applied loads."""
     comm = MPI.COMM_WORLD
-    cfg = Config.from_flat_kwargs(
+    cfg = Config(
         domain=unit_cube,
         facet_tags=facet_tags,
-        n_trab=2.0,
-        n_cort=1.2,
-        rho_trab_max=0.8,
-        rho_cort_min=1.2,
-        results_dir=str(tmp_path),
-        max_subiters=8,
-        ksp_atol=1e-15,
+        material=MaterialParams(n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2),
+        output=OutputParams(results_dir=str(tmp_path)),
+        solver=SolverParams(max_subiters=8, ksp_atol=1e-15),
     )
 
     with Remodeller(cfg, loader=dummy_load["loader"], loading_cases=dummy_load["loading_cases"]) as rem:
@@ -86,15 +80,12 @@ def test_mechanics_produces_displacement_under_load(tmp_path, unit_cube, facet_t
 
 def test_stimulus_responds_to_strain_energy(tmp_path, unit_cube, facet_tags, dummy_load):
     """Stimulus field should develop non-zero values driven by mechanical energy."""
-    cfg = Config.from_flat_kwargs(
+    cfg = Config(
         domain=unit_cube,
         facet_tags=facet_tags,
-        n_trab=2.0,
-        n_cort=1.2,
-        rho_trab_max=0.8,
-        rho_cort_min=1.2,
-        results_dir=str(tmp_path),
-        max_subiters=8,
+        material=MaterialParams(n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2),
+        output=OutputParams(results_dir=str(tmp_path)),
+        solver=SolverParams(max_subiters=8),
     )
 
     with Remodeller(cfg, loader=dummy_load["loader"], loading_cases=dummy_load["loading_cases"]) as rem:
@@ -110,16 +101,13 @@ def test_stimulus_responds_to_strain_energy(tmp_path, unit_cube, facet_tags, dum
 def test_density_evolves_with_stimulus(tmp_path, unit_cube, facet_tags, dummy_load):
     """Density should evolve from initial rho0 in response to stimulus."""
     comm = MPI.COMM_WORLD
-    cfg = Config.from_flat_kwargs(
+    cfg = Config(
         domain=unit_cube,
         facet_tags=facet_tags,
-        n_trab=2.0,
-        n_cort=1.2,
-        rho_trab_max=0.8,
-        rho_cort_min=1.2,
-        results_dir=str(tmp_path),
-        max_subiters=8,
-        rho0=0.8,
+        material=MaterialParams(n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2),
+        output=OutputParams(results_dir=str(tmp_path)),
+        solver=SolverParams(max_subiters=8),
+        density=DensityParams(rho0=0.8),
     )
 
     with Remodeller(cfg, loader=dummy_load["loader"], loading_cases=dummy_load["loading_cases"]) as rem:
@@ -145,15 +133,12 @@ def test_density_evolves_with_stimulus(tmp_path, unit_cube, facet_tags, dummy_lo
 
 def test_model_single_step_records_metrics(tmp_path, unit_cube, facet_tags, dummy_load):
     """Single timestep execution with subiteration metrics collection."""
-    cfg = Config.from_flat_kwargs(
+    cfg = Config(
         domain=unit_cube,
         facet_tags=facet_tags,
-        n_trab=2.0,
-        n_cort=1.2,
-        rho_trab_max=0.8,
-        rho_cort_min=1.2,
-        results_dir=str(tmp_path),
-        max_subiters=6,
+        material=MaterialParams(n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2),
+        output=OutputParams(results_dir=str(tmp_path)),
+        solver=SolverParams(max_subiters=6),
     )
 
     with Remodeller(cfg, loader=dummy_load["loader"], loading_cases=dummy_load["loading_cases"]) as rem:
@@ -164,17 +149,12 @@ def test_model_single_step_records_metrics(tmp_path, unit_cube, facet_tags, dumm
 
 def test_model_convergence_stability(tmp_path, unit_cube, facet_tags, dummy_load):
     """Verify fixed-point iteration converges and produces consistent results."""
-    cfg = Config.from_flat_kwargs(
+    cfg = Config(
         domain=unit_cube,
         facet_tags=facet_tags,
-        n_trab=2.0,
-        n_cort=1.2,
-        rho_trab_max=0.8,
-        rho_cort_min=1.2,
-        results_dir=str(tmp_path),
-        max_subiters=12,
-        coupling_tol=1e-6,
-        ksp_atol=1e-15,
+        material=MaterialParams(n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2),
+        output=OutputParams(results_dir=str(tmp_path)),
+        solver=SolverParams(max_subiters=12, coupling_tol=1e-6, ksp_atol=1e-15),
     )
 
     with Remodeller(cfg, loader=dummy_load["loader"], loading_cases=dummy_load["loading_cases"]) as rem:
@@ -191,16 +171,12 @@ def test_model_convergence_stability(tmp_path, unit_cube, facet_tags, dummy_load
 
 def test_model_two_steps_energy_stability(tmp_path, unit_cube, facet_tags, dummy_load):
     """Energy should remain stable across consecutive timesteps."""
-    cfg = Config.from_flat_kwargs(
+    cfg = Config(
         domain=unit_cube,
         facet_tags=facet_tags,
-        n_trab=2.0,
-        n_cort=1.2,
-        rho_trab_max=0.8,
-        rho_cort_min=1.2,
-        results_dir=str(tmp_path),
-        max_subiters=6,
-        ksp_atol=1e-15,
+        material=MaterialParams(n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2),
+        output=OutputParams(results_dir=str(tmp_path)),
+        solver=SolverParams(max_subiters=6, ksp_atol=1e-15),
     )
 
     with Remodeller(cfg, loader=dummy_load["loader"], loading_cases=dummy_load["loading_cases"]) as rem:

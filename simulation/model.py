@@ -78,7 +78,7 @@ class Remodeller:
         u = Function(self.V, name="u")
         rho = Function(self.Q, name="rho")
         rho_old = Function(self.Q, name="rho_old")
-        assign(rho, self.cfg.rho0)
+        assign(rho, self.cfg.density.rho0)
 
         L = Function(self.T, name="L")
         L_old = Function(self.T, name="L_old")
@@ -222,8 +222,8 @@ class Remodeller:
     def simulate(self) -> None:
         """Run remodeling loop using dt_initial and total_time from Config."""
         t = 0.0
-        dt = float(self.cfg.dt_initial)
-        total_time = float(self.cfg.total_time)
+        dt = float(self.cfg.time.dt_initial)
+        total_time = float(self.cfg.time.total_time)
         step_idx = 0
 
         self.comm.Barrier()
@@ -252,7 +252,7 @@ class Remodeller:
                 transient=False,
             )
             self.main_task_id = self.progress.add_task("Remodeling", total=total_time, info=" " * 35)
-            self.sub_task_id = self.progress.add_task("  Coupling", total=self.cfg.max_subiters, info=" " * 35)
+            self.sub_task_id = self.progress.add_task("  Coupling", total=self.cfg.solver.max_subiters, info=" " * 35)
             self.progress.start()
 
         while t < total_time:
@@ -261,7 +261,7 @@ class Remodeller:
             
             error, metrics = self.step(dt)
             
-            if self.cfg.adaptive_dt:
+            if self.cfg.time.adaptive_dt:
                 # Adaptive time stepping with PI controller
                 accepted, next_dt, reason = self.integrator.suggest_dt(dt, metrics["converged"], error)
             else:
@@ -274,7 +274,7 @@ class Remodeller:
                 t += dt
                 step_idx += 1
                 
-                if step_idx % self.cfg.saving_interval == 0:
+                if step_idx % self.cfg.output.saving_interval == 0:
                     self._output(t)
                 
                 if self.progress is not None and self.main_task_id is not None:

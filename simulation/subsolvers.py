@@ -55,7 +55,7 @@ class _BaseLinearSolver:
         self.dx = self.cfg.dx
         self.ds = self.cfg.ds
         self.logger = get_logger(self.comm, name=self.__class__.__name__, log_file=self.cfg.log_file)
-        self.smooth_eps: float = self.cfg.smooth_eps
+        self.smooth_eps: float = self.cfg.numerics.smooth_eps
 
         self.trial = ufl.TrialFunction(self.function_space)
         self.test = ufl.TestFunction(self.function_space)
@@ -144,9 +144,9 @@ class _BaseLinearSolver:
             if v is not None:
                 opts[f"{prefix}_{k}"] = v
 
-        opts[f"{prefix}_ksp_rtol"] = self.cfg.ksp_rtol
-        opts[f"{prefix}_ksp_atol"] = self.cfg.ksp_atol
-        opts[f"{prefix}_ksp_max_it"] = self.cfg.ksp_max_it
+        opts[f"{prefix}_ksp_rtol"] = self.cfg.solver.ksp_rtol
+        opts[f"{prefix}_ksp_atol"] = self.cfg.solver.ksp_atol
+        opts[f"{prefix}_ksp_max_it"] = self.cfg.solver.ksp_max_it
 
         self.ksp.setInitialGuessNonzero(True)
         if self.A is not None:
@@ -202,7 +202,7 @@ class MechanicsSolver(_BaseLinearSolver):
         self.A.setNearNullSpace(self._nullspace)
         self.A.setOption(PETSc.Mat.Option.SPD, True)
 
-        ksp_options = {"ksp_type": self.cfg.ksp_type, "pc_type": self.cfg.pc_type}
+        ksp_options = {"ksp_type": self.cfg.solver.ksp_type, "pc_type": self.cfg.solver.pc_type}
         self.create_ksp(prefix="mechanics", ksp_options=ksp_options)
 
     @staticmethod
@@ -210,21 +210,21 @@ class MechanicsSolver(_BaseLinearSolver):
         return ufl.sym(ufl.grad(u))
 
     def _E_iso(self, rho):
-        rho_eff = smooth_max(rho, self.cfg.rho_min, self.smooth_eps)
-        rho_rel = rho_eff / self.cfg.rho_ref
+        rho_eff = smooth_max(rho, self.cfg.density.rho_min, self.smooth_eps)
+        rho_rel = rho_eff / self.cfg.density.rho_ref
 
-        denom = float(self.cfg.rho_cort_min - self.cfg.rho_trab_max)
-        t = (rho_eff - self.cfg.rho_trab_max) / denom
+        denom = float(self.cfg.material.rho_cort_min - self.cfg.material.rho_trab_max)
+        t = (rho_eff - self.cfg.material.rho_trab_max) / denom
         w = smoothstep01(t)
-        k = self.cfg.n_trab * (1.0 - w) + self.cfg.n_cort * w
+        k = self.cfg.material.n_trab * (1.0 - w) + self.cfg.material.n_cort * w
 
-        return self.cfg.E0 * (rho_rel ** k)
+        return self.cfg.material.E0 * (rho_rel ** k)
 
     def sigma(self, u, rho, L: fem.Function | None = None):
         eps = self.eps(u)
 
         E_iso = self._E_iso(rho)
-        nu0 = float(self.cfg.nu0)
+        nu0 = float(self.cfg.material.nu0)
         mu_iso = E_iso / (2.0 * (1.0 + nu0))
         lmbda_iso = E_iso * nu0 / ((1.0 + nu0) * (1.0 - 2.0 * nu0))
         sigma_iso = 2.0 * mu_iso * eps + lmbda_iso * ufl.tr(eps) * ufl.Identity(self.gdim)
@@ -244,8 +244,8 @@ class MechanicsSolver(_BaseLinearSolver):
         a2_hat = ufl.exp(l2 - mean_l)
         a3_hat = ufl.exp(l3 - mean_l)
 
-        pE = float(self.cfg.stiff_pE)
-        pG = float(self.cfg.stiff_pG)
+        pE = float(self.cfg.material.stiff_pE)
+        pG = float(self.cfg.material.stiff_pG)
 
         E1 = E_iso * (a1_hat**pE)
         E2 = E_iso * (a2_hat**pE)
@@ -356,9 +356,9 @@ class FabricSolver(_BaseLinearSolver):
         self.logger = get_logger(self.comm, name="Fabric", log_file=self.cfg.log_file)
 
         self.dt_c = fem.Constant(self.mesh, float(self.cfg.dt))
-        self.cA_c = fem.Constant(self.mesh, float(self.cfg.fabric_cA))
-        self.tau_c = fem.Constant(self.mesh, float(self.cfg.fabric_tau))
-        self.D_c = fem.Constant(self.mesh, float(self.cfg.fabric_D))
+        self.cA_c = fem.Constant(self.mesh, float(self.cfg.fabric.fabric_cA))
+        self.tau_c = fem.Constant(self.mesh, float(self.cfg.fabric.fabric_tau))
+        self.D_c = fem.Constant(self.mesh, float(self.cfg.fabric.fabric_D))
 
         self._use_diffusion = float(self.D_c.value) > 0.0
 
@@ -399,10 +399,10 @@ class FabricSolver(_BaseLinearSolver):
         if gdim != 3:
             raise ValueError("FabricSolver currently requires gdim==3.")
 
-        epsQ = float(self.cfg.fabric_epsQ)
-        gammaF = float(self.cfg.fabric_gammaF)
-        m_min = float(self.cfg.fabric_m_min)
-        m_max = float(self.cfg.fabric_m_max)
+        epsQ = float(self.cfg.fabric.fabric_epsQ)
+        gammaF = float(self.cfg.fabric.fabric_gammaF)
+        m_min = float(self.cfg.fabric.fabric_m_min)
+        m_max = float(self.cfg.fabric.fabric_m_max)
 
         I = ufl.Identity(3)
         Q = symm(self.Qbar) + epsQ * I
@@ -433,7 +433,7 @@ class FabricSolver(_BaseLinearSolver):
 
     def _setup_ksp(self):
         self.A.setOption(PETSc.Mat.Option.SPD, True)
-        ksp_options = {"ksp_type": self.cfg.ksp_type, "pc_type": self.cfg.pc_type}
+        ksp_options = {"ksp_type": self.cfg.solver.ksp_type, "pc_type": self.cfg.solver.pc_type}
         self.create_ksp(prefix="fabric", ksp_options=ksp_options)
 
     def assemble_lhs(self) -> None:
@@ -568,14 +568,14 @@ class StimulusSolver(_BaseLinearSolver):
         self.dt_c = fem.Constant(self.mesh, float(self.cfg.dt))
 
         # Stimulus parameters (Constants for UFL forms)
-        self.tau_c = fem.Constant(self.mesh, float(self.cfg.stimulus_tau))
-        self.D_c = fem.Constant(self.mesh, float(self.cfg.stimulus_D))
-        self.S_max_c = fem.Constant(self.mesh, float(self.cfg.stimulus_S_max))
-        self.kappa_c = fem.Constant(self.mesh, float(self.cfg.stimulus_kappa))
-        self.delta0_c = fem.Constant(self.mesh, float(self.cfg.stimulus_delta0))
+        self.tau_c = fem.Constant(self.mesh, float(self.cfg.stimulus.stimulus_tau))
+        self.D_c = fem.Constant(self.mesh, float(self.cfg.stimulus.stimulus_D))
+        self.S_max_c = fem.Constant(self.mesh, float(self.cfg.stimulus.stimulus_S_max))
+        self.kappa_c = fem.Constant(self.mesh, float(self.cfg.stimulus.stimulus_kappa))
+        self.delta0_c = fem.Constant(self.mesh, float(self.cfg.stimulus.stimulus_delta0))
 
         # Compile-time flag: avoid forming grad-grad if D_S is identically zero (helps DG spaces).
-        self._use_diffusion = float(self.cfg.stimulus_D) > 0.0
+        self._use_diffusion = float(self.cfg.stimulus.stimulus_D) > 0.0
 
     def _compile_forms(self):
         dt = self.dt_c
@@ -595,10 +595,10 @@ class StimulusSolver(_BaseLinearSolver):
         #   delta = (m - m_ref) / m_ref
         #   |delta| <= delta0 -> drive = 0
         #   otherwise drive = S_max * tanh((|delta|-delta0)/kappa) * sign(delta)
-        eps = float(self.cfg.smooth_eps)
-        rho_safe = smooth_max(self.rho, self.cfg.rho_min, eps)
+        eps = float(self.cfg.numerics.smooth_eps)
+        rho_safe = smooth_max(self.rho, self.cfg.density.rho_min, eps)
         m = self.psi / rho_safe
-        m_ref = float(self.cfg.psi_ref) / float(self.cfg.rho_ref)
+        m_ref = float(self.cfg.stimulus.psi_ref) / float(self.cfg.density.rho_ref)
         delta = (m - m_ref) / m_ref
         delta_abs = ufl.sqrt(delta * delta + eps * eps)
         delta_excess = smooth_max(delta_abs - self.delta0_c, 0.0, eps)
@@ -610,7 +610,7 @@ class StimulusSolver(_BaseLinearSolver):
 
     def _setup_ksp(self):
         self.A.setOption(PETSc.Mat.Option.SPD, True)
-        ksp_options = {"ksp_type": self.cfg.ksp_type, "pc_type": self.cfg.pc_type}
+        ksp_options = {"ksp_type": self.cfg.solver.ksp_type, "pc_type": self.cfg.solver.pc_type}
         self.create_ksp(prefix="stimulus", ksp_options=ksp_options)
 
     def assemble_lhs(self) -> None:
@@ -689,7 +689,7 @@ class DensitySolver(_BaseLinearSolver):
         dt = self.dt_c
 
         # Smooth helpers (avoid hard clamps / if-branches in UFL)
-        eps = float(self.cfg.smooth_eps)
+        eps = float(self.cfg.numerics.smooth_eps)
 
         def smooth_min(a, b, eps_):
             # smooth_min(a,b) = a + b - smooth_max(a,b)
@@ -700,8 +700,8 @@ class DensitySolver(_BaseLinearSolver):
         S_neg = smooth_max(-self.S, 0.0, eps)
 
         # Surface availability A(rho_old) from apparent density via a vascular-porosity proxy.
-        if bool(self.cfg.surface_use):
-            rho_t = float(self.cfg.rho_tissue)
+        if bool(self.cfg.density.surface_use):
+            rho_t = float(self.cfg.density.rho_tissue)
             f_raw = 1.0 - (self.rho_old / rho_t)
             f = smooth_min(smooth_max(f_raw, 0.0, eps), 1.0, eps)
 
@@ -715,8 +715,8 @@ class DensitySolver(_BaseLinearSolver):
             )
             S_v = smooth_max(S_v, 0.0, eps)
 
-            A_min = float(self.cfg.surface_A_min)
-            S0 = float(self.cfg.surface_S0)
+            A_min = float(self.cfg.density.surface_A_min)
+            S0 = float(self.cfg.density.surface_S0)
             x = S_v / S0
             x = smooth_min(x, 1.0, eps)  # linear in S_v, capped
             A_surf = A_min + (1.0 - A_min) * x
@@ -724,18 +724,18 @@ class DensitySolver(_BaseLinearSolver):
             A_surf = 1.0
 
         # Soft-bounded kinetics: formation vanishes as rho -> rho_max; resorption vanishes as rho -> rho_min.
-        rho_min = float(self.cfg.rho_min)
-        rho_max = float(self.cfg.rho_max)
+        rho_min = float(self.cfg.density.rho_min)
+        rho_max = float(self.cfg.density.rho_max)
 
-        k_form = float(self.cfg.k_rho_form) * A_surf
-        k_res = float(self.cfg.k_rho_resorb) * A_surf
+        k_form = float(self.cfg.density.k_rho_form) * A_surf
+        k_res = float(self.cfg.density.k_rho_resorb) * A_surf
 
         # Linear reaction coefficient on rho^{n+1}
         reaction = (k_form * S_pos / rho_max) + (k_res * S_neg / rho_min)
 
         a_ufl = (
             (self.trial / dt) * self.test * self.dx
-            + self.cfg.D_rho * ufl.inner(ufl.grad(self.trial), ufl.grad(self.test)) * self.dx
+            + self.cfg.density.D_rho * ufl.inner(ufl.grad(self.trial), ufl.grad(self.test)) * self.dx
             + reaction * self.trial * self.test * self.dx
         )
         self.a_form = fem.form(a_ufl)
@@ -745,7 +745,7 @@ class DensitySolver(_BaseLinearSolver):
         self.L_form = fem.form(L_ufl)
     def _setup_ksp(self):
         self.A.setOption(PETSc.Mat.Option.SPD, True)
-        ksp_options = {"ksp_type": self.cfg.ksp_type, "pc_type": self.cfg.pc_type}
+        ksp_options = {"ksp_type": self.cfg.solver.ksp_type, "pc_type": self.cfg.solver.pc_type}
         self.create_ksp(prefix="density", ksp_options=ksp_options)
 
     def assemble_lhs(self) -> None:

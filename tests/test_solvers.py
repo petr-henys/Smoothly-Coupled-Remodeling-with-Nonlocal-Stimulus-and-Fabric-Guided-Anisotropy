@@ -154,7 +154,7 @@ class TestMatrixAssembly:
             # Density solver: positive semi-definite
             rho = Function(Q, name="rho")
             rho_old = Function(Q, name="rho_old"); rho_old.x.array[:] = 0.5; rho_old.x.scatter_forward()
-            psi_field = Function(Q, name="psi"); psi_field.x.array[:] = cfg.psi_ref; psi_field.x.scatter_forward()
+            psi_field = Function(Q, name="psi"); psi_field.x.array[:] = cfg.stimulus.psi_ref; psi_field.x.scatter_forward()
             solver = DensitySolver(rho, rho_old, psi_field, cfg)
             solver.setup()  # setup() already calls assemble_lhs()
             

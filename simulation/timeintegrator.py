@@ -131,8 +131,8 @@ class TimeIntegrator:
         if self._N_total <= 0:
             return 0.0
 
-        atol = float(self.cfg.adaptive_atol)
-        rtol = float(self.cfg.adaptive_rtol)
+        atol = float(self.cfg.time.adaptive_atol)
+        rtol = float(self.cfg.time.adaptive_rtol)
 
         sq_error_local = 0.0
         for name, hist in self._fields.items():
@@ -157,7 +157,7 @@ class TimeIntegrator:
         """PI controller: returns (accepted, next_dt, reason)."""
         if not converged:
             # Divergence: Cut aggressively
-            next_dt = max(self.cfg.dt_min, dt * 0.5)
+            next_dt = max(self.cfg.time.dt_min, dt * 0.5)
             return False, next_dt, "diverged"
         
         if self.step_count == 0:
@@ -171,7 +171,7 @@ class TimeIntegrator:
             factor = self.safety * (1.0 / error_norm) ** (1.0 / self.k_exp)
             factor = max(self.shrink_factor, min(0.9, factor))  # Ensure reduction
             
-            next_dt = max(self.cfg.dt_min, dt * factor)
+            next_dt = max(self.cfg.time.dt_min, dt * factor)
             
             # Reset PI history on rejection to avoid bad memory
             self.error_prev = error_norm
@@ -200,7 +200,7 @@ class TimeIntegrator:
              factor = max(1.0, factor)
 
         next_dt = dt * factor
-        next_dt = max(self.cfg.dt_min, min(self.cfg.dt_max, next_dt))
+        next_dt = max(self.cfg.time.dt_min, min(self.cfg.time.dt_max, next_dt))
 
         # Store error for next step
         self.error_prev = safe_error

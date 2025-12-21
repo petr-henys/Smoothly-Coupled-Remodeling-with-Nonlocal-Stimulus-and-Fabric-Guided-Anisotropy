@@ -83,19 +83,19 @@ class FixedPointSolver:
 
         # Anderson accelerator (optional)
         self.anderson: Anderson | None = None
-        if self.cfg.accel_type == "anderson":
+        if self.cfg.solver.accel_type == "anderson":
             self.anderson = Anderson(
                 comm=self.comm,
-                m=int(self.cfg.m),
-                beta=float(self.cfg.beta),
-                lam=float(self.cfg.lam),
-                gamma=float(self.cfg.gamma),
-                safeguard=bool(self.cfg.safeguard),
-                backtrack_max=int(self.cfg.backtrack_max),
-                restart_on_reject_k=int(self.cfg.restart_on_reject_k),
-                restart_on_stall=float(self.cfg.restart_on_stall),
-                restart_on_cond=float(self.cfg.restart_on_cond),
-                step_limit_factor=float(self.cfg.step_limit_factor),
+                m=int(self.cfg.solver.m),
+                beta=float(self.cfg.solver.beta),
+                lam=float(self.cfg.solver.lam),
+                gamma=float(self.cfg.solver.gamma),
+                safeguard=bool(self.cfg.solver.safeguard),
+                backtrack_max=int(self.cfg.solver.backtrack_max),
+                restart_on_reject_k=int(self.cfg.solver.restart_on_reject_k),
+                restart_on_stall=float(self.cfg.solver.restart_on_stall),
+                restart_on_cond=float(self.cfg.solver.restart_on_cond),
+                step_limit_factor=float(self.cfg.solver.step_limit_factor),
                 verbose=False,
             )
 
@@ -158,9 +158,9 @@ class FixedPointSolver:
     # ------------------------------- main loop ------------------------------
 
     def run(self, progress, task_id) -> bool:
-        tol = float(self.cfg.coupling_tol)
-        max_subiters = int(self.cfg.max_subiters)
-        min_subiters = int(self.cfg.min_subiters)
+        tol = float(self.cfg.solver.coupling_tol)
+        max_subiters = int(self.cfg.solver.max_subiters)
+        min_subiters = int(self.cfg.solver.min_subiters)
 
         self.subiter_metrics = []
 
@@ -197,7 +197,7 @@ class FixedPointSolver:
             if self.anderson is not None:
                 x_new_s, aa = self.anderson.mix(x_old_s, x_raw_s)
             else:
-                beta = float(self.cfg.beta)
+                beta = float(self.cfg.solver.beta)
                 x_new_s = x_old_s + beta * (x_raw_s - x_old_s)
                 aa = {"aa_hist": 0, "accepted": True, "backtracks": 0, "restart_reason": ""}
 

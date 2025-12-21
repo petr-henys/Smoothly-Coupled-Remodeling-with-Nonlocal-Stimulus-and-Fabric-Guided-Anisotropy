@@ -24,7 +24,7 @@ class FieldStorage:
     def __init__(self, cfg: "Config", comm: MPI.Comm) -> None:
         self.comm = comm
         self.logger = get_logger(comm, name="Storage.Fields")
-        self.output_dir = Path(cfg.results_dir)
+        self.output_dir = Path(cfg.output.results_dir)
         self._writers: Dict[str, VTXWriter] = {}
         self._write_counts: Dict[str, int] = defaultdict(int)
         

@@ -7,6 +7,7 @@ import basix
 import ufl
 
 from simulation.config import Config
+from simulation.params import MaterialParams, DensityParams, NumericsParams, StimulusParams
 from simulation.utils import build_dirichlet_bcs
 from simulation.subsolvers import MechanicsSolver, smooth_max, DensitySolver
 
@@ -21,7 +22,8 @@ class TestConstitutiveLaw:
     def test_isotropic_stress_symmetry(self, unit_cube, facet_tags):
         """Verify stress tensor is symmetric for isotropic material."""
         comm = MPI.COMM_WORLD
-        cfg = Config.from_flat_kwargs(domain=unit_cube, facet_tags=facet_tags, n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2)
+        cfg = Config(domain=unit_cube, facet_tags=facet_tags,
+                    material=MaterialParams(n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2))
         
         P1_vec = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3,))
         P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
@@ -78,10 +80,10 @@ class TestAdvancedConstitutiveLaws:
     def test_power_law_stiffness(self, unit_cube, facet_tags):
         """Verify E(ρ) follows the variable-exponent law from the manuscript."""
         comm = MPI.COMM_WORLD
-        cfg = Config.from_flat_kwargs(
+        cfg = Config(
             domain=unit_cube, facet_tags=facet_tags,
-            n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2,
-            E0=1000.0, rho_ref=1.0
+            material=MaterialParams(n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2, E0=1000.0),
+            density=DensityParams(rho_ref=1.0)
         )
         
         P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
@@ -94,14 +96,14 @@ class TestAdvancedConstitutiveLaws:
             rho.x.scatter_forward()
             
             # Use UFL expression from MechanicsSolver logic
-            rho_eff = smooth_max(rho, cfg.rho_min, cfg.smooth_eps)
-            rho_rel = rho_eff / cfg.rho_ref
+            rho_eff = smooth_max(rho, cfg.density.rho_min, cfg.numerics.smooth_eps)
+            rho_rel = rho_eff / cfg.density.rho_ref
 
-            t = (rho_eff - cfg.rho_trab_max) / (cfg.rho_cort_min - cfg.rho_trab_max)
+            t = (rho_eff - cfg.material.rho_trab_max) / (cfg.material.rho_cort_min - cfg.material.rho_trab_max)
             w = ufl.conditional(ufl.le(t, 0.0), 0.0, ufl.conditional(ufl.ge(t, 1.0), 1.0, t))
             w = w * w * (3.0 - 2.0 * w)
-            k = cfg.n_trab * (1.0 - w) + cfg.n_cort * w
-            E_expr = cfg.E0 * (rho_rel ** k)
+            k = cfg.material.n_trab * (1.0 - w) + cfg.material.n_cort * w
+            E_expr = cfg.material.E0 * (rho_rel ** k)
             
             E_local = fem.assemble_scalar(fem.form(E_expr * cfg.dx))
             vol_local = fem.assemble_scalar(fem.form(1.0 * cfg.dx))
@@ -114,11 +116,11 @@ class TestAdvancedConstitutiveLaws:
             E_computed = compute_E_eff(rho_val)
 
             # Python-side expected value (smooth_max ~ max for rho_val >> rho_min)
-            t = (rho_val - cfg.rho_trab_max) / (cfg.rho_cort_min - cfg.rho_trab_max)
+            t = (rho_val - cfg.material.rho_trab_max) / (cfg.material.rho_cort_min - cfg.material.rho_trab_max)
             t = max(0.0, min(1.0, t))
             w = t * t * (3.0 - 2.0 * t)
-            k = cfg.n_trab * (1.0 - w) + cfg.n_cort * w
-            E_expected = cfg.E0 * ((rho_val / cfg.rho_ref) ** k)
+            k = cfg.material.n_trab * (1.0 - w) + cfg.material.n_cort * w
+            E_expected = cfg.material.E0 * ((rho_val / cfg.density.rho_ref) ** k)
             rel_err = abs(E_computed - E_expected) / E_expected
             assert rel_err < 0.01, \
                 f"Power law failed at ρ={rho_val}: E={E_computed:.2f}, expected {E_expected:.2f}"
@@ -127,10 +129,12 @@ class TestAdvancedConstitutiveLaws:
     def test_linear_driver_rate(self, unit_cube, facet_tags):
         """Verify density evolution rate follows specific energy stimulus."""
         comm = MPI.COMM_WORLD
-        cfg = Config.from_flat_kwargs(domain=unit_cube, facet_tags=facet_tags, n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2)
+        cfg = Config(domain=unit_cube, facet_tags=facet_tags,
+                    material=MaterialParams(n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2))
         
-        cfg.k_rho = 1.0
-        cfg.dt = 0.1
+        # Note: k_rho is now in density params, but we set dt on cfg
+        k_rho = 1.0  # Local test value
+        cfg.set_dt(0.1)
         
         P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
         Q = functionspace(unit_cube, P1)
@@ -138,7 +142,7 @@ class TestAdvancedConstitutiveLaws:
         rho = Function(Q, name="rho")
         rho_old = Function(Q, name="rho_old")
         psi_field = Function(Q, name="psi")
-        rho_val = cfg.rho_ref  # Use reference density for simpler math
+        rho_val = cfg.density.rho_ref  # Use reference density for simpler math
         rho_old.x.array[:] = rho_val
         rho_old.x.scatter_forward()
         
@@ -165,12 +169,12 @@ class TestAdvancedConstitutiveLaws:
         # With rho = rho_ref, this simplifies to: k_rho * (psi - psi_ref) / psi_ref
         
         # Case 1: psi = 2*psi_ref → S = 1.0
-        rate_pos = get_rate(2.0 * cfg.psi_ref)
-        expected_pos = cfg.k_rho * 1.0
+        rate_pos = get_rate(2.0 * cfg.stimulus.psi_ref)
+        expected_pos = k_rho * 1.0
         assert abs(rate_pos - expected_pos) < 0.05, f"Positive rate mismatch: got {rate_pos}, expected {expected_pos}"
         
         # Case 2: psi = 0.5*psi_ref → S = -0.5
-        rate_neg = get_rate(0.5 * cfg.psi_ref)
-        expected_neg = cfg.k_rho * (-0.5)
+        rate_neg = get_rate(0.5 * cfg.stimulus.psi_ref)
+        expected_neg = k_rho * (-0.5)
         assert abs(rate_neg - expected_neg) < 0.05, f"Negative rate mismatch: got {rate_neg}, expected {expected_neg}"
 

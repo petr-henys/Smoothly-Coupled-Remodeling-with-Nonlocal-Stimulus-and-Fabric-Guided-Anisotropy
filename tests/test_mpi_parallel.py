@@ -16,6 +16,7 @@ import basix
 import ufl
 
 from simulation.config import Config
+from simulation.params import MaterialParams, SolverParams, OutputParams
 from simulation.utils import build_facetag, build_dirichlet_bcs
 from simulation.subsolvers import MechanicsSolver, DensitySolver
 from simulation.fixedsolver import FixedPointSolver
@@ -108,7 +109,8 @@ class TestDomainDecomposition:
         comm = MPI.COMM_WORLD
         domain = unit_cube
         facet_tags = build_facetag(domain)
-        cfg = Config.from_flat_kwargs(domain=domain, facet_tags=facet_tags, n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2)
+        cfg = Config(domain=domain, facet_tags=facet_tags,
+                    material=MaterialParams(n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2))
         
         P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
         Q = functionspace(domain, P1)
@@ -168,7 +170,8 @@ class TestCollectiveOps:
         comm = MPI.COMM_WORLD
         domain = unit_cube
         facet_tags = build_facetag(domain)
-        cfg = Config.from_flat_kwargs(domain=domain, facet_tags=facet_tags, n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2)
+        cfg = Config(domain=domain, facet_tags=facet_tags,
+                    material=MaterialParams(n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2))
         
         vol_local = fem.assemble_scalar(fem.form(1.0 * cfg.dx))
         vol_global = comm.allreduce(vol_local, op=MPI.SUM)
@@ -193,7 +196,9 @@ class TestMPIIO:
         import tempfile
         from pathlib import Path
         with tempfile.TemporaryDirectory() as tmpdir:
-            cfg = Config.from_flat_kwargs(domain=domain, facet_tags=facet_tags, n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2, results_dir=tmpdir)
+            cfg = Config(domain=domain, facet_tags=facet_tags,
+                        material=MaterialParams(n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2),
+                        output=OutputParams(results_dir=tmpdir))
             comm.Barrier()
             if comm.rank == 0:
                 assert (Path(tmpdir) / "config.json").exists(), "config.json not written on rank 0"
@@ -207,7 +212,9 @@ class TestMPIIO:
         
         import tempfile
         with tempfile.TemporaryDirectory() as tmpdir:
-            cfg = Config.from_flat_kwargs(domain=domain, facet_tags=facet_tags, n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2, results_dir=tmpdir)
+            cfg = Config(domain=domain, facet_tags=facet_tags,
+                        material=MaterialParams(n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2),
+                        output=OutputParams(results_dir=tmpdir))
             loader = create_mock_loader(domain)
             
             with Remodeller(cfg, loader=loader, loading_cases=create_loading_cases()) as rem:
@@ -234,16 +241,11 @@ class TestFixedPointParallel:
         comm = MPI.COMM_WORLD
         domain = unit_cube
         facet_tags = build_facetag(domain)
-        cfg = Config.from_flat_kwargs(
+        cfg = Config(
             domain=domain,
             facet_tags=facet_tags,
-            n_trab=2.0,
-            n_cort=1.2,
-            rho_trab_max=0.8,
-            rho_cort_min=1.2,
-            accel_type="anderson",
-            max_subiters=20,
-            coupling_tol=1e-6
+            material=MaterialParams(n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2),
+            solver=SolverParams(accel_type="anderson", max_subiters=20, coupling_tol=1e-6)
         )
         loader = create_mock_loader(domain)
         
@@ -262,16 +264,11 @@ class TestFixedPointParallel:
         comm = MPI.COMM_WORLD
         domain = unit_cube
         facet_tags = build_facetag(domain)
-        cfg = Config.from_flat_kwargs(
+        cfg = Config(
             domain=domain,
             facet_tags=facet_tags,
-            n_trab=2.0,
-            n_cort=1.2,
-            rho_trab_max=0.8,
-            rho_cort_min=1.2,
-            accel_type="picard",
-            max_subiters=30,
-            coupling_tol=1e-5
+            material=MaterialParams(n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2),
+            solver=SolverParams(accel_type="picard", max_subiters=30, coupling_tol=1e-5)
         )
         loader = create_mock_loader(domain)
         
@@ -300,7 +297,8 @@ class TestCrossRankComm:
         
         domain = unit_cube
         facet_tags = build_facetag(domain)
-        cfg = Config.from_flat_kwargs(domain=domain, facet_tags=facet_tags, n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2)
+        cfg = Config(domain=domain, facet_tags=facet_tags,
+                    material=MaterialParams(n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2))
         
         P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3,))
         V = functionspace(domain, P1_vec)

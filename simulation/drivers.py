@@ -82,7 +82,7 @@ class GaitDriver:
         assign(self.Qbar, 0.0, scatter=False)
         n_owned_psi = get_owned_size(self.psi)
         n_owned_Q = get_owned_size(self.Qbar)
-        p = float(self.cfg.stimulus_power_p)
+        p = float(self.cfg.stimulus.stimulus_power_p)
         sum_cycles = 0.0
         tiny = 1e-30
 
