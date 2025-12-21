@@ -5,11 +5,11 @@
 To reduce the number of block fixed-point (block Picard/Gauss--Seidel) sub-iterations, we employ Type-II Anderson acceleration (AA-II) with finite memory $m$. We compare (i) a plain block Picard baseline and (ii) AA-II with standard safeguards (restart on deterioration and backtracking/damping) across representative couplings and time-step sizes $\Delta t$. We also report diagnostics that help choose~$m$ and monitor robustness.
 % ==== Added clarifications (implementation-faithful) ====
 \subsection*{Interaction-gain diagnostics and spectral radius}\label{subsec:diag_rhoJ}
-We estimate a $3\times 3$ interaction-gain matrix $J$ of the Gauss--Seidel (GS) fixed-point map $G$ at the current state by finite-difference GS sweeps on the accelerated remodeling state $(\rho,\mathbf L,S)$: for each block we form a small deterministic perturbation $\delta_j$ and measure
+We estimate a $3\times 3$ interaction-gain matrix $J$ of the Gauss--Seidel (GS) fixed-point map $G$ at the current state by finite-difference GS sweeps on the accelerated remodeling state $(\mathbf L,S,\rho)$: for each block we form a small deterministic perturbation $\delta_j$ and measure
 \begin{equation*}
   J_{ij}\;\approx\;\frac{\big\|\,G_i(x^\star+\delta_j)-G_i(x^\star)\,\big\|}{\|\delta_j\|}\,.
 \end{equation*}
-The block norms $\|\cdot\|$ are the same as in our stopping criterion (\S\ref{subsec:proj_merit}); for mechanics we \emph{project out} Dirichlet degrees of freedom before forming the norm. We report the spectral radius $\rho(J)$ as a diagnostic of local contractivity ($\rho(J)<1$ implies a locally contracting GS map in this block-norm sense). This diagnostic is optional and does not affect the iterate; it can be enabled per sub-iteration.
+The block norms $\|\cdot\|$ are the same as in our stopping criterion (\S\ref{subsec:proj_merit}). We report the spectral radius $\rho(J)$ as a diagnostic of local contractivity ($\rho(J)<1$ implies a locally contracting GS map in this block-norm sense). This diagnostic is optional and does not affect the iterate; it can be enabled per sub-iteration.
 
 \paragraph{Contractivity analysis}
 We summarize contractivity and coupling structure across timesteps and configurations (\cref{fig:contractivity}). Panel (a) shows the evolution of the spectral radius $\rho(J)$ over time with the $\rho(J)=1$ threshold; values below unity indicate local contraction. Panel (b) visualizes a representative interaction-gain matrix $\mathbf J$ as a heatmap; panel (c) tracks the strongest gains over time. Panel (d) aggregates the distribution of $\rho(J)$ across $\Delta t$, and panel (e) shows the maximum off-diagonal gain versus time. Together these diagnostics indicate predominantly contractive behavior and stable coupling strengths in the regimes tested.
@@ -24,15 +24,15 @@ We summarize contractivity and coupling structure across timesteps and configura
 \end{figure}
 
 \subsection*{Projected residual merit, stopping, and AA acceptance}\label{subsec:proj_merit}
-We use the \emph{projected, RMS-per-DOF} merit and acceptance/backtracking defined in the solver description (\S\ref{sec:fp-aa}). The projected norm acts on the flattened state $(\rho,\mathbf L,S)$, zeros any constrained DOFs, and uses block weights $w_i=1/N_i$; acceptance follows the safeguard \eqref{eq:safeguard} with the same thresholds and minimal-subiteration requirement as in \S\ref{sec:fp-aa}. Candidate formation and step limiting follow \eqref{eq:kkt}--\eqref{eq:aa-update}.
+We use the \emph{RMS-per-DOF} merit and acceptance/backtracking defined in the solver description (\S\ref{sec:fp-aa}). The norm acts on the flattened state $(\mathbf L,S,\rho)$ with per-block RMS-per-DOF scaling; acceptance follows the safeguard \eqref{eq:safeguard} with the same thresholds and minimal-subiteration requirement as in \S\ref{sec:fp-aa}. Candidate formation and step limiting follow \eqref{eq:kkt}--\eqref{eq:aa-update}.
 
 \subsection*{Stacking vs.\ sweep order}\label{subsec:order}
-The accelerated stacked state follows $(\rho,\mathbf L,S)$, while a single GS sweep updates blocks in the physical order $u\!\to\! S\!\to\!\rho\!\to\!\mathbf L$ (mechanics is recomputed inside the driver and is not part of the Anderson state). The interaction-gain matrix $J$ is indexed according to the $(\rho,\mathbf L,S)$ ordering.
+The accelerated stacked state follows $(\mathbf L,S,\rho)$, while a single GS sweep updates blocks in the physical order \emph{mechanics driver} $\to$ fabric $\to$ stimulus $\to$ density (mechanics is recomputed inside the driver and is not part of the Anderson state). The interaction-gain matrix $J$ is indexed according to the $(\mathbf L,S,\rho)$ ordering.
 
 \subsection*{Anderson acceleration details}\label{subsec:aa_details}
 We employ the Type-II Anderson (Pulay) acceleration scheme described in \S\ref{sec:fp-aa}.
 Specific settings for the results below include a step limit factor $c=2$ and history depths $m$ as indicated in the figures.
-We restart the AA history upon (i) repeated rejections, (ii) stagnation with respect to the best Picard merit, or (iii) poor conditioning of the regularized Gram system. Accepted AA candidates re-enforce Dirichlet DOFs from the freshest Picard state.
+We restart the AA history upon (i) repeated rejections, (ii) stagnation with respect to the best Picard merit, or (iii) poor conditioning of the regularized Gram system.
 
 \paragraph{Performance diagnostics}
 To assess stability and tuning, we monitor Anderson metrics over time and their sensitivity to $(\Delta t, m, \beta)$ (\cref{fig:aa-metrics}). At fixed $\Delta t=25$ days, a sliding-window view of the Gram-matrix condition number $\kappa(\mathbf H)$ remains well behaved across tested histories $m$ and mixing factors $\beta$. Aggregated over late-time windows, the rejection rate stays moderate, the average history depth scales with $m$, and the median $\kappa(\mathbf H)$ shows only mild growth with larger $m$ or $\beta$.

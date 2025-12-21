@@ -152,7 +152,7 @@ class FabricParams:
     # Power-law exponent for fabric eigenvalues
     fabric_gammaF: float = 1.0
 
-    # Regularization for Q̄ eigenvalue computation
+    # Regularization for Q̄ eigenvalue computation [MPa²] (added as epsQ * I to Q̄)
     fabric_epsQ: float = 1e-12
 
     # Eigenvalue ratio bounds
@@ -299,7 +299,7 @@ class NumericsParams:
     # Quadrature degree for integration
     quadrature_degree: int = 4
 
-    # Smoothing epsilon for C¹ approximations
+    # Smoothing epsilon for C¹ approximations (absolute width, interpreted in the units of the smoothed quantity)
     smooth_eps: float = 1e-6
 
     def validate(self) -> None:
