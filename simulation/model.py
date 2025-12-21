@@ -9,60 +9,83 @@ Orchestrates:
 
 from __future__ import annotations
 
-from typing import Dict, Tuple, List
 from pathlib import Path
+from typing import TYPE_CHECKING, Dict, List, Tuple
 
 import basix.ufl
 from dolfinx import fem
 from dolfinx.fem import Function, functionspace
 
-from simulation.storage import UnifiedStorage
-from simulation.logger import get_logger
-from simulation.utils import build_dirichlet_bcs, assign
 from simulation.config import Config
-from simulation.subsolvers import MechanicsSolver, FabricSolver, StimulusSolver, DensitySolver
-from simulation.fixedsolver import FixedPointSolver
 from simulation.drivers import GaitDriver
-from simulation.timeintegrator import TimeIntegrator
-from simulation.registry import BlockRegistry
+from simulation.fixedsolver import FixedPointSolver
 from simulation.loader import Loader, LoadingCase
+from simulation.logger import get_logger
+from simulation.progress import ProgressReporter
+from simulation.registry import BlockRegistry
+from simulation.storage import UnifiedStorage
+from simulation.subsolvers import DensitySolver, FabricSolver, MechanicsSolver, StimulusSolver
+from simulation.timeintegrator import TimeIntegrator
+from simulation.utils import assign, build_dirichlet_bcs
+
+if TYPE_CHECKING:
+    from mpi4py import MPI
 
 
 class Remodeller:
     """Orchestrates coupled mechanics↔density remodeling (MPI-parallel)."""
 
-    def __init__(self, cfg: Config, loader: Loader, loading_cases: List[LoadingCase]):
+    def __init__(
+        self,
+        cfg: Config,
+        loader: Loader,
+        loading_cases: List[LoadingCase],
+    ):
         """Initialize coupled solvers, I/O, and precomputed loading cases."""
         self.cfg = cfg
-        self.domain = self.cfg.domain
+        self.domain = cfg.domain
+        self.comm: MPI.Comm = self.domain.comm
+        self.rank = self.comm.rank
         self.closed = False
-        self.progress = None
-        self.main_task_id = None
+
         self.loader = loader
         self.loading_cases = loading_cases
-        self.comm = self.domain.comm
-        self.rank = self.comm.rank
-        
+
         # Ensure log directory exists (rank 0 creates, all ranks wait)
-        if self.rank == 0:
-            log_path = Path(self.cfg.log_file)
-            if log_path.parent:
-                log_path.parent.mkdir(parents=True, exist_ok=True)
-        self.comm.Barrier()
+        self._ensure_log_dir()
 
         self.logger = get_logger(self.comm, name="Remodeller", log_file=self.cfg.log_file)
         self.logger.debug("Initializing Remodeller...")
 
         self.storage = UnifiedStorage(cfg)
 
-        self.dx = self.cfg.dx
-        self.ds = self.cfg.ds
-        self.gdim = self.domain.geometry.dim
+        # Build function spaces and state fields, then wire solvers
+        self._build_spaces_and_fields()
+        self._build_solvers()
 
-        # Build function spaces
-        P1_vec = basix.ufl.element("Lagrange", self.domain.basix_cell(), 1, shape=(self.gdim,))
-        P1 = basix.ufl.element("Lagrange", self.domain.basix_cell(), 1)
-        P1_ten = basix.ufl.element("Lagrange", self.domain.basix_cell(), 1, shape=(self.gdim, self.gdim))
+        self.solvers_initialized = False
+        self._current_dt: float = 0.0
+
+        # Persist initial configuration
+        self.cfg.update_config_json()
+
+    def _ensure_log_dir(self) -> None:
+        """Create log directory on rank 0."""
+        if self.rank == 0:
+            log_path = Path(self.cfg.log_file)
+            if log_path.parent:
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+        self.comm.Barrier()
+
+    def _build_spaces_and_fields(self) -> None:
+        """Create function spaces and state fields."""
+        gdim = self.domain.geometry.dim
+        cell = self.domain.basix_cell()
+
+        # P1 spaces: vector (u), scalar (rho, S), tensor (L)
+        P1_vec = basix.ufl.element("Lagrange", cell, 1, shape=(gdim,))
+        P1 = basix.ufl.element("Lagrange", cell, 1)
+        P1_ten = basix.ufl.element("Lagrange", cell, 1, shape=(gdim, gdim))
 
         self.V = functionspace(self.domain, P1_vec)
         self.Q = functionspace(self.domain, P1)
@@ -74,22 +97,24 @@ class Remodeller:
         dofs_T = self.T.dofmap.index_map.size_global * self.T.dofmap.index_map_bs
         self.num_dofs_total = int(dofs_V + dofs_Q + dofs_T)
 
-        # Create state fields
-        u = Function(self.V, name="u")
-        rho = Function(self.Q, name="rho")
-        rho_old = Function(self.Q, name="rho_old")
-        assign(rho, self.cfg.density.rho0)
+        # State fields
+        self.u = Function(self.V, name="u")
+        self.rho = Function(self.Q, name="rho")
+        self.rho_old = Function(self.Q, name="rho_old")
+        assign(self.rho, self.cfg.density.rho0)
 
-        L = Function(self.T, name="L")
-        L_old = Function(self.T, name="L_old")
-        assign(L, 0.0)
-        assign(L_old, 0.0)
+        self.L = Function(self.T, name="L")
+        self.L_old = Function(self.T, name="L_old")
+        assign(self.L, 0.0)
+        assign(self.L_old, 0.0)
 
-        S = Function(self.Q, name="S")
-        S_old = Function(self.Q, name="S_old")
-        assign(S, 0.0)
-        assign(S_old, 0.0)
+        self.S = Function(self.Q, name="S")
+        self.S_old = Function(self.Q, name="S_old")
+        assign(self.S, 0.0)
+        assign(self.S_old, 0.0)
 
+    def _build_solvers(self) -> None:
+        """Wire up the solver graph: mechanics → fabric → stimulus → density."""
         # Boundary conditions
         bc_mech = build_dirichlet_bcs(self.V, self.cfg.facet_tags, id_tag=1, value=0.0)
         neumann_bcs = [(self.loader.traction, self.loader.load_tag)]
@@ -100,7 +125,9 @@ class Remodeller:
         self.registry = BlockRegistry(self.comm, self.cfg)
 
         # 1. Mechanics solver (wrapped by GaitDriver)
-        mechsolver = MechanicsSolver(u, rho, self.cfg, bc_mech, neumann_bcs, L=L)
+        mechsolver = MechanicsSolver(
+            self.u, self.rho, self.cfg, bc_mech, neumann_bcs, L=self.L
+        )
 
         # 2. GaitDriver: mechanics + multi-load SED averaging
         self.driver = GaitDriver(
@@ -111,15 +138,19 @@ class Remodeller:
         self.registry.register(self.driver)
 
         # 3. Fabric solver: log-fabric evolution L -> L_target(Qbar)
-        self.fabricsolver = FabricSolver(L, L_old, self.driver.Qbar_field(), self.cfg)
+        self.fabricsolver = FabricSolver(
+            self.L, self.L_old, self.driver.Qbar_field(), self.cfg
+        )
         self.registry.register(self.fabricsolver)
 
         # 4. Stimulus solver: S(psi, rho)
-        self.stimsolver = StimulusSolver(S, S_old, self.driver.stimulus_field(), rho, self.cfg)
+        self.stimsolver = StimulusSolver(
+            self.S, self.S_old, self.driver.stimulus_field(), self.rho, self.cfg
+        )
         self.registry.register(self.stimsolver)
 
         # 5. Density solver: rho(S)
-        self.densolver = DensitySolver(rho, rho_old, S, self.cfg)
+        self.densolver = DensitySolver(self.rho, self.rho_old, self.S, self.cfg)
         self.registry.register(self.densolver)
 
         # =====================================================================
@@ -134,19 +165,11 @@ class Remodeller:
 
         # Fixed-point solver (uses blocks from registry)
         self.fixedsolver = FixedPointSolver(
-            self.comm,
-            self.cfg,
-            blocks=self.registry.blocks,
+            self.comm, self.cfg, blocks=self.registry.blocks,
         )
 
         # Time integrator (uses auto-discovered state fields)
         self.integrator = TimeIntegrator(self.comm, self.cfg, self.state_fields)
-
-        self.solvers_initialized = False
-        self._current_dt: float = 0.0
-
-        # Persist initial configuration
-        self.cfg.update_config_json()
 
     def _setup_blocks(self) -> None:
         """Call setup() on all coupling blocks."""
@@ -174,7 +197,7 @@ class Remodeller:
             self._current_dt = dt
             self._assemble_blocks_lhs()
 
-    def close(self):
+    def close(self) -> None:
         """Release PETSc resources and close I/O."""
         if self.closed:
             return
@@ -193,12 +216,19 @@ class Remodeller:
 
     def _output(self, t: float) -> None:
         """Write fields to storage."""
-        # Call post_step_update on all blocks (e.g., compute eigenvectors)
         self.registry.post_step_update_all()
         self.storage.fields.write("fields", float(t))
 
-    def step(self, dt: float) -> Tuple[float, Dict]:
-        """Single timestep attempt."""
+    def step(self, dt: float, reporter: ProgressReporter | None = None) -> Tuple[float, Dict]:
+        """Execute a single timestep attempt.
+
+        Args:
+            dt: Timestep size [days].
+            reporter: Optional progress reporter for subiteration display.
+
+        Returns:
+            Tuple of (error_norm, metrics_dict).
+        """
         for name, f in self.state_fields.items():
             assign(self.state_fields_old[name], f, scatter=True)
 
@@ -208,9 +238,10 @@ class Remodeller:
         for name, pred in x_pred.items():
             assign(self.state_fields[name], pred, scatter=True)
 
+        # Pass reporter for subiteration progress (rank 0 only)
         converged = self.fixedsolver.run(
-            self.progress if self.rank == 0 else None,
-            getattr(self, 'sub_task_id', None) if self.rank == 0 else None,
+            reporter.progress if reporter and reporter.rank == 0 else None,
+            reporter.sub_task_id if reporter and reporter.rank == 0 else None,
         )
 
         error_norm = self.integrator.compute_wrms_error(x_pred)
@@ -219,8 +250,13 @@ class Remodeller:
 
         return error_norm, {"converged": converged, "iters": used_subiters}
 
-    def simulate(self) -> None:
-        """Run remodeling loop using dt_initial and total_time from Config."""
+    def simulate(self, reporter: ProgressReporter | None = None) -> None:
+        """Run remodeling loop using dt_initial and total_time from Config.
+
+        Args:
+            reporter: Optional progress reporter. If None, a default reporter
+                     is created on rank 0.
+        """
         t = 0.0
         dt = float(self.cfg.time.dt_initial)
         total_time = float(self.cfg.time.total_time)
@@ -228,75 +264,60 @@ class Remodeller:
 
         self.comm.Barrier()
 
-        if self.rank == 0:
-            from rich.progress import (
-                Progress,
-                TextColumn,
-                BarColumn,
-                SpinnerColumn,
-                TimeRemainingColumn,
-                TimeElapsedColumn,
+        # Create default reporter if none provided
+        owns_reporter = False
+        if reporter is None and self.rank == 0:
+            reporter = ProgressReporter(
+                self.comm, total_time, self.cfg.solver.max_subiters
             )
-            from rich.console import Console
+            reporter.start()
+            owns_reporter = True
 
-            console = Console(stderr=True, force_terminal=True)
-            self.progress = Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                BarColumn(bar_width=60),
-                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-                TimeElapsedColumn(),
-                TimeRemainingColumn(compact=True),
-                TextColumn("{task.fields[info]}"),
-                console=console,
-                transient=False,
-            )
-            self.main_task_id = self.progress.add_task("Remodeling", total=total_time, info=" " * 35)
-            self.sub_task_id = self.progress.add_task("  Coupling", total=self.cfg.solver.max_subiters, info=" " * 35)
-            self.progress.start()
+        try:
+            while t < total_time:
+                if t + dt > total_time:
+                    dt = total_time - t
 
-        while t < total_time:
-            if t + dt > total_time:
-                dt = total_time - t
-            
-            error, metrics = self.step(dt)
-            
-            if self.cfg.time.adaptive_dt:
-                # Adaptive time stepping with PI controller
-                accepted, next_dt, reason = self.integrator.suggest_dt(dt, metrics["converged"], error)
-            else:
-                # Fixed time stepping - always accept, keep dt constant
-                accepted = True
-                next_dt = dt
-            
-            if accepted:
-                self.integrator.commit_step(dt, self.state_fields, self.state_fields_old)
-                t += dt
-                step_idx += 1
-                
-                if step_idx % self.cfg.output.saving_interval == 0:
-                    self._output(t)
-                
-                if self.progress is not None and self.main_task_id is not None:
-                    info_str = f"t={t:5.1f}d dt={next_dt:5.1f} err={error:.1e}"
-                    self.progress.update(self.main_task_id, completed=t, info=f"{info_str:<35}")
-                
-                dt = next_dt
-            else:
-                for name in self.state_fields:
-                    assign(self.state_fields[name], self.state_fields_old[name])
-                if not metrics["converged"]:
-                     self.integrator.reset_history()
-                dt = next_dt
+                error, metrics = self.step(dt, reporter)
 
-        if self.progress is not None:
-            info_str = f"t={t:5.1f}d dt={dt:5.1f} done"
-            self.progress.update(self.main_task_id, completed=t, info=f"{info_str:<35}")
-            self.progress.stop()
-            self.progress = None
+                if self.cfg.time.adaptive_dt:
+                    accepted, next_dt, reason = self.integrator.suggest_dt(
+                        dt, metrics["converged"], error
+                    )
+                else:
+                    accepted = True
+                    next_dt = dt
+
+                if accepted:
+                    self.integrator.commit_step(dt, self.state_fields, self.state_fields_old)
+                    t += dt
+                    step_idx += 1
+
+                    if step_idx % self.cfg.output.saving_interval == 0:
+                        self._output(t)
+
+                    if reporter is not None:
+                        reporter.update_main(t, next_dt, error)
+
+                    dt = next_dt
+                else:
+                    for name in self.state_fields:
+                        assign(self.state_fields[name], self.state_fields_old[name])
+                    if not metrics["converged"]:
+                        self.integrator.reset_history()
+                    dt = next_dt
+
+            if reporter is not None:
+                reporter.update_main(t, dt, 0.0, done=True)
+
+        finally:
+            if owns_reporter and reporter is not None:
+                reporter.stop()
 
     def __enter__(self) -> "Remodeller":
+        """Context manager entry."""
         return self
 
     def __exit__(self, *_) -> None:
+        """Context manager exit."""
         self.close()

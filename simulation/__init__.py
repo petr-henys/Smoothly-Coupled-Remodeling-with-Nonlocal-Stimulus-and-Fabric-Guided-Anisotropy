@@ -6,6 +6,8 @@ This package provides the core simulation components:
 - Solvers: MechanicsSolver, DensitySolver, StimulusSolver, FabricSolver
 - Drivers: GaitDriver for multi-load mechanical analysis
 - Protocols: CouplingBlock interface for solver blocks
+- ProgressReporter: Rich progress display
+- Scenarios: Predefined gait loading configurations
 """
 
 from simulation.config import Config
@@ -20,10 +22,12 @@ from simulation.params import (
     NumericsParams,
     OutputParams,
 )
+from simulation.progress import ProgressReporter
+from simulation.scenarios import get_standard_gait_cases, load_scenarios_from_yaml
 
 __all__ = [
+    # Config and parameters
     "Config",
-    "CouplingBlock",
     "MaterialParams",
     "DensityParams",
     "StimulusParams",
@@ -32,4 +36,11 @@ __all__ = [
     "TimeParams",
     "NumericsParams",
     "OutputParams",
+    # Protocols
+    "CouplingBlock",
+    # Progress reporting
+    "ProgressReporter",
+    # Scenarios
+    "get_standard_gait_cases",
+    "load_scenarios_from_yaml",
 ]
