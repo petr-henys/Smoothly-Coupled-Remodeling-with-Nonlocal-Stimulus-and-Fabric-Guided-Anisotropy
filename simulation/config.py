@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field
 import json
 from pathlib import Path
 from typing import Any
-
-import numpy as np
 
 from dolfinx import mesh
 import ufl
