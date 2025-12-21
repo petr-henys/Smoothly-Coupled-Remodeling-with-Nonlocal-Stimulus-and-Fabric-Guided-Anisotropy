@@ -346,3 +346,76 @@ def format_dt_label(dt: float) -> str:
         return f"dt={int(dt)} days"
     else:
         return f"dt={dt:.2f} days"
+
+
+# =============================================================================
+# Manuscript Figure Utilities (constitutive/analysis plots)
+# =============================================================================
+
+# Output directory for manuscript figures.
+MANUSCRIPT_IMAGE_DIR = Path(__file__).resolve().parent.parent / "manuscript" / "images"
+
+# Tol colorblind-safe palette for constitutive plots.
+COLORS = {
+    'blue': '#0077BB',
+    'cyan': '#33BBEE',
+    'teal': '#009988',
+    'orange': '#EE7733',
+    'red': '#CC3311',
+    'magenta': '#EE3377',
+    'grey': '#BBBBBB',
+    'black': '#000000',
+}
+
+
+def smooth_max(x: np.ndarray, xmin: float, eps: float = 1e-6) -> np.ndarray:
+    """C¹ approximation of max(x, xmin): smooth_max(x, xmin) ≥ xmin always."""
+    dx = x - xmin
+    return xmin + 0.5 * (dx + np.sqrt(dx * dx + eps * eps))
+
+
+def smoothstep01(t: np.ndarray) -> np.ndarray:
+    """Cubic smoothstep: 0 for t≤0, 1 for t≥1, t²(3-2t) in between."""
+    t_clamped = np.clip(t, 0.0, 1.0)
+    return t_clamped * t_clamped * (3.0 - 2.0 * t_clamped)
+
+
+def create_figure(nrows: int = 2, ncols: int = 3, 
+                  figsize: tuple = None) -> tuple:
+    """Create figure with consistent styling for manuscript.
+    
+    Returns:
+        (fig, axes) tuple.
+    """
+    if figsize is None:
+        figsize = (12, 7) if ncols >= 3 else (8, 6)
+    fig, axes = plt.subplots(nrows, ncols, figsize=figsize)
+    return fig, axes
+
+
+def save_manuscript_figure(fig: plt.Figure, filename: str, 
+                           dpi: int = 300, close: bool = True) -> Path:
+    """Save figure to manuscript/images directory.
+    
+    Args:
+        fig: Matplotlib figure.
+        filename: Output filename (with or without extension).
+        dpi: Resolution.
+        close: Close figure after saving.
+        
+    Returns:
+        Path to saved file.
+    """
+    MANUSCRIPT_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+    
+    if not filename.endswith('.png'):
+        filename = f"{filename}.png"
+    
+    output_path = MANUSCRIPT_IMAGE_DIR / filename
+    fig.savefig(output_path, dpi=dpi, bbox_inches='tight', pad_inches=0.05)
+    
+    if close:
+        plt.close(fig)
+    
+    print(f"Generated {output_path}")
+    return output_path

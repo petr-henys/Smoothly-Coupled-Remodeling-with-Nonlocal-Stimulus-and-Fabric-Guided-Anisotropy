@@ -1,261 +1,326 @@
+"""Visualization of log-fabric anisotropy model.
+
+Reflects the actual FabricSolver implementation:
+- Log-fabric tensor L with tr(L)=0 for volume-preserving fabric
+- Fabric eigenvalues a_hat_i = exp(l_i - mean_l) from L
+- Stiffness: E_i = E_iso * a_hat_i^pE, G_ij = G_iso * (a_hat_i*a_hat_j)^(0.5*pG)
+- Target L_target derived from Q̄ = weighted(σσᵀ) via geometric normalization
+"""
+
 import numpy as np
 import matplotlib.pyplot as plt
-import os
 
-# Output directory
-OUTPUT_DIR = "/mnt/pracovni/Active_projects/GACR_BoneMorphologyModeling/remodeller/results/constitutive_analysis"
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+from plot_utils import COLORS, save_manuscript_figure
+
 
 def set_modern_style():
-    """Configure matplotlib for a modern, publication-quality look."""
+    """Configure matplotlib for publication-quality look."""
     plt.rcParams.update({
-        'font.family': 'sans-serif',
-        'font.sans-serif': ['Arial', 'DejaVu Sans', 'Liberation Sans', 'Bitstream Vera Sans', 'sans-serif'],
-        'font.size': 10,
-        'axes.labelsize': 11,
-        'axes.titlesize': 12,
-        'xtick.labelsize': 9,
-        'ytick.labelsize': 9,
-        'legend.fontsize': 9,
-        
-        'axes.linewidth': 1.0,
-        'axes.edgecolor': '#333333',
+        'font.family': 'serif',
+        'font.serif': ['Times New Roman', 'DejaVu Serif'],
+        'font.size': 8,
+        'axes.labelsize': 8,
+        'axes.titlesize': 9,
+        'xtick.labelsize': 7,
+        'ytick.labelsize': 7,
+        'legend.fontsize': 7,
+        'axes.linewidth': 0.8,
         'axes.grid': True,
         'grid.alpha': 0.2,
-        'grid.color': '#333333',
-        'grid.linestyle': '--',
-        
+        'grid.linewidth': 0.5,
         'axes.spines.top': False,
         'axes.spines.right': False,
-        
         'figure.facecolor': 'white',
         'axes.facecolor': 'white',
         'legend.frameon': False,
     })
 
-# Color palette
-COLORS = {
-    'blue': '#0077BB',
-    'cyan': '#33BBEE',
-    'teal': '#009988',
-    'orange': '#EE7733',
-    'red': '#CC3311',
-    'magenta': '#EE3377',
-    'grey': '#BBBBBB',
-    'black': '#000000'
+
+# Default fabric parameters (from FabricParams)
+DEFAULT_PARAMS = {
+    'E0': 7500.0,       # Reference Young's modulus [MPa]
+    'nu0': 0.3,         # Poisson ratio
+    'pE': 1.0,          # Axial stiffness exponent (stiff_pE)
+    'pG': 1.0,          # Shear stiffness exponent (stiff_pG)
+    'gammaF': 1.0,      # Fabric eigenvalue exponent
+    'm_min': 0.2,       # Min eigenvalue ratio bound
+    'm_max': 5.0,       # Max eigenvalue ratio bound
 }
 
-def get_fabric_tensor(type_str):
-    """Return a 2D fabric tensor for visualization."""
+
+def get_log_fabric_tensor(type_str: str) -> np.ndarray:
+    """Return a 3D log-fabric tensor L with tr(L)=0.
+    
+    The log-fabric L stores ln(m_i) where m_i are fabric eigenvalues.
+    For volume preservation, tr(L) = ln(m1) + ln(m2) + ln(m3) = 0.
+    """
     if type_str == 'isotropic':
-        # In 2D, trace=1 -> 0.5, 0.5
-        return np.diag([0.5, 0.5])
+        # m1 = m2 = m3 = 1 -> L = 0
+        return np.zeros((3, 3))
     elif type_str == 'uniaxial':
-        # Highly aligned in X
-        return np.diag([0.9, 0.1])
-    elif type_str == 'shear':
-        # Principal axes rotated 45 deg
-        # A = R * diag(0.9, 0.1) * R.T
+        # Strong alignment in Z: m3 >> m1 = m2
+        # m1 = m2 = 0.5, m3 = 4.0 -> ln product = 0 (trace constraint)
+        # Actually: m1*m2*m3 = 1 for normalized fabric
+        # Let m1 = m2 = r, m3 = 1/r^2 with r = 0.5 -> m3 = 4
+        r = 0.5
+        l1 = l2 = np.log(r)
+        l3 = np.log(1.0 / (r * r))
+        return np.diag([l1, l2, l3])
+    elif type_str == 'biaxial':
+        # Two strong directions: m1 = m2 > m3
+        # m1 = m2 = 2, m3 = 0.25 -> product = 1
+        l1 = l2 = np.log(2.0)
+        l3 = np.log(0.25)
+        return np.diag([l1, l2, l3])
+    elif type_str == 'rotated':
+        # Uniaxial rotated 45° in XZ plane
+        r = 0.5
+        l1 = np.log(r)
+        l2 = np.log(r)
+        l3 = np.log(1.0 / (r * r))
+        D = np.diag([l1, l2, l3])
+        # Rotate around Y axis by 45°
         theta = np.pi / 4
         c, s = np.cos(theta), np.sin(theta)
-        R = np.array([[c, -s], [s, c]])
-        D = np.diag([0.9, 0.1])
+        R = np.array([[c, 0, s], [0, 1, 0], [-s, 0, c]])
         return R @ D @ R.T
     else:
-        return np.diag([0.5, 0.5])
+        return np.zeros((3, 3))
 
-def calculate_directional_stiffness(theta, A, rho=1.0, E0=15000, k=2.0, p=0.5, nu=0.3):
-    """
-    Calculate longitudinal stiffness E(theta) using Zysset-Curnier model.
+
+def compute_fabric_eigenvalues(L: np.ndarray) -> tuple:
+    """Compute fabric eigenvalues a_hat from log-fabric L.
     
-    E(n) approx n . C . n
-    But Zysset defines E_i along principal axes.
-    For an orthotropic material, 1/E(n) = sum (n_i^2 / E_i) + shear terms...
-    Actually, let's compute the full stiffness tensor C and project it: E(n) = n . C . n
+    a_hat_i = exp(l_i - mean_l) ensures geometric mean = 1.
     """
-    # 1. Eigenvalues of A
-    w, v = np.linalg.eigh(A)
+    L_sym = 0.5 * (L + L.T)
+    eigenvals = np.linalg.eigvalsh(L_sym)
     # Sort descending
-    idx = w.argsort()[::-1]
-    w = w[idx]
-    v = v[:, idx]
+    eigenvals = np.sort(eigenvals)[::-1]
     
-    m1, m2 = w[0], w[1]
-    
-    # 2. Principal Stiffnesses
-    # E_i = E0 * rho^k * m_i^p
-    E1 = E0 * (rho**k) * (m1**p)
-    E2 = E0 * (rho**k) * (m2**p)
-    
-    # Shear modulus (approx)
-    # G12 = G0 * rho^k * (m1*m2)^(p/2)
-    # Assume G0 approx E0 / (2(1+nu))
-    G0 = E0 / (2 * (1 + nu))
-    G12 = G0 * (rho**k) * ((m1*m2)**(p/2))
-    
-    # Poisson ratio
-    nu12 = nu # Simplified
-    nu21 = nu12 * (E2/E1)
-    
-    # Compliance Matrix S in principal frame
-    # [1/E1, -nu21/E2, 0]
-    # [-nu12/E1, 1/E2, 0]
-    # [0, 0, 1/G12]
-    
-    S_mat = np.zeros((3,3))
-    S_mat[0,0] = 1.0/E1
-    S_mat[1,1] = 1.0/E2
-    S_mat[0,1] = -nu12/E1
-    S_mat[1,0] = -nu12/E1 # Symmetry check: nu12/E1 = nu21/E2
-    S_mat[2,2] = 1.0/G12
-    
-    # Stiffness Matrix C = inv(S)
-    C_mat = np.linalg.inv(S_mat)
-    
-    # 3. Rotate to global frame
-    # We need n in principal frame.
-    # n_global = [cos(theta), sin(theta)]
-    # n_local = V.T @ n_global
-    
-    n_global = np.array([np.cos(theta), np.sin(theta)])
-    n_local = v.T @ n_global
-    
-    # Voigt notation for strain: eps = [e11, e22, 2e12]
-    # n . C . n is not quite right for E(n).
-    # Young's modulus E(n) is usually defined as stress/strain in direction n.
-    # 1/E(n) = n_local_i^4 / E1 + n_local_j^4 / E2 + ...
-    # For 2D orthotropic:
-    # 1/E(theta) = (c^4)/E1 + (s^4)/E2 + (1/G12 - 2*nu12/E1)*c^2*s^2
-    
-    c = n_local[0]
-    s = n_local[1]
-    
-    inv_E = (c**4)/E1 + (s**4)/E2 + (1.0/G12 - 2.0*nu12/E1)*(c**2)*(s**2)
-    
-    return 1.0/inv_E, m1
+    mean_l = np.mean(eigenvals)
+    a_hat = np.exp(eigenvals - mean_l)
+    return a_hat, eigenvals
 
-def calculate_directional_diffusion(theta, A, beta_par=0.1, beta_perp=0.01):
-    """
-    Calculate directional diffusion D(theta) = n.B.n
-    B = beta_perp*I + (beta_par - beta_perp)*A
-    """
-    nx = np.cos(theta)
-    ny = np.sin(theta)
-    nAn = A[0,0]*nx**2 + 2*A[0,1]*nx*ny + A[1,1]*ny**2
-    
-    D = beta_perp + (beta_par - beta_perp) * nAn
-    return D
 
-def plot_stiffness_polar(ax, fabric_types):
-    """Polar plot of stiffness."""
+def calculate_directional_stiffness(theta: float, phi: float, L: np.ndarray,
+                                     E0: float = 7500.0, nu0: float = 0.3,
+                                     pE: float = 1.0, pG: float = 1.0) -> float:
+    """Calculate directional Young's modulus E(n) from log-fabric L.
+    
+    Uses the actual MechanicsSolver constitutive model:
+    - a_hat_i = exp(l_i - mean_l)
+    - E_i = E_iso * a_hat_i^pE
+    - G_ij = G_iso * (a_hat_i * a_hat_j)^(0.5*pG)
+    
+    For Young's modulus in direction n (3D orthotropic compliance):
+    1/E(n) = sum_i n_i^4/E_i + sum_{i<j} (1/G_ij - 2*nu0/sqrt(Ei*Ej)) * n_i^2*n_j^2
+    
+    Args:
+        theta: Polar angle from Z axis [rad]
+        phi: Azimuthal angle in XY plane [rad]
+        L: 3x3 log-fabric tensor
+        E0: Reference Young's modulus [MPa]
+        nu0: Poisson ratio
+        pE: Axial stiffness exponent
+        pG: Shear stiffness exponent
+    """
+    # Fabric eigenvalues and eigenvectors
+    L_sym = 0.5 * (L + L.T)
+    eigenvals, eigenvecs = np.linalg.eigh(L_sym)
+    # Sort descending by eigenvalue
+    idx = np.argsort(eigenvals)[::-1]
+    eigenvals = eigenvals[idx]
+    eigenvecs = eigenvecs[:, idx]
+    
+    # a_hat = exp(l - mean_l)
+    mean_l = np.mean(eigenvals)
+    a_hat = np.exp(eigenvals - mean_l)
+    
+    # Principal stiffnesses
+    E_iso = E0  # For visualization, use E0 directly (rho=1)
+    G_iso = E_iso / (2.0 * (1.0 + nu0))
+    
+    E1 = E_iso * (a_hat[0] ** pE)
+    E2 = E_iso * (a_hat[1] ** pE)
+    E3 = E_iso * (a_hat[2] ** pE)
+    
+    G12 = G_iso * ((a_hat[0] * a_hat[1]) ** (0.5 * pG))
+    G23 = G_iso * ((a_hat[1] * a_hat[2]) ** (0.5 * pG))
+    G31 = G_iso * ((a_hat[2] * a_hat[0]) ** (0.5 * pG))
+    
+    # Direction vector in global frame
+    n_global = np.array([
+        np.sin(theta) * np.cos(phi),
+        np.sin(theta) * np.sin(phi),
+        np.cos(theta)
+    ])
+    
+    # Transform to principal frame
+    n_local = eigenvecs.T @ n_global
+    n1, n2, n3 = n_local[0], n_local[1], n_local[2]
+    
+    # Compliance in direction n (orthotropic material)
+    # 1/E(n) = n1^4/E1 + n2^4/E2 + n3^4/E3
+    #        + (1/G23 - 2*nu/sqrt(E2*E3)) * n2^2*n3^2
+    #        + (1/G31 - 2*nu/sqrt(E3*E1)) * n3^2*n1^2
+    #        + (1/G12 - 2*nu/sqrt(E1*E2)) * n1^2*n2^2
+    
+    inv_E = (n1**4 / E1 + n2**4 / E2 + n3**4 / E3
+             + (1.0/G23 - 2.0*nu0/np.sqrt(E2*E3)) * n2**2 * n3**2
+             + (1.0/G31 - 2.0*nu0/np.sqrt(E3*E1)) * n3**2 * n1**2
+             + (1.0/G12 - 2.0*nu0/np.sqrt(E1*E2)) * n1**2 * n2**2)
+    
+    return 1.0 / inv_E
+
+
+def plot_stiffness_polar(ax, fabric_types: dict):
+    """Polar plot of directional stiffness E(θ) in XZ plane (phi=0)."""
     theta = np.linspace(0, 2*np.pi, 360)
+    phi = 0.0  # XZ plane
     
     for ftype, color in fabric_types.items():
-        A = get_fabric_tensor(ftype)
-        C_vals = []
-        for t in theta:
-            val, _ = calculate_directional_stiffness(t, A, p=1.0) # p=1 for strong effect
-            C_vals.append(val)
-        ax.plot(theta, C_vals, color=color, linewidth=2, label=ftype.capitalize())
+        L = get_log_fabric_tensor(ftype)
+        E_vals = [calculate_directional_stiffness(t, phi, L) for t in theta]
+        ax.plot(theta, np.array(E_vals)/1000, color=color, linewidth=2, label=ftype.capitalize())
         
-    ax.set_title(r'(a) Directional Stiffness $E(\theta)$', loc='left', fontweight='bold', pad=20)
-    # ax.set_rticks([10000, 20000, 30000])
+    ax.set_title(r'(a) Directional Stiffness $E(\theta)$ [GPa]', loc='left', fontweight='bold', pad=20)
     ax.set_rlabel_position(45)
     ax.grid(True, alpha=0.3)
     ax.legend(loc='upper right', bbox_to_anchor=(1.3, 1.1), fontsize=8)
 
-def plot_diffusion_polar(ax, fabric_types):
-    """Polar plot of diffusion."""
+
+def plot_ahat_polar(ax, fabric_types: dict):
+    """Polar plot of fabric eigenvalue magnitude in direction θ."""
     theta = np.linspace(0, 2*np.pi, 360)
     
     for ftype, color in fabric_types.items():
-        A = get_fabric_tensor(ftype)
-        D = calculate_directional_diffusion(theta, A, beta_par=0.1, beta_perp=0.02)
-        ax.plot(theta, D, color=color, linewidth=2, label=ftype.capitalize())
+        L = get_log_fabric_tensor(ftype)
+        a_hat, eigenvals = compute_fabric_eigenvalues(L)
         
-    ax.set_title(r'(b) Directional Diffusion $D(\theta)$', loc='left', fontweight='bold', pad=20)
-    ax.set_rticks([0.02, 0.06, 0.1])
+        # a(θ) = n·M·n where M = diag(a_hat) in principal frame
+        L_sym = 0.5 * (L + L.T)
+        _, eigenvecs = np.linalg.eigh(L_sym)
+        idx = np.argsort(np.linalg.eigvalsh(L_sym))[::-1]
+        eigenvecs = eigenvecs[:, idx]
+        
+        a_vals = []
+        for t in theta:
+            # Direction in XZ plane
+            n_global = np.array([np.sin(t), 0, np.cos(t)])
+            n_local = eigenvecs.T @ n_global
+            a_n = np.sum(a_hat * n_local**2)
+            a_vals.append(a_n)
+        
+        ax.plot(theta, a_vals, color=color, linewidth=2, label=ftype.capitalize())
+        
+    ax.set_title(r'(b) Fabric Factor $\hat{a}(\theta)$', loc='left', fontweight='bold', pad=20)
     ax.set_rlabel_position(45)
     ax.grid(True, alpha=0.3)
 
-def plot_stiffness_p_sensitivity(ax):
-    """Linear plot of stiffness vs angle for different p (fabric exponent)."""
-    theta = np.linspace(0, np.pi, 180) # Half circle sufficient
-    A = get_fabric_tensor('uniaxial') # Aligned
+
+def plot_stiffness_pE_sensitivity(ax):
+    """Stiffness vs angle for different pE exponents."""
+    theta = np.linspace(0, np.pi, 180)
+    phi = 0.0
+    L = get_log_fabric_tensor('uniaxial')
     
-    ps = [0.2, 0.5, 1.0, 2.0]
+    pEs = [0.5, 1.0, 1.5, 2.0]
     colors = [COLORS['grey'], COLORS['cyan'], COLORS['blue'], COLORS['black']]
     
-    for p, c in zip(ps, colors):
-        vals = []
-        for t in theta:
-            val, _ = calculate_directional_stiffness(t, A, p=p)
-            vals.append(val)
-        ax.plot(np.degrees(theta), np.array(vals)/1000, color=c, label=r'$p=' + str(p) + '$')
+    for pE, c in zip(pEs, colors):
+        vals = [calculate_directional_stiffness(t, phi, L, pE=pE) for t in theta]
+        ax.plot(np.degrees(theta), np.array(vals)/1000, color=c, label=rf'$p_E={pE}$')
         
-    ax.set_title(r'(c) Anisotropy Sensitivity ($p$)', loc='left', fontweight='bold')
-    ax.set_xlabel(r'Angle $\theta$ [deg]')
+    ax.set_title(r'(c) Stiffness Exponent $p_E$ Effect', loc='left', fontweight='bold')
+    ax.set_xlabel(r'Angle $\theta$ from principal axis [deg]')
     ax.set_ylabel(r'Stiffness $E$ [GPa]')
     ax.set_xlim(0, 180)
     ax.legend(fontsize=8)
 
-def plot_diffusion_beta_sensitivity(ax):
-    """Linear plot of diffusion vs angle for different beta ratios."""
-    theta = np.linspace(0, np.pi, 180)
-    A = get_fabric_tensor('uniaxial')
-    
-    # Fix beta_par = 0.1, vary beta_perp
-    beta_perps = [0.01, 0.05, 0.1] # Ratio 10:1, 2:1, 1:1
-    colors = [COLORS['red'], COLORS['orange'], COLORS['grey']]
-    
-    for bp, c in zip(beta_perps, colors):
-        D = calculate_directional_diffusion(theta, A, beta_par=0.1, beta_perp=bp)
-        ratio = 0.1/bp
-        ax.plot(np.degrees(theta), D, color=c, label=r'$\beta_{\perp}=' + str(bp) + r'$ (Ratio ' + f'{ratio:.0f}:1)')
-        
-    ax.set_title(r'(d) Diffusion Anisotropy ($\beta_{\perp}$)', loc='left', fontweight='bold')
-    ax.set_xlabel(r'Angle $\theta$ [deg]')
-    ax.set_ylabel(r'Diffusivity $D$ [mm$^2$/day]')
-    ax.set_xlim(0, 180)
-    ax.legend(fontsize=8)
 
-def plot_eigenvalue_scaling(ax):
-    """Visualize how stiffness scales with eigenvalues for different p."""
-    m = np.linspace(0.1, 1.0, 100)
-    ps = [0.5, 1.0, 2.0]
+def plot_ahat_scaling(ax):
+    """Visualize a_hat = exp(l) scaling with log-eigenvalue l."""
+    l_vals = np.linspace(-2, 2, 100)  # l = ln(m)
+    a_hat = np.exp(l_vals)
+    
+    ax.plot(l_vals, a_hat, color=COLORS['blue'], linewidth=2, label=r'$\hat{a} = e^l$')
+    ax.axhline(1.0, color=COLORS['grey'], linestyle='--', alpha=0.5, label='Isotropic')
+    ax.axvline(0.0, color=COLORS['grey'], linestyle='--', alpha=0.5)
+    
+    # Mark typical bounds
+    m_min, m_max = 0.2, 5.0
+    ax.axhline(m_min, color=COLORS['red'], linestyle=':', alpha=0.7, label=f'$m_{{min}}={m_min}$')
+    ax.axhline(m_max, color=COLORS['red'], linestyle=':', alpha=0.7, label=f'$m_{{max}}={m_max}$')
+    
+    ax.set_title(r'(d) Log-Fabric Scaling $\hat{a} = e^l$', loc='left', fontweight='bold')
+    ax.set_xlabel(r'Log-eigenvalue $l = \ln(m)$')
+    ax.set_ylabel(r'Fabric factor $\hat{a}$')
+    ax.set_ylim(0, 6)
+    ax.legend(fontsize=8)
+    ax.grid(True, alpha=0.3)
+
+
+def plot_stiffness_scaling(ax):
+    """Visualize E_i = E_iso * a_hat^pE for different pE."""
+    a_hat = np.linspace(0.2, 5.0, 100)
+    pEs = [0.5, 1.0, 2.0]
     colors = [COLORS['cyan'], COLORS['blue'], COLORS['black']]
     
-    for p, c in zip(ps, colors):
-        E_factor = m**p
-        ax.plot(m, E_factor, color=c, label=f'$p={p}$')
+    for pE, c in zip(pEs, colors):
+        E_factor = a_hat ** pE
+        ax.plot(a_hat, E_factor, color=c, label=rf'$p_E={pE}$')
+    
+    ax.axhline(1.0, color=COLORS['grey'], linestyle='--', alpha=0.5)
+    ax.axvline(1.0, color=COLORS['grey'], linestyle='--', alpha=0.5)
         
-    ax.set_title(r'(e) Stiffness Scaling $m^p$', loc='left', fontweight='bold')
-    ax.set_xlabel(r'Eigenvalue $m$ [-]')
-    ax.set_ylabel(r'Factor [-]')
+    ax.set_title(r'(e) Stiffness Scaling $E_i/E_{iso} = \hat{a}^{p_E}$', loc='left', fontweight='bold')
+    ax.set_xlabel(r'Fabric factor $\hat{a}$')
+    ax.set_ylabel(r'Stiffness ratio $E_i/E_{iso}$')
     ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
 
-def plot_projection_concept(ax):
-    """Conceptual plot of unit trace projection."""
-    # Just a schematic of eigenvalues
-    # Trace = L1 + L2 = 1
-    L1 = np.linspace(0, 1, 100)
-    L2 = 1 - L1
+
+def plot_log_fabric_space(ax):
+    """Log-fabric eigenvalue space with tr(L)=0 constraint."""
+    # For 3D: l1 + l2 + l3 = 0 defines a plane
+    # Project onto 2D: plot l1 vs l2 (l3 = -l1 - l2)
     
-    ax.plot(L1, L2, color=COLORS['black'], linestyle='-', label='Unit Trace Line')
-    ax.fill_between(L1, 0, L2, color=COLORS['teal'], alpha=0.1, label='Feasible Region (PSD)')
+    l1 = np.linspace(-2, 2, 100)
+    l2_line = -l1  # When l3 = 0: l1 + l2 = 0
     
-    # Points
-    ax.scatter([0.5], [0.5], color=COLORS['grey'], s=50, label='Isotropic')
-    ax.scatter([0.9], [0.1], color=COLORS['blue'], s=50, label='Uniaxial')
+    # Feasible region: ordered eigenvalues l1 >= l2 >= l3
+    # With l3 = -l1 - l2, need l2 >= -l1 - l2 => l2 >= -l1/2
+    # And l1 >= l2
     
-    ax.set_title(r'(f) Fabric Eigenvalue Space ($\lambda_1 + \lambda_2 = 1$)', loc='left', fontweight='bold')
-    ax.set_xlabel(r'$\lambda_1$')
-    ax.set_ylabel(r'$\lambda_2$')
-    ax.set_xlim(0, 1.1)
-    ax.set_ylim(0, 1.1)
+    ax.fill_between(l1, -l1/2, l1, where=(l1 >= -l1/2), 
+                    color=COLORS['teal'], alpha=0.15, label='Feasible (ordered)')
+    
+    # Zero trace line (isotropic subspace)
+    ax.axhline(0, color=COLORS['grey'], linestyle='--', alpha=0.5)
+    ax.axvline(0, color=COLORS['grey'], linestyle='--', alpha=0.5)
+    
+    # Example points
+    ax.scatter([0], [0], color=COLORS['grey'], s=80, zorder=5, label='Isotropic')
+    
+    # Uniaxial: l1 = l2 = ln(0.5), l3 = ln(4) ≈ 1.39
+    r = 0.5
+    l_uni = np.log(r)
+    ax.scatter([l_uni], [l_uni], color=COLORS['blue'], s=80, zorder=5, label='Uniaxial (aligned)')
+    
+    # Biaxial: l1 = l2 = ln(2), l3 = ln(0.25)
+    l_bi = np.log(2.0)
+    ax.scatter([l_bi], [l_bi], color=COLORS['magenta'], s=80, zorder=5, label='Biaxial (planar)')
+    
+    ax.set_title(r'(f) Log-Fabric Space ($l_1 + l_2 + l_3 = 0$)', loc='left', fontweight='bold')
+    ax.set_xlabel(r'$l_1 = \ln(m_1)$')
+    ax.set_ylabel(r'$l_2 = \ln(m_2)$')
+    ax.set_xlim(-2.5, 2.5)
+    ax.set_ylim(-2.5, 2.5)
+    ax.set_aspect('equal')
+    ax.legend(fontsize=8, loc='upper right')
     ax.grid(True, alpha=0.3)
-    ax.legend(fontsize=8)
+
 
 def generate_anisotropy_plot():
     set_modern_style()
@@ -279,21 +344,19 @@ def generate_anisotropy_plot():
     fabric_types = {
         'isotropic': COLORS['grey'],
         'uniaxial': COLORS['blue'],
-        'shear': COLORS['magenta']
+        'rotated': COLORS['magenta']
     }
     
     plot_stiffness_polar(ax1, fabric_types)
-    plot_diffusion_polar(ax2, fabric_types)
-    plot_stiffness_p_sensitivity(ax3)
-    plot_diffusion_beta_sensitivity(ax4)
-    plot_eigenvalue_scaling(ax5)
-    plot_projection_concept(ax6)
+    plot_ahat_polar(ax2, fabric_types)
+    plot_stiffness_pE_sensitivity(ax3)
+    plot_ahat_scaling(ax4)
+    plot_stiffness_scaling(ax5)
+    plot_log_fabric_space(ax6)
     
     plt.tight_layout()
-    output_path = os.path.join(OUTPUT_DIR, 'anisotropy_law.png')
-    plt.savefig(output_path, dpi=300, bbox_inches='tight')
-    plt.close()
-    print(f"Generated {output_path}")
+    save_manuscript_figure(fig, 'anisotropy_law')
+
 
 if __name__ == "__main__":
     generate_anisotropy_plot()
