@@ -278,6 +278,25 @@ class TimeParams:
     # Maximum timestep [days]
     dt_max: float = 100.0
 
+    # --- PI Controller parameters (Gustafsson) ---
+    # Safety factor for step size adjustment
+    pi_safety: float = 0.9
+
+    # Maximum growth factor per step
+    pi_growth_max: float = 5.0
+
+    # Minimum shrink factor per step
+    pi_shrink_min: float = 0.1
+
+    # Exponent for simple rejection formula: h_new = h * (1/err)^(1/k_exp)
+    pi_k_exp: float = 1.5
+
+    # Proportional gain (error ratio term)
+    pi_kp: float = 0.20
+
+    # Integral gain (current error term)
+    pi_ki: float = 0.40
+
     def validate(self) -> None:
         """Validate time stepping parameter constraints."""
         if self.total_time <= 0:
@@ -290,6 +309,17 @@ class TimeParams:
             raise ValueError("dt_min must be <= dt_max.")
         if self.adaptive_rtol <= 0 or self.adaptive_atol <= 0:
             raise ValueError("adaptive_rtol and adaptive_atol must be > 0.")
+        # PI controller validation
+        if not (0.0 < self.pi_safety <= 1.0):
+            raise ValueError("pi_safety must be in (0, 1].")
+        if self.pi_growth_max < 1.0:
+            raise ValueError("pi_growth_max must be >= 1.0.")
+        if not (0.0 < self.pi_shrink_min < 1.0):
+            raise ValueError("pi_shrink_min must be in (0, 1).")
+        if self.pi_k_exp <= 0:
+            raise ValueError("pi_k_exp must be > 0.")
+        if self.pi_kp < 0 or self.pi_ki < 0:
+            raise ValueError("pi_kp and pi_ki must be >= 0.")
 
 
 @dataclass

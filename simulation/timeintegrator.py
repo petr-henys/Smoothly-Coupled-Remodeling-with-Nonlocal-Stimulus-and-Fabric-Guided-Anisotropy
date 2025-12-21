@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Mapping, Tuple
+from typing import Mapping, Optional, Tuple, TYPE_CHECKING
 
 import numpy as np
 from mpi4py import MPI
 from dolfinx import fem
 
+from simulation.logger import get_logger
 from simulation.utils import assign, get_owned_size
+
+if TYPE_CHECKING:
+    from simulation.params import TimeParams
 
 
 @dataclass
@@ -28,30 +32,33 @@ class TimeIntegrator:
         self,
         comm: MPI.Intracomm,
         state_fields: Mapping[str, fem.Function],
-        dt_min: float = 1e-3,
-        dt_max: float = 10.0,
-        adaptive_rtol: float = 1e-3,
-        adaptive_atol: float = 1e-4,
+        time_params: "TimeParams",
+        log_file: Optional[str] = None,
     ):
-        """Initialize with MPI comm, parameters, and a mapping of state fields."""
+        """Initialize with MPI comm, TimeParams, and a mapping of state fields."""
         self.comm = comm
-        self.dt_min = dt_min
-        self.dt_max = dt_max
-        self.rtol = adaptive_rtol
-        self.atol = adaptive_atol
+
+        # Copy parameters from TimeParams
+        self.dt_min = time_params.dt_min
+        self.dt_max = time_params.dt_max
+        self.rtol = time_params.adaptive_rtol
+        self.atol = time_params.adaptive_atol
+
+        # Logger (rank-0 only console: WARNING, file: DEBUG)
+        self.logger = get_logger(self.comm, name="TimeInt", log_file=log_file)
 
         # Controller state
         self.step_count = 0
         self.dt_prev: float = 0.0
         self.error_prev = 1.0  # Initialize with 1.0
 
-        # Controller parameters
-        self.safety = 0.9
-        self.growth_factor = 5.0
-        self.shrink_factor = 0.1
-        self.k_exp = 1.5
-        self.kp = 0.20
-        self.ki = 0.40
+        # PI controller parameters from TimeParams
+        self.safety = time_params.pi_safety
+        self.growth_factor = time_params.pi_growth_max
+        self.shrink_factor = time_params.pi_shrink_min
+        self.k_exp = time_params.pi_k_exp
+        self.kp = time_params.pi_kp
+        self.ki = time_params.pi_ki
 
         self._fields: dict[str, _FieldHistory] = {}
         self._N_total: int = 0
@@ -160,11 +167,17 @@ class TimeIntegrator:
         if not converged:
             # Divergence: Cut aggressively
             next_dt = max(self.dt_min, dt * 0.5)
+            self.logger.debug(
+                f"dt={dt:.3e} -> {next_dt:.3e} | REJECT (diverged) | err={error_norm:.2e}"
+            )
             return False, next_dt, "diverged"
         
         if self.step_count == 0:
             # Initialize PI history; do not reject the very first step.
             self.error_prev = max(error_norm, 1.0)
+            self.logger.debug(
+                f"dt={dt:.3e} -> {dt:.3e} | ACCEPT (first step) | err={error_norm:.2e}"
+            )
             return True, dt, "first step accepted (no rejection)"
 
         # Rejection (Error too high)
@@ -177,6 +190,9 @@ class TimeIntegrator:
             
             # Reset PI history on rejection to avoid bad memory
             self.error_prev = error_norm
+            self.logger.info(
+                f"dt={dt:.3e} -> {next_dt:.3e} | REJECT | err={error_norm:.2e} > 1.0 | factor={factor:.3f}"
+            )
             return False, next_dt, f"error {error_norm:.2f} > 1.0"
 
         # Acceptance (Error OK)
@@ -207,6 +223,9 @@ class TimeIntegrator:
         # Store error for next step
         self.error_prev = safe_error
 
+        self.logger.debug(
+            f"dt={dt:.3e} -> {next_dt:.3e} | ACCEPT | err={error_norm:.2e} | factor={factor:.3f}"
+        )
         return True, next_dt, "accepted"
 
     def commit_step(self, dt: float, new_fields: Mapping[str, fem.Function], old_fields: Mapping[str, fem.Function]) -> None:
@@ -227,3 +246,7 @@ class TimeIntegrator:
 
         self.dt_prev = dt_curr
         self.step_count += 1
+
+        self.logger.debug(
+            f"step {self.step_count} committed | dt={dt_curr:.3e} | fields={list(self._fields.keys())}"
+        )

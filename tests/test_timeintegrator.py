@@ -9,6 +9,7 @@ from dolfinx import fem, mesh
 import basix.ufl
 
 from simulation.timeintegrator import TimeIntegrator
+from simulation.params import TimeParams
 
 @pytest.fixture
 def ti_setup():
@@ -23,7 +24,8 @@ def ti_setup():
     
     state_fields = {"f1": f1, "f2": f2}
     
-    ti = TimeIntegrator(comm, state_fields, dt_min=0.1, dt_max=10.0)
+    time_params = TimeParams(dt_min=0.1, dt_max=10.0)
+    ti = TimeIntegrator(comm, state_fields, time_params=time_params)
     return ti, state_fields
 
 class TestTimeIntegrator:

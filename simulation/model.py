@@ -164,12 +164,10 @@ class Remodeller:
 
         # Time integrator (uses auto-discovered state fields)
         self.integrator = TimeIntegrator(
-            self.comm, 
+            self.comm,
             self.state_fields,
-            dt_min=self.cfg.time.dt_min,
-            dt_max=self.cfg.time.dt_max,
-            adaptive_rtol=self.cfg.time.adaptive_rtol,
-            adaptive_atol=self.cfg.time.adaptive_atol,
+            time_params=self.cfg.time,
+            log_file=self.cfg.log_file,
         )
 
     def _setup_blocks(self) -> None:
