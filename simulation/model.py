@@ -116,7 +116,7 @@ class Remodeller:
     def _build_solvers(self) -> None:
         """Wire up the solver graph: mechanics → fabric → stimulus → density."""
         # Boundary conditions
-        bc_mech = build_dirichlet_bcs(self.V, self.cfg.facet_tags, id_tag=1, value=0.0)
+        bc_mech = build_dirichlet_bcs(self.V, self.cfg.facet_tags, id_tag=self.cfg.geometry.fix_tag, value=0.0)
         neumann_bcs = [(self.loader.traction, self.loader.load_tag)]
 
         # =====================================================================

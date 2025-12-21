@@ -183,3 +183,41 @@ class TestConfigValidation:
                 facet_tags=facet_tags,
                 material=MaterialParams(n_trab=2.0, n_cort=1.2, rho_trab_max=1.2, rho_cort_min=1.2),
             )
+
+    def test_numerics_params_validation(self, unit_cube, facet_tags):
+        """NumericsParams validation."""
+        # Invalid quadrature degree
+        with pytest.raises(ValueError):
+            Config(
+                domain=unit_cube,
+                facet_tags=facet_tags,
+                numerics=NumericsParams(quadrature_degree=0),
+            )
+
+        # Invalid smooth_eps
+        with pytest.raises(ValueError):
+            Config(
+                domain=unit_cube,
+                facet_tags=facet_tags,
+                numerics=NumericsParams(smooth_eps=0.0),
+            )
+
+    def test_geometry_params_validation(self, unit_cube, facet_tags):
+        """GeometryParams validation."""
+        from simulation.params import GeometryParams
+
+        # Invalid fix_tag
+        with pytest.raises(ValueError):
+            Config(
+                domain=unit_cube,
+                facet_tags=facet_tags,
+                geometry=GeometryParams(fix_tag=-1),
+            )
+
+        # Invalid load_tag
+        with pytest.raises(ValueError):
+            Config(
+                domain=unit_cube,
+                facet_tags=facet_tags,
+                geometry=GeometryParams(load_tag=-1),
+            )

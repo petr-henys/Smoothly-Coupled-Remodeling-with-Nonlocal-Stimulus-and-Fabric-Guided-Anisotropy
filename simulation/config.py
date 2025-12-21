@@ -19,6 +19,7 @@ from simulation.params import (
     TimeParams,
     NumericsParams,
     OutputParams,
+    GeometryParams,
     params_to_dict,
 )
 
@@ -40,6 +41,7 @@ class Config:
     time: TimeParams = field(default_factory=TimeParams)
     numerics: NumericsParams = field(default_factory=NumericsParams)
     output: OutputParams = field(default_factory=OutputParams)
+    geometry: GeometryParams = field(default_factory=GeometryParams)
 
     # Runtime state (not serialized)
     domain: mesh.Mesh | None = field(default=None, repr=False)
@@ -74,6 +76,7 @@ class Config:
         self.time.validate()
         self.numerics.validate()
         self.output.validate()
+        self.geometry.validate()
 
     def _build_measures(self):
         """Create UFL measures with the configured quadrature degree."""

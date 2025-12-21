@@ -349,6 +349,24 @@ class OutputParams:
             raise ValueError("saving_interval must be >= 1.")
 
 
+@dataclass
+class GeometryParams:
+    """Mesh tagging configuration."""
+
+    # Facet tag for fixed boundary conditions (Dirichlet)
+    fix_tag: int = 1
+
+    # Facet tag for loading surface (Neumann)
+    load_tag: int = 2
+
+    def validate(self) -> None:
+        """Validate geometry parameter constraints."""
+        if self.fix_tag < 0:
+            raise ValueError("fix_tag must be >= 0.")
+        if self.load_tag < 0:
+            raise ValueError("load_tag must be >= 0.")
+
+
 def params_to_dict(params) -> dict[str, Any]:
     """Convert a params dataclass to a JSON-serializable dict."""
     result = {}
