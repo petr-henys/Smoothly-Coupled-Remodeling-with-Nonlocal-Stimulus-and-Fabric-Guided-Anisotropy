@@ -134,13 +134,13 @@ def test_mechanics_uniform_extension():
 
     # Create solution function
     u = fem.Function(V, name="u")
-    
+
     # Solve
     mech = MechanicsSolver(u, rho, cfg, bcs, [])
     mech.setup()
     mech.assemble_rhs()
-    reason = mech.solve()
-    assert reason > 0, f"KSP failed to converge, reason={reason}"
+    stats = mech.solve()
+    assert stats.converged, f"KSP failed to converge, reason={stats.ksp_reason}"
 
     # Check solution is nonzero (should have extension)
     idxmap = V.dofmap.index_map

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, List, Tuple
+from typing import Any, Dict, TYPE_CHECKING, List, Tuple
 import time
 
 import basix.ufl
@@ -31,6 +31,7 @@ from simulation.utils import (
     projectors_sylvester,
 )
 from simulation.logger import get_logger
+from simulation.stats import SweepStats
 
 if TYPE_CHECKING:
     from simulation.config import Config
@@ -38,6 +39,9 @@ if TYPE_CHECKING:
 
 class _BaseLinearSolver:
     """Base class for PETSc KSP linear solvers."""
+
+    # Subclasses must define this label for stats identification
+    _label: str = "base"
 
     def __init__(
         self,
@@ -125,7 +129,12 @@ class _BaseLinearSolver:
     def assemble_rhs(self) -> None:
         raise NotImplementedError
 
-    def _solve(self) -> dict:
+    def _compute_extra_stats(self) -> Dict[str, Any]:
+        """Override in subclass to add physics-specific stats to SweepStats.extra."""
+        return {}
+
+    def _solve(self) -> SweepStats:
+        """Solve the linear system and return structured stats."""
         t0 = time.perf_counter()
         self.ksp.solve(self.b, self.state.x.petsc_vec)
         self.state.x.scatter_forward()
@@ -134,11 +143,19 @@ class _BaseLinearSolver:
         reason = int(self.ksp.getConvergedReason())
         iters = int(self.ksp.getIterationNumber())
         self.last_reason = reason
-        return {"reason": reason, "iters": iters, "time": t1 - t0}
 
-    def _maybe_warn(self, reason: int, label: str):
         if reason < 0:
-            self.logger.warning(f"{label} solver failed to converge (reason: {reason})")
+            self.logger.warning(f"{self._label} solver failed to converge (reason: {reason})")
+
+        extra = self._compute_extra_stats()
+
+        return SweepStats(
+            label=self._label,
+            ksp_iters=iters,
+            ksp_reason=reason,
+            solve_time=t1 - t0,
+            extra=extra,
+        )
 
     def create_ksp(self, prefix: str, ksp_options: dict[str, object]) -> PETSc.KSP:
         self.ksp = PETSc.KSP().create(self.comm)
@@ -163,6 +180,8 @@ class _BaseLinearSolver:
 
 class MechanicsSolver(_BaseLinearSolver):
     """Linear elasticity with density-dependent stiffness."""
+
+    _label = "mech"
 
     def __init__(
         self,
@@ -315,10 +334,10 @@ class MechanicsSolver(_BaseLinearSolver):
         set_bc(self.b, self.dirichlet_bcs)
         self.b.ghostUpdate(PETSc.InsertMode.INSERT, PETSc.ScatterMode.FORWARD)
 
-    def _compute_anisotropy_stats(self) -> str:
-        """Compute statistics of anisotropy (a_hat range) and deviator magnitude (p2)."""
+    def _compute_extra_stats(self) -> Dict[str, Any]:
+        """Compute anisotropy statistics (a_hat range, p2 deviator magnitude)."""
         if self.L is None:
-            return ""
+            return {}
 
         # Access local array
         bs = self.L.function_space.dofmap.index_map_bs
@@ -333,46 +352,51 @@ class MechanicsSolver(_BaseLinearSolver):
         else:
             # Reshape to (N, 3, 3)
             L_flat = arr.reshape(-1, 3, 3)
-            
+
             # Symmetrize
             L_sym = 0.5 * (L_flat + L_flat.transpose(0, 2, 1))
-            
+
             # Eigenvalues (ascending)
             w = np.linalg.eigvalsh(L_sym)  # (N, 3)
-            
+
             # a_hat = exp(w - mean_w)
             mean_l = np.mean(w, axis=1, keepdims=True)
             a_hat = np.exp(w - mean_l)
-            
+
             a_min_loc = np.min(a_hat)
             a_max_loc = np.max(a_hat)
-            
+
             # p2 = sum((w - mean_l)^2) / 6.0
             dev = w - mean_l
             p2 = np.sum(dev**2, axis=1) / 6.0
-            
+
             p2_min_loc = np.min(p2)
             p2_max_loc = np.max(p2)
 
         # MPI Reduce
         comm = self.comm
-        
+
         glob_min = np.array([a_min_loc, p2_min_loc], dtype=float)
         glob_max = np.array([a_max_loc, p2_max_loc], dtype=float)
-        
+
         comm.Allreduce(MPI.IN_PLACE, glob_min, op=MPI.MIN)
         comm.Allreduce(MPI.IN_PLACE, glob_max, op=MPI.MAX)
-        
+
         # If no data (e.g. empty mesh?), handle gracefully
         if glob_min[0] > glob_max[0]:
-            return ""
+            return {}
 
-        return f"a=[{glob_min[0]:.2f}, {glob_max[0]:.2f}] p2=[{glob_min[1]:.1e}, {glob_max[1]:.1e}]"
+        return {
+            "a_min": float(glob_min[0]),
+            "a_max": float(glob_max[0]),
+            "p2_min": float(glob_min[1]),
+            "p2_max": float(glob_max[1]),
+        }
 
-    def solve(self):
-        res = self._solve()
-        self._maybe_warn(res["reason"], "Mechanics")
-        return res
+    def solve(self) -> SweepStats:
+        """Assemble RHS and solve the mechanics system."""
+        self.assemble_rhs()
+        return self._solve()
 
     # -------------------------------------------------------------------------
     # CouplingBlock protocol - MechanicsSolver produces no coupled state
@@ -391,15 +415,16 @@ class MechanicsSolver(_BaseLinearSolver):
         # Displacement u is managed by GaitDriver which owns the output
         return ()
 
-    def sweep(self):
-        res = self._solve()
-        self._maybe_warn(res["reason"], "Mechanics")
-        stats = self._compute_anisotropy_stats()
-        return {"label": "mech", "reason": res["reason"], "iters": res["iters"], "time": res["time"], "extra": stats}
+    def sweep(self) -> SweepStats:
+        """Perform one Gauss-Seidel sweep for the mechanics block."""
+        self.assemble_rhs()
+        return self._solve()
 
 
 class FabricSolver(_BaseLinearSolver):
     """Log-fabric evolution: implicit Euler reaction–diffusion towards L_target(Qbar)."""
+
+    _label = "fab"
 
     def __init__(
         self,
@@ -412,8 +437,6 @@ class FabricSolver(_BaseLinearSolver):
         self.L = self.state
         self.L_old = L_old
         self.Qbar = Qbar
-
-        self.logger = get_logger(self.comm, name="Fabric", log_file=self.cfg.log_file)
 
         self.dt_c = fem.Constant(self.mesh, float(self.cfg.dt))
         self.cA_c = fem.Constant(self.mesh, float(self.cfg.fabric.fabric_cA))
@@ -585,18 +608,18 @@ class FabricSolver(_BaseLinearSolver):
         self.n2.x.scatter_forward()
         self.n3.x.scatter_forward()
 
-    def solve(self) -> dict:
+    def solve(self) -> SweepStats:
+        """Solve the fabric evolution system."""
         if float(self.dt_c.value) != float(self.cfg.dt):
             self.assemble_lhs()
         self.assemble_rhs()
-        res = self._solve()
+        stats = self._solve()
         self._symmetrize_L()
-        self._maybe_warn(res["reason"], "Fabric")
-        return res
+        return stats
 
-    def sweep(self):
-        res = self.solve()
-        return {"label": "fab", "reason": res["reason"], "iters": res["iters"], "time": res["time"]}
+    def sweep(self) -> SweepStats:
+        """Perform one Gauss-Seidel sweep for the fabric block."""
+        return self.solve()
 
 
 class StimulusSolver(_BaseLinearSolver):
@@ -607,6 +630,8 @@ class StimulusSolver(_BaseLinearSolver):
       with the local quasi-static limit S = S_max tanh(delta/kappa) for tau_S=0.
     where delta is computed from the specific energy `m = psi/rho_safe` relative to `m_ref`.
     """
+
+    _label = "stim"
 
     def __init__(
         self,
@@ -621,8 +646,6 @@ class StimulusSolver(_BaseLinearSolver):
         self.S_old = S_old
         self.psi = psi_field
         self.rho = rho
-
-        self.logger = get_logger(self.comm, name="Stimulus", log_file=self.cfg.log_file)
 
         # Time step is adaptive, so keep dt as a Constant (updates reassemble the LHS).
         self.dt_c = fem.Constant(self.mesh, float(self.cfg.dt))
@@ -706,18 +729,16 @@ class StimulusSolver(_BaseLinearSolver):
     def output_fields(self) -> Tuple[fem.Function, ...]:
         return (self.S,)
 
-    def solve(self) -> dict:
-        # Reassemble LHS when dt changes (adaptive stepping).
+    def solve(self) -> SweepStats:
+        """Solve the stimulus evolution system."""
         if float(self.dt_c.value) != float(self.cfg.dt):
             self.assemble_lhs()
         self.assemble_rhs()
-        res = self._solve()
-        self._maybe_warn(res["reason"], "Stimulus")
-        return res
+        return self._solve()
 
-    def sweep(self):
-        res = self.solve()
-        return {"label": "stim", "reason": res["reason"], "iters": res["iters"], "time": res["time"]}
+    def sweep(self) -> SweepStats:
+        """Perform one Gauss-Seidel sweep for the stimulus block."""
+        return self.solve()
 
 
 class DensitySolver(_BaseLinearSolver):
@@ -731,6 +752,8 @@ class DensitySolver(_BaseLinearSolver):
 
     optionally scaled by a surface availability A(ρ_old) when cfg.surface_use=True.
     """
+
+    _label = "dens"
 
     def __init__(
         self,
@@ -841,14 +864,13 @@ class DensitySolver(_BaseLinearSolver):
     def output_fields(self) -> Tuple[fem.Function, ...]:
         return (self.rho,)
 
-    def solve(self) -> dict:
+    def solve(self) -> SweepStats:
+        """Solve the density evolution system."""
         # LHS depends on dt, stimulus, and rho_old (via surface availability) -> reassemble each call
         self.assemble_lhs()
         self.assemble_rhs()
-        res = self._solve()
-        self._maybe_warn(res["reason"], "Density")
-        return res
+        return self._solve()
 
-    def sweep(self):
-        res = self.solve()
-        return {"label": "dens", "reason": res["reason"], "iters": res["iters"], "time": res["time"]}
+    def sweep(self) -> SweepStats:
+        """Perform one Gauss-Seidel sweep for the density block."""
+        return self.solve()

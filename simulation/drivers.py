@@ -1,7 +1,7 @@
 """GaitDriver: mechanics + cycle-weighted power-mean SED over multiple loading cases."""
 
 from __future__ import annotations
-from typing import Dict, List, Tuple, TYPE_CHECKING
+from typing import Any, Dict, List, Tuple, TYPE_CHECKING
 
 from dolfinx import fem
 import ufl
@@ -9,6 +9,7 @@ import ufl
 from simulation.config import Config
 from simulation.subsolvers import MechanicsSolver
 from simulation.logger import get_logger
+from simulation.stats import SweepStats
 from simulation.utils import assign, get_owned_size, symm
 
 if TYPE_CHECKING:
@@ -123,8 +124,12 @@ class GaitDriver:
         """Release solver resources."""
         self.mech.destroy()
 
-    def update_snapshots(self) -> Dict:
-        """Solve all enabled loading cases and update averaged `psi` and `Qbar` (collective)."""
+    def _update_snapshots(self) -> Tuple[int, float, Dict[str, Any]]:
+        """Solve all enabled loading cases and update averaged `psi` and `Qbar`.
+
+        Returns:
+            Tuple of (total_ksp_iters, total_solve_time, extra_stats_from_last_solve).
+        """
         # Zero out accumulated fields (owned DOFs only; single scatter at the end)
         assign(self.psi, 0.0, scatter=False)
         assign(self.Qbar, 0.0, scatter=False)
@@ -136,6 +141,7 @@ class GaitDriver:
 
         total_iters = 0
         total_time = 0.0
+        last_extra: Dict[str, Any] = {}
 
         for case in self.loading_cases:
             day_cycles = float(case.day_cycles)
@@ -143,16 +149,17 @@ class GaitDriver:
                 # Disabled case (day_cycles == 0) → skip solve.
                 continue
             sum_cycles += day_cycles
-            
+
             # Load cached traction (cheap, no geometry work)
             self.loader.set_loading_case(case.name)
-            
+
             # Reassemble RHS (traction is referenced in the form)
             self.mech.assemble_rhs()
-            res = self.mech.solve()
-            total_iters += res["iters"]
-            total_time += res["time"]
-            
+            stats = self.mech.solve()
+            total_iters += stats.ksp_iters
+            total_time += stats.solve_time
+            last_extra = stats.extra
+
             # Compute SED + Q_case for this case
             self.calculator.compute_sed(self._psi_temp)
             self.calculator.compute_Q(self._Q_temp)
@@ -177,7 +184,8 @@ class GaitDriver:
 
         self.psi.x.scatter_forward()
         self.Qbar.x.scatter_forward()
-        return {"iters": total_iters, "time": total_time}
+
+        return total_iters, total_time, last_extra
 
     def stimulus_field(self) -> fem.Function:
         """Return the averaged `psi` function (DG0 field)."""
@@ -209,13 +217,19 @@ class GaitDriver:
         """No post-step processing needed for GaitDriver."""
         pass
 
-    def sweep(self) -> Dict:
-        """One Gauss–Seidel sweep for the mechanics block.
+    def sweep(self) -> SweepStats:
+        """One Gauss-Seidel sweep for the mechanics block.
 
         - Reassemble stiffness K(rho)
         - Solve each enabled loading case
         - Update averaged psi (DG0)
         """
         self.assemble_lhs()
-        stats = self.update_snapshots()
-        return {"label": "mech", "reason": int(self.mech.last_reason), "iters": stats["iters"], "time": stats["time"]}
+        total_iters, total_time, extra = self._update_snapshots()
+        return SweepStats(
+            label="mech",
+            ksp_iters=total_iters,
+            ksp_reason=int(self.mech.last_reason),
+            solve_time=total_time,
+            extra=extra,
+        )

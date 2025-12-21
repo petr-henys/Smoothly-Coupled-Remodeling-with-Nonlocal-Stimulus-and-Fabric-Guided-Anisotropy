@@ -17,6 +17,9 @@ from simulation.config import Config
 from simulation.subsolvers import MechanicsSolver, DensitySolver
 from simulation.fixedsolver import FixedPointSolver
 
+from simulation.stats import SweepStats
+
+
 class MockDriver:
     """Mock driver for testing solvers without full gait integration."""
     def __init__(self, mech):
@@ -29,8 +32,8 @@ class MockDriver:
     def invalidate(self):
         pass
 
-    def update_snapshots(self):
-        return {}
+    def sweep(self) -> SweepStats:
+        return SweepStats(label="mock", ksp_iters=0, ksp_reason=0, solve_time=0.0)
 
     def setup(self):
         self.mech.setup()
@@ -50,28 +53,32 @@ np.random.seed(1234)
 
 class TestSolverStatistics:
     """Test solver statistics tracking."""
-    
+
     def test_ksp_reason_tracking(self, cfg, spaces, fields, bc_mech):
-        """Verify KSP convergence reason is exposed after a solve."""
+        """Verify KSP convergence reason is exposed after a solve via SweepStats."""
         from dolfinx import fem
         import numpy as np
+        from simulation.stats import SweepStats
         V, Q, T = spaces.V, spaces.Q, spaces.T
         u, rho, _, A, _, _, _ = fields
-        
+
         # Create traction directly
         t_load = fem.Function(V, name="traction")
         vec = np.zeros(3, dtype=float)
         vec[0] = -0.1
         t_load.interpolate(lambda x: np.tile(vec.reshape(3, 1), (1, x.shape[1])))
         t_load.x.scatter_forward()
-        
+
         mech = MechanicsSolver(u, rho, cfg, bc_mech, [(t_load, 2)])
-        
+
         mech.setup()
 
-        reason = mech.solve()
-        assert isinstance(reason, int)
-        assert mech.last_reason == reason, "last_reason not set"
+        stats = mech.solve()
+        assert isinstance(stats, SweepStats), "solve() should return SweepStats"
+        assert stats.converged, "Solver should have converged"
+        assert stats.ksp_reason == mech.last_reason, "last_reason not set correctly"
+        assert stats.ksp_iters > 0, "Should have positive iteration count"
+        assert stats.solve_time > 0, "Should have positive solve time"
 
 
 # =============================================================================

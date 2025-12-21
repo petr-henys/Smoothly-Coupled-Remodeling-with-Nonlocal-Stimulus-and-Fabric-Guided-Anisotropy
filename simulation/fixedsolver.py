@@ -1,10 +1,10 @@
-"""Fixed-point coupling via block Gauss–Seidel + optional Anderson acceleration.
+"""Fixed-point coupling via block Gauss-Seidel + optional Anderson acceleration.
 
 Each block must implement the `CouplingBlock` protocol:
 - `state_fields`: tuple of fields that form the coupled state
 - `setup()`: one-time initialization
 - `assemble_lhs()`: reassemble dt-dependent operators
-- `sweep()`: perform one block update
+- `sweep()`: perform one block update (returns SweepStats)
 - `destroy()`: release resources
 
 Blocks with `state_fields == ()` may still run each sweep (side effects), but do
@@ -14,7 +14,7 @@ not contribute entries to the Anderson-mixed state vector.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Sequence, Tuple
+from typing import Any, Dict, List, Sequence, Tuple
 import resource
 
 import numpy as np
@@ -23,6 +23,7 @@ from dolfinx import fem
 
 from simulation.config import Config
 from simulation.protocols import CouplingBlock
+from simulation.stats import SweepStats, StepSummary
 from simulation.utils import get_owned_size
 from simulation.logger import get_logger
 from simulation.anderson import Anderson
@@ -39,7 +40,7 @@ class _FieldSpec:
 
 
 class FixedPointSolver:
-    """Block Gauss–Seidel + optional Anderson acceleration."""
+    """Block Gauss-Seidel + optional Anderson acceleration."""
 
     def __init__(self, comm: MPI.Comm, cfg: Config, blocks: Sequence[CouplingBlock]):
         self.comm = comm
@@ -48,7 +49,7 @@ class FixedPointSolver:
 
         self.logger = get_logger(self.comm, name="FixedPoint", log_file=self.cfg.log_file)
 
-        self.subiter_metrics: List[Dict] = []
+        self.subiter_metrics: List[Dict[str, Any]] = []
 
         # Collect coupled state fields (deduplicate by object identity, preserve order)
         fields: List[fem.Function] = []
@@ -158,7 +159,66 @@ class FixedPointSolver:
 
     # ------------------------------- main loop ------------------------------
 
-    def run(self, progress, task_id) -> bool:
+    def _format_iteration_log(
+        self,
+        itr: int,
+        picard_res: float,
+        aa_step_res: float,
+        aa_info: Dict[str, Any],
+        mem_mb: float,
+        block_stats: List[SweepStats],
+    ) -> str:
+        """Format one Picard iteration as multi-line hierarchical output.
+
+        Option D format:
+            Picard 5: res=5.63e-02 → 2.85e-02 (cond=2.1e+03, m=5, ACC)
+                mech  81it  0.572s │ fab  6it  0.272s │ stim  6it  0.002s │ dens  4it  0.003s
+                └─ aniso: a=[0.56, 1.82]  p2=[0.01, 0.09]
+        """
+        cond_val = aa_info.get("condH")
+        cond_str = f"{cond_val:.1e}" if cond_val is not None else "N/A"
+        acc_str = "ACC" if aa_info.get("accepted", True) else "REJ"
+        rst_str = f", RST:{aa_info['restart_reason']}" if aa_info.get("restart_reason") else ""
+
+        # Line 1: Picard header
+        line1 = f"Picard {itr:>2}: res={picard_res:.2e} → {aa_step_res:.2e} (cond={cond_str}, m={aa_info.get('aa_hist', 0)}, {acc_str}{rst_str})"
+
+        # Line 2: Block performance (compact, aligned)
+        block_parts = [s.format_short(width=4) for s in block_stats]
+        line2 = "    " + " │ ".join(block_parts)
+
+        # Line 3: Physics-specific extras (if any block has them)
+        extras = []
+        for s in block_stats:
+            extra_str = s.format_extra()
+            if extra_str:
+                extras.append(f"{s.label}: {extra_str}")
+        
+        lines = [line1, line2]
+        if extras:
+            line3 = "    └─ " + "  |  ".join(extras)
+            lines.append(line3)
+
+        return "\n".join(lines)
+
+    def run(
+        self,
+        progress,
+        task_id,
+        step_index: int = 0,
+        sim_time: float = 0.0,
+    ) -> bool:
+        """Run fixed-point iteration until convergence.
+
+        Args:
+            progress: Progress reporter (or None).
+            task_id: Task ID for progress updates (or None).
+            step_index: Current timestep index (1-based), for logging.
+            sim_time: Current simulation time [days], for logging.
+
+        Returns:
+            True if converged within tolerance.
+        """
         tol = float(self.cfg.solver.coupling_tol)
         max_subiters = int(self.cfg.solver.max_subiters)
         min_subiters = int(self.cfg.solver.min_subiters)
@@ -179,11 +239,11 @@ class FixedPointSolver:
             # Snapshot old iterate (unscaled, owned DOFs)
             x_old = self._pack_unscaled()
 
-            # One Gauss–Seidel sweep of all blocks
-            sweep_stats = []
+            # One Gauss-Seidel sweep of all blocks (each returns SweepStats)
+            sweep_stats: List[SweepStats] = []
             for blk in self.blocks:
-                res = blk.sweep()
-                sweep_stats.append(res)
+                stats = blk.sweep()
+                sweep_stats.append(stats)
 
             # Raw iterate after the sweep
             x_raw = self._pack_unscaled()
@@ -213,33 +273,11 @@ class FixedPointSolver:
 
             # Log per-Picard step info (file only via DEBUG level)
             cond_val = aa.get("condH")
-            cond_str = f"{cond_val:.1e}" if cond_val is not None else "N/A"
-            acc_str = "ACC" if aa.get("accepted", True) else "REJ"
-            rst_str = f" RST({aa.get('restart_reason')})" if aa.get("restart_reason") else ""
-            hist_str = f"m={aa.get('aa_hist', 0)}"
-
-            log_parts = [
-                f"Picard {itr}: res={picard_res:.2e}",
-                f"aa_res={aa_step_res:.2e}",
-                f"cond={cond_str}",
-                f"{hist_str}",
-                f"{acc_str}",
-                f"mem={mem_mb:.1f}MB"
-            ]
-            if rst_str:
-                log_parts.append(rst_str.strip())
-
-            for s in sweep_stats:
-                if "iters" in s:
-                    msg = f"{s['label']}: {s['iters']}it/{s['time']:.3f}s"
-                    if s.get("extra"):
-                        msg += f" {s['extra']}"
-                    log_parts.append(msg)
-            self.logger.debug(", ".join(log_parts))
+            log_line = self._format_iteration_log(itr, picard_res, aa_step_res, aa, mem_mb, sweep_stats)
+            self.logger.debug(log_line)
 
             rec = {
                 "iter": int(itr),
-                # Keep `proj_res` as the convergence residual used for stopping/postprocessing.
                 "proj_res": float(picard_res),
                 "picard_res": float(picard_res),
                 "aa_step_res": float(aa_step_res),
@@ -264,36 +302,10 @@ class FixedPointSolver:
             if itr >= min_subiters and picard_res <= tol:
                 converged = True
                 break
-        
-        # Summary stats for the time step (file only via INFO level, assuming console is WARNING)
-        # Aggregate stats by label dynamically
-        agg_stats = {}
-        for m in self.subiter_metrics:
-            for s in m["block_stats"]:
-                lbl = s.get("label", "unknown")
-                if lbl not in agg_stats:
-                    agg_stats[lbl] = {"iters": 0, "time": 0.0}
-                agg_stats[lbl]["iters"] += s.get("iters", 0)
-                agg_stats[lbl]["time"] += s.get("time", 0.0)
 
-        # Format per-block stats
-        block_summary_parts = []
-        # Sort by label for consistent output order
-        for lbl in sorted(agg_stats.keys()):
-            st = agg_stats[lbl]
-            block_summary_parts.append(f"{lbl.capitalize()}: {st['iters']}it/{st['time']:.2f}s")
-        
-        block_summary_str = ", ".join(block_summary_parts)
-        
-        total_rejections = sum(1 for m in self.subiter_metrics if not m["aa_accepted"])
-        total_restarts = sum(1 for m in self.subiter_metrics if m["aa_restart"])
-        max_cond = max((m["condH"] for m in self.subiter_metrics), default=0.0)
-        max_hist = max((m["aa_hist"] for m in self.subiter_metrics), default=0)
-
-        self.logger.info(f"Step Summary: {len(self.subiter_metrics)} Picard iters. "
-                         f"{block_summary_str}. "
-                         f"AA: max_m={max_hist}, max_cond={max_cond:.1e}, "
-                         f"rej={total_rejections}, rst={total_restarts}")
+        # Summary stats for the time step using StepSummary
+        summary = StepSummary.from_iteration_records(self.subiter_metrics)
+        self.logger.info(summary.format_summary(step_index=step_index, sim_time=sim_time))
 
         if progress is not None and task_id is not None:
             progress.update(task_id, completed=True)

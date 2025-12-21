@@ -6,10 +6,11 @@ interface contracts for solver blocks and other pluggable components.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Dict, Protocol, Tuple, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, Tuple, runtime_checkable
 
 if TYPE_CHECKING:
     from dolfinx import fem
+    from simulation.stats import SweepStats
 
 
 @runtime_checkable
@@ -31,7 +32,7 @@ class CouplingBlock(Protocol):
     Lifecycle methods:
     - `setup()`: One-time initialization (create matrices, KSP, etc.)
     - `assemble_lhs()`: Reassemble dt-dependent or field-dependent LHS
-    - `sweep()`: One block update in the Gauss-Seidel iteration
+    - `sweep()`: One block update in the Gauss-Seidel iteration (returns SweepStats)
     - `post_step_update()`: Hook called after each accepted timestep
       (e.g., compute derived fields like eigenvectors)
     - `destroy()`: Release PETSc/solver resources
@@ -40,7 +41,7 @@ class CouplingBlock(Protocol):
         >>> def register_block(block: CouplingBlock) -> None:
         ...     block.setup()
         ...     for _ in range(max_iters):
-        ...         info = block.sweep()
+        ...         stats = block.sweep()  # Returns SweepStats
         ...     block.post_step_update()
     """
 
@@ -86,11 +87,12 @@ class CouplingBlock(Protocol):
         """
         ...
 
-    def sweep(self) -> Dict:
+    def sweep(self) -> "SweepStats":
         """Perform one Gauss-Seidel block update.
 
         Returns:
-            Dict with at least 'label' (str) and 'reason' (int, KSP converged reason).
+            SweepStats with mandatory fields (label, ksp_iters, ksp_reason,
+            solve_time) and optional physics-specific data in `extra`.
         """
         ...
 

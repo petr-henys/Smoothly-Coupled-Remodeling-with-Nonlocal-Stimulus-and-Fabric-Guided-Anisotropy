@@ -64,14 +64,19 @@ class TestGaitDriverUnitCube:
 
     def test_stimulus_positive(self, driver_setup):
         """Stimulus should be positive under load."""
+        from simulation.stats import SweepStats
         drv = GaitDriver(
-            driver_setup["mech"], 
+            driver_setup["mech"],
             driver_setup["cfg"],
             driver_setup["loader"],
             driver_setup["loading_cases"],
         )
         drv.setup()
-        drv.update_snapshots()
+        stats = drv.sweep()
+
+        assert isinstance(stats, SweepStats), "sweep() should return SweepStats"
+        assert stats.label == "mech"
+        assert stats.ksp_iters > 0
 
         psi_max = MPI.COMM_WORLD.allreduce(float(drv.psi.x.array.max()), op=MPI.MAX)
         assert psi_max > 0, f"Expected positive stimulus, got {psi_max:.3e}"
@@ -95,8 +100,8 @@ class TestGaitDriverUnitCube:
             
             drv = GaitDriver(mech, cfg, loader, loading_cases)
             drv.setup()
-            drv.update_snapshots()
-            
+            drv.sweep()
+
             psi_avg = comm.allreduce(float(drv.psi.x.array.mean()), op=MPI.SUM) / comm.size
             mech.destroy()
             return psi_avg
@@ -114,13 +119,13 @@ class TestGaitDriverUnitCube:
     def test_psi_field_valid(self, driver_setup):
         """Stimulus field should have valid values after update."""
         drv = GaitDriver(
-            driver_setup["mech"], 
+            driver_setup["mech"],
             driver_setup["cfg"],
             driver_setup["loader"],
             driver_setup["loading_cases"],
         )
         drv.setup()
-        drv.update_snapshots()
+        drv.sweep()
 
         comm = MPI.COMM_WORLD
         psi_min = comm.allreduce(float(drv.psi.x.array.min()), op=MPI.MIN)
@@ -149,10 +154,10 @@ class TestGaitDriverUnitCube:
         
         drv = GaitDriver(mech, cfg, loader, loading_cases)
         drv.setup()
-        drv.update_snapshots()
-        
+        drv.sweep()
+
         # Should have computed for both cases - verify via psi field
         psi_max = MPI.COMM_WORLD.allreduce(float(drv.psi.x.array.max()), op=MPI.MAX)
         assert psi_max > 0
-        
+
         mech.destroy()

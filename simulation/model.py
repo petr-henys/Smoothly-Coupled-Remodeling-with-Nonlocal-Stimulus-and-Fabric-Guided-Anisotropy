@@ -227,12 +227,20 @@ class Remodeller:
         self.registry.post_step_update_all()
         self.storage.fields.write("fields", float(t))
 
-    def step(self, dt: float, reporter: ProgressReporter | None = None) -> Tuple[float, Dict]:
+    def step(
+        self,
+        dt: float,
+        reporter: ProgressReporter | None = None,
+        step_index: int = 0,
+        sim_time: float = 0.0,
+    ) -> Tuple[float, Dict]:
         """Execute a single timestep attempt.
 
         Args:
             dt: Timestep size [days].
             reporter: Optional progress reporter for subiteration display.
+            step_index: Current step index (1-based).
+            sim_time: Current simulation time [days].
 
         Returns:
             Tuple of (error_norm, metrics_dict).
@@ -250,6 +258,8 @@ class Remodeller:
         converged = self.fixedsolver.run(
             reporter.progress if reporter and reporter.rank == 0 else None,
             reporter.sub_task_id if reporter and reporter.rank == 0 else None,
+            step_index=step_index,
+            sim_time=sim_time,
         )
 
         error_norm = self.integrator.compute_wrms_error(x_pred)
@@ -286,7 +296,7 @@ class Remodeller:
                 if t + dt > total_time:
                     dt = total_time - t
 
-                error, metrics = self.step(dt, reporter)
+                error, metrics = self.step(dt, reporter, step_index=step_idx + 1, sim_time=t + dt)
 
                 if self.cfg.time.adaptive_dt:
                     accepted, next_dt, reason = self.integrator.suggest_dt(
