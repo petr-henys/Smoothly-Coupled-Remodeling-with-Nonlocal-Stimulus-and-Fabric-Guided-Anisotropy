@@ -61,7 +61,7 @@ class TestSmoothFunctions:
         comm = MPI.COMM_WORLD
         domain = make_unit_cube(comm, 8)
         facet_tags = build_facetag(domain)
-        cfg = Config(domain=domain, facet_tags=facet_tags, n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2)
+        cfg = Config.from_flat_kwargs(domain=domain, facet_tags=facet_tags, n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2)
 
         P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
         Q = functionspace(domain, P1)

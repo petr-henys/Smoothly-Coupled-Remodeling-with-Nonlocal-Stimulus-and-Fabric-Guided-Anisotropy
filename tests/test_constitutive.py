@@ -21,7 +21,7 @@ class TestConstitutiveLaw:
     def test_isotropic_stress_symmetry(self, unit_cube, facet_tags):
         """Verify stress tensor is symmetric for isotropic material."""
         comm = MPI.COMM_WORLD
-        cfg = Config(domain=unit_cube, facet_tags=facet_tags, n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2)
+        cfg = Config.from_flat_kwargs(domain=unit_cube, facet_tags=facet_tags, n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2)
         
         P1_vec = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1, shape=(3,))
         P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
@@ -78,11 +78,11 @@ class TestAdvancedConstitutiveLaws:
     def test_power_law_stiffness(self, unit_cube, facet_tags):
         """Verify E(ρ) follows the variable-exponent law from the manuscript."""
         comm = MPI.COMM_WORLD
-        cfg = Config(domain=unit_cube, facet_tags=facet_tags, n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2)
-        
-        # Base stiffness scale
-        cfg.E0 = 1000.0
-        cfg.rho_ref = 1.0
+        cfg = Config.from_flat_kwargs(
+            domain=unit_cube, facet_tags=facet_tags,
+            n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2,
+            E0=1000.0, rho_ref=1.0
+        )
         
         P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
         Q = functionspace(unit_cube, P1)
@@ -127,7 +127,7 @@ class TestAdvancedConstitutiveLaws:
     def test_linear_driver_rate(self, unit_cube, facet_tags):
         """Verify density evolution rate follows specific energy stimulus."""
         comm = MPI.COMM_WORLD
-        cfg = Config(domain=unit_cube, facet_tags=facet_tags, n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2)
+        cfg = Config.from_flat_kwargs(domain=unit_cube, facet_tags=facet_tags, n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2)
         
         cfg.k_rho = 1.0
         cfg.dt = 0.1

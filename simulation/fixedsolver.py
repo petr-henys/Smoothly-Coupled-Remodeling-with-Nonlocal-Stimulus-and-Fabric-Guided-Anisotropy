@@ -1,8 +1,11 @@
 """Fixed-point coupling via block Gauss–Seidel + optional Anderson acceleration.
 
-Each block must provide:
+Each block must implement the `CouplingBlock` protocol:
 - `state_fields`: tuple of fields that form the coupled state
+- `setup()`: one-time initialization
+- `assemble_lhs()`: reassemble dt-dependent operators
 - `sweep()`: perform one block update
+- `destroy()`: release resources
 
 Blocks with `state_fields == ()` may still run each sweep (side effects), but do
 not contribute entries to the Anderson-mixed state vector.
@@ -18,6 +21,7 @@ from mpi4py import MPI
 from dolfinx import fem
 
 from simulation.config import Config
+from simulation.protocols import CouplingBlock
 from simulation.utils import get_owned_size
 from simulation.logger import get_logger
 from simulation.anderson import Anderson
@@ -36,10 +40,10 @@ class _FieldSpec:
 class FixedPointSolver:
     """Block Gauss–Seidel + optional Anderson acceleration."""
 
-    def __init__(self, comm: MPI.Comm, cfg: Config, blocks: Sequence[object]):
+    def __init__(self, comm: MPI.Comm, cfg: Config, blocks: Sequence[CouplingBlock]):
         self.comm = comm
         self.cfg = cfg
-        self.blocks = tuple(blocks)
+        self.blocks: Tuple[CouplingBlock, ...] = tuple(blocks)
 
         self.logger = get_logger(self.comm, name="FixedPoint", log_file=self.cfg.log_file)
 
@@ -49,8 +53,11 @@ class FixedPointSolver:
         fields: List[fem.Function] = []
         seen = set()
         for blk in self.blocks:
-            if not hasattr(blk, "state_fields"):
-                raise AttributeError(f"Block {type(blk).__name__} missing required attribute `state_fields`.")
+            # Protocol check at runtime (optional, for debugging)
+            if not isinstance(blk, CouplingBlock):
+                raise TypeError(
+                    f"Block {type(blk).__name__} does not implement CouplingBlock protocol."
+                )
             for f in tuple(blk.state_fields):
                 if id(f) not in seen:
                     seen.add(id(f))
