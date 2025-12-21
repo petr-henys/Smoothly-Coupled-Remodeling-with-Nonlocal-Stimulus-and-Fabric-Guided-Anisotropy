@@ -118,7 +118,7 @@ class StimulusParams:
     stimulus_power_p: float = 4.0
 
     # Reference strain energy density [MPa]
-    psi_ref: float = 0.005
+    psi_ref: float = 0.01
 
     # Time constant [days]; τ_S=0 gives quasi-static stimulus
     stimulus_tau: float = 25.0
