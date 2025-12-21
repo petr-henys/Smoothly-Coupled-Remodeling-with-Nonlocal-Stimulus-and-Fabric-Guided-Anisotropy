@@ -330,7 +330,7 @@ class TestUnifiedStorage:
                 assert rem.storage is not None
                 assert rem.storage.fields is not None
                 
-                # Field writers should be registered
-                assert "scalars" in rem.storage.fields._writers
+                # Field writers should be registered (unified "fields" output)
+                assert "fields" in rem.storage.fields._writers
             
             comm.Barrier()

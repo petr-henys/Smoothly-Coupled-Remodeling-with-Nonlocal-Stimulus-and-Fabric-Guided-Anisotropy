@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, List, Tuple
 
+import basix.ufl
 import numpy as np
 from petsc4py import PETSc
 from dolfinx import fem
+from dolfinx.fem import functionspace, Function
 from dolfinx.fem.petsc import (
     assemble_matrix,
     assemble_vector,
@@ -80,6 +82,29 @@ class _BaseLinearSolver:
         if self.b is not None:
             self.b.destroy()
             self.b = None
+
+    # -------------------------------------------------------------------------
+    # CouplingBlock protocol - default implementations
+    # -------------------------------------------------------------------------
+
+    @property
+    def state_fields(self) -> Tuple[fem.Function, ...]:
+        """Fields participating in fixed-point coupling. Override in subclass."""
+        return ()
+
+    @property
+    def state_fields_old(self) -> Tuple[fem.Function, ...]:
+        """Old-step counterparts for state_fields. Override in subclass."""
+        return ()
+
+    @property
+    def output_fields(self) -> Tuple[fem.Function, ...]:
+        """Fields to write to VTX storage. Override in subclass."""
+        return ()
+
+    def post_step_update(self) -> None:
+        """Hook called after each accepted timestep. Override in subclass."""
+        pass
 
     def setup(self):
         self._compile_forms()
@@ -290,9 +315,21 @@ class MechanicsSolver(_BaseLinearSolver):
         self._maybe_warn(reason, "Mechanics")
         return int(reason)
 
-    # Fixed interface expected by the coupling solver
+    # -------------------------------------------------------------------------
+    # CouplingBlock protocol - MechanicsSolver produces no coupled state
+    # -------------------------------------------------------------------------
+
     @property
-    def state_fields(self):
+    def state_fields(self) -> Tuple[fem.Function, ...]:
+        return ()
+
+    @property
+    def state_fields_old(self) -> Tuple[fem.Function, ...]:
+        return ()
+
+    @property
+    def output_fields(self) -> Tuple[fem.Function, ...]:
+        # Displacement u is managed by GaitDriver which owns the output
         return ()
 
     def sweep(self):
@@ -324,6 +361,17 @@ class FabricSolver(_BaseLinearSolver):
         self.D_c = fem.Constant(self.mesh, float(self.cfg.fabric_D))
 
         self._use_diffusion = float(self.D_c.value) > 0.0
+
+        # Create vector function space for eigenvector output
+        P1_vec = basix.ufl.element("Lagrange", self.mesh.basix_cell(), 1, shape=(self.gdim,))
+        self._V_vec = functionspace(self.mesh, P1_vec)
+
+        # Principal direction output fields (eigenvectors of L)
+        # n1 -> largest eigenvalue (principal fabric direction)
+        # n3 -> smallest eigenvalue
+        self.n1 = Function(self._V_vec, name="n1")
+        self.n2 = Function(self._V_vec, name="n2")
+        self.n3 = Function(self._V_vec, name="n3")
 
     def _compile_forms(self):
         dt = self.dt_c
@@ -418,9 +466,64 @@ class FabricSolver(_BaseLinearSolver):
         A[:] = 0.5 * (A + np.swapaxes(A, 1, 2))
         self.L.x.scatter_forward()
 
+    # -------------------------------------------------------------------------
+    # CouplingBlock protocol
+    # -------------------------------------------------------------------------
+
     @property
-    def state_fields(self):
+    def state_fields(self) -> Tuple[fem.Function, ...]:
         return (self.L,)
+
+    @property
+    def state_fields_old(self) -> Tuple[fem.Function, ...]:
+        return (self.L_old,)
+
+    @property
+    def output_fields(self) -> Tuple[fem.Function, ...]:
+        """Return principal direction fields for visualization."""
+        return (self.n1, self.n2, self.n3)
+
+    def post_step_update(self) -> None:
+        """Extract eigenvectors from L tensor after each accepted step."""
+        self._update_eigenvectors()
+
+    def _update_eigenvectors(self) -> None:
+        """Extract eigenvectors from L tensor and store in n1, n2, n3 fields.
+
+        n1 corresponds to largest eigenvalue (principal fabric direction),
+        n3 to smallest eigenvalue.
+        """
+        bs = int(self.function_space.dofmap.index_map_bs)
+        n_owned = int(self.function_space.dofmap.index_map.size_local * bs)
+        gdim = self.gdim
+
+        if n_owned <= 0:
+            return
+
+        # Reshape L to (n_nodes, 3, 3) tensor array
+        L_arr = self.L.x.array[:n_owned].reshape(-1, gdim, gdim)
+
+        # Symmetrize for eigendecomposition
+        L_sym = 0.5 * (L_arr + np.swapaxes(L_arr, 1, 2))
+
+        # Compute eigenvalues and eigenvectors for each node
+        # np.linalg.eigh returns eigenvalues in ascending order
+        _, eigenvectors = np.linalg.eigh(L_sym)
+
+        # eigenvectors[:, :, i] is the eigenvector for eigenvalues[:, i]
+        # eigenvalues are sorted ascending, so:
+        # - [:, 2] -> largest eigenvalue -> n1
+        # - [:, 1] -> middle eigenvalue -> n2
+        # - [:, 0] -> smallest eigenvalue -> n3
+        n_owned_v = int(self._V_vec.dofmap.index_map.size_local * self._V_vec.dofmap.index_map_bs)
+
+        self.n1.x.array[:n_owned_v] = eigenvectors[:, :, 2].flatten()
+        self.n2.x.array[:n_owned_v] = eigenvectors[:, :, 1].flatten()
+        self.n3.x.array[:n_owned_v] = eigenvectors[:, :, 0].flatten()
+
+        self.n1.x.scatter_forward()
+        self.n2.x.scatter_forward()
+        self.n3.x.scatter_forward()
 
     def solve(self) -> int:
         if float(self.dt_c.value) != float(self.cfg.dt):
@@ -527,8 +630,20 @@ class StimulusSolver(_BaseLinearSolver):
         self.b.ghostUpdate(PETSc.InsertMode.ADD, PETSc.ScatterMode.REVERSE)
         self.b.ghostUpdate(PETSc.InsertMode.INSERT, PETSc.ScatterMode.FORWARD)
 
+    # -------------------------------------------------------------------------
+    # CouplingBlock protocol
+    # -------------------------------------------------------------------------
+
     @property
-    def state_fields(self):
+    def state_fields(self) -> Tuple[fem.Function, ...]:
+        return (self.S,)
+
+    @property
+    def state_fields_old(self) -> Tuple[fem.Function, ...]:
+        return (self.S_old,)
+
+    @property
+    def output_fields(self) -> Tuple[fem.Function, ...]:
         return (self.S,)
 
     def solve(self) -> int:
@@ -650,8 +765,20 @@ class DensitySolver(_BaseLinearSolver):
         self.b.ghostUpdate(PETSc.InsertMode.ADD, PETSc.ScatterMode.REVERSE)
         self.b.ghostUpdate(PETSc.InsertMode.INSERT, PETSc.ScatterMode.FORWARD)
 
+    # -------------------------------------------------------------------------
+    # CouplingBlock protocol
+    # -------------------------------------------------------------------------
+
     @property
-    def state_fields(self):
+    def state_fields(self) -> Tuple[fem.Function, ...]:
+        return (self.rho,)
+
+    @property
+    def state_fields_old(self) -> Tuple[fem.Function, ...]:
+        return (self.rho_old,)
+
+    @property
+    def output_fields(self) -> Tuple[fem.Function, ...]:
         return (self.rho,)
 
     def solve(self) -> int:
@@ -661,6 +788,7 @@ class DensitySolver(_BaseLinearSolver):
         reason = self._solve()
         self._maybe_warn(reason, "Density")
         return int(reason)
+
     def sweep(self):
         reason = self.solve()
         return {"label": "dens", "reason": int(reason)}

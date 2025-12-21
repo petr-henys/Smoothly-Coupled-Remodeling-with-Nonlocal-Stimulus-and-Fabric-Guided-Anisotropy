@@ -12,7 +12,6 @@ from __future__ import annotations
 from typing import Dict, Tuple, List
 from pathlib import Path
 
-import numpy as np
 import basix.ufl
 from dolfinx import fem
 from dolfinx.fem import Function, functionspace
@@ -25,6 +24,7 @@ from simulation.subsolvers import MechanicsSolver, FabricSolver, StimulusSolver,
 from simulation.fixedsolver import FixedPointSolver
 from simulation.drivers import GaitDriver
 from simulation.timeintegrator import TimeIntegrator
+from simulation.registry import BlockRegistry
 from simulation.loader import Loader, LoadingCase
 
 
@@ -59,6 +59,7 @@ class Remodeller:
         self.ds = self.cfg.ds
         self.gdim = self.domain.geometry.dim
 
+        # Build function spaces
         P1_vec = basix.ufl.element("Lagrange", self.domain.basix_cell(), 1, shape=(self.gdim,))
         P1 = basix.ufl.element("Lagrange", self.domain.basix_cell(), 1)
         P1_ten = basix.ufl.element("Lagrange", self.domain.basix_cell(), 1, shape=(self.gdim, self.gdim))
@@ -67,105 +68,78 @@ class Remodeller:
         self.Q = functionspace(self.domain, P1)
         self.T = functionspace(self.domain, P1_ten)
 
-        # Total DOFs
+        # Total DOFs (for diagnostics)
         dofs_V = self.V.dofmap.index_map.size_global * self.V.dofmap.index_map_bs
         dofs_Q = self.Q.dofmap.index_map.size_global * self.Q.dofmap.index_map_bs
         dofs_T = self.T.dofmap.index_map.size_global * self.T.dofmap.index_map_bs
         self.num_dofs_total = int(dofs_V + dofs_Q + dofs_T)
 
+        # Create state fields
         u = Function(self.V, name="u")
-        self.rho = Function(self.Q, name="rho")
-        self.rho_old = Function(self.Q, name="rho_old")
+        rho = Function(self.Q, name="rho")
+        rho_old = Function(self.Q, name="rho_old")
+        assign(rho, self.cfg.rho0)
 
-        assign(self.rho, self.cfg.rho0)
+        L = Function(self.T, name="L")
+        L_old = Function(self.T, name="L_old")
+        assign(L, 0.0)
+        assign(L_old, 0.0)
 
-        # Log-fabric tensor state (CG1 tensor 3×3).
-        self.L = Function(self.T, name="L")
-        self.L_old = Function(self.T, name="L_old")
-        assign(self.L, 0.0)
-        assign(self.L_old, 0.0)
+        S = Function(self.Q, name="S")
+        S_old = Function(self.Q, name="S_old")
+        assign(S, 0.0)
+        assign(S_old, 0.0)
 
-        # Principal directions (eigenvectors) of fabric tensor for output.
-        # n1 corresponds to largest eigenvalue, n3 to smallest.
-        self.n1 = Function(self.V, name="n1")
-        self.n2 = Function(self.V, name="n2")
-        self.n3 = Function(self.V, name="n3")
-
-        # Dirichlet BC: clamp cut surface (u=0)
+        # Boundary conditions
         bc_mech = build_dirichlet_bcs(self.V, self.cfg.facet_tags, id_tag=1, value=0.0)
-
-        # Neumann BC: traction on proximal surface (hip + muscles)
         neumann_bcs = [(self.loader.traction, self.loader.load_tag)]
 
-        # 1. Mechanics Solver
-        mechsolver = MechanicsSolver(u, self.rho, self.cfg, bc_mech, neumann_bcs, L=self.L)
+        # =====================================================================
+        # Block registration - add/remove blocks here
+        # =====================================================================
+        self.registry = BlockRegistry(self.comm, self.cfg)
 
-        # 2. Driver with loading cases
+        # 1. Mechanics solver (wrapped by GaitDriver)
+        mechsolver = MechanicsSolver(u, rho, self.cfg, bc_mech, neumann_bcs, L=L)
+
+        # 2. GaitDriver: mechanics + multi-load SED averaging
         self.driver = GaitDriver(
-            mechsolver, self.cfg, 
+            mechsolver, self.cfg,
             loader=self.loader,
             loading_cases=self.loading_cases,
         )
+        self.registry.register(self.driver)
 
-        # 3. Fabric solver (implicit Euler reaction–diffusion) targeting L_target(Qbar).
-        self.fabricsolver = FabricSolver(
-            self.L,
-            self.L_old,
-            self.driver.Qbar_field(),
-            self.cfg,
-        )
+        # 3. Fabric solver: log-fabric evolution L -> L_target(Qbar)
+        self.fabricsolver = FabricSolver(L, L_old, self.driver.Qbar_field(), self.cfg)
+        self.registry.register(self.fabricsolver)
 
-        # 4. Stimulus field and solver (implicit Euler diffusion/decay + explicit drive).
-        self.S = fem.Function(self.Q, name="S")
-        self.S_old = fem.Function(self.Q, name="S_old")
-        assign(self.S, 0.0)
-        assign(self.S_old, 0.0)
+        # 4. Stimulus solver: S(psi, rho)
+        self.stimsolver = StimulusSolver(S, S_old, self.driver.stimulus_field(), rho, self.cfg)
+        self.registry.register(self.stimsolver)
 
-        # Register all fields for output in a single VTX file
-        # (n1, n2, n3 are principal directions of fabric tensor L)
-        self.storage.fields.register(
-            "fields",
-            [self.rho, self.S, self.driver.psi, self.driver.Qbar, self.n1, self.n2, self.n3],
-            filename="fields.bp",
-        )
+        # 5. Density solver: rho(S)
+        self.densolver = DensitySolver(rho, rho_old, S, self.cfg)
+        self.registry.register(self.densolver)
 
-        self.stimsolver = StimulusSolver(
-            self.S,
-            self.S_old,
-            self.driver.stimulus_field(),
-            self.rho,
-            self.cfg,
-        )
+        # =====================================================================
+        # Auto-discover fields from blocks
+        # =====================================================================
+        self.state_fields = self.registry.state_fields
+        self.state_fields_old = self.registry.state_fields_old
 
-        # 5. Density Solver
-        self.densolver = DensitySolver(
-            self.rho, 
-            self.rho_old, 
-            self.S,
-            self.cfg,
-        )
+        # Register output fields for VTX storage (auto-collected from blocks)
+        output_fields = self.registry.output_fields
+        self.storage.fields.register("fields", output_fields, filename="fields.bp")
+
+        # Fixed-point solver (uses blocks from registry)
         self.fixedsolver = FixedPointSolver(
             self.comm,
             self.cfg,
-            # (L, S, rho) are in the coupled state vector (see each block's `state_fields`):
-            # - driver: updates quasi-static mechanics and recomputes psi/Qbar, but contributes no state fields
-            # - fabricsolver: updates L
-            # - stimsolver: updates S
-            # - densolver: updates rho
-            blocks=(self.driver, self.fabricsolver, self.stimsolver, self.densolver),
+            blocks=self.registry.blocks,
         )
 
-        # State fields for time integration (L, S, rho) with their old-step counterparts.
-        self.state_fields = {
-            "L": self.L,
-            "S": self.S,
-            "rho": self.rho,
-        }
-        self.state_fields_old = {
-            "L": self.L_old,
-            "S": self.S_old,
-            "rho": self.rho_old,
-        }
+        # Time integrator (uses auto-discovered state fields)
         self.integrator = TimeIntegrator(self.comm, self.cfg, self.state_fields)
 
         self.solvers_initialized = False
@@ -176,13 +150,11 @@ class Remodeller:
 
     def _setup_blocks(self) -> None:
         """Call setup() on all coupling blocks."""
-        for blk in self.fixedsolver.blocks:
-            blk.setup()
+        self.registry.setup_all()
 
     def _assemble_blocks_lhs(self) -> None:
         """Reassemble LHS matrices for all coupling blocks."""
-        for blk in self.fixedsolver.blocks:
-            blk.assemble_lhs()
+        self.registry.assemble_lhs_all()
 
     def _ensure_solvers_initialized(self, dt: float) -> None:
         """Initialize solver objects and (re)assemble dt-dependent operators."""
@@ -209,13 +181,9 @@ class Remodeller:
 
         self.comm.Barrier()
 
-        if hasattr(self, "driver") and self.driver is not None:
-            self.driver.destroy()
-
-        for attr in ("fabricsolver", "stimsolver", "densolver"):
-            solver = getattr(self, attr, None)
-            if solver is not None:
-                solver.destroy()
+        # Destroy all blocks via registry
+        if hasattr(self, "registry") and self.registry is not None:
+            self.registry.destroy_all()
 
         if self.storage is not None:
             self.storage.close()
@@ -223,47 +191,10 @@ class Remodeller:
         self.comm.Barrier()
         self.closed = True
 
-    def _update_fabric_eigenvectors(self) -> None:
-        """Extract eigenvectors from L tensor and store in n1, n2, n3 fields.
-        
-        n1 corresponds to largest eigenvalue (principal fabric direction),
-        n3 to smallest eigenvalue.
-        """
-        bs = int(self.T.dofmap.index_map_bs)
-        n_owned = int(self.T.dofmap.index_map.size_local * bs)
-        gdim = self.gdim
-        
-        if n_owned <= 0:
-            return
-        
-        # Reshape L to (n_nodes, 3, 3) tensor array
-        L_arr = self.L.x.array[:n_owned].reshape(-1, gdim, gdim)
-        
-        # Symmetrize for eigendecomposition
-        L_sym = 0.5 * (L_arr + np.swapaxes(L_arr, 1, 2))
-        
-        # Compute eigenvalues and eigenvectors for each node
-        # np.linalg.eigh returns eigenvalues in ascending order
-        eigenvalues, eigenvectors = np.linalg.eigh(L_sym)
-        
-        # eigenvectors[:, :, i] is the eigenvector for eigenvalues[:, i]
-        # eigenvalues are sorted ascending, so:
-        # - [:, 2] -> largest eigenvalue -> n1
-        # - [:, 1] -> middle eigenvalue -> n2  
-        # - [:, 0] -> smallest eigenvalue -> n3
-        n_owned_v = int(self.V.dofmap.index_map.size_local * self.V.dofmap.index_map_bs)
-        
-        self.n1.x.array[:n_owned_v] = eigenvectors[:, :, 2].flatten()
-        self.n2.x.array[:n_owned_v] = eigenvectors[:, :, 1].flatten()
-        self.n3.x.array[:n_owned_v] = eigenvectors[:, :, 0].flatten()
-        
-        self.n1.x.scatter_forward()
-        self.n2.x.scatter_forward()
-        self.n3.x.scatter_forward()
-
     def _output(self, t: float) -> None:
         """Write fields to storage."""
-        self._update_fabric_eigenvectors()
+        # Call post_step_update on all blocks (e.g., compute eigenvectors)
+        self.registry.post_step_update_all()
         self.storage.fields.write("fields", float(t))
 
     def step(self, dt: float) -> Tuple[float, Dict]:

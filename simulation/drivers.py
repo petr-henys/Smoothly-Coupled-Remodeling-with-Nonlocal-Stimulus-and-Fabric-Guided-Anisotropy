@@ -1,7 +1,7 @@
 """GaitDriver: mechanics + cycle-weighted power-mean SED over multiple loading cases."""
 
 from __future__ import annotations
-from typing import Dict, List, TYPE_CHECKING
+from typing import Dict, List, Tuple, TYPE_CHECKING
 
 from dolfinx import fem
 import ufl
@@ -134,11 +134,27 @@ class GaitDriver:
         """Return averaged `Qbar` (DG0 tensor field)."""
         return self.Qbar
 
+    # -------------------------------------------------------------------------
+    # CouplingBlock protocol - GaitDriver produces derived quantities, no state
+    # -------------------------------------------------------------------------
 
     @property
-    def state_fields(self):
-        # The driver does not own coupled state variables (rho/S). It produces psi.
+    def state_fields(self) -> Tuple[fem.Function, ...]:
+        # The driver does not own coupled state variables (rho/S). It produces psi/Qbar.
         return ()
+
+    @property
+    def state_fields_old(self) -> Tuple[fem.Function, ...]:
+        return ()
+
+    @property
+    def output_fields(self) -> Tuple[fem.Function, ...]:
+        """Return psi and Qbar for VTX output."""
+        return (self.psi, self.Qbar)
+
+    def post_step_update(self) -> None:
+        """No post-step processing needed for GaitDriver."""
+        pass
 
     def sweep(self) -> Dict:
         """One Gauss–Seidel sweep for the mechanics block.

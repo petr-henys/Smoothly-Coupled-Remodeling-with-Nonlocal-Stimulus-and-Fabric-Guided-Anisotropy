@@ -211,7 +211,7 @@ class TestMPIIO:
             loader = create_mock_loader(domain)
             
             with Remodeller(cfg, loader=loader, loading_cases=create_loading_cases()) as rem:
-                rem.storage.fields.write("scalars", 0.0)
+                rem.storage.fields.write("fields", 0.0)
                 
                 # Should complete without hanging
                 comm.Barrier()
@@ -249,7 +249,7 @@ class TestFixedPointParallel:
         
         with Remodeller(cfg, loader=loader, loading_cases=create_loading_cases()) as rem:
             # Take one time step
-            rem.step(1.0, 0, 1.0)
+            rem.step(1.0)
             
             # Check Anderson was used
             gs_iters = len(rem.fixedsolver.subiter_metrics)
@@ -276,7 +276,7 @@ class TestFixedPointParallel:
         loader = create_mock_loader(domain)
         
         with Remodeller(cfg, loader=loader, loading_cases=create_loading_cases()) as rem:
-            rem.step(1.0, 0, 1.0)
+            rem.step(1.0)
             
             # Should converge
             assert len(rem.fixedsolver.subiter_metrics) > 0
@@ -352,10 +352,23 @@ class TestMemoryUsage:
     @pytest.mark.parametrize("m", [3, 5])
     def test_anderson_history_bounded(self, m):
         """Anderson history should be bounded by window size m."""
-        from simulation.anderson import _Anderson
+        from simulation.anderson import Anderson
         
         n = 100
-        aa = _Anderson(comm=MPI.COMM_WORLD, m=m)
+        aa = Anderson(
+            comm=MPI.COMM_WORLD,
+            m=m,
+            beta=1.0,
+            lam=1e-6,
+            gamma=1.0,
+            safeguard=False,
+            backtrack_max=3,
+            restart_on_reject_k=3,
+            restart_on_stall=1.0,
+            restart_on_cond=1e10,
+            step_limit_factor=2.0,
+            verbose=False,
+        )
         
         # Add more than m updates
         for i in range(10):

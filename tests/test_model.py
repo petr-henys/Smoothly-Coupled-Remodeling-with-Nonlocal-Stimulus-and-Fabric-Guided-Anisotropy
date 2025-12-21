@@ -53,7 +53,8 @@ def test_model_initializes_with_traction(tmp_path, unit_cube, facet_tags, dummy_
 
     with Remodeller(cfg, loader=dummy_load["loader"], loading_cases=dummy_load["loading_cases"]) as rem:
         assert "fields" in rem.storage.fields._writers
-        rho_mean = comm.allreduce(np.mean(rem.rho.x.array), op=MPI.SUM) / comm.size
+        rho = rem.state_fields["rho"]
+        rho_mean = comm.allreduce(np.mean(rho.x.array), op=MPI.SUM) / comm.size
         assert abs(rho_mean - cfg.rho0) < 1e-10
 
 
@@ -122,20 +123,21 @@ def test_density_evolves_with_stimulus(tmp_path, unit_cube, facet_tags, dummy_lo
     )
 
     with Remodeller(cfg, loader=dummy_load["loader"], loading_cases=dummy_load["loading_cases"]) as rem:
-        rho_initial = rem.rho.x.array.copy()
+        rho = rem.state_fields["rho"]
+        rho_initial = rho.x.array.copy()
 
         for i in range(3):
             rem.step(5.0)
 
-        rho_diff = np.abs(rem.rho.x.array - rho_initial)
+        rho_diff = np.abs(rho.x.array - rho_initial)
         max_diff = comm.allreduce(np.max(rho_diff), op=MPI.MAX)
         mean_diff = comm.allreduce(np.mean(rho_diff), op=MPI.SUM) / comm.size
 
         assert max_diff > 1e-6, f"Density max change too small: {max_diff:.3e}"
         assert mean_diff > 1e-8, f"Density mean change too small: {mean_diff:.3e}"
 
-        rho_min = comm.allreduce(np.min(rem.rho.x.array), op=MPI.MIN)
-        rho_max = comm.allreduce(np.max(rem.rho.x.array), op=MPI.MAX)
+        rho_min = comm.allreduce(np.min(rho.x.array), op=MPI.MIN)
+        rho_max = comm.allreduce(np.max(rho.x.array), op=MPI.MAX)
 
         assert rho_min > 0.0
         assert rho_max < 10.0
