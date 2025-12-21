@@ -249,6 +249,8 @@ class MechanicsSolver(_BaseLinearSolver):
 
         E_iso = self._E_iso(rho)
         nu0 = float(self.cfg.material.nu0)
+
+        # Isotropic baseline
         mu_iso = E_iso / (2.0 * (1.0 + nu0))
         lmbda_iso = E_iso * nu0 / ((1.0 + nu0) * (1.0 - 2.0 * nu0))
         sigma_iso = 2.0 * mu_iso * eps + lmbda_iso * ufl.tr(eps) * ufl.Identity(self.gdim)
@@ -259,53 +261,71 @@ class MechanicsSolver(_BaseLinearSolver):
         if self.gdim != 3:
             raise ValueError("Anisotropic MechanicsSolver currently requires gdim==3.")
 
+        I3 = ufl.Identity(3)
+
+        # Fabric spectral stuff
         Ls = symm(L)
         l1, l2, l3 = eigenvalues_sym3(Ls)
         P1, P2, P3 = projectors_sylvester(Ls, l1, l2, l3)
 
         mean_l = (l1 + l2 + l3) / 3.0
-        a1_hat = ufl.exp(l1 - mean_l)
-        a2_hat = ufl.exp(l2 - mean_l)
-        a3_hat = ufl.exp(l3 - mean_l)
 
+        # ------------------------------------------------------------------
+        # FIX A: Clamp BEFORE exp() to prevent overflow / NaNs
+        # Use caps consistent with cfg.fabric (reciprocal-safe).
+        import math
+        m_min = float(self.cfg.fabric.fabric_m_min)
+        m_max = float(self.cfg.fabric.fabric_m_max)
+        a_cap = max(m_max, 1.0 / m_min)  # ensures symmetric cap
+        dmax = math.log(a_cap)
+
+        d1 = clamp(l1 - mean_l, -dmax, dmax)
+        d2 = clamp(l2 - mean_l, -dmax, dmax)
+        d3 = clamp(l3 - mean_l, -dmax, dmax)
+
+        a1_hat = ufl.exp(d1)
+        a2_hat = ufl.exp(d2)
+        a3_hat = ufl.exp(d3)
+
+        # ------------------------------------------------------------------
         pE = float(self.cfg.material.stiff_pE)
         pG = float(self.cfg.material.stiff_pG)
 
-        E1 = E_iso * (a1_hat**pE)
-        E2 = E_iso * (a2_hat**pE)
-        E3 = E_iso * (a3_hat**pE)
+        E1 = E_iso * (a1_hat ** pE)
+        E2 = E_iso * (a2_hat ** pE)
+        E3 = E_iso * (a3_hat ** pE)
 
         G_iso = E_iso / (2.0 * (1.0 + nu0))
         G12 = G_iso * ((a1_hat * a2_hat) ** (0.5 * pG))
         G23 = G_iso * ((a2_hat * a3_hat) ** (0.5 * pG))
         G31 = G_iso * ((a3_hat * a1_hat) ** (0.5 * pG))
 
-        # Orthotropic Poisson ratios: use nu0 for all directions.
-        # With reciprocity, nu_ij/E_j = nu_ji/E_i.
-        nu12 = nu0
-        nu23 = nu0
-        nu31 = nu0
+        # ------------------------------------------------------------------
+        # FIX B: Normal part without building/inverting Sn.
+        # For S_ii = 1/Ei and S_ij = -nu0/sqrt(Ei Ej),
+        # S = D R D with D=diag(1/sqrt(Ei)) and R having diag 1, offdiag -nu0.
+        # Then C = S^{-1} = D^{-1} R^{-1} D^{-1},
+        # and R^{-1} has closed form: R^{-1} = a I + b J.
+        nu = nu0  # validated (-1, 0.5)
+        a = 1.0 / (1.0 + nu)
+        b = nu / ((1.0 + nu) * (1.0 - 2.0 * nu))
 
-        nu21 = nu12 * E2 / E1
-        nu32 = nu23 * E3 / E2
-        nu13 = nu31 * E1 / E3
-
-        Sn = ufl.as_matrix(
-            [
-                [1.0 / E1, -nu21 / E2, -nu31 / E3],
-                [-nu12 / E1, 1.0 / E2, -nu32 / E3],
-                [-nu13 / E1, -nu23 / E2, 1.0 / E3],
-            ]
-        )
-        Cn = ufl.inv(Sn)
-
+        # Project eps into principal projector directions
         e1 = ufl.inner(P1, eps)
         e2 = ufl.inner(P2, eps)
         e3 = ufl.inner(P3, eps)
-        e = ufl.as_vector([e1, e2, e3])
-        s = ufl.dot(Cn, e)
 
-        sigma_normal = s[0] * P1 + s[1] * P2 + s[2] * P3
+        sqrtE1 = ufl.sqrt(E1)
+        sqrtE2 = ufl.sqrt(E2)
+        sqrtE3 = ufl.sqrt(E3)
+
+        # s = Cn * e, but computed in closed form (stable + cheaper)
+        sum_term = sqrtE1 * e1 + sqrtE2 * e2 + sqrtE3 * e3
+        s1 = a * E1 * e1 + b * sqrtE1 * sum_term
+        s2 = a * E2 * e2 + b * sqrtE2 * sum_term
+        s3 = a * E3 * e3 + b * sqrtE3 * sum_term
+
+        sigma_normal = s1 * P1 + s2 * P2 + s3 * P3
 
         def _P_eps_P(A, B):
             return ufl.dot(A, ufl.dot(eps, B))
@@ -318,12 +338,28 @@ class MechanicsSolver(_BaseLinearSolver):
 
         sigma_aniso = sigma_normal + sigma_shear
 
-        # Robust isotropic fallback when L is nearly spherical (avoid 0/0 in projectors).
+        # ------------------------------------------------------------------
+        # FIX C: C¹ blend instead of conditional (scale-aware).
+        # Measure deviatoric magnitude of Ls (same normalization as elsewhere).
         q = ufl.tr(Ls) / 3.0
-        B = Ls - q * ufl.Identity(3)
+        B = Ls - q * I3
         p2 = ufl.tr(ufl.dot(B, B)) / 6.0
-        iso_L = ufl.lt(p2, 1e-14)
-        return ufl.as_tensor([[ufl.conditional(iso_L, sigma_iso[i, j], sigma_aniso[i, j]) for j in range(3)] for i in range(3)])
+        scale2 = ufl.max_value(q * q + p2, 1.0)
+
+        # Dimensionless anisotropy measure:
+        r = p2 / scale2
+
+        # Blend window around a relative tolerance.
+        # r <= r0 -> almost isotropic, r >= r1 -> fully anisotropic.
+        tol_iso = 1e-14
+        r0 = 0.1 * tol_iso
+        r1 = 10.0 * tol_iso
+
+        t = (r - r0) / (r1 - r0)
+        w = smoothstep01(t)  # already clamps to [0,1]
+
+        # Final stress (C¹ in w)
+        return (1.0 - w) * sigma_iso + w * sigma_aniso
 
     def assemble_rhs(self):
         with self.b.localForm() as b_loc:

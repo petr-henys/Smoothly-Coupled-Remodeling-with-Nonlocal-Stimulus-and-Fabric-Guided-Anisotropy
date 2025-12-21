@@ -217,7 +217,7 @@ class SolverParams:
     ksp_max_it: int = 100
 
     # Reuse preconditioner across solves
-    ksp_reuse_pc: bool = True
+    ksp_reuse_pc: bool = False
 
     # Fixed-point acceleration type: 'anderson' or 'picard'
     accel_type: str = "anderson"
