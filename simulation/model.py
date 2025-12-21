@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Dict, Tuple, List
 from pathlib import Path
 
+import numpy as np
 import basix.ufl
 from dolfinx import fem
 from dolfinx.fem import Function, functionspace
@@ -84,6 +85,12 @@ class Remodeller:
         assign(self.L, 0.0)
         assign(self.L_old, 0.0)
 
+        # Principal directions (eigenvectors) of fabric tensor for output.
+        # n1 corresponds to largest eigenvalue, n3 to smallest.
+        self.n1 = Function(self.V, name="n1")
+        self.n2 = Function(self.V, name="n2")
+        self.n3 = Function(self.V, name="n3")
+
         # Dirichlet BC: clamp cut surface (u=0)
         bc_mech = build_dirichlet_bcs(self.V, self.cfg.facet_tags, id_tag=1, value=0.0)
 
@@ -115,9 +122,10 @@ class Remodeller:
         assign(self.S_old, 0.0)
 
         # Register all fields for output in a single VTX file
+        # (n1, n2, n3 are principal directions of fabric tensor L)
         self.storage.fields.register(
             "fields",
-            [self.rho, self.S, self.driver.psi, self.driver.Qbar, self.L],
+            [self.rho, self.S, self.driver.psi, self.driver.Qbar, self.n1, self.n2, self.n3],
             filename="fields.bp",
         )
 
@@ -215,8 +223,47 @@ class Remodeller:
         self.comm.Barrier()
         self.closed = True
 
+    def _update_fabric_eigenvectors(self) -> None:
+        """Extract eigenvectors from L tensor and store in n1, n2, n3 fields.
+        
+        n1 corresponds to largest eigenvalue (principal fabric direction),
+        n3 to smallest eigenvalue.
+        """
+        bs = int(self.T.dofmap.index_map_bs)
+        n_owned = int(self.T.dofmap.index_map.size_local * bs)
+        gdim = self.gdim
+        
+        if n_owned <= 0:
+            return
+        
+        # Reshape L to (n_nodes, 3, 3) tensor array
+        L_arr = self.L.x.array[:n_owned].reshape(-1, gdim, gdim)
+        
+        # Symmetrize for eigendecomposition
+        L_sym = 0.5 * (L_arr + np.swapaxes(L_arr, 1, 2))
+        
+        # Compute eigenvalues and eigenvectors for each node
+        # np.linalg.eigh returns eigenvalues in ascending order
+        eigenvalues, eigenvectors = np.linalg.eigh(L_sym)
+        
+        # eigenvectors[:, :, i] is the eigenvector for eigenvalues[:, i]
+        # eigenvalues are sorted ascending, so:
+        # - [:, 2] -> largest eigenvalue -> n1
+        # - [:, 1] -> middle eigenvalue -> n2  
+        # - [:, 0] -> smallest eigenvalue -> n3
+        n_owned_v = int(self.V.dofmap.index_map.size_local * self.V.dofmap.index_map_bs)
+        
+        self.n1.x.array[:n_owned_v] = eigenvectors[:, :, 2].flatten()
+        self.n2.x.array[:n_owned_v] = eigenvectors[:, :, 1].flatten()
+        self.n3.x.array[:n_owned_v] = eigenvectors[:, :, 0].flatten()
+        
+        self.n1.x.scatter_forward()
+        self.n2.x.scatter_forward()
+        self.n3.x.scatter_forward()
+
     def _output(self, t: float) -> None:
         """Write fields to storage."""
+        self._update_fabric_eigenvectors()
         self.storage.fields.write("fields", float(t))
 
     def step(self, dt: float) -> Tuple[float, Dict]:
