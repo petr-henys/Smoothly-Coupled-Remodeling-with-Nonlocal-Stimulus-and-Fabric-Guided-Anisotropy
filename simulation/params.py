@@ -78,7 +78,7 @@ class DensityParams:
     k_rho_resorb: float = 2e-02
 
     # Diffusion coefficient [mm²/day]
-    D_rho: float = 1e-2
+    D_rho: float = 2e-2
 
     # CT apparent density mapping to porosity for surface availability
     rho_tissue: float = 2.0  # Fully mineralized matrix density [g/cm³]

@@ -351,7 +351,7 @@ class MechanicsSolver(_BaseLinearSolver):
 
         # Blend window around a relative tolerance.
         # r <= r0 -> almost isotropic, r >= r1 -> fully anisotropic.
-        tol_iso = 1e-14
+        tol_iso = 1e-8
         r0 = 0.1 * tol_iso
         r1 = 10.0 * tol_iso
 
@@ -458,7 +458,12 @@ class MechanicsSolver(_BaseLinearSolver):
 
 
 class FabricSolver(_BaseLinearSolver):
-    """Log-fabric evolution: implicit Euler reaction–diffusion towards L_target(Qbar)."""
+    """Log-fabric evolution in log-space (symmetric tensor L), updated by implicit Euler.
+
+The model relaxes L towards a coaxial target L_target(Qbar) with optional diffusion. The
+relaxation rate is smoothly down-weighted when Qbar is nearly isotropic, which reduces
+noise-driven fabric drift and eigenvector switching.
+"""
 
     _label = "fab"
 
@@ -492,6 +497,27 @@ class FabricSolver(_BaseLinearSolver):
         self.n2 = Function(self._V_vec, name="n2")
         self.n3 = Function(self._V_vec, name="n3")
 
+    def _activity_factor(self):
+        """Return a smooth activity factor in [0, 1] based on directional information in Qbar."""
+        if self.gdim != 3:
+            raise ValueError("FabricSolver currently requires gdim==3.")
+
+        epsQ = float(self.cfg.fabric.fabric_epsQ)
+        I = ufl.Identity(3)
+        Q = symm(self.Qbar) + epsQ * I
+
+        # Dimensionless anisotropy measure from the deviatoric part of Q
+        trQ = ufl.tr(Q)
+        Q_iso = (trQ / 3.0) * I
+        Q_dev = Q - Q_iso
+
+        r = ufl.sqrt(ufl.inner(Q_dev, Q_dev) + self.smooth_eps * self.smooth_eps) / (trQ + epsQ)
+
+        # Smooth gate (r -> 0 => act ~ 0, r large => act ~ 1)
+        aniso_eps = 1e-4
+        act = r / (r + aniso_eps)
+        return act
+
     def _compile_forms(self):
         dt = self.dt_c
         cA = self.cA_c
@@ -502,7 +528,8 @@ class FabricSolver(_BaseLinearSolver):
         T = ufl.TestFunction(self.function_space)
 
         alpha = cA / dt
-        beta = cA / tau
+        act = self._activity_factor()
+        beta = (cA * act) / tau
 
         a_ufl = (alpha + beta) * ufl.inner(L_trial, T) * self.dx
         if self._use_diffusion:
@@ -646,8 +673,8 @@ class FabricSolver(_BaseLinearSolver):
 
     def solve(self) -> SweepStats:
         """Solve the fabric evolution system."""
-        if float(self.dt_c.value) != float(self.cfg.dt):
-            self.assemble_lhs()
+        # LHS depends on the current Qbar through the activity factor, so we reassemble each call.
+        self.assemble_lhs()
         self.assemble_rhs()
         stats = self._solve()
         self._symmetrize_L()
@@ -659,13 +686,12 @@ class FabricSolver(_BaseLinearSolver):
 
 
 class StimulusSolver(_BaseLinearSolver):
-    """Update stimulus field `S` via diffusion/decay with a saturating drive.
+    """Update stimulus field `S` via diffusion/decay with a smooth, saturating mechanostat drive.
 
-    Model (dimensionless `S`):
-      dS/dt = D_S ΔS - (1/tau_S) S + (1/tau_S) S_max tanh(delta/kappa),
-      with the local quasi-static limit S = S_max tanh(delta/kappa) for tau_S=0.
-    where delta is computed from the specific energy `m = psi/rho_safe` relative to `m_ref`.
-    """
+The drive is based on the specific strain energy m = psi/rho_safe relative to a reference m_ref.
+A smooth "lazy zone" gate suppresses very small deviations without a hard dead-band, and tanh
+provides saturation for large deviations.
+"""
 
     _label = "stim"
 
@@ -691,7 +717,6 @@ class StimulusSolver(_BaseLinearSolver):
         self.D_c = fem.Constant(self.mesh, float(self.cfg.stimulus.stimulus_D))
         self.S_max_c = fem.Constant(self.mesh, float(self.cfg.stimulus.stimulus_S_max))
         self.kappa_c = fem.Constant(self.mesh, float(self.cfg.stimulus.stimulus_kappa))
-        self.delta0_c = fem.Constant(self.mesh, float(self.cfg.stimulus.stimulus_delta0))
 
         # Compile-time flag: avoid forming grad-grad if D_S is identically zero (helps DG spaces).
         self._use_diffusion = float(self.cfg.stimulus.stimulus_D) > 0.0
@@ -720,9 +745,18 @@ class StimulusSolver(_BaseLinearSolver):
         m_ref = float(self.cfg.stimulus.psi_ref) / float(self.cfg.density.rho_ref)
         delta = (m - m_ref) / m_ref
         delta_abs = ufl.sqrt(delta * delta + eps * eps)
-        delta_excess = smooth_max(delta_abs - self.delta0_c, 0.0, eps)
-        sgn = delta / delta_abs
-        drive = self.S_max_c * ufl.tanh(delta_excess / self.kappa_c) * sgn
+
+        # Smooth lazy zone: suppress very small errors without a hard dead-band.
+        # delta0 controls the width of the suppression region; delta0 == 0 disables it.
+        delta0 = float(self.cfg.stimulus.stimulus_delta0)
+        if delta0 > 0.0:
+            delta0_safe = max(delta0, 1e-12)
+            gate = 1.0 - ufl.exp(-((delta_abs / delta0_safe) ** 2))
+            delta_eff = delta * gate
+        else:
+            delta_eff = delta
+
+        drive = self.S_max_c * ufl.tanh(delta_eff / self.kappa_c)
 
         L_ufl = (alpha * self.S_old + drive) * v * self.dx
         self.L_form = fem.form(L_ufl)
@@ -823,22 +857,44 @@ class DensitySolver(_BaseLinearSolver):
             rho_t = float(self.cfg.density.rho_tissue)
             f_raw = 1.0 - (self.rho_old / rho_t)
             f = smooth_min(smooth_max(f_raw, 0.0, eps), 1.0, eps)
+            # Specific surface availability: trabecular vs cortical.
+            # We keep the classic Martin-type polynomial in the trabecular regime, and use a
+            # cortical proxy that grows like sqrt(porosity) at high BV/TV. The two are blended
+            # smoothly across the trab->cort transition densities from the material model.
+            rho_trab_max = float(self.cfg.material.rho_trab_max)
+            rho_cort_min = float(self.cfg.material.rho_cort_min)
 
-            # Martin polynomial for specific surface S_V(f) [1/mm]
-            S_v = (
+            # Trabecular (Martin-type) specific surface [1/mm]
+            S_trab = (
                 32.3 * f
                 - 93.9 * f**2
                 + 134.0 * f**3
                 - 101.0 * f**4
                 + 28.8 * f**5
             )
+
+            # Cortical proxy: scale chosen so that S_cort matches S_trab at rho_trab_max
+            f_tr = max(1.0 - rho_trab_max / rho_t, 1e-6)
+            S_trab_tr = (
+                32.3 * f_tr
+                - 93.9 * f_tr**2
+                + 134.0 * f_tr**3
+                - 101.0 * f_tr**4
+                + 28.8 * f_tr**5
+            )
+            surface_cort_scale = S_trab_tr / (f_tr**0.5)
+            S_cort = surface_cort_scale * ufl.sqrt(f + eps)
+
+            denom = max(rho_cort_min - rho_trab_max, 1e-12)
+            t = (self.rho_old - rho_trab_max) / denom
+            w_cort = smoothstep01(t)  # 0 trab, 1 cort
+
+            S_v = (1.0 - w_cort) * S_trab + w_cort * S_cort
             S_v = smooth_max(S_v, 0.0, eps)
 
             A_min = float(self.cfg.density.surface_A_min)
             S0 = float(self.cfg.density.surface_S0)
-            x = S_v / S0
-            x = smooth_min(x, 1.0, eps)  # linear in S_v, capped
-            A_surf = A_min + (1.0 - A_min) * x
+            A_surf = A_min + (1.0 - A_min) * (S_v / (S_v + S0))
         else:
             A_surf = 1.0
 
