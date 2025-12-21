@@ -134,6 +134,9 @@ class GaitDriver:
         sum_cycles = 0.0
         tiny = 1e-30
 
+        total_iters = 0
+        total_time = 0.0
+
         for case in self.loading_cases:
             day_cycles = float(case.day_cycles)
             if day_cycles <= 0.0:
@@ -146,7 +149,9 @@ class GaitDriver:
             
             # Reassemble RHS (traction is referenced in the form)
             self.mech.assemble_rhs()
-            self.mech.solve()
+            res = self.mech.solve()
+            total_iters += res["iters"]
+            total_time += res["time"]
             
             # Compute SED + Q_case for this case
             self.calculator.compute_sed(self._psi_temp)
@@ -172,7 +177,7 @@ class GaitDriver:
 
         self.psi.x.scatter_forward()
         self.Qbar.x.scatter_forward()
-        return {}
+        return {"iters": total_iters, "time": total_time}
 
     def stimulus_field(self) -> fem.Function:
         """Return the averaged `psi` function (DG0 field)."""
@@ -212,5 +217,5 @@ class GaitDriver:
         - Update averaged psi (DG0)
         """
         self.assemble_lhs()
-        self.update_snapshots()
-        return {"label": "mech", "reason": int(self.mech.last_reason)}
+        stats = self.update_snapshots()
+        return {"label": "mech", "reason": int(self.mech.last_reason), "iters": stats["iters"], "time": stats["time"]}

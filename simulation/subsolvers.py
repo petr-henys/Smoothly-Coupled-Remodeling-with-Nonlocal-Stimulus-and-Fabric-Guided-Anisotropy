@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, List, Tuple
+import time
 
 import basix.ufl
 import numpy as np
+from mpi4py import MPI
 from petsc4py import PETSc
 from dolfinx import fem
 from dolfinx.fem import functionspace, Function
@@ -123,13 +125,16 @@ class _BaseLinearSolver:
     def assemble_rhs(self) -> None:
         raise NotImplementedError
 
-    def _solve(self) -> int:
+    def _solve(self) -> dict:
+        t0 = time.perf_counter()
         self.ksp.solve(self.b, self.state.x.petsc_vec)
         self.state.x.scatter_forward()
+        t1 = time.perf_counter()
 
         reason = int(self.ksp.getConvergedReason())
+        iters = int(self.ksp.getIterationNumber())
         self.last_reason = reason
-        return reason
+        return {"reason": reason, "iters": iters, "time": t1 - t0}
 
     def _maybe_warn(self, reason: int, label: str):
         if reason < 0:
@@ -310,10 +315,64 @@ class MechanicsSolver(_BaseLinearSolver):
         set_bc(self.b, self.dirichlet_bcs)
         self.b.ghostUpdate(PETSc.InsertMode.INSERT, PETSc.ScatterMode.FORWARD)
 
+    def _compute_anisotropy_stats(self) -> str:
+        """Compute statistics of anisotropy (a_hat range) and deviator magnitude (p2)."""
+        if self.L is None:
+            return ""
+
+        # Access local array
+        bs = self.L.function_space.dofmap.index_map_bs
+        n_local = self.L.function_space.dofmap.index_map.size_local
+        n_owned = n_local * bs
+        arr = self.L.x.array[:n_owned]
+
+        if arr.size == 0:
+            # Return dummy values that won't affect min/max reduction
+            a_min_loc, a_max_loc = 1e30, -1e30
+            p2_min_loc, p2_max_loc = 1e30, -1e30
+        else:
+            # Reshape to (N, 3, 3)
+            L_flat = arr.reshape(-1, 3, 3)
+            
+            # Symmetrize
+            L_sym = 0.5 * (L_flat + L_flat.transpose(0, 2, 1))
+            
+            # Eigenvalues (ascending)
+            w = np.linalg.eigvalsh(L_sym)  # (N, 3)
+            
+            # a_hat = exp(w - mean_w)
+            mean_l = np.mean(w, axis=1, keepdims=True)
+            a_hat = np.exp(w - mean_l)
+            
+            a_min_loc = np.min(a_hat)
+            a_max_loc = np.max(a_hat)
+            
+            # p2 = sum((w - mean_l)^2) / 6.0
+            dev = w - mean_l
+            p2 = np.sum(dev**2, axis=1) / 6.0
+            
+            p2_min_loc = np.min(p2)
+            p2_max_loc = np.max(p2)
+
+        # MPI Reduce
+        comm = self.comm
+        
+        glob_min = np.array([a_min_loc, p2_min_loc], dtype=float)
+        glob_max = np.array([a_max_loc, p2_max_loc], dtype=float)
+        
+        comm.Allreduce(MPI.IN_PLACE, glob_min, op=MPI.MIN)
+        comm.Allreduce(MPI.IN_PLACE, glob_max, op=MPI.MAX)
+        
+        # If no data (e.g. empty mesh?), handle gracefully
+        if glob_min[0] > glob_max[0]:
+            return ""
+
+        return f"a=[{glob_min[0]:.2f}, {glob_max[0]:.2f}] p2=[{glob_min[1]:.1e}, {glob_max[1]:.1e}]"
+
     def solve(self):
-        reason = self._solve()
-        self._maybe_warn(reason, "Mechanics")
-        return int(reason)
+        res = self._solve()
+        self._maybe_warn(res["reason"], "Mechanics")
+        return res
 
     # -------------------------------------------------------------------------
     # CouplingBlock protocol - MechanicsSolver produces no coupled state
@@ -333,9 +392,10 @@ class MechanicsSolver(_BaseLinearSolver):
         return ()
 
     def sweep(self):
-        reason = self._solve()
-        self._maybe_warn(reason, "Mechanics")
-        return {"label": "mech", "reason": int(reason)}
+        res = self._solve()
+        self._maybe_warn(res["reason"], "Mechanics")
+        stats = self._compute_anisotropy_stats()
+        return {"label": "mech", "reason": res["reason"], "iters": res["iters"], "time": res["time"], "extra": stats}
 
 
 class FabricSolver(_BaseLinearSolver):
@@ -525,18 +585,18 @@ class FabricSolver(_BaseLinearSolver):
         self.n2.x.scatter_forward()
         self.n3.x.scatter_forward()
 
-    def solve(self) -> int:
+    def solve(self) -> dict:
         if float(self.dt_c.value) != float(self.cfg.dt):
             self.assemble_lhs()
         self.assemble_rhs()
-        reason = self._solve()
+        res = self._solve()
         self._symmetrize_L()
-        self._maybe_warn(reason, "Fabric")
-        return int(reason)
+        self._maybe_warn(res["reason"], "Fabric")
+        return res
 
     def sweep(self):
-        reason = self.solve()
-        return {"label": "fab", "reason": int(reason)}
+        res = self.solve()
+        return {"label": "fab", "reason": res["reason"], "iters": res["iters"], "time": res["time"]}
 
 
 class StimulusSolver(_BaseLinearSolver):
@@ -646,18 +706,18 @@ class StimulusSolver(_BaseLinearSolver):
     def output_fields(self) -> Tuple[fem.Function, ...]:
         return (self.S,)
 
-    def solve(self) -> int:
+    def solve(self) -> dict:
         # Reassemble LHS when dt changes (adaptive stepping).
         if float(self.dt_c.value) != float(self.cfg.dt):
             self.assemble_lhs()
         self.assemble_rhs()
-        reason = self._solve()
-        self._maybe_warn(reason, "Stimulus")
-        return int(reason)
+        res = self._solve()
+        self._maybe_warn(res["reason"], "Stimulus")
+        return res
 
     def sweep(self):
-        reason = self.solve()
-        return {"label": "stim", "reason": int(reason)}
+        res = self.solve()
+        return {"label": "stim", "reason": res["reason"], "iters": res["iters"], "time": res["time"]}
 
 
 class DensitySolver(_BaseLinearSolver):
@@ -781,14 +841,14 @@ class DensitySolver(_BaseLinearSolver):
     def output_fields(self) -> Tuple[fem.Function, ...]:
         return (self.rho,)
 
-    def solve(self) -> int:
+    def solve(self) -> dict:
         # LHS depends on dt, stimulus, and rho_old (via surface availability) -> reassemble each call
         self.assemble_lhs()
         self.assemble_rhs()
-        reason = self._solve()
-        self._maybe_warn(reason, "Density")
-        return int(reason)
+        res = self._solve()
+        self._maybe_warn(res["reason"], "Density")
+        return res
 
     def sweep(self):
-        reason = self.solve()
-        return {"label": "dens", "reason": int(reason)}
+        res = self.solve()
+        return {"label": "dens", "reason": res["reason"], "iters": res["iters"], "time": res["time"]}

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Dict, List, Sequence, Tuple
+import resource
 
 import numpy as np
 from mpi4py import MPI
@@ -179,8 +180,10 @@ class FixedPointSolver:
             x_old = self._pack_unscaled()
 
             # One Gauss–Seidel sweep of all blocks
+            sweep_stats = []
             for blk in self.blocks:
-                blk.sweep()
+                res = blk.sweep()
+                sweep_stats.append(res)
 
             # Raw iterate after the sweep
             x_raw = self._pack_unscaled()
@@ -199,11 +202,40 @@ class FixedPointSolver:
             else:
                 beta = float(self.cfg.solver.beta)
                 x_new_s = x_old_s + beta * (x_raw_s - x_old_s)
-                aa = {"aa_hist": 0, "accepted": True, "backtracks": 0, "restart_reason": ""}
+                aa = {"aa_hist": 0, "accepted": True, "backtracks": 0, "restart_reason": "", "condH": 1.0}
 
             aa_step_res = self._proj_step(x_old_s, x_new_s, x_raw_s)
 
             self._unpack_scaled_into_fields(x_new_s)
+
+            # Memory usage (Max RSS in KB on Linux -> MB)
+            mem_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
+
+            # Log per-Picard step info (file only via DEBUG level)
+            cond_val = aa.get("condH")
+            cond_str = f"{cond_val:.1e}" if cond_val is not None else "N/A"
+            acc_str = "ACC" if aa.get("accepted", True) else "REJ"
+            rst_str = f" RST({aa.get('restart_reason')})" if aa.get("restart_reason") else ""
+            hist_str = f"m={aa.get('aa_hist', 0)}"
+
+            log_parts = [
+                f"Picard {itr}: res={picard_res:.2e}",
+                f"aa_res={aa_step_res:.2e}",
+                f"cond={cond_str}",
+                f"{hist_str}",
+                f"{acc_str}",
+                f"mem={mem_mb:.1f}MB"
+            ]
+            if rst_str:
+                log_parts.append(rst_str.strip())
+
+            for s in sweep_stats:
+                if "iters" in s:
+                    msg = f"{s['label']}: {s['iters']}it/{s['time']:.3f}s"
+                    if s.get("extra"):
+                        msg += f" {s['extra']}"
+                    log_parts.append(msg)
+            self.logger.debug(", ".join(log_parts))
 
             rec = {
                 "iter": int(itr),
@@ -215,6 +247,9 @@ class FixedPointSolver:
                 "aa_accepted": bool(aa.get("accepted", True)),
                 "aa_backtracks": int(aa.get("backtracks", 0)),
                 "aa_restart": str(aa.get("restart_reason", "")),
+                "condH": float(cond_val) if cond_val is not None else 0.0,
+                "mem_mb": float(mem_mb),
+                "block_stats": sweep_stats,
             }
             self.subiter_metrics.append(rec)
 
@@ -229,6 +264,36 @@ class FixedPointSolver:
             if itr >= min_subiters and picard_res <= tol:
                 converged = True
                 break
+        
+        # Summary stats for the time step (file only via INFO level, assuming console is WARNING)
+        # Aggregate stats by label dynamically
+        agg_stats = {}
+        for m in self.subiter_metrics:
+            for s in m["block_stats"]:
+                lbl = s.get("label", "unknown")
+                if lbl not in agg_stats:
+                    agg_stats[lbl] = {"iters": 0, "time": 0.0}
+                agg_stats[lbl]["iters"] += s.get("iters", 0)
+                agg_stats[lbl]["time"] += s.get("time", 0.0)
+
+        # Format per-block stats
+        block_summary_parts = []
+        # Sort by label for consistent output order
+        for lbl in sorted(agg_stats.keys()):
+            st = agg_stats[lbl]
+            block_summary_parts.append(f"{lbl.capitalize()}: {st['iters']}it/{st['time']:.2f}s")
+        
+        block_summary_str = ", ".join(block_summary_parts)
+        
+        total_rejections = sum(1 for m in self.subiter_metrics if not m["aa_accepted"])
+        total_restarts = sum(1 for m in self.subiter_metrics if m["aa_restart"])
+        max_cond = max((m["condH"] for m in self.subiter_metrics), default=0.0)
+        max_hist = max((m["aa_hist"] for m in self.subiter_metrics), default=0)
+
+        self.logger.info(f"Step Summary: {len(self.subiter_metrics)} Picard iters. "
+                         f"{block_summary_str}. "
+                         f"AA: max_m={max_hist}, max_cond={max_cond:.1e}, "
+                         f"rej={total_rejections}, rst={total_restarts}")
 
         if progress is not None and task_id is not None:
             progress.update(task_id, completed=True)
