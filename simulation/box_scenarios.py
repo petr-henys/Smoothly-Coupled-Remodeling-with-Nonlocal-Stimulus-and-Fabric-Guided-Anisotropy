@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import List
 
-from simulation.box_loader import BoxLoadingCase, PressureLoadSpec
+from simulation.box_loader import BoxLoadingCase, GradientType, PressureLoadSpec
 
 
 def get_single_pressure_case(
@@ -45,11 +45,12 @@ def get_gradient_pressure_case(
     pressure: float = 1.0,
     gradient_axis: int = 0,
     gradient_range: tuple[float, float] = (0.5, 1.5),
+    gradient_type: GradientType = GradientType.LINEAR,
     box_extent: tuple[float, float] = (0.0, 10.0),
     name: str = "gradient_compression",
     day_cycles: float = 1.0,
 ) -> BoxLoadingCase:
-    """Create a pressure case with linear gradient across the surface.
+    """Create a pressure case with spatial gradient across the surface.
     
     This creates non-uniform loading that drives density adaptation.
     Areas with higher load will densify, areas with lower load will resorb.
@@ -58,6 +59,7 @@ def get_gradient_pressure_case(
         pressure: Base pressure magnitude [MPa]
         gradient_axis: Axis for gradient (0=x, 1=y)
         gradient_range: (min_factor, max_factor) for pressure variation
+        gradient_type: Type of gradient (LINEAR, PARABOLIC, BENDING)
         box_extent: (min_coord, max_coord) along gradient axis
         name: Case name
         day_cycles: Loading cycles per day
@@ -72,7 +74,94 @@ def get_gradient_pressure_case(
             magnitude=pressure,
             direction=(0.0, 0.0, -1.0),
             gradient_axis=gradient_axis,
+            gradient_type=gradient_type,
             gradient_range=gradient_range,
+            box_extent=box_extent,
+        ),
+    )
+
+
+def get_parabolic_pressure_case(
+    pressure: float = 1.0,
+    gradient_axis: int = 0,
+    center_factor: float = 2.0,
+    edge_factor: float = 0.5,
+    box_extent: tuple[float, float] = (0.0, 10.0),
+    name: str = "parabolic_compression",
+    day_cycles: float = 1.0,
+) -> BoxLoadingCase:
+    """Create a parabolic pressure distribution - peak at center, low at edges.
+    
+    Creates a bell-shaped pressure distribution that produces:
+    - High SED at center -> bone densification
+    - Low SED at edges -> bone resorption
+    
+    This mimics localized loading (e.g., contact patch).
+    
+    Args:
+        pressure: Base pressure magnitude [MPa]
+        gradient_axis: Axis for parabola (0=x, 1=y)
+        center_factor: Factor at center (peak)
+        edge_factor: Factor at edges (min)
+        box_extent: (min_coord, max_coord) along axis
+        name: Case name
+        day_cycles: Loading cycles per day
+        
+    Returns:
+        BoxLoadingCase with parabolic pressure
+    """
+    return BoxLoadingCase(
+        name=name,
+        day_cycles=day_cycles,
+        pressure=PressureLoadSpec(
+            magnitude=pressure,
+            direction=(0.0, 0.0, -1.0),
+            gradient_axis=gradient_axis,
+            gradient_type=GradientType.PARABOLIC,
+            gradient_range=(edge_factor, center_factor),  # min at edges, max at center
+            box_extent=box_extent,
+        ),
+    )
+
+
+def get_bending_like_case(
+    pressure: float = 1.0,
+    gradient_axis: int = 0,
+    tension_factor: float = 0.2,
+    compression_factor: float = 1.8,
+    box_extent: tuple[float, float] = (0.0, 10.0),
+    name: str = "bending_load",
+    day_cycles: float = 1.0,
+) -> BoxLoadingCase:
+    """Create a bending-like load - compression on one side, reduced on other.
+    
+    Simulates eccentric loading that creates bending-like stress distribution:
+    - One side gets high compression -> high SED -> densification
+    - Other side gets low load -> low SED -> resorption
+    
+    This is useful for studying adaptive remodeling under asymmetric loading.
+    
+    Args:
+        pressure: Base pressure magnitude [MPa]
+        gradient_axis: Axis across which load varies (0=x, 1=y)
+        tension_factor: Factor on low-load side (< 1.0)
+        compression_factor: Factor on high-load side (> 1.0)
+        box_extent: (min_coord, max_coord) along axis
+        name: Case name
+        day_cycles: Loading cycles per day
+        
+    Returns:
+        BoxLoadingCase with bending-like pressure
+    """
+    return BoxLoadingCase(
+        name=name,
+        day_cycles=day_cycles,
+        pressure=PressureLoadSpec(
+            magnitude=pressure,
+            direction=(0.0, 0.0, -1.0),
+            gradient_axis=gradient_axis,
+            gradient_type=GradientType.LINEAR,  # Linear gives bending-like distribution
+            gradient_range=(tension_factor, compression_factor),
             box_extent=box_extent,
         ),
     )

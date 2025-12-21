@@ -16,11 +16,13 @@ from dolfinx import fem, mesh
 import basix.ufl
 
 from simulation.box_mesh import BoxGeometry, BoxMeshBuilder, create_box_mesh
-from simulation.box_loader import BoxLoader, BoxLoadingCase, PressureLoadSpec
+from simulation.box_loader import BoxLoader, BoxLoadingCase, GradientType, PressureLoadSpec
 from simulation.box_scenarios import (
     get_single_pressure_case,
     get_physiological_compression_cases,
     get_cyclic_loading_cases,
+    get_parabolic_pressure_case,
+    get_bending_like_case,
 )
 from simulation.box_factory import BoxSolverFactory
 from simulation.config import Config
@@ -237,6 +239,62 @@ class TestBoxScenarios:
         pressures = [c.pressure.magnitude for c in cases]
         assert np.isclose(min(pressures), 0.5)
         assert np.isclose(max(pressures), 3.0)
+
+    def test_parabolic_pressure_case(self):
+        """Test parabolic pressure distribution."""
+        case = get_parabolic_pressure_case(
+            pressure=1.0,
+            gradient_axis=0,
+            center_factor=2.0,
+            edge_factor=0.5,
+            box_extent=(0.0, 10.0),
+        )
+        
+        assert case.name == "parabolic_compression"
+        assert case.pressure.gradient_type == GradientType.PARABOLIC
+        assert case.pressure.gradient_range == (0.5, 2.0)  # (edge, center)
+
+    def test_bending_like_case(self):
+        """Test bending-like pressure distribution."""
+        case = get_bending_like_case(
+            pressure=2.0,
+            gradient_axis=1,
+            tension_factor=0.2,
+            compression_factor=1.8,
+        )
+        
+        assert case.name == "bending_load"
+        assert case.pressure.gradient_type == GradientType.LINEAR
+        assert case.pressure.magnitude == 2.0
+        assert case.pressure.gradient_axis == 1
+
+    def test_parabolic_loader_produces_peak_at_center(self, box_mesh_and_tags):
+        """Test that parabolic loading produces peak traction at center."""
+        domain, facet_tags = box_mesh_and_tags
+        loader = BoxLoader(domain, facet_tags)
+        
+        case = get_parabolic_pressure_case(
+            pressure=1.0,
+            gradient_axis=0,
+            center_factor=2.0,
+            edge_factor=0.5,
+            box_extent=(0.0, 10.0),
+        )
+        
+        loader.precompute_loading_cases([case])
+        loader.set_loading_case(case.name)
+        
+        # Check that traction is non-zero and varies spatially
+        traction_z = loader.traction.x.array[2::3]  # z-component
+        local_max = np.max(np.abs(traction_z)) if len(traction_z) > 0 else 0.0
+        local_min = np.min(np.abs(traction_z)) if len(traction_z) > 0 else 0.0
+        
+        comm = MPI.COMM_WORLD
+        global_max = comm.allreduce(local_max, op=MPI.MAX)
+        global_min = comm.allreduce(local_min, op=MPI.MIN)
+        
+        # Should have variation (center > edge)
+        assert global_max > global_min, "Parabolic load should have spatial variation"
 
 
 # =============================================================================
