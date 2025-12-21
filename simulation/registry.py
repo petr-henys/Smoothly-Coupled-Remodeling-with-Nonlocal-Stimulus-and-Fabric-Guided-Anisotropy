@@ -124,9 +124,16 @@ class BlockRegistry:
     def output_fields(self) -> List[fem.Function]:
         """Return list of all output fields for VTX storage.
 
-        Fields are deduplicated and returned in discovery order.
+        Fields are deduplicated and sorted: CG (Lagrange) first, then DG.
+        This ensures VTXWriter initializes with the CG mesh topology, preventing
+        "Point array size mismatch" errors when mixing Point (CG) and Cell (DG) data.
         """
-        return self._output_fields.copy()
+        def _sort_key(f):
+            # Use ufl_element() for robust family detection
+            # basix.ufl elements have 'discontinuous' property
+            return 0 if not f.function_space.ufl_element().discontinuous else 1
+
+        return sorted(self._output_fields, key=_sort_key)
 
     def setup_all(self) -> None:
         """Call setup() on all registered blocks."""

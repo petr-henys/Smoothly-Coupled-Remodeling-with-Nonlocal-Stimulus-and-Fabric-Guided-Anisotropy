@@ -159,6 +159,8 @@ class Remodeller:
         self.state_fields_old = self.registry.state_fields_old
 
         # Register output fields for VTX storage (auto-collected from blocks)
+        # Note: registry.output_fields is already sorted (CG first, then DG)
+        # to ensure VTXWriter initializes with correct topology.
         output_fields = self.registry.output_fields
         self.storage.fields.register("fields", output_fields, filename="fields.bp")
 
