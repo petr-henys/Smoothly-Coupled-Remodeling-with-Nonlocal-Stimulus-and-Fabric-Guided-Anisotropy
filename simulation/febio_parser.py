@@ -12,7 +12,7 @@ from simulation.logger import get_logger
 
 
 class FEBio2Dolfinx:
-    """Parse FEBio .feb file and build DOLFINx mesh with surface tags (units: mm)."""
+    """Parse .feb file and build DOLFINx mesh with surface tags (units: mm)."""
 
     def __init__(self, feb_file: str, log_file: str = None, *, comm: MPI.Comm = MPI.COMM_WORLD):
         """Load .feb file and build mesh with surface tags."""

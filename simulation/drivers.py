@@ -1,4 +1,4 @@
-"""GaitDriver: mechanics + cycle-weighted power-mean SED over multiple loading cases."""
+"""GaitDriver: multi-load mechanics with cycle-weighted power-mean SED."""
 
 from __future__ import annotations
 from typing import Any, Dict, List, Tuple, TYPE_CHECKING
@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 
 class StimulusCalculator:
-    """Calculates SED and fabric tensor from mechanics solution."""
+    """Computes SED (ψ) and fabric tensor (Q) from mechanics solution."""
 
     def __init__(self, mech: MechanicsSolver):
         """Initialize with mechanics solver to access state fields."""
@@ -67,12 +67,7 @@ class StimulusCalculator:
 
 
 class GaitDriver:
-    """Mechanics driver that computes accumulated SED stimulus.
-
-    For each loading case: set cached traction, solve mechanics, compute
-    element-wise psi = 0.5 * sigma : epsilon (DG0), and accumulate
-    weighted by day_cycles (number of loading cycles per day).
-    """
+    """Multi-load mechanics: solves each case, accumulates cycle-weighted SED and Q̄."""
 
     def __init__(
         self,

@@ -10,7 +10,7 @@ import ufl
 dtype = PETSc.ScalarType
 
 def build_nullspace(V: FunctionSpace):
-    """6-vector PETSc nullspace for 3D elasticity (rigid-body modes)."""
+    """Build 6-vector PETSc nullspace for 3D elasticity (rigid-body modes)."""
     bs = V.dofmap.index_map_bs
     length0 = V.dofmap.index_map.size_local
     basis = [la.vector(V.dofmap.index_map, bs=bs, dtype=dtype) for i in range(6)]
@@ -63,7 +63,7 @@ def build_facetag(m: mesh.Mesh) -> mesh.MeshTags:
 def build_dirichlet_bcs(
     V: fem.FunctionSpace, facet_tags: mesh.MeshTags, id_tag: int, value: float = 0.0
 ) -> List[fem.DirichletBC]:
-    """Homogeneous Dirichlet BCs on tagged facets."""
+    """Create homogeneous Dirichlet BCs on tagged facets."""
     fdim = V.mesh.topology.dim - 1
     facets = facet_tags.find(id_tag)
     bcs = []
@@ -74,13 +74,7 @@ def build_dirichlet_bcs(
     return bcs
 
 def assign(f: fem.Function, v, *, scatter: bool = True) -> None:
-    """Assign value to owned DOFs of a Function.
-
-    Args:
-        f: Target function.
-        v: Source value (scalar, array-like, or Function).
-        scatter: If True, update ghosts via scatter_forward().
-    """
+    """Assign value to owned DOFs; scatter_forward() if scatter=True."""
     owned = f.function_space.dofmap.index_map.size_local * f.function_space.dofmap.index_map_bs
     if isinstance(v, fem.Function):
         f.x.array[:owned] = v.x.array[:owned]
@@ -96,12 +90,12 @@ def assign(f: fem.Function, v, *, scatter: bool = True) -> None:
         f.x.scatter_forward()
 
 def get_owned_size(field: fem.Function) -> int:
-    """Number of locally owned DOFs."""
+    """Return number of locally owned DOFs."""
     return int(field.function_space.dofmap.index_map.size_local * field.function_space.dofmap.index_map_bs)
 
 
 def field_stats(field: fem.Function, comm: MPI.Comm) -> Tuple[float, float, float]:
-    """Global min, max, mean of owned DOFs."""
+    """Return global (min, max, mean) of owned DOFs."""
     n_owned = get_owned_size(field)
     local_data = field.x.array[:n_owned]
     
@@ -124,7 +118,7 @@ def field_stats(field: fem.Function, comm: MPI.Comm) -> Tuple[float, float, floa
 
 
 def collect_dirichlet_dofs(bcs, n_owned: int) -> np.ndarray:
-    """Unique owned DOF indices from BCs."""
+    """Return unique owned DOF indices from boundary conditions."""
     chunks = []
     for bc in bcs:
         idx, first_ghost = bc.dof_indices()
@@ -136,7 +130,7 @@ def collect_dirichlet_dofs(bcs, n_owned: int) -> np.ndarray:
     return np.unique(np.concatenate(chunks))
 
 def smooth_abs(x, eps=1e-4):
-    """C¹ approximation of |x|: sqrt(x² + eps²) - eps."""
+    """C¹ approximation of |x|."""
     return ufl.sqrt(x**2 + eps**2) - eps
 
 def smooth_plus(x, eps=1e-4):
@@ -149,10 +143,7 @@ def smooth_max(x, y, eps=1e-4):
 
 
 def smoothstep01(t):
-    """Cubic smoothstep on [0,1] with hard clamping.
-
-    Returns 0 for t<=0, 1 for t>=1, and t^2(3-2t) in between.
-    """
+    """Cubic smoothstep on [0,1]: 0 for t≤0, 1 for t≥1, t²(3-2t) in between."""
     t_clamped = ufl.conditional(ufl.le(t, 0.0), 0.0, ufl.conditional(ufl.ge(t, 1.0), 1.0, t))
     return t_clamped * t_clamped * (3.0 - 2.0 * t_clamped)
 
@@ -167,12 +158,12 @@ def clamp(x, a, b):
 
 
 def symm(X):
-    """Symmetric part of a tensor: (X + X^T) / 2."""
+    """Symmetric part: (X + X^T) / 2."""
     return 0.5 * (X + ufl.transpose(X))
 
 
 def eigenvalues_sym3(X, *, eps_p: float = 1e-18, eps_r: float = 1e-12, tol: float = 1e-14):
-    """Eigenvalues of a symmetric 3×3 tensor via invariant formula (robust, no eigenvectors)."""
+    """Eigenvalues of symmetric 3×3 tensor via invariant formula."""
     Xs = symm(X)
     I = ufl.Identity(3)
 
@@ -202,7 +193,7 @@ def eigenvalues_sym3(X, *, eps_p: float = 1e-18, eps_r: float = 1e-12, tol: floa
 
 
 def projectors_sylvester(X, l1, l2, l3, *, eps_d: float = 1e-12, tol: float = 1e-14):
-    """Spectral projectors for a symmetric 3×3 tensor using Sylvester formula (robust denominators)."""
+    """Spectral projectors for symmetric 3×3 tensor via Sylvester formula."""
     Xs = symm(X)
     I = ufl.Identity(3)
 

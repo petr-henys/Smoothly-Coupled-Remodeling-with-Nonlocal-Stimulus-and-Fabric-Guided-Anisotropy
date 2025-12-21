@@ -1,4 +1,4 @@
-"""Filesystem paths for anatomy inputs and simulation outputs."""
+"""Filesystem paths for anatomy inputs and results."""
 
 from pathlib import Path
 import shutil

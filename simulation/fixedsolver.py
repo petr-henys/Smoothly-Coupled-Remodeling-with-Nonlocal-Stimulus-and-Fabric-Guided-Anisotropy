@@ -1,15 +1,4 @@
-"""Fixed-point coupling via block Gauss-Seidel + optional Anderson acceleration.
-
-Each block must implement the `CouplingBlock` protocol:
-- `state_fields`: tuple of fields that form the coupled state
-- `setup()`: one-time initialization
-- `assemble_lhs()`: reassemble dt-dependent operators
-- `sweep()`: perform one block update (returns SweepStats)
-- `destroy()`: release resources
-
-Blocks with `state_fields == ()` may still run each sweep (side effects), but do
-not contribute entries to the Anderson-mixed state vector.
-"""
+"""Block Gauss-Seidel fixed-point solver with optional Anderson acceleration."""
 
 from __future__ import annotations
 
@@ -40,7 +29,7 @@ class _FieldSpec:
 
 
 class FixedPointSolver:
-    """Block Gauss-Seidel + optional Anderson acceleration."""
+    """Block Gauss-Seidel iteration with optional Anderson acceleration."""
 
     def __init__(self, comm: MPI.Comm, cfg: Config, blocks: Sequence[CouplingBlock]):
         self.comm = comm

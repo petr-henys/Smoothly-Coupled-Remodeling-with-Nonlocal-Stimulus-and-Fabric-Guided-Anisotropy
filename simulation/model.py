@@ -1,11 +1,4 @@
-"""Top-level remodeling loop: couples mechanics, stimulus, and density.
-
-Orchestrates:
-- mechanics solve(s) via `GaitDriver` (multi-load SED averaging)
-- density solve via `DensitySolver`
-- fixed-point coupling with optional Anderson acceleration
-- adaptive time stepping via `TimeIntegrator`
-"""
+"""Remodeller: main orchestrator coupling mechanics, stimulus, and density."""
 
 from __future__ import annotations
 
@@ -34,7 +27,7 @@ if TYPE_CHECKING:
 
 
 class Remodeller:
-    """Orchestrates coupled mechanics↔density remodeling (MPI-parallel)."""
+    """MPI-parallel coupled mechanics↔density remodeling loop."""
 
     def __init__(
         self,
@@ -43,7 +36,7 @@ class Remodeller:
         loading_cases: List[LoadingCase],
         factory: SolverFactory | None = None,
     ):
-        """Initialize coupled solvers, I/O, and precomputed loading cases."""
+        """Initialize solvers and precompute loading cases."""
         self.cfg = cfg
         self.domain = cfg.domain
         self.comm: MPI.Comm = self.domain.comm
@@ -234,17 +227,7 @@ class Remodeller:
         step_index: int = 0,
         sim_time: float = 0.0,
     ) -> Tuple[float, Dict]:
-        """Execute a single timestep attempt.
-
-        Args:
-            dt: Timestep size [days].
-            reporter: Optional progress reporter for subiteration display.
-            step_index: Current step index (1-based).
-            sim_time: Current simulation time [days].
-
-        Returns:
-            Tuple of (error_norm, metrics_dict).
-        """
+        """Execute one timestep; returns (error_norm, metrics_dict)."""
         for name, f in self.state_fields.items():
             assign(self.state_fields_old[name], f, scatter=True)
 
@@ -269,12 +252,7 @@ class Remodeller:
         return error_norm, {"converged": converged, "iters": used_subiters}
 
     def simulate(self, reporter: ProgressReporter | None = None) -> None:
-        """Run remodeling loop using dt_initial and total_time from Config.
-
-        Args:
-            reporter: Optional progress reporter. If None, a default reporter
-                     is created on rank 0.
-        """
+        """Run remodeling loop using dt_initial and total_time from Config."""
         t = 0.0
         dt = float(self.cfg.time.dt_initial)
         total_time = float(self.cfg.time.total_time)

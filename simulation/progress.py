@@ -1,8 +1,4 @@
-"""Rich progress display for simulation (rank-0 only).
-
-Encapsulates all presentation logic for the simulation progress bar,
-keeping it separate from the core simulation code.
-"""
+"""Rich progress bar for simulation (rank-0 only)."""
 
 from __future__ import annotations
 
@@ -13,17 +9,7 @@ if TYPE_CHECKING:
 
 
 class ProgressReporter:
-    """Encapsulates Rich progress bar logic for MPI-parallel simulations.
-
-    Only rank 0 displays progress; other ranks have no-op methods.
-
-    Usage:
-        with ProgressReporter(comm, total_time, max_subiters) as progress:
-            for step in simulation:
-                progress.update_main(t, dt, error)
-                for subiter in coupling_iterations:
-                    progress.update_subiter(subiter)
-    """
+    """Rich progress bar: main task (simulation time) + subtask (coupling iters)."""
 
     def __init__(self, comm: "MPI.Comm", total_time: float, max_subiters: int):
         """Initialize progress reporter.

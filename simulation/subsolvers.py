@@ -1,4 +1,4 @@
-"""Linear subsolvers for mechanics, stimulus, and density."""
+"""PDE subsolvers: mechanics, fabric, stimulus, density."""
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 
 
 class _BaseLinearSolver:
-    """Base class for PETSc KSP linear solvers."""
+    """Base class for PETSc KSP solvers."""
 
     # Subclasses must define this label for stats identification
     _label: str = "base"
@@ -179,7 +179,7 @@ class _BaseLinearSolver:
 
 
 class MechanicsSolver(_BaseLinearSolver):
-    """Linear elasticity with density-dependent stiffness."""
+    """Linear elasticity with density/fabric-dependent anisotropic stiffness."""
 
     _label = "mech"
 
@@ -458,12 +458,7 @@ class MechanicsSolver(_BaseLinearSolver):
 
 
 class FabricSolver(_BaseLinearSolver):
-    """Log-fabric evolution in log-space (symmetric tensor L), updated by implicit Euler.
-
-The model relaxes L towards a coaxial target L_target(Qbar) with optional diffusion. The
-relaxation rate is smoothly down-weighted when Qbar is nearly isotropic, which reduces
-noise-driven fabric drift and eigenvector switching.
-"""
+    """Log-fabric evolution L → L_target(Q̄) with diffusion (implicit Euler)."""
 
     _label = "fab"
 
@@ -686,12 +681,7 @@ noise-driven fabric drift and eigenvector switching.
 
 
 class StimulusSolver(_BaseLinearSolver):
-    """Update stimulus field `S` via diffusion/decay with a smooth, saturating mechanostat drive.
-
-The drive is based on the specific strain energy m = psi/rho_safe relative to a reference m_ref.
-A smooth "lazy zone" gate suppresses very small deviations without a hard dead-band, and tanh
-provides saturation for large deviations.
-"""
+    """Stimulus S: diffusion + decay with saturating mechanostat drive."""
 
     _label = "stim"
 
@@ -812,16 +802,7 @@ provides saturation for large deviations.
 
 
 class DensitySolver(_BaseLinearSolver):
-    """Density evolution (implicit Euler diffusion + bounded formation/resorption kinetics).
-
-    Continuous model implemented (up to smoothing of clamps):
-
-        dρ/dt = Dρ Δρ
-               + k_form S_+ (1 - ρ/ρ_max)
-               - k_res  S_- (1 - ρ/ρ_min),
-
-    optionally scaled by a surface availability A(ρ_old) when cfg.surface_use=True.
-    """
+    """Density ρ: diffusion + bounded formation/resorption kinetics (implicit Euler)."""
 
     _label = "dens"
 

@@ -1,12 +1,4 @@
-"""Block registry for automatic state/output field discovery.
-
-The BlockRegistry collects coupling blocks and automatically discovers:
-- State fields for fixed-point coupling and time integration
-- Old-step counterparts for rollback on rejected steps
-- Output fields for VTX storage
-
-This enables adding/removing subsolvers without manual wiring in the orchestrator.
-"""
+"""Block registry for automatic state/output field discovery."""
 
 from __future__ import annotations
 
@@ -23,21 +15,7 @@ if TYPE_CHECKING:
 
 
 class BlockRegistry:
-    """Registry that auto-discovers fields from coupling blocks.
-
-    Usage:
-        registry = BlockRegistry(comm, cfg)
-        registry.register(driver)
-        registry.register(fabric_solver)
-        registry.register(stimulus_solver)
-        registry.register(density_solver)
-
-        # Auto-collected fields
-        state_fields = registry.state_fields        # Dict[str, Function]
-        state_fields_old = registry.state_fields_old  # Dict[str, Function]
-        output_fields = registry.output_fields      # List[Function]
-        blocks = registry.blocks                    # Tuple[CouplingBlock, ...]
-    """
+    """Collects blocks and auto-discovers their state/output fields."""
 
     def __init__(self, comm: MPI.Comm, cfg: "Config"):
         self.comm = comm

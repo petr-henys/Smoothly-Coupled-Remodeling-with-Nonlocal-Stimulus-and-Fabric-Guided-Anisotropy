@@ -1,8 +1,4 @@
-"""Solver factory for creating simulation components.
-
-This module defines the interface and default implementation for creating
-solvers, allowing for dependency injection and easier testing.
-"""
+"""Solver factory for dependency injection."""
 
 from __future__ import annotations
 from typing import List, Protocol, TYPE_CHECKING
@@ -19,7 +15,7 @@ if TYPE_CHECKING:
 
 
 class SolverFactory(Protocol):
-    """Abstract factory for creating simulation solvers."""
+    """Abstract factory for creating solvers."""
 
     def create_mechanics_solver(
         self,
@@ -70,7 +66,7 @@ class SolverFactory(Protocol):
 
 
 class DefaultSolverFactory:
-    """Default implementation of SolverFactory."""
+    """Default solver factory implementation."""
 
     def __init__(self, cfg: Config):
         self.cfg = cfg

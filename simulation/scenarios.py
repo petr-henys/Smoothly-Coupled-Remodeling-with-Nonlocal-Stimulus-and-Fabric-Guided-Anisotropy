@@ -1,8 +1,4 @@
-"""Predefined gait loading scenarios for bone remodeling.
-
-Provides factory functions and utilities for creating loading cases
-that represent different gait phases and activities.
-"""
+"""Predefined gait loading scenarios."""
 
 from __future__ import annotations
 
@@ -13,15 +9,7 @@ from simulation.loader import HipLoadSpec, LoadingCase, MuscleLoadSpec
 
 
 def get_standard_gait_cases() -> list[LoadingCase]:
-    """Get standard walking gait cycle (4 phases).
-
-    Returns:
-        List of LoadingCase objects representing:
-        - Heel strike (0–10%): impact/weight acceptance
-        - Mid-stance (~30%): peak single-leg support
-        - Toe-off (~60%): propulsion/pre-swing
-        - Stair climbing: high torsion/bending (low frequency)
-    """
+    """Standard walking cycle: heel strike, mid-stance, toe-off, stair climb."""
     # 1) Heel strike (0–10%): impact/weight acceptance
     case_heel_strike = LoadingCase(
         name="heel_strike",

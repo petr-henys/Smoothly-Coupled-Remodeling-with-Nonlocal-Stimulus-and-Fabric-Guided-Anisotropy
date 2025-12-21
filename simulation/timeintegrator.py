@@ -1,8 +1,4 @@
-"""Adaptive AB2 predictor with Gustafsson PI control.
-
-The integrator is field-agnostic: it can predict and estimate error for an
-arbitrary set of coupled state fields (e.g., ``S`` and ``rho``).
-"""
+"""AB2 predictor with Gustafsson PI adaptive time stepping."""
 
 from __future__ import annotations
 
@@ -26,11 +22,7 @@ class _FieldHistory:
 
 
 class TimeIntegrator:
-    """Adaptive time stepping for state-field updates.
-
-    Uses an AB2 predictor for error estimation and a Gustafsson PI controller.
-    Step is accepted if WRMS ≤ 1.
-    """
+    """AB2 predictor + PI controller for adaptive time stepping."""
 
     def __init__(
         self,

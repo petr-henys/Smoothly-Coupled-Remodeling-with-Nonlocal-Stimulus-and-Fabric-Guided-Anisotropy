@@ -1,9 +1,4 @@
-"""Structured statistics for solver blocks.
-
-Defines the SweepStats dataclass that all CouplingBlock.sweep() methods must return.
-Mandatory stats: label, ksp_iters, ksp_reason, solve_time.
-Physics-specific stats go in the `extra` dict.
-"""
+"""Structured statistics for solver blocks and timesteps."""
 
 from __future__ import annotations
 
@@ -13,18 +8,7 @@ from typing import Any, Dict, List
 
 @dataclass(frozen=True)
 class SweepStats:
-    """Statistics returned by every CouplingBlock.sweep() call.
-
-    Mandatory fields capture common solver metrics. Physics-specific
-    data (e.g., anisotropy measures, field bounds) goes in `extra`.
-
-    Attributes:
-        label: Short block identifier (e.g., "mech", "fab", "stim", "dens").
-        ksp_iters: Total KSP iterations for this sweep.
-        ksp_reason: PETSc KSP convergence reason (>=0 means converged).
-        solve_time: Wall-clock time for the solve [seconds].
-        extra: Dict of physics-specific stats (e.g., {"a_min": 0.5, "a_max": 2.1}).
-    """
+    """Statistics from one CouplingBlock.sweep() call."""
 
     label: str
     ksp_iters: int
@@ -86,7 +70,7 @@ class SweepStats:
 
 @dataclass
 class StepSummary:
-    """Aggregated statistics for one complete timestep (all Picard iterations)."""
+    """Aggregated statistics for one timestep (all Picard iterations)."""
 
     picard_iters: int
     total_ksp_iters: Dict[str, int]

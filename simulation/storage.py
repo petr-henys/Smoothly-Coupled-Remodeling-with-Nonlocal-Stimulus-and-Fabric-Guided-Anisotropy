@@ -1,4 +1,4 @@
-"""VTX field output (collective MPI)."""
+"""VTX field output (MPI-collective)."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from simulation.logger import get_logger
 
 
 class FieldStorage:
-    """VTX field writers. All ops are MPI-collective."""
+    """Manages VTX writers for field output."""
 
     __slots__ = ("comm", "logger", "output_dir", "_writers", "_write_counts")
 
@@ -69,7 +69,7 @@ class FieldStorage:
 
 
 class UnifiedStorage:
-    """Field storage wrapper."""
+    """Top-level storage wrapper."""
 
     __slots__ = ("comm", "fields")
 

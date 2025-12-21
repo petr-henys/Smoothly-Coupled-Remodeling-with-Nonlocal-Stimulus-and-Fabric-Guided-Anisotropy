@@ -1,10 +1,4 @@
-"""Grouped parameter dataclasses for simulation configuration.
-
-These dataclasses organize simulation parameters into logical groups,
-improving code organization, IDE support, and validation.
-
-Units: mm, day, MPa, g/cm³ (consistent with DOLFINx mesh units).
-"""
+"""Parameter dataclasses for simulation configuration (mm, day, MPa, g/cm³)."""
 
 from __future__ import annotations
 
@@ -14,11 +8,7 @@ from typing import Any
 
 @dataclass
 class MaterialParams:
-    """Material constitutive parameters.
-
-    Density-dependent modulus: E(ρ) = E₀ (ρ/ρ_ref)^k
-    with k blending from n_trab to n_cort via smoothstep.
-    """
+    """Material constitutive law: E(ρ) = E₀ (ρ/ρ_ref)^k with k blending trab→cort."""
 
     # Young's modulus reference [MPa]
     E0: float = 7500.0
@@ -56,10 +46,7 @@ class MaterialParams:
 
 @dataclass
 class DensityParams:
-    """Bone density evolution parameters.
-
-    PDE: ∂ρ/∂t = D_ρ ∇²ρ + k_form·S₊·(1-ρ/ρ_max) - k_res·S₋·(1-ρ/ρ_min)
-    """
+    """Density evolution: ∂ρ/∂t = D_ρ∇²ρ + formation - resorption."""
 
     # Density bounds [g/cm³]
     rho_min: float = 0.1
@@ -108,11 +95,7 @@ class DensityParams:
 
 @dataclass
 class StimulusParams:
-    """Mechanical stimulus field parameters.
-
-    PDE: ∂S/∂t = D_S ∇²S - (1/τ_S)S + (1/τ_S)S_max·tanh(δ/κ)
-    where δ = (ψ/ρ - ψ_ref/ρ_ref) / (ψ_ref/ρ_ref).
-    """
+    """Stimulus evolution: diffusion + decay toward mechanostat drive."""
 
     # Power-mean exponent for multi-load SED averaging (1=mean; higher→peak-biased)
     stimulus_power_p: float = 4.0
@@ -155,10 +138,7 @@ class StimulusParams:
 
 @dataclass
 class FabricParams:
-    """Fabric tensor evolution parameters.
-
-    Log-fabric tensor L evolves via reaction-diffusion toward L_target(Q̄).
-    """
+    """Log-fabric tensor L: reaction-diffusion toward L_target(Q̄)."""
 
     # Time constant [days]
     fabric_tau: float = 50.0
@@ -199,7 +179,7 @@ class FabricParams:
 
 @dataclass
 class SolverParams:
-    """Linear and nonlinear solver parameters."""
+    """KSP and fixed-point solver settings."""
 
     # PETSc KSP solver type
     ksp_type: str = "minres"
@@ -275,7 +255,7 @@ class SolverParams:
 
 @dataclass
 class TimeParams:
-    """Time integration and adaptive stepping parameters."""
+    """Time stepping and adaptive control."""
 
     # Total simulation time [days]
     total_time: float = 500.0
@@ -314,7 +294,7 @@ class TimeParams:
 
 @dataclass
 class NumericsParams:
-    """Numerical method parameters."""
+    """Quadrature and smoothing settings."""
 
     # Quadrature degree for integration
     quadrature_degree: int = 4
@@ -332,7 +312,7 @@ class NumericsParams:
 
 @dataclass
 class OutputParams:
-    """Output and storage parameters."""
+    """Results directory and saving interval."""
 
     # Output interval (every N steps)
     saving_interval: int = 1
@@ -351,7 +331,7 @@ class OutputParams:
 
 @dataclass
 class GeometryParams:
-    """Mesh tagging configuration."""
+    """Facet tag IDs for boundary conditions."""
 
     # Facet tag for fixed boundary conditions (Dirichlet)
     fix_tag: int = 1

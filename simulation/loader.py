@@ -1,11 +1,4 @@
-"""MPI-parallel femur load mapping with traction caching.
-
-Rank 0 owns the PyVista geometry and evaluates surface tractions at gathered
-DOF coordinates; all ranks receive scattered values and assemble a DOLFINx
-traction field. Loading cases are precomputed once and then replayed cheaply.
-
-Units: geometry in mm; input forces in N; traction output in MPa (N/mm²).
-"""
+"""MPI-parallel traction loader with precomputed loading case cache."""
 
 from __future__ import annotations
 
@@ -26,7 +19,7 @@ from simulation.utils import assign, get_owned_size
 
 @dataclass
 class HipLoadSpec:
-    """Hip joint load: magnitude [N], angles [deg], Gaussian spread [deg]."""
+    """Hip joint load specification."""
     magnitude: float
     alpha_sag: float       # Sagittal angle (+ anterior)
     alpha_front: float     # Frontal angle (+ lateral)
@@ -36,7 +29,7 @@ class HipLoadSpec:
 
 @dataclass
 class MuscleLoadSpec:
-    """Muscle load: name, magnitude [N], angles [deg], Gaussian spread [mm]."""
+    """Muscle load specification."""
     name: str              # Muscle ID (glmed, glmin, glmax, psoas, vastus_*)
     magnitude: float       # Force magnitude [N]
     alpha_sag: float       # Sagittal angle (+ anterior)
@@ -47,7 +40,7 @@ class MuscleLoadSpec:
 
 @dataclass 
 class LoadingCase:
-    """One gait phase: hip load + zero or more muscle loads."""
+    """One gait phase: hip load + optional muscle loads."""
     name: str
     day_cycles: float             # Number of loading cycles per day
     hip: HipLoadSpec | None       # Hip joint load (None if no hip load)
@@ -67,18 +60,14 @@ MUSCLE_PATHS = {
 
 @dataclass
 class CachedTraction:
-    """Cached owned-DOF traction values for one loading case."""
+    """Precomputed traction for one loading case."""
     name: str
     day_cycles: float
     traction: np.ndarray  # Flat array for proximal traction
 
 
 class Loader:
-    """MPI-parallel traction loader with precomputed case cache.
-
-    Builds tractions on the proximal surface; the cut surface is clamped via
-    Dirichlet BCs in mechanics.
-    """
+    """MPI-parallel traction loader: precomputes cases, replays them cheaply."""
     
     def __init__(self, mesh: dmesh.Mesh, facet_tags: dmesh.MeshTags, load_tag: int):
         """Create loader for `mesh` and proximal surface tag `load_tag`."""

@@ -34,6 +34,7 @@ def build_load(gait_data, force_vector):
     return full_data
 
 def vector_from_angles(magnitude: float, alpha_sag: float = 0.0, alpha_front: float = 0.0) -> np.ndarray:
+    """Convert magnitude + sagittal/frontal angles to 3D force vector."""
     a_sag, a_front = np.deg2rad([alpha_sag, alpha_front])
     t_sag, t_front = np.tan(a_sag), np.tan(a_front)
     
@@ -67,6 +68,7 @@ def orthoload2ISB(points: np.ndarray) -> np.ndarray:
     return points[:, [0, 2, 3, 1]]
 
 class GaussianSurfaceLoad:
+    """Base class for Gaussian-distributed surface loads."""
 
     def __init__(self, femur_mesh: pv.PolyData, femur_css: FemurCSS, use_cell_data: bool = True, verbose: bool = True):
         self.css = femur_css
@@ -168,7 +170,7 @@ class GaussianSurfaceLoad:
         return traction_vectors
 
 class HIPJointLoad(GaussianSurfaceLoad):
-    """Hip joint load using ray-traced Gaussian distribution."""
+    """Hip joint load via ray-traced Gaussian on femoral head."""
 
     def get_contact_point_css(self, force_vector_css: np.ndarray) -> np.ndarray:
         """Find the center of the contact patch on the CSS surface."""

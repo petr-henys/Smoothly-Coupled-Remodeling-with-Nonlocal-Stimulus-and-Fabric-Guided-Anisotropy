@@ -1,7 +1,4 @@
-"""MPI-safe logging with rank-0 output via `PETSc.Sys.Print`.
-
-Also provides standard `logging` utilities for non-MPI scripts.
-"""
+"""MPI-safe logging via PETSc.Sys.Print (rank-0 only)."""
 
 import logging
 import sys
@@ -25,7 +22,7 @@ class Level(IntEnum):
 
 
 class Logger:
-    """Rank-0 logger with optional lazy message evaluation."""
+    """Rank-0 logger with lazy message evaluation."""
 
     __slots__ = ("comm", "console_level", "file_level", "name", "prefix", "log_file")
 

@@ -1,13 +1,7 @@
-"""Simulation package for bone remodeling.
+"""Bone remodeling simulation package.
 
-This package provides the core simulation components:
-- Config: Simulation parameters organized into logical groups
-- Remodeller: Top-level orchestrator for coupled simulations
-- Solvers: MechanicsSolver, DensitySolver, StimulusSolver, FabricSolver
-- Drivers: GaitDriver for multi-load mechanical analysis
-- Protocols: CouplingBlock interface for solver blocks
-- ProgressReporter: Rich progress display
-- Scenarios: Predefined gait loading configurations
+Core components: Config, Remodeller, CouplingBlock protocol, GaitDriver,
+subsolvers (Mechanics, Fabric, Stimulus, Density), ProgressReporter.
 """
 
 from simulation.config import Config

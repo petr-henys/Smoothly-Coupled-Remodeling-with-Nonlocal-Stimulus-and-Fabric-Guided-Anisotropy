@@ -24,11 +24,7 @@ from simulation.params import (
 
 @dataclass
 class Config:
-    """Simulation parameters (mm, day, MPa, g/cm³).
-
-    Parameters are organized into logical groups via nested dataclasses.
-    Access parameters via their group: cfg.material.E0, cfg.density.rho_min, etc.
-    """
+    """Simulation configuration (mm, day, MPa, g/cm³). Access via: cfg.material.E0, etc."""
 
     # Grouped parameter dataclasses
     material: MaterialParams = field(default_factory=MaterialParams)

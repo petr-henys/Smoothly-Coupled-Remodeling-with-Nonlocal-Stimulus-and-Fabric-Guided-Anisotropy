@@ -1,9 +1,4 @@
-"""MPI-aware Anderson acceleration with a fixed interface.
-
-Exposes `reset()` and `mix(x_old, x_raw) -> (x_new, info)`. Inner products are
-global (MPI reductions). The caller is responsible for scaling/normalizing the
-state vector before mixing.
-"""
+"""MPI-aware Anderson acceleration with safeguard and restart."""
 
 from __future__ import annotations
 
@@ -17,10 +12,7 @@ from simulation.logger import get_logger
 
 
 class Anderson:
-    """MPI-aware Anderson acceleration with safeguard + restart.
-
-    Constructor arguments are intentionally explicit: no defaults.
-    """
+    """Anderson mixing with backtracking safeguard and history restart."""
 
     def __init__(
         self,
