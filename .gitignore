@@ -13,6 +13,9 @@
 !/parametrizer.py
 !/postprocessor.py
 !/run_remodeller.py
+!/run_box_model.py
+!/run_convergence_sweep.py
+!/run_model.py
 
 # Python cache
 __pycache__/
