@@ -61,7 +61,7 @@
     country={Czechia}}
 %% Abstract
 \begin{abstract}
-We propose a four-field bone-remodeling formulation that co-evolves displacement $\mathbf{u}$, apparent density $\rho$, log-fabric $\mathbf{L} = \ln \mathbf{A}$, and a nonlocal mechanotransductive stimulus $S$. The elastic response follows a fabric-guided orthotropic law, where stiffness tensors are constructed from the spectral decomposition of $\mathbf{L}$. A cycle-weighted strain-energy driver is filtered by a diffusion--reaction stimulus with a smooth saturating (lazy-zone) mechanostat; density evolves via bounded formation/resorption kinetics with diffusive regularization; and log-fabric relaxes toward a trace-normalized target constructed from cycle-weighted stress outer-products, with spatial diffusion and activity gating. Time integration is fully implicit Backward--Euler; space is discretized by conforming $H^1$ finite elements in a unified weak-form notation. Nonlinear coupling is solved by a partitioned block Gauss--Seidel sweep (mechanics $\rightarrow$ fabric $\rightarrow$ stimulus $\rightarrow$ density) wrapped in Type-II Anderson acceleration with Tikhonov regularization and residual safeguards. A single smoothing policy used across clamping and normalizations ensures differentiability and preserves coercivity, while the solver architecture yields stable, mesh-robust convergence without monolithic Jacobians.
+We propose a four-field bone-remodeling formulation that co-evolves displacement $\mathbf{u}$, apparent density $\rho$, log-fabric $\mathbf{L} = \ln \mathbf{A}$, and a nonlocal mechanotransductive stimulus $S$. The elastic response follows a fabric-guided orthotropic law, where stiffness tensors are constructed from the spectral decomposition of $\mathbf{L}$. A cycle-weighted strain-energy driver is filtered by a diffusion--reaction stimulus with a smooth saturating (lazy-zone) mechanostat; density evolves via bounded formation/resorption kinetics with diffusive regularization; and log-fabric relaxes toward a trace-free logarithmic target constructed from cycle-weighted \emph{deviatoric} stress outer-products, with spatial diffusion and activity gating. Time integration is fully implicit Backward--Euler; space is discretized by conforming $H^1$ finite elements in a unified weak-form notation. Nonlinear coupling is solved by a partitioned block Gauss--Seidel sweep (mechanics $\rightarrow$ fabric $\rightarrow$ stimulus $\rightarrow$ density) wrapped in Type-II Anderson acceleration with Tikhonov regularization and residual safeguards. A single smoothing policy used across clamping and normalizations ensures differentiability and preserves coercivity, while the solver architecture yields stable, mesh-robust convergence without monolithic Jacobians.
 \end{abstract}
 
 %% Graphical abstract
@@ -94,7 +94,11 @@ From a numerical standpoint, loosely coupled or explicit updates are in general 
 \label{sec:related-novelty}
 Our formulation sits between classical density--only mechanostat models and fully coupled cell--population or damage--remodeling frameworks. In \emph{local} mechanostat models the remodeling drive is a pointwise function of a mechanical index, typically strain or strain--energy density, and only the density $\rho$ evolves; transport and fabric are absent and spatial regularity is supplied ad hoc (cf.\ early density models and follow--ups reviewed in \cite{Giorgio2019_MechanicallyDrivenBiological}). Nonlocal and \emph{diffusive} stimulus fields---as in \eqref{eq:stim-strong-nd}---have been advocated to account for osteocytic/vascular communication and to remove checkerboarding; this strand has gained traction in the last decade \cite{Giorgio2019_MechanicallyDrivenBiological, Addessi2024_BoneRemodelingApproach}. On the elasticity side, orthotropic models that couple BV/TV and second--order fabric tensors to the full fourth--order stiffness tensor (Cowin's relations and the Zysset--Curnier model) are now standard in homogenized micro--FE and hFE pipelines \cite{Cowin1985_RelationshipBetweenElasticity, Turner1990_FabricDependenceOrthotropic, Zysset1995_AlternativeModelAnisotropic, Maquer2015_BoneVolumeFraction, Maquer2017_NotOnlyStiffness}. Our constitutive choice preserves this spirit but adopts an energetically nonnegative, rank--one reinforcement aligned with a unit--trace direction proxy $\widehat{\mathbf{A}}$, which empirically captures the dominant directional effect while simplifying the numerics; it leaves the isotropic floor strictly coercive through the smooth clamp $\widetilde\rho\ge\rho_{\min}$, cf.\ \eqref{eq:smooth-max-nd}.
 
-In the \emph{evolution} of anisotropy, several authors align fabric with stress or strain measures and regularize it by diffusion or smoothing (e.g.\ structure--tensor approaches and stress--alignment hypotheses, see \cite{Kuo2007_QuantifyingAnisotropyTrabecular, Rietbergen2015_NovelApproachEstimate, Dutra2016_QuantifyingTrabecularBone}). We follow this line by evolving the log-fabric $\mathbf{L}=\ln\mathbf{A}$ with a relaxation--diffusion flow toward a trace-normalized target constructed from the cycle-averaged stress outer-product $\bar{\mathbf{Q}}=\mathrm{sym}(\boldsymbol{\sigma}\boldsymbol{\sigma}^{\!\top})$, using smooth regularization and eigenvalue-ratio bounds to avoid non-differentiable spectral projections and extreme anisotropy.
+In the \emph{evolution} of anisotropy, several authors align fabric with stress or strain measures and regularize it by diffusion or smoothing (e.g.\ structure--tensor approaches and stress--alignment hypotheses, see \cite{Kuo2007_QuantifyingAnisotropyTrabecular, Rietbergen2015_NovelApproachEstimate, Dutra2016_QuantifyingTrabecularBone}). We follow this line by evolving the log-fabric $\mathbf{L}=\ln\mathbf{A}$ with a relaxation--diffusion flow toward a trace-free logarithmic target constructed from the cycle-averaged \emph{deviatoric} stress outer-product,
+\(
+\bar{\mathbf{Q}}=\mathrm{sym}(\boldsymbol{\sigma}_{\mathrm{dev}}\boldsymbol{\sigma}_{\mathrm{dev}}^{\!\top})
+\)
+with $\boldsymbol{\sigma}_{\mathrm{dev}}:=\boldsymbol{\sigma}-\tfrac13(\mathrm{tr}\,\boldsymbol{\sigma})\mathbf{I}$, using smooth regularization and eigenvalue-ratio bounds to avoid non-differentiable spectral projections and extreme anisotropy.
 
 % (Solver recap moved earlier; see \S\ref{sec:fp-aa} for details.)
 
@@ -132,11 +136,11 @@ The orthotropic engineering constants are given by:
 \paragraph{Orthotropic tensor construction and physical admissibility.}
 The coefficients \eqref{eq:zysset-curnier} define engineering constants in the \emph{principal fabric frame}.
 Let $\widehat{\mathbf{A}}$ denote the \emph{deviatoric (unit-determinant) normalization} of the fabric tensor, defined by \eqref{eq:Ahat-blend-nd}. We denote by $\{\mathbf{a}_i\}_{i=1}^3$ the orthonormal eigenvectors of $\widehat{\mathbf{A}}$ and by $\{m_i\}_{i=1}^3$ its eigenvalues, which represent \emph{eigenvalue ratios} (anisotropy factors) with isotropic scaling removed.
-The stiffness tensor $\mathbb{C}(\rho,\mathbf{A})$ entering $\boldsymbol{\sigma}=\mathbb{C}:\boldsymbol{\varepsilon}$ is assembled by:
-(i) forming the orthotropic \emph{compliance} matrix $\mathbf{S}$ in this material frame from $\{E_i,G_{ij},\nu_{ij}\}$ (Voigt notation),
-(ii) enforcing reciprocity via $\nu_{ji}E_i=\nu_{ij}E_j$ (implemented explicitly through \eqref{eq:zysset-curnier}),
-(iii) inverting $\mathbf{S}$ to obtain the symmetric stiffness matrix $\mathbf{C}=\mathbf{S}^{-1}$, and
-(iv) rotating $\mathbf{C}$ to the spatial frame using the eigenbasis $\{\mathbf{a}_i\}$.
+The stiffness operator entering $\boldsymbol{\sigma}=\mathbb{C}:\boldsymbol{\varepsilon}$ is conveniently expressed in projector form using the spectral decomposition
+\(
+\widehat{\mathbf{A}}=\sum_{i=1}^3 m_i\,\mathbf{P}_i
+\)
+with $\mathbf{P}_i:=\mathbf{a}_i\otimes\mathbf{a}_i$ in the fully anisotropic case. Conceptually, one may assemble $\mathbb{C}$ by forming the orthotropic compliance matrix $\mathbf{S}$ from $\{E_i,G_{ij},\nu_{ij}\}$ (Voigt notation), enforcing reciprocity ($\nu_{ji}E_i=\nu_{ij}E_j$), inverting $\mathbf{S}$, and rotating to the spatial frame.
 This construction ensures that the resulting constitutive operator is \emph{conservative} (minor and major symmetries) and admits a standard strain energy density $U=\tfrac12\boldsymbol{\sigma}:\boldsymbol{\varepsilon}$.
 In addition to the lower-density clamp \eqref{eq:smooth-max-nd} (which guarantees strictly positive moduli in \eqref{eq:zysset-curnier}), we ensure \emph{strong ellipticity} through admissible parameter ranges and bounded anisotropy (via eigenvalue-ratio bounds), and the law reduces smoothly to the isotropic baseline as $\widehat{\mathbf{A}}\to\mathbf{I}$.
 
@@ -145,6 +149,16 @@ where $E_0$ is a reference Young's modulus, $\nu_0$ is a (density-independent) P
 k(\rho) = n_{\mathrm{trab}} (1 - w(\rho)) + n_{\mathrm{cort}} w(\rho),
 \end{equation}
 where $w(\rho)$ is a smooth interpolation function (smoothstep) transitioning from 0 to 1 over the range $[\rho_{\mathrm{trab}}^{\max}, \rho_{\mathrm{cort}}^{\min}]$. The density $\widetilde{\rho}$ is smoothly clamped to a minimum value $\rho_{\min}$ to ensure positive definiteness. The stress is then $\boldsymbol{\sigma} = \mathbb{C} : \boldsymbol{\varepsilon}$.
+
+\paragraph{Numerically robust stress evaluation.}
+Two numerical issues arise in practice: (i) the projector/eigenvector representation is ill-conditioned when $\widehat{\mathbf{A}}$ is (nearly) isotropic or transversely isotropic (repeated eigenvalues), and (ii) extreme anisotropy can cause overflow in $\exp(\mathbf{L})$ and large stiffness contrasts. We address (i) by evaluating spectral projectors $\mathbf{P}_i$ without eigenvectors using the Sylvester formula and smoothly blending it to the isotropic limit ($\mathbf{P}_i=\mathbf{I}/3$) and the transversely isotropic limit (unique projector plus an equal split of the orthogonal plane), which avoids basis flips and preserves $\sum_i \mathbf{P}_i=\mathbf{I}$. We address (ii) by clamping the deviatoric log-eigenvalues of $\mathbf{L}$ before exponentiation, consistently with the global anisotropy bounds $m_{\min},m_{\max}$, and by using a smooth, scale-aware gate that blends the orthotropic stress to the isotropic baseline as $\widehat{\mathbf{A}}\to\mathbf{I}$, keeping $\boldsymbol{\sigma}(\mathbf{u},\rho,\mathbf{L})$ continuous through eigenvalue degeneracy. Figure \ref{fig:sylvester_projectors} summarizes these limits and the associated conditioning behavior.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{images/sylvester_projectors.png}
+    \caption{Robust Sylvester projectors for symmetric $3\times3$ tensors. (a) In the transversely isotropic (pair-degenerate) limit, rank-one eigenvector projectors in the degenerate plane depend on an arbitrary in-plane basis rotation, while the robust construction assigns an equal split. (b) In the isotropic limit, rank-one eigenvector projectors depend on the arbitrary orthonormal basis; the robust limit yields $\mathbf{I}/3$. (c) Near a pair-degeneracy, the raw Sylvester formula becomes ill-conditioned; denominator regularization and the blended TI limit keep the (unique) plane projector $P_2+P_3$ accurate. (d) Enforcing $P_1+P_2+P_3=\mathbf{I}$ removes drift from finite precision. (e) Smooth degeneracy weights transition from the fully anisotropic regime to the TI split as the eigenvalue gap shrinks. (f) The robust construction smoothly equalizes the two degenerate projectors, $\|P_2-P_3\|_F\to0$, avoiding basis flips.}
+    \label{fig:sylvester_projectors}
+\end{figure}
 
 \paragraph{Smooth lower density clamp.}
 To maintain uniform strong ellipticity and avoid case distinctions in highly porous regions, we use a smooth ``max'' operator:
@@ -275,7 +289,7 @@ Equation \eqref{eq:density-strong-nd} uses differentiable kinetics and soft boun
 \end{figure}
 
 \subsection*{Direction (fabric) submodel}\label{subsec:direction-nd}
-The local fabric is described by a second-order, symmetric, positive-definite tensor field $\mathbf{A}=\mathbf{A}(x,t)$. To ensure positive definiteness and robustness, we evolve the logarithmic fabric tensor $\mathbf{L} = \ln \mathbf{A}$. The dynamics follow a relaxation--diffusion flow toward a logarithmic target $\mathbf{L}_M = \ln \widehat{\mathbf{M}}$. The strong form on a bounded Lipschitz domain is
+The local fabric is described by a second-order, symmetric, positive-definite tensor field $\mathbf{A}=\mathbf{A}(x,t)$. To ensure positive definiteness and robustness, we evolve the logarithmic fabric tensor $\mathbf{L} = \ln \mathbf{A}$. The dynamics follow a relaxation--diffusion flow toward a mechanically informed, trace-free logarithmic target $\mathbf{L}_M(\bar{\mathbf{Q}})$ defined below. The strong form on a bounded Lipschitz domain is
 \begin{equation}\label{eq:L-strong-nd}
 \begin{aligned}
 c_A\,\partial_t \mathbf{L} \;-\; c_A D_A\,\Delta \mathbf{L} \;+\; \frac{c_A\,a(\bar{\mathbf{Q}})}{\tau_A}\,\mathbf{L}
@@ -290,25 +304,26 @@ supplemented with homogeneous no-flux boundary conditions and an admissible init
 Here $D_A\ge 0$ is a diffusion coefficient, $c_A>0$ a capacity (common scaling), and $\tau_A>0$ a relaxation time constant. The activity factor $a(\bar{\mathbf{Q}})\in[0,1]$ suppresses updates under near-isotropic loading; the Laplacian and normal derivative act componentwise on $\mathbf{L}$.
 
 \paragraph{Target construction from mechanics.}
-For each loading case $i$, the mechanics solve provides $\boldsymbol{\sigma}_i$ and $\boldsymbol{\varepsilon}_i$. We form the symmetric stress outer-product
+For each loading case $i$, the mechanics solve provides $\boldsymbol{\sigma}_i$ and $\boldsymbol{\varepsilon}_i$. To extract \emph{directional} information and remove the hydrostatic contribution we form the symmetric deviatoric-stress outer-product
 \begin{equation}\label{eq:M-def-nd}
-\mathbf{Q}_i \;:=\; \mathrm{sym}\!\big(\boldsymbol{\sigma}_i\,\boldsymbol{\sigma}_i^{\!\top}\big),
+\boldsymbol{\sigma}_{i,\mathrm{dev}}:=\boldsymbol{\sigma}_i-\tfrac13(\mathrm{tr}\,\boldsymbol{\sigma}_i)\mathbf{I},\qquad
+\mathbf{Q}_i \;:=\; \mathrm{sym}\!\big(\boldsymbol{\sigma}_{i,\mathrm{dev}}\,\boldsymbol{\sigma}_{i,\mathrm{dev}}^{\!\top}\big),
 \end{equation}
 and compute a cycle-weighted average
 \(
 \bar{\mathbf{Q}}:=\sum_i c_i \mathbf{Q}_i\big/\sum_i c_i
 \),
-where $c_i$ are the same daily weights as in \eqref{eq:stim-psi-nd}. To construct a bounded, trace-normalized target we use the eigen-decomposition of a regularized tensor $\mathbf{Q}:=\mathrm{sym}(\bar{\mathbf{Q}})+\varepsilon_Q\mathbf{I}$, $\mathbf{Q}=\sum_i \lambda_i\mathbf{P}_i$, and define
+where $c_i$ are the same daily weights as in \eqref{eq:stim-psi-nd}. To construct a bounded, trace-free logarithmic target we use the eigen-decomposition of a regularized tensor $\mathbf{Q}:=\mathrm{sym}(\bar{\mathbf{Q}})+\varepsilon_Q\mathbf{I}$, $\mathbf{Q}=\sum_i \lambda_i\mathbf{P}_i$, and define
 \begin{equation}\label{eq:M-hat-nd}
-\widehat{\mathbf{M}} \;:=\; \sum_{i=1}^3 \widehat m_i\,\mathbf{P}_i,\qquad
-\widehat m_i \;:=\; \frac{\operatorname{clamp}\!\big((\lambda_i/g)^{\gamma_F},\,m_{\min},\,m_{\max}\big)}{\frac13\sum_{j=1}^3 \operatorname{clamp}\!\big((\lambda_j/g)^{\gamma_F},\,m_{\min},\,m_{\max}\big)},\qquad
-g:=(\lambda_1\lambda_2\lambda_3)^{1/3},
+\tilde m_i \;:=\; \operatorname{clamp}\!\big((\lambda_i/g)^{\gamma_F},\,m_{\min},\,m_{\max}\big),\qquad
+g:=(\lambda_1\lambda_2\lambda_3)^{1/3},\qquad
+\mathbf{L}_M(\bar{\mathbf{Q}})\;:=\;\sum_{i=1}^3\Big(\ln(\tilde m_i)-\tfrac13\sum_{j=1}^3\ln(\tilde m_j)\Big)\mathbf{P}_i,
 \end{equation}
-so that $\mathrm{tr}\,\widehat{\mathbf{M}}=3$ and eigenvalue ratios are bounded by $m_{\min},m_{\max}$. Here $\operatorname{clamp}(x,a,b):=\min\{b,\max\{a,x\}\}$. Finally, the logarithmic target is $\mathbf{L}_M(\bar{\mathbf{Q}}):=\ln(\widehat{\mathbf{M}})=\sum_i \ln(\widehat m_i)\mathbf{P}_i$.
+so that $\mathrm{tr}\,\mathbf{L}_M=0$ (equivalently $\det(\exp(\mathbf{L}_M))=1$) and the induced eigenvalue ratios are bounded by $m_{\min},m_{\max}$. Here $\operatorname{clamp}(x,a,b):=\min\{b,\max\{a,x\}\}$. In computation we evaluate $\{\lambda_i,\mathbf{P}_i\}$ using a stabilized Sylvester-projector construction (as above), which is robust under isotropic and transversely isotropic limits of $\mathbf{Q}$.
 
 The activity factor $a(\bar{\mathbf{Q}})$ is computed from the deviatoric magnitude of $\mathbf{Q}$: let $\mathbf{Q}_{\mathrm{dev}}:=\mathbf{Q}-\frac13(\mathrm{tr}\,\mathbf{Q})\mathbf{I}$ and
 \[
-r:=\frac{\sqrt{\mathbf{Q}_{\mathrm{dev}}:\mathbf{Q}_{\mathrm{dev}}}}{\mathrm{tr}\,\mathbf{Q}+\varepsilon_Q},\qquad
+r:=\frac{\sqrt{\mathbf{Q}_{\mathrm{dev}}:\mathbf{Q}_{\mathrm{dev}}+\varepsilon^2}}{\mathrm{tr}\,\mathbf{Q}+\varepsilon_Q},\qquad
 a:=\frac{r}{r+\varepsilon_a}\in[0,1],
 \]
 with a small dimensionless $\varepsilon_a>0$.
@@ -321,7 +336,7 @@ with a small dimensionless $\varepsilon_a>0$.
 \end{figure}
 
 \paragraph{Quantitative analysis and biological interpretation.}
-Figure \ref{fig:anisotropy_law} visualizes how the log-fabric state biases directional stiffness. The relaxation term in \eqref{eq:L-strong-nd} drives $\mathbf{L}$ toward the mechanically informed target $\mathbf{L}_M(\bar{\mathbf{Q}})$ while diffusion regularizes spatial oscillations; the log-Euclidean representation ensures $\mathbf{A}=\exp(\mathbf{L})\in\mathbb{S}^{3}_{++}$ by construction. The trace normalization in \eqref{eq:M-hat-nd} implies $\mathrm{tr}\,\widehat{\mathbf{M}}=3$ and thus $\mathrm{tr}\,\mathbf{L}_M=0$. In the constitutive evaluation, isotropic scaling is removed by working with eigenvalue ratios (deviatoric part of $\mathbf{L}$) and bounding them by the same $m_{\min},m_{\max}$ used in \eqref{eq:M-hat-nd}.
+Figure \ref{fig:anisotropy_law} visualizes how the log-fabric state biases directional stiffness. The relaxation term in \eqref{eq:L-strong-nd} drives $\mathbf{L}$ toward the mechanically informed target $\mathbf{L}_M(\bar{\mathbf{Q}})$ while diffusion regularizes spatial oscillations; the log-Euclidean representation ensures $\mathbf{A}=\exp(\mathbf{L})\in\mathbb{S}^{3}_{++}$ by construction. The log-space normalization in \eqref{eq:M-hat-nd} enforces $\mathrm{tr}\,\mathbf{L}_M=0$ (unit determinant for $\exp(\mathbf{L}_M)$), so the target acts on anisotropy (eigenvalue ratios) rather than isotropic scaling. In the constitutive evaluation, isotropic scaling is removed by working with eigenvalue ratios (deviatoric part of $\mathbf{L}$) and bounding them by the same $m_{\min},m_{\max}$ used in \eqref{eq:M-hat-nd}.
 \begin{figure}[htbp]
     \centering
     \includegraphics[width=\textwidth]{images/fabric_orientation.jpg}
@@ -383,7 +398,7 @@ Here $S_+^n:=S_+(S^n)$ and $S_-^n:=S_-(S^n)$ are the smooth positive/negative pa
 with the no--flux condition from \eqref{eq:density-bc-ic-nd} and $\rho^{0}=\rho_0$.
 
 \paragraph{Direction/fabric.}
-With $\mathbf{L}_M(\bar{\mathbf{Q}}^{n})=\ln(\widehat{\mathbf{M}}(\bar{\mathbf{Q}}^{n}))$, find $\mathbf{L}^{n}$ such that
+With $\mathbf{L}_M(\bar{\mathbf{Q}}^{n})$ given by \eqref{eq:M-hat-nd}, find $\mathbf{L}^{n}$ such that
 \begin{equation}\label{eq:be-A}
 \frac{c_A}{\Delta t^n}\big(\mathbf{L}^{n}-\mathbf{L}^{n-1}\big)\;-\;c_A D_A\,\Delta \mathbf{L}^{n}\;+\;\frac{c_A\,a(\bar{\mathbf{Q}}^{n})}{\tau_A}\,\mathbf{L}^{n}
 \;=\; \frac{c_A\,a(\bar{\mathbf{Q}}^{n})}{\tau_A}\,\mathbf{L}_M(\bar{\mathbf{Q}}^{n})\quad\text{in }\Omega,
@@ -433,7 +448,7 @@ With $\mathbf{D}_\rho$ from \eqref{eq:Drho-nd}, find $\rho_h^{n}\in Q_h$ such th
 where $S_+^n = S_+(S^n)$ and $S_-^n = S_-(S^n)$ with $S_\pm$ defined in \eqref{eq:smooth-splits-nd}.
 
 \paragraph{Direction/fabric (Backward--Euler weak form).}
-With $\mathbf{L}_M(\bar{\mathbf{Q}}^{n})=\ln(\widehat{\mathbf{M}}(\bar{\mathbf{Q}}^{n}))$, find $\mathbf{L}_h^{n}\in T_h$ such that for all $\mathbf{Q}_h\in T_h$,
+With $\mathbf{L}_M(\bar{\mathbf{Q}}^{n})$ given by \eqref{eq:M-hat-nd}, find $\mathbf{L}_h^{n}\in T_h$ such that for all $\mathbf{Q}_h\in T_h$,
 \begin{equation}\label{eq:fe-A-unified}
 \left(\left(\frac{c_A}{\Delta t^n} + \frac{c_A\,a(\bar{\mathbf{Q}}^{n})}{\tau_A}\right)\mathbf{L}_h^{n}, \mathbf{Q}_h\right) \;+\; c_A D_A\,(\nabla \mathbf{L}_h^{n}, \nabla \mathbf{Q}_h)
 \;=\; \left(\frac{c_A}{\Delta t^n}\mathbf{L}_h^{n-1}, \mathbf{Q}_h\right) \;+\; \frac{c_A\,a(\bar{\mathbf{Q}}^{n})}{\tau_A}\,(\mathbf{L}_M(\bar{\mathbf{Q}}^{n}), \mathbf{Q}_h).
@@ -457,7 +472,7 @@ with the product inner product
 for $\mathbf{y}=(\mathbf{Q},q,p)$ and positive weights $\alpha_\bullet$. The mechanics field $\mathbf{u}$ is treated as a dependent variable $\mathbf{u}(\rho,\mathbf{L})$ determined by the equilibrium equations. We monitor an RMS-per-DOF global $L^2$ norm on a scaled concatenation of $(\mathbf{L},S,\rho)$ (per-field scaling set from the first sweep); scalar/tensor blocks have no Dirichlet-constrained DOFs, so the “projection” is trivial.
 
 \paragraph{Block map.}
-We define the fixed-point iteration in terms of the mechanical drivers $\psi_{\mathrm{day}}$ (scalar stimulus driver) and $\bar{\mathbf{Q}}$ (cycle-averaged stress outer-product). Given the state $(\rho, \mathbf{L})$, the mechanics driver $\mathsf{U}$ determines equilibrium displacements for each loading case and generates
+We define the fixed-point iteration in terms of the mechanical drivers $\psi_{\mathrm{day}}$ (scalar stimulus driver) and $\bar{\mathbf{Q}}$ (cycle-averaged deviatoric-stress outer-product). Given the state $(\rho, \mathbf{L})$, the mechanics driver $\mathsf{U}$ determines equilibrium displacements for each loading case and generates
 \[
 \psi_{\mathrm{new}} = \psi_{\mathrm{day}}(\rho,\mathbf{L}), \qquad \bar{\mathbf{Q}}_{\mathrm{new}} = \bar{\mathbf{Q}}(\rho,\mathbf{L}).
 \]
@@ -472,7 +487,7 @@ where $S_{\mathrm{new}}=\mathsf{S}(\psi_{\mathrm{new}},\rho)$ is the updated sti
 \psi_{\mathrm{day}}(x)=\left(\frac{\sum_i c_i\,\psi_i(x)^p}{\sum_i c_i}\right)^{1/p},\qquad
 \psi_i(x):=\max\!\Big(0,\tfrac12\,\boldsymbol{\sigma}_i(x):\boldsymbol{\varepsilon}_i(x)\Big),
 \]
-with exponent $p\ge 1$ and cycle weights $c_i$ (cycles/day); the fabric driver is $\bar{\mathbf{Q}}=\sum_i c_i\,\mathrm{sym}(\boldsymbol{\sigma}_i\boldsymbol{\sigma}_i^{\!\top})/\sum_i c_i$.
+with exponent $p\ge 1$ and cycle weights $c_i$ (cycles/day); the fabric driver is $\bar{\mathbf{Q}}=\sum_i c_i\,\mathrm{sym}(\boldsymbol{\sigma}_{i,\mathrm{dev}}\boldsymbol{\sigma}_{i,\mathrm{dev}}^{\!\top})/\sum_i c_i$ with $\boldsymbol{\sigma}_{i,\mathrm{dev}}:=\boldsymbol{\sigma}_i-\tfrac13(\mathrm{tr}\,\boldsymbol{\sigma}_i)\mathbf{I}$.
 
 The fixed point at $t^n$ solves
 \begin{equation}\label{eq:fp-residual}

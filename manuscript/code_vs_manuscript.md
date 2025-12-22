@@ -27,10 +27,10 @@ This note summarizes the *current* implementation in `simulation/` and serves as
      - implemented in `simulation/drivers.py` (`GaitDriver._update_snapshots()`), with `p = cfg.stimulus.stimulus_power_p`.
 
 3. **Fabric driver**
-   - target built from cycle-weighted average of stress outer-products:
-     - per case: `Q_i = sym(sigma*sigma^T)` (DG0 tensor)
+   - target built from cycle-weighted average of deviatoric-stress outer-products:
+     - per case: `sigma_dev = sigma - (tr(sigma)/3)*I`, `Q_i = sym(sigma_dev*sigma_dev^T)` (DG0 tensor)
      - average: `Qbar = sum_i c_i Q_i / sum_i c_i`
-     - target `L_target(Qbar)` uses eigenvalue normalization by geometric mean, exponent `gammaF`, clamp to `[m_min, m_max]`, and final trace normalization.
+     - target `L_target(Qbar)` uses eigenvalue normalization by geometric mean, exponent `gammaF`, clamp to `[m_min, m_max]`, and final log-space mean removal (`tr(L_target)=0`).
      - implemented in `simulation/drivers.py` (`StimulusCalculator.compute_Q`) and `simulation/subsolvers.py` (`FabricSolver._L_target_from_Qbar()`).
 
 4. **Stimulus PDE + source term**
