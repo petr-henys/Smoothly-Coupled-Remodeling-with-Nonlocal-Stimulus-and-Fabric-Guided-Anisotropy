@@ -398,3 +398,69 @@ class TestBoxModelIntegration:
             # Note: with very few steps, change may be small
             # Just verify the simulation ran without error
             assert np.isfinite(rho_final).all(), "Density should remain finite"
+
+    def test_metrics_csv_output(self, box_mesh_and_tags, tmp_path):
+        """Test that metrics CSV files are written during simulation."""
+        from simulation.model import Remodeller
+        from simulation.config import Config
+        from simulation.params import GeometryParams, SolverParams, TimeParams, OutputParams
+        import pandas as pd
+        
+        domain, facet_tags = box_mesh_and_tags
+        comm = MPI.COMM_WORLD
+        
+        # Create config with tmp_path as output directory
+        output_dir = tmp_path / "metrics_test"
+        if comm.rank == 0:
+            output_dir.mkdir(parents=True, exist_ok=True)
+        comm.Barrier()
+        
+        cfg = Config(
+            domain=domain,
+            facet_tags=facet_tags,
+            geometry=GeometryParams(
+                fix_tag=BoxMeshBuilder.TAG_BOTTOM,
+                load_tag=BoxMeshBuilder.TAG_TOP,
+            ),
+            solver=SolverParams(
+                coupling_tol=1e-3,
+                max_subiters=10,
+                ksp_rtol=1e-6,
+            ),
+            time=TimeParams(
+                total_time=10.0,
+                dt_initial=5.0,
+                adaptive_dt=False,
+            ),
+            output=OutputParams(
+                results_dir=str(output_dir),
+            ),
+        )
+        
+        loader = BoxLoader(domain, facet_tags)
+        loading_cases = [get_single_pressure_case(pressure=1.0)]
+        factory = BoxSolverFactory(cfg)
+        
+        with Remodeller(cfg, loader=loader, loading_cases=loading_cases, factory=factory) as remodeller:
+            remodeller.simulate()
+        
+        # Verify CSV files were written (rank 0 only)
+        if comm.rank == 0:
+            steps_csv = output_dir / "steps.csv"
+            subiters_csv = output_dir / "subiterations.csv"
+            
+            assert steps_csv.exists(), "steps.csv should be created"
+            assert subiters_csv.exists(), "subiterations.csv should be created"
+            
+            # Verify content
+            steps_df = pd.read_csv(steps_csv)
+            assert len(steps_df) == 2, f"Should have 2 steps, got {len(steps_df)}"
+            assert "step" in steps_df.columns
+            assert "time_days" in steps_df.columns
+            assert "mech_iters" in steps_df.columns
+            assert "fab_iters" in steps_df.columns
+            
+            subiters_df = pd.read_csv(subiters_csv)
+            assert len(subiters_df) > 0, "Should have subiteration records"
+            assert "proj_res" in subiters_df.columns
+            assert "condH" in subiters_df.columns

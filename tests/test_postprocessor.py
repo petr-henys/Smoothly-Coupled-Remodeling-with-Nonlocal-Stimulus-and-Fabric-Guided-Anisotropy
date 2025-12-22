@@ -75,18 +75,19 @@ def mock_run_directory(shared_tmp_path):
                     "iter": iter_num,
                     "time_days": steps_data["time_days"][step],
                     "proj_res": 1e-4 * 0.5**iter_num,
-                    "rel_change": 1e-3 * 0.6**iter_num,
+                    "aa_step_res": 1e-3 * 0.6**iter_num,
                     "mech_iters": 5 + iter_num % 3,
+                    "fab_iters": 4 + iter_num % 3,
                     "stim_iters": 4 + iter_num % 2,
                     "dens_iters": 3 + iter_num % 2,
-                    "dir_iters": 4 + iter_num % 3,
                     "accepted": 1 if iter_num > 0 else 0,
                     "restart": 0,
                     "condH": 2.5 + 0.1 * iter_num,
+                    "aa_hist": iter_num % 5,
                     "mech_time": 0.05,
+                    "fab_time": 0.04,
                     "stim_time": 0.03,
                     "dens_time": 0.02,
-                    "dir_time": 0.04,
                     "memory_mb": 1234.5 + step * 10 + iter_num * 0.5,
                 })
         pd.DataFrame(subiters_rows).to_csv(run_dir / "subiterations.csv", index=False)
@@ -273,8 +274,8 @@ def test_subiterations_metrics_loading(mock_run_directory):
     assert len(subiters_df) == 10 + 8 + 9 + 7
     
     expected_cols = {
-        "step", "iter", "time_days", "proj_res", "rel_change",
-        "mech_iters", "stim_iters", "dens_iters", "dir_iters",
+        "step", "iter", "time_days", "proj_res", "aa_step_res",
+        "mech_iters", "fab_iters", "stim_iters", "dens_iters",
         "accepted", "restart", "condH"
     }
     assert expected_cols.issubset(set(subiters_df.columns))

@@ -182,9 +182,9 @@ class SimulationLoader:
             "num_subiters": len(step_subiters),
             "final_proj_res": step_subiters["proj_res"].iloc[-1] if len(step_subiters) > 0 else np.nan,
             "total_mech_iters": step_subiters["mech_iters"].sum() if "mech_iters" in step_subiters else 0,
+            "total_fab_iters": step_subiters["fab_iters"].sum() if "fab_iters" in step_subiters else 0,
             "total_stim_iters": step_subiters["stim_iters"].sum() if "stim_iters" in step_subiters else 0,
             "total_dens_iters": step_subiters["dens_iters"].sum() if "dens_iters" in step_subiters else 0,
-            "total_dir_iters": step_subiters["dir_iters"].sum() if "dir_iters" in step_subiters else 0,
             "aa_acceptances": step_subiters["accepted"].sum() if "accepted" in step_subiters else 0,
             "aa_restarts": step_subiters["restart"].sum() if "restart" in step_subiters else 0,
         }

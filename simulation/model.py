@@ -245,10 +245,14 @@ class Remodeller:
         )
 
         error_norm = self.integrator.compute_wrms_error(x_pred)
-        metrics = list(self.fixedsolver.subiter_metrics)
-        used_subiters = len(metrics)
+        subiter_metrics = list(self.fixedsolver.subiter_metrics)
+        used_subiters = len(subiter_metrics)
 
-        return error_norm, {"converged": converged, "iters": used_subiters}
+        return error_norm, {
+            "converged": converged,
+            "iters": used_subiters,
+            "subiter_metrics": subiter_metrics,
+        }
 
     def simulate(self, reporter: ProgressReporter | SweepProgressReporter | None = None) -> None:
         """Run remodeling loop using dt_initial and total_time from Config."""
@@ -287,6 +291,16 @@ class Remodeller:
                     self.integrator.commit_step(dt, self.state_fields, self.state_fields_old)
                     t += dt
                     step_idx += 1
+
+                    # Write metrics to CSV (every step, regardless of saving_interval)
+                    self.storage.metrics.write_step(
+                        step=step_idx,
+                        time_days=t,
+                        dt_days=dt,
+                        converged=metrics["converged"],
+                        error_norm=error,
+                        subiter_metrics=metrics.get("subiter_metrics", []),
+                    )
 
                     if step_idx % self.cfg.output.saving_interval == 0:
                         self._output(t)
