@@ -16,6 +16,7 @@
 !/run_box_model.py
 !/run_convergence_sweep.py
 !/run_model.py
+!/intensity_mapper.py
 
 # Python cache
 __pycache__/
