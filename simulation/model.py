@@ -98,6 +98,7 @@ class Remodeller:
         self.rho = Function(self.Q, name="rho")
         self.rho_old = Function(self.Q, name="rho_old")
         assign(self.rho, self.cfg.density.rho0)
+        assign(self.rho_old, self.cfg.density.rho0)  # Must match rho initial value
 
         self.L = Function(self.T, name="L")
         self.L_old = Function(self.T, name="L_old")
