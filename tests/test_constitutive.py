@@ -8,7 +8,7 @@ import ufl
 
 from simulation.config import Config
 from simulation.params import MaterialParams, DensityParams
-from simulation.subsolvers import DensitySolver, MechanicsSolver
+from simulation.solvers import DensitySolver, MechanicsSolver
 from simulation.utils import build_dirichlet_bcs, smooth_max
 
 # =============================================================================

@@ -9,7 +9,7 @@ import ufl
 from simulation.config import Config
 from simulation.params import MaterialParams, DensityParams, NumericsParams, StimulusParams
 from simulation.utils import build_dirichlet_bcs, build_facetag
-from simulation.subsolvers import MechanicsSolver, DensitySolver
+from simulation.solvers import MechanicsSolver, DensitySolver
 from dolfinx import mesh
 
 def make_unit_cube(comm=MPI.COMM_WORLD, n=6):

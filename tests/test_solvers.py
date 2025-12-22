@@ -14,7 +14,7 @@ from dolfinx import fem, default_scalar_type
 from dolfinx.fem import Function
 
 from simulation.config import Config
-from simulation.subsolvers import MechanicsSolver, DensitySolver
+from simulation.solvers import MechanicsSolver, DensitySolver
 from simulation.fixedsolver import FixedPointSolver
 
 from simulation.stats import SweepStats
@@ -186,7 +186,7 @@ class TestMatrixAssembly:
         L_old = A_old
         Qbar = fem.Function(T, name="Qbar")
         
-        from simulation.subsolvers import FabricSolver
+        from simulation.solvers import FabricSolver
         solver = FabricSolver(L, L_old, Qbar, cfg)
         solver.setup()
         
@@ -218,7 +218,7 @@ class TestMatrixAssembly:
 # Stimulus Solver Tests
 # =============================================================================
 
-from simulation.subsolvers import StimulusSolver, FabricSolver
+from simulation.solvers import StimulusSolver, FabricSolver
 
 @pytest.fixture
 def stimulus_setup(cfg, spaces, fields):

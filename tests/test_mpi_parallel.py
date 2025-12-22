@@ -18,7 +18,7 @@ import ufl
 from simulation.config import Config
 from simulation.params import MaterialParams, SolverParams, OutputParams
 from simulation.utils import build_facetag, build_dirichlet_bcs
-from simulation.subsolvers import MechanicsSolver, DensitySolver
+from simulation.solvers import MechanicsSolver, DensitySolver
 from simulation.fixedsolver import FixedPointSolver
 from simulation.model import Remodeller
 from simulation.loader import LoadingCase

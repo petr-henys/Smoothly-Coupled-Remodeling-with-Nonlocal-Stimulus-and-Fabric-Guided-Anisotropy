@@ -16,7 +16,7 @@ from dolfinx import fem
 from simulation.box_loader import BoxLoader, BoxLoadingCase
 from simulation.box_mesh import BoxMeshBuilder
 from simulation.drivers import GaitDriver
-from simulation.subsolvers import (
+from simulation.solvers import (
     MechanicsSolver,
     FabricSolver, 
     StimulusSolver,

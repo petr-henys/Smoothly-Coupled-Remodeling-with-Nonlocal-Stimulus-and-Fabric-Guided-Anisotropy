@@ -6,7 +6,7 @@ from typing import List, Protocol, TYPE_CHECKING
 from dolfinx import fem
 
 from simulation.drivers import GaitDriver
-from simulation.subsolvers import MechanicsSolver, FabricSolver, StimulusSolver, DensitySolver
+from simulation.solvers import MechanicsSolver, FabricSolver, StimulusSolver, DensitySolver
 from simulation.utils import build_dirichlet_bcs
 
 if TYPE_CHECKING:

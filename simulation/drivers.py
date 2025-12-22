@@ -7,7 +7,7 @@ from dolfinx import fem
 import ufl
 
 from simulation.config import Config
-from simulation.subsolvers import MechanicsSolver
+from simulation.solvers import MechanicsSolver
 from simulation.logger import get_logger
 from simulation.stats import SweepStats
 from simulation.utils import assign, get_owned_size, symm

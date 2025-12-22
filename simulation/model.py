@@ -17,7 +17,7 @@ from simulation.logger import get_logger
 from simulation.progress import ProgressReporter
 from simulation.registry import BlockRegistry
 from simulation.storage import UnifiedStorage
-from simulation.subsolvers import DensitySolver, FabricSolver, MechanicsSolver, StimulusSolver
+from simulation.solvers import DensitySolver, FabricSolver, MechanicsSolver, StimulusSolver
 from simulation.timeintegrator import TimeIntegrator
 from simulation.utils import assign, build_dirichlet_bcs
 from simulation.factory import SolverFactory, DefaultSolverFactory

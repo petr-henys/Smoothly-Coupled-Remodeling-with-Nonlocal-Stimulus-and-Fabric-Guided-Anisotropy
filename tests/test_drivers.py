@@ -6,7 +6,7 @@ from mpi4py import MPI
 from dolfinx import fem
 
 from simulation.config import Config
-from simulation.subsolvers import MechanicsSolver
+from simulation.solvers import MechanicsSolver
 from simulation.drivers import GaitDriver
 from simulation.loader import LoadingCase
 

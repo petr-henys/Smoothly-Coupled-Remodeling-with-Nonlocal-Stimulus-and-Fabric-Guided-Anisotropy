@@ -19,7 +19,7 @@ import ufl
 from simulation.config import Config
 from simulation.params import MaterialParams, SolverParams, StimulusParams
 from simulation.utils import build_facetag, build_dirichlet_bcs, get_owned_size, assign, field_stats
-from simulation.subsolvers import MechanicsSolver, DensitySolver
+from simulation.solvers import MechanicsSolver, DensitySolver
 
 pytestmark = [pytest.mark.mpi]
 
