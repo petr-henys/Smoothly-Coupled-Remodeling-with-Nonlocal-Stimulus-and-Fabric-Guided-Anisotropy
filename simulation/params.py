@@ -155,6 +155,9 @@ class FabricParams:
     # Regularization for Q̄ eigenvalue computation [MPa²] (added as epsQ * I to Q̄)
     fabric_epsQ: float = 1e-12
 
+    # Activity-gate width for near-isotropic loading (dimensionless)
+    fabric_aniso_eps: float = 1e-4
+
     # Eigenvalue ratio bounds
     fabric_m_min: float = 0.2
     fabric_m_max: float = 5.0
@@ -171,6 +174,8 @@ class FabricParams:
             raise ValueError("fabric_gammaF must be > 0.")
         if self.fabric_epsQ <= 0:
             raise ValueError("fabric_epsQ must be > 0.")
+        if self.fabric_aniso_eps <= 0:
+            raise ValueError("fabric_aniso_eps must be > 0.")
         if self.fabric_m_min <= 0:
             raise ValueError("fabric_m_min must be > 0.")
         if self.fabric_m_max <= self.fabric_m_min:

@@ -1,8 +1,8 @@
-# Code vs. `manuscript.tex` (subsolvers + parameters)
+# Manuscript ↔ implementation (subsolvers + parameters)
 
-This note records the *current* implemented subsolver equations/parameters in `simulation/` and serves as a checklist for keeping `manuscript/manuscript.tex` aligned with the code.
+This note summarizes the *current* implementation in `simulation/` and serves as a checklist for verifying that it matches the model and notation described in `manuscript/manuscript.tex`.
 
-## Scope (what is treated as “truth”)
+## Scope (implementation files)
 
 - Implemented PDE blocks: `simulation/subsolvers.py`
   - `MechanicsSolver` (elasticity)
@@ -13,7 +13,7 @@ This note records the *current* implemented subsolver equations/parameters in `s
 - Coupling / fixed-point / Anderson: `simulation/model.py`, `simulation/fixedsolver.py`, `simulation/anderson.py`
 - Parameter defaults: `simulation/params.py` (via `simulation/config.py`)
 
-## High-level mapping (code truth)
+## High-level mapping (implementation)
 
 1. **Coupling order**
    - mechanics-driver → fabric → stimulus → density
@@ -90,6 +90,7 @@ This note records the *current* implemented subsolver equations/parameters in `s
 - `fabric_cA = 1.0`
 - `fabric_gammaF = 1.0`
 - `fabric_epsQ = 1e-12` MPa²
+- `fabric_aniso_eps = 1e-4` (dimensionless activity-gate width)
 - `fabric_m_min = 0.2`, `fabric_m_max = 5.0`
 
 ### Solver (`cfg.solver`)

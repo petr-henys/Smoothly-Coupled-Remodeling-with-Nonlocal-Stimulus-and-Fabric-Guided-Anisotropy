@@ -509,7 +509,7 @@ class FabricSolver(_BaseLinearSolver):
         r = ufl.sqrt(ufl.inner(Q_dev, Q_dev) + self.smooth_eps * self.smooth_eps) / (trQ + epsQ)
 
         # Smooth gate (r -> 0 => act ~ 0, r large => act ~ 1)
-        aniso_eps = 1e-4
+        aniso_eps = float(self.cfg.fabric.fabric_aniso_eps)
         act = r / (r + aniso_eps)
         return act
 

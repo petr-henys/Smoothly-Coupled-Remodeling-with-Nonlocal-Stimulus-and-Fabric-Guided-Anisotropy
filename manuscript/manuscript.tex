@@ -101,7 +101,7 @@ In the \emph{evolution} of anisotropy, several authors align fabric with stress 
 \section*{Governing equations}
 \label{sec:strong-forms-nd}
 \paragraph{Units and scaling.}
-The reference implementation uses the unit system: length [mm], time [day], stress/energy [MPa], and density [g/cm$^3$]. The stimulus $S$ is dimensionless, the apparent density $\rho$ is in g/cm$^3$, and fabric quantities ($\mathbf{A}$, $\mathbf{L}$) are dimensionless. Implementation parameters are grouped in \texttt{Config} (material/density/stimulus/fabric/solver/time/numerics). The boundary partition is $\partial\Omega=\Gamma_D\cup\Gamma_N$ with outward unit normal $\mathbf{n}$.
+We use the unit system: length [mm], time [day], stress/energy [MPa], and density [g/cm$^3$]. The stimulus $S$ is dimensionless, the apparent density $\rho$ is in g/cm$^3$, and fabric quantities ($\mathbf{A}$, $\mathbf{L}$) are dimensionless. The boundary partition is $\partial\Omega=\Gamma_D\cup\Gamma_N$ with outward unit normal $\mathbf{n}$.
 
 \subsection*{Mechanical submodel}
 \label{subsec:mech-nd}
@@ -118,12 +118,12 @@ Under quasi-static conditions the balance of linear momentum reads
 \end{equation}
 
 \paragraph{Constitutive structure.}
-We adopt the Zysset-Curnier orthotropic material model \cite{Zysset1995_AlternativeModelAnisotropic}, which defines the stiffness tensor $\mathbb{C}$ based on the apparent density $\rho$ and the eigenvalues $m_1, m_2, m_3$ of the fabric tensor $\mathbf{A}$. The fabric tensor is recovered from the logarithmic field $\mathbf{L}$ via the matrix exponential $\mathbf{A} = \exp(\mathbf{L})$.
+We adopt the Zysset-Curnier orthotropic material model \cite{Zysset1995_AlternativeModelAnisotropic}, which defines the stiffness tensor $\mathbb{C}$ based on the apparent density $\rho$ and the fabric eigenvalue ratios $m_1, m_2, m_3$ obtained from the log-fabric field $\mathbf{L}$. The fabric tensor is recovered from $\mathbf{L}$ via the matrix exponential $\mathbf{A} = \exp(\mathbf{L})$.
 The orthotropic engineering constants are given by:
 \begin{equation}\label{eq:zysset-curnier}
 \begin{aligned}
-    E_i &= E_0 \, \widetilde{\rho}^{k(\rho)} \, m_i^p, \\
-    G_{ij} &= G_0 \, \widetilde{\rho}^{k(\rho)} \, (m_i m_j)^{p/2}, \\
+    E_i &= E_0 \left(\frac{\widetilde{\rho}}{\rho_{\mathrm{ref}}}\right)^{k(\rho)} m_i^{p_E}, \\
+    G_{ij} &= \frac{E_0}{2(1+\nu_0)} \left(\frac{\widetilde{\rho}}{\rho_{\mathrm{ref}}}\right)^{k(\rho)} (m_i m_j)^{p_G/2}, \\
     \nu_{ij} &= \nu_0 \quad \text{for } i<j, \\
     \nu_{ji} &= \nu_{ij}\,\frac{E_j}{E_i} \quad \text{for } i<j,
 \end{aligned}
@@ -131,24 +131,23 @@ The orthotropic engineering constants are given by:
 
 \paragraph{Orthotropic tensor construction and physical admissibility.}
 The coefficients \eqref{eq:zysset-curnier} define engineering constants in the \emph{principal fabric frame}.
-Let $\widehat{\mathbf{A}}$ denote the \emph{trace-safe unit-trace normalization} of the fabric tensor, defined by $\widehat{\mathbf{A}} \;:=\; \frac{\mathbf{A}+\varepsilon_A\,\mathbf{I}}{\mathrm{tr}\!\big(\mathbf{A}+\varepsilon_A\,\mathbf{I}\big)}$ (see also \eqref{eq:Ahat-blend-nd}), with a small $\varepsilon_A>0$ (isotropic fallback) used consistently throughout the model.
-We denote by $\{\mathbf{a}_i\}_{i=1}^3$ the orthonormal eigenvectors of $\widehat{\mathbf{A}}$ and by $\{m_i\}_{i=1}^3$ its eigenvalues (so $\sum_i m_i=1$).
+Let $\widehat{\mathbf{A}}$ denote the \emph{deviatoric (unit-determinant) normalization} of the fabric tensor, defined by \eqref{eq:Ahat-blend-nd}. We denote by $\{\mathbf{a}_i\}_{i=1}^3$ the orthonormal eigenvectors of $\widehat{\mathbf{A}}$ and by $\{m_i\}_{i=1}^3$ its eigenvalues, which represent \emph{eigenvalue ratios} (anisotropy factors) with isotropic scaling removed.
 The stiffness tensor $\mathbb{C}(\rho,\mathbf{A})$ entering $\boldsymbol{\sigma}=\mathbb{C}:\boldsymbol{\varepsilon}$ is assembled by:
 (i) forming the orthotropic \emph{compliance} matrix $\mathbf{S}$ in this material frame from $\{E_i,G_{ij},\nu_{ij}\}$ (Voigt notation),
 (ii) enforcing reciprocity via $\nu_{ji}E_i=\nu_{ij}E_j$ (implemented explicitly through \eqref{eq:zysset-curnier}),
 (iii) inverting $\mathbf{S}$ to obtain the symmetric stiffness matrix $\mathbf{C}=\mathbf{S}^{-1}$, and
 (iv) rotating $\mathbf{C}$ to the spatial frame using the eigenbasis $\{\mathbf{a}_i\}$.
 This construction ensures that the resulting constitutive operator is \emph{conservative} (minor and major symmetries) and admits a standard strain energy density $U=\tfrac12\boldsymbol{\sigma}:\boldsymbol{\varepsilon}$.
-In addition to the lower-density clamp \eqref{eq:smooth-max-nd} (which guarantees strictly positive moduli in \eqref{eq:zysset-curnier}), we verify \emph{strong ellipticity} by requiring the assembled $\mathbf{C}$ to be symmetric positive definite; in practice this is satisfied for the parameter ranges used, and can be robustly enforced by a small eigenvalue floor on $\mathbf{C}$ if needed.
+In addition to the lower-density clamp \eqref{eq:smooth-max-nd} (which guarantees strictly positive moduli in \eqref{eq:zysset-curnier}), we ensure \emph{strong ellipticity} through admissible parameter ranges and bounded anisotropy (via eigenvalue-ratio bounds), and the law reduces smoothly to the isotropic baseline as $\widehat{\mathbf{A}}\to\mathbf{I}$.
 
-where $E_0, G_0, \nu_0$ are reference moduli, $p$ is the fabric exponent, and $k(\rho)$ is a density-dependent exponent. To capture the distinct mechanical behavior of trabecular and cortical bone, $k(\rho)$ transitions smoothly from a trabecular exponent $n_{\mathrm{trab}}$ to a cortical exponent $n_{\mathrm{cort}}$:
+where $E_0$ is a reference Young's modulus, $\nu_0$ is a (density-independent) Poisson ratio, $\rho_{\mathrm{ref}}$ is a reference density, and $p_E$ and $p_G$ are stiffness exponents controlling axial and shear scaling with fabric. The density-dependent exponent $k(\rho)$ transitions smoothly from a trabecular exponent $n_{\mathrm{trab}}$ to a cortical exponent $n_{\mathrm{cort}}$:
 \begin{equation}\label{eq:variable-exponent}
 k(\rho) = n_{\mathrm{trab}} (1 - w(\rho)) + n_{\mathrm{cort}} w(\rho),
 \end{equation}
 where $w(\rho)$ is a smooth interpolation function (smoothstep) transitioning from 0 to 1 over the range $[\rho_{\mathrm{trab}}^{\max}, \rho_{\mathrm{cort}}^{\min}]$. The density $\widetilde{\rho}$ is smoothly clamped to a minimum value $\rho_{\min}$ to ensure positive definiteness. The stress is then $\boldsymbol{\sigma} = \mathbb{C} : \boldsymbol{\varepsilon}$.
 
 \paragraph{Smooth lower density clamp.}
-To maintain uniform strong ellipticity and avoid case distinctions in highly porous regions, we use the same smooth ``max'' as in the implementation:
+To maintain uniform strong ellipticity and avoid case distinctions in highly porous regions, we use a smooth ``max'' operator:
 \begin{equation}\label{eq:smooth-max-nd}
 \widetilde{\rho}(\rho;\rho_{\min},\varepsilon)
 :=\rho_{\min}+\tfrac12\!\left[(\rho-\rho_{\min})+\sqrt{(\rho-\rho_{\min})^2+\varepsilon^2}-\varepsilon\right].
@@ -159,7 +158,7 @@ This monotone, everywhere differentiable approximation of $\max\{\rho,\rho_{\min
 To ensure the fabric tensor $\mathbf{A}$ remains symmetric and positive-definite (SPD) throughout the simulation, we evolve its matrix logarithm $\mathbf{L} = \ln \mathbf{A}$. The fabric tensor is recovered via $\mathbf{A} = \exp(\mathbf{L})$. This parameterization guarantees that $\mathbf{A}$ is always SPD for any real symmetric tensor $\mathbf{L}$, avoiding the need for ad-hoc projections or constraints.
 
 \paragraph{Quantitative analysis and biological interpretation.}
-Figure \ref{fig:constitutive_law} illustrates the behavior of the density-elasticity law. Panel (a) shows the stiffness $E(\rho)$ transitioning from a quadratic trabecular regime ($n_{\mathrm{trab}}=2.0$) to a near-linear cortical regime ($n_{\mathrm{cort}}=1.3$). This dual-power law captures the stiffening efficiency of dense bone while maintaining the rapid compliance increase in porous bone. Panel (b) explicitly plots the exponent $n(\rho)$, which varies smoothly between the two regimes via the cubic smoothstep function shown in (f). Panels (c) and (d) demonstrate the sensitivity of the stiffness curve to the transition thresholds $\rho_{\mathrm{trab}}^{\max}$ and $\rho_{\mathrm{cort}}^{\min}$; shifting these parameters allows for calibration to specific anatomical sites where the trabecular-cortical boundary may differ. Panel (e) highlights the effect of the exponents themselves; higher $n_{\mathrm{trab}}$ suppresses stiffness in low-density regions, effectively modeling the loss of connectivity in osteoporotic bone. The smooth lower clamp \eqref{eq:smooth-max-nd} guarantees strictly positive stiffness even in highly porous regions, thus preventing mechanical degeneracy and preserving differentiability. The normalization \eqref{eq:Ahat-blend-nd} filters the computed direction field into a \emph{symmetric, unit-trace} descriptor; with $\varepsilon>0$ it is \emph{positive-definite}. This combination yields a mechanically transparent, numerically robust model suitable for coupling with remodeling stimuli and evolution equations.
+Figure \ref{fig:constitutive_law} illustrates the behavior of the density-elasticity law. Panel (a) shows the stiffness $E(\rho)$ transitioning from a quadratic trabecular regime ($n_{\mathrm{trab}}=2.0$) to a near-linear cortical regime ($n_{\mathrm{cort}}=1.3$). This dual-power law captures the stiffening efficiency of dense bone while maintaining the rapid compliance increase in porous bone. Panel (b) explicitly plots the exponent $n(\rho)$, which varies smoothly between the two regimes via the cubic smoothstep function shown in (f). Panels (c) and (d) demonstrate the sensitivity of the stiffness curve to the transition thresholds $\rho_{\mathrm{trab}}^{\max}$ and $\rho_{\mathrm{cort}}^{\min}$; shifting these parameters allows for calibration to specific anatomical sites where the trabecular-cortical boundary may differ. Panel (e) highlights the effect of the exponents themselves; higher $n_{\mathrm{trab}}$ suppresses stiffness in low-density regions, effectively modeling the loss of connectivity in osteoporotic bone. The smooth lower clamp \eqref{eq:smooth-max-nd} guarantees strictly positive stiffness even in highly porous regions, thus preventing mechanical degeneracy and preserving differentiability. The normalization \eqref{eq:Ahat-blend-nd} removes isotropic scaling from the fabric and yields a symmetric, unit-determinant anisotropy descriptor ($\det\widehat{\mathbf{A}}=1$), which is positive definite by construction. This combination yields a mechanically transparent, numerically robust model suitable for coupling with remodeling stimuli and evolution equations.
 
 \begin{figure}[htbp]
     \centering
@@ -229,18 +228,18 @@ The apparent density $\rho=\rho(x,t)$ evolves under diffusive regularization and
 \end{equation}
 
 \paragraph{Diffusive regularization.}
-In the current implementation, transport is modeled by an isotropic diffusion tensor
+In this work, transport is modeled by an isotropic diffusion tensor
 \begin{equation}\label{eq:Drho-nd}
 \mathbf{D}_\rho(x,t) \;=\; D_\rho\,\mathbf{I},
 \end{equation}
-with $D_\rho\ge 0$ in units mm$^2$/day. For later use (e.g.\ fabric-guided constitutive evaluation) we define a trace-safe unit-trace normalization of $\mathbf{A}=\exp(\mathbf{L})$:
+with $D_\rho\ge 0$ in units mm$^2$/day. For later use (e.g.\ fabric-guided constitutive evaluation) we define a deviatoric (unit-determinant) normalization of $\mathbf{A}=\exp(\mathbf{L})$:
 \begin{equation}\label{eq:Ahat-blend-nd}
-\widehat{\mathbf{A}} \;=\; \frac{\mathbf{A}+\varepsilon_A\,\mathbf{I}}{\mathrm{tr}(\mathbf{A}+\varepsilon_A\,\mathbf{I})},
+\widehat{\mathbf{A}} \;:=\; \exp\!\Big(\mathbf{L}-\tfrac13\,\mathrm{tr}(\mathbf{L})\,\mathbf{I}\Big),
 \end{equation}
-which is symmetric, unit-trace, and positive-definite for $\varepsilon_A>0$.
+which is symmetric positive definite and satisfies $\det(\widehat{\mathbf{A}})=1$, i.e., it contains only the anisotropy (eigenvalue ratios) of $\mathbf{A}$.
 
 \paragraph{Bounded formation/resorption kinetics.}
-The density evolution is driven by the stimulus $S$ such that positive stimulus drives growth toward $\rho_{\max}$ and negative stimulus drives resorption toward $\rho_{\min}$. We use smooth positive/negative parts (consistent with the implementation smoothness $\varepsilon$):
+The density evolution is driven by the stimulus $S$ such that positive stimulus drives growth toward $\rho_{\max}$ and negative stimulus drives resorption toward $\rho_{\min}$. We use smooth positive/negative parts (consistent with the global smoothing width $\varepsilon$):
 \begin{equation}\label{eq:smooth-splits-nd}
 \operatorname{smoothmax}(a,b;\varepsilon):=\tfrac12\!\left(a+b+\sqrt{(a-b)^2+\varepsilon^2}-\varepsilon\right),\qquad
 S_+(S):=\operatorname{smoothmax}(S,0;\varepsilon),\quad
@@ -251,20 +250,20 @@ The total evolution equation is:
 \partial_t \rho - \nabla \cdot (\mathbf{D}_\rho \nabla \rho) =
 A_{\mathrm{surf}}(\rho)\Big(
 k_{\mathrm{form}}\,S_+(S)\Big(1-\frac{\rho}{\rho_{\max}}\Big)
-k_{\mathrm{res}}\,S_-(S)\Big(1-\frac{\rho}{\rho_{\min}}\Big)
+\;+\;k_{\mathrm{res}}\,S_-(S)\Big(1-\frac{\rho}{\rho_{\min}}\Big)
 \Big).
 \end{equation}
-Here $k_{\mathrm{form}},k_{\mathrm{res}}\ge 0$ are formation/resorption gains. The bracketed terms are soft bounds: as $\rho\to\rho_{\max}$ (formation) or $\rho\to\rho_{\min}$ (resorption) the corresponding rate vanishes, so $\rho$ remains naturally attracted to $[\rho_{\min},\rho_{\max}]$ without hard constraints. The optional surface-availability factor $A_{\mathrm{surf}}\in[A_{\min},1]$ scales activity based on a porosity/specific-surface proxy (evaluated on the previous step in the implementation).
+Here $k_{\mathrm{form}},k_{\mathrm{res}}\ge 0$ are formation/resorption gains. The bracketed terms are soft bounds: as $\rho\to\rho_{\max}$ (formation) or $\rho\to\rho_{\min}$ (resorption) the corresponding rate vanishes, so $\rho$ remains naturally attracted to $[\rho_{\min},\rho_{\max}]$ without hard constraints. The optional surface-availability factor $A_{\mathrm{surf}}\in[A_{\min},1]$ scales activity based on a porosity/specific-surface proxy, which we evaluate explicitly at the previous time level.
 
 \paragraph{Quantitative analysis and biological interpretation.}
-Equation \eqref{eq:density-strong-nd} uses differentiable kinetics and soft bounds to provide a stable density update driven by the nonlocal stimulus field. The diffusion term $\nabla\!\cdot(\mathbf{D}_\rho\nabla\rho)$ introduces a spatial regularization length scale, preventing checkerboard patterns and promoting mesh-independent solutions. In this implementation $\mathbf{D}_\rho$ is isotropic; fabric effects enter through the mechanics and the fabric evolution, and can be extended to anisotropic transport if desired.
+Equation \eqref{eq:density-strong-nd} uses differentiable kinetics and soft bounds to provide a stable density update driven by the nonlocal stimulus field. The diffusion term $\nabla\!\cdot(\mathbf{D}_\rho\nabla\rho)$ introduces a spatial regularization length scale, preventing checkerboard patterns and promoting mesh-independent solutions. Here $\mathbf{D}_\rho$ is isotropic; fabric effects enter through the mechanics and the fabric evolution, and can be extended to anisotropic transport if desired.
 
 \begin{figure}[htbp]
     \centering
     \IfFileExists{images/mechanostat_law.png}{%
         \includegraphics[width=\textwidth]{images/mechanostat_law.png}%
     }{\fbox{\parbox{0.9\linewidth}{\centering Missing image: \texttt{images/mechanostat\_law.png}}}}
-    \caption{Mechanostat and density kinetics (implementation). Top row: stimulus mechanostat drive (lazy zone and saturation). Bottom row: surface-availability factor and bounded formation/resorption rates that keep $\rho$ attracted to $[\rho_{\min},\rho_{\max}]$.}
+    \caption{Mechanostat and density kinetics. Top row: stimulus mechanostat drive (lazy zone and saturation). Bottom row: surface-availability factor and bounded formation/resorption rates that keep $\rho$ attracted to $[\rho_{\min},\rho_{\max}]$.}
     \label{fig:mechanostat_law}
 \end{figure}
 
@@ -317,7 +316,7 @@ with a small dimensionless $\varepsilon_a>0$.
 \begin{figure}[htbp]
     \centering
     \includegraphics[width=\textwidth]{images/anisotropy_law.png}
-    \caption{Fabric-guided anisotropy. (a) Directional stiffness for representative fabric states. (b,d) Directional diffusivity illustrations correspond to an optional anisotropic-transport extension; the current reference implementation uses isotropic density diffusion $\mathbf{D}_\rho=D_\rho\mathbf{I}$ in \eqref{eq:Drho-nd}. (c,e,f) Stiffness scaling and eigenvalue-space visualizations.}
+    \caption{Fabric-guided anisotropy. (a) Directional stiffness for representative fabric states. (b,d) Directional diffusivity illustrations correspond to an optional anisotropic-transport extension; in the present model we use isotropic density diffusion $\mathbf{D}_\rho=D_\rho\mathbf{I}$ in \eqref{eq:Drho-nd}. (c,e,f) Stiffness scaling and eigenvalue-space visualizations.}
     \label{fig:anisotropy_law}
 \end{figure}
 
@@ -331,12 +330,12 @@ Figure \ref{fig:anisotropy_law} visualizes how the log-fabric state biases direc
 \end{figure}
 
 \paragraph{Regularization parameters and defaults.}
-The implementation uses a single global smoothing width $\varepsilon$ for the soft clamps in \eqref{eq:smooth-max-nd} and \eqref{eq:smooth-splits-nd}. The stimulus mechanostat uses a dimensionless lazy-zone half-width $\delta_0$ and saturation width $\kappa_S$ in \eqref{eq:stim-strong-nd}. The fabric target uses $\varepsilon_Q$ and eigenvalue-ratio bounds $[m_{\min},m_{\max}]$ in \eqref{eq:M-hat-nd}, and the activity factor uses $\varepsilon_a$ to smoothly gate near-isotropic loading. These choices avoid hard projections while keeping the subproblems well-conditioned in practice.
+We use a single global smoothing width $\varepsilon$ for the soft clamps in \eqref{eq:smooth-max-nd} and \eqref{eq:smooth-splits-nd}. The stimulus mechanostat uses a dimensionless lazy-zone half-width $\delta_0$ and saturation width $\kappa_S$ in \eqref{eq:stim-strong-nd}. The fabric target uses $\varepsilon_Q$ and eigenvalue-ratio bounds $[m_{\min},m_{\max}]$ in \eqref{eq:M-hat-nd}, and the activity factor uses $\varepsilon_a$ to smoothly gate near-isotropic loading. These choices avoid hard projections while keeping the subproblems well-conditioned in practice.
 
 \section*{Constitutive Properties and Gait Integration}
 
 \subsection*{Gait Cycle Integration and Stimulus Accumulation}
-The daily mechanical stimulus $\psi_{\mathrm{day}}$ aggregates the loading history over a full day. In the reference implementation, the gait cycle is represented by a finite set of loading cases (phases) with relative daily frequencies $c_i$, and the daily driver is computed as the cycle-weighted power mean in \eqref{eq:stim-psi-nd}. The exponent $p$ plays a critical role in filtering the mechanical signal: $p=1$ gives a weighted mean, while larger $p$ increasingly biases toward peak loads ($p\to\infty$ approaches a max). Under linear elasticity $\psi_i\propto F^2$, so the power kernel scales as $F^{2p}$ and convexity (Jensen’s inequality) explains why dynamic peaks produce a stronger stimulus than a constant load of equivalent average magnitude.
+The daily mechanical stimulus $\psi_{\mathrm{day}}$ aggregates the loading history over a full day. In our numerical experiments, the gait cycle is represented by a finite set of loading cases (phases) with relative daily frequencies $c_i$, and the daily driver is computed as the cycle-weighted power mean in \eqref{eq:stim-psi-nd}. The exponent $p$ plays a critical role in filtering the mechanical signal: $p=1$ gives a weighted mean, while larger $p$ increasingly biases toward peak loads ($p\to\infty$ approaches a max). Under linear elasticity $\psi_i\propto F^2$, so the power kernel scales as $F^{2p}$ and convexity (Jensen’s inequality) explains why dynamic peaks produce a stronger stimulus than a constant load of equivalent average magnitude.
 
 \begin{figure}[htbp]
     \centering
@@ -379,7 +378,7 @@ k_{\mathrm{form}}\,S_+^n\!\left(1-\frac{\rho^n}{\rho_{\max}}\right)
 \;+\;k_{\mathrm{res}}\,S_-^n\!\left(1-\frac{\rho^n}{\rho_{\min}}\right)
 \right]\quad\text{in }\Omega,
 \end{equation}
-Here $S_+^n:=S_+(S^n)$ and $S_-^n:=S_-(S^n)$ are the smooth positive/negative parts from \eqref{eq:smooth-splits-nd}. In the implementation $A_{\mathrm{surf}}$ is evaluated on $\rho^{n-1}$.
+Here $S_+^n:=S_+(S^n)$ and $S_-^n:=S_-(S^n)$ are the smooth positive/negative parts from \eqref{eq:smooth-splits-nd}. We evaluate $A_{\mathrm{surf}}$ explicitly on $\rho^{n-1}$.
 
 with the no--flux condition from \eqref{eq:density-bc-ic-nd} and $\rho^{0}=\rho_0$.
 
@@ -400,7 +399,7 @@ for scalar fields $Q_h\subset H^1(\Omega)$, and for second-order tensors
 \[
 T_h:=\{\,\mathbf{Q}_h\in [H^1(\Omega)]^{d\times d}\,\}.
 \]
-In the implementation the tensor unknown $\mathbf{L}$ is represented componentwise and is symmetrized after each fabric solve; the fabric tensor is recovered as $\mathbf{A}=\exp(\mathbf{L})$.
+We represent the tensor unknown $\mathbf{L}$ componentwise and symmetrize it after each fabric solve; the fabric tensor is recovered as $\mathbf{A}=\exp(\mathbf{L})$.
 
 \paragraph{Mechanics at $t^n$ (weak form).}
 Find $\mathbf{u}_h^{n}\in V_h$ such that for all $\mathbf{v}_h\in V_h$,
@@ -455,7 +454,7 @@ with the product inner product
 \langle \mathbf{x},\mathbf{y}\rangle_{\mathcal{X}} \;=\;
 \alpha_L\,(\mathbf{L},\mathbf{Q}) \;+\; \alpha_S\,(S,q) \;+\; \alpha_\rho\,(\rho,p),
 \end{equation}
-for $\mathbf{y}=(\mathbf{Q},q,p)$ and positive weights $\alpha_\bullet$. The mechanics field $\mathbf{u}$ is treated as a dependent variable $\mathbf{u}(\rho,\mathbf{L})$ determined by the equilibrium equations. In the implementation we monitor an RMS-per-DOF global L2 norm on a scaled concatenation of $(\mathbf{L},S,\rho)$ (per-field scaling set from the first sweep); scalar/tensor blocks have no Dirichlet-constrained DOFs, so the “projection” is trivial.
+for $\mathbf{y}=(\mathbf{Q},q,p)$ and positive weights $\alpha_\bullet$. The mechanics field $\mathbf{u}$ is treated as a dependent variable $\mathbf{u}(\rho,\mathbf{L})$ determined by the equilibrium equations. We monitor an RMS-per-DOF global $L^2$ norm on a scaled concatenation of $(\mathbf{L},S,\rho)$ (per-field scaling set from the first sweep); scalar/tensor blocks have no Dirichlet-constrained DOFs, so the “projection” is trivial.
 
 \paragraph{Block map.}
 We define the fixed-point iteration in terms of the mechanical drivers $\psi_{\mathrm{day}}$ (scalar stimulus driver) and $\bar{\mathbf{Q}}$ (cycle-averaged stress outer-product). Given the state $(\rho, \mathbf{L})$, the mechanics driver $\mathsf{U}$ determines equilibrium displacements for each loading case and generates
@@ -468,12 +467,12 @@ The block Gauss--Seidel map $\mathcal{G}:\mathcal{X}\to\mathcal{X}$ is then defi
 :=
 \Big(\ \underbrace{\mathsf{L}(\bar{\mathbf{Q}}_{\mathrm{new}})}_{\text{fabric}},\ \underbrace{\mathsf{S}(\psi_{\mathrm{new}},\rho)}_{\text{stim}},\ \underbrace{\mathsf{R}(S_{\mathrm{new}})}_{\text{density}}\ \Big),
 \end{equation}
-where $S_{\mathrm{new}}=\mathsf{S}(\psi_{\mathrm{new}},\rho)$ is the updated stimulus. This structure highlights that $\mathsf{S}$ and $\mathsf{L}$ depend on mechanics only through intermediate drivers. In the implementation, the daily driver is a cycle-weighted power mean of local strain energy density across loading cases,
+where $S_{\mathrm{new}}=\mathsf{S}(\psi_{\mathrm{new}},\rho)$ is the updated stimulus. This structure highlights that $\mathsf{S}$ and $\mathsf{L}$ depend on mechanics only through intermediate drivers. We take the daily driver as a cycle-weighted power mean of local strain energy density across loading cases,
 \[
 \psi_{\mathrm{day}}(x)=\left(\frac{\sum_i c_i\,\psi_i(x)^p}{\sum_i c_i}\right)^{1/p},\qquad
 \psi_i(x):=\max\!\Big(0,\tfrac12\,\boldsymbol{\sigma}_i(x):\boldsymbol{\varepsilon}_i(x)\Big),
 \]
-with exponent $p=\texttt{stimulus\_power\_p}$ and weights $c_i=\texttt{day\_cycles}$; the fabric driver is $\bar{\mathbf{Q}}=\sum_i c_i\,\mathrm{sym}(\boldsymbol{\sigma}_i\boldsymbol{\sigma}_i^{\!\top})/\sum_i c_i$.
+with exponent $p\ge 1$ and cycle weights $c_i$ (cycles/day); the fabric driver is $\bar{\mathbf{Q}}=\sum_i c_i\,\mathrm{sym}(\boldsymbol{\sigma}_i\boldsymbol{\sigma}_i^{\!\top})/\sum_i c_i$.
 
 The fixed point at $t^n$ solves
 \begin{equation}\label{eq:fp-residual}
@@ -513,7 +512,7 @@ If $p\ge 2$, we apply a cheap residual-energy safeguard using the Gram matrix: w
 \mathbf{y} \;=\; \sum_{j=1}^{p} \alpha_j\Big(\mathbf{x}^{(m-p+j)} + \beta\,r^{(m-p+j+1)}\Big),\qquad
 \mathbf{s}:=\mathbf{y}-\mathbf{x}^{(m)},\qquad \mathbf{x}_{\mathrm{cand}}:=\mathbf{x}^{(m)}+\mathbf{s},
 \end{equation}
-with a \emph{step limiter} enforcing $\|\mathbf{x}_{\mathrm{cand}} - \mathbf{x}^{(m)}\|_{\mathrm{proj}} \le \mathrm{factor}\,\|x_{\mathrm{raw}}^{(m+1)} - \mathbf{x}^{(m)}\|_{\mathrm{proj}}$ (implemented by scaling $\mathbf{s}$ if needed).
+with a \emph{step limiter} enforcing $\|\mathbf{x}_{\mathrm{cand}} - \mathbf{x}^{(m)}\|_{\mathrm{proj}} \le c_{\mathrm{step}}\,\|x_{\mathrm{raw}}^{(m+1)} - \mathbf{x}^{(m)}\|_{\mathrm{proj}}$ (implemented by scaling $\mathbf{s}$ if needed).
 
 \paragraph{Projected-residual merit, safeguard, and backtracking.}
 The acceptance test uses an \emph{RMS-per-DOF} 2--norm on the scaled flattened state $(\mathbf{L},S,\rho)$ (blockwise scaled by the first-sweep RMS and by $1/\sqrt{N_i}$). For these blocks there are no Dirichlet constraints, so the projection is the identity. With
@@ -528,13 +527,13 @@ we accept the Anderson step iff
 \begin{equation}\label{eq:safeguard}
 r_{\mathrm{proxy}}^{(m+1)} \;\le\; (1-\gamma)\,r_{\mathrm{Pic}}^{(m+1)}.
 \end{equation}
-Otherwise we backtrack along $\mathbf{s}$ by halving ($\le$ a user cap) until \eqref{eq:safeguard} holds; if backtracking fails, we \emph{fall back} to the (possibly damped) Picard step $\mathbf{x}^{(m)}+\beta\,(x_{\mathrm{raw}}^{(m+1)}-\mathbf{x}^{(m)})$. This safeguard is \emph{cheap}: it requires no extra GS sweep because the proxy only uses differences of already known states.
+Otherwise we backtrack along $\mathbf{s}$ by halving (up to $N_{\mathrm{bt}}$ attempts) until \eqref{eq:safeguard} holds; if backtracking fails, we \emph{fall back} to the (possibly damped) Picard step $\mathbf{x}^{(m)}+\beta\,(x_{\mathrm{raw}}^{(m+1)}-\mathbf{x}^{(m)})$. This safeguard is \emph{cheap}: it requires no extra GS sweep because the proxy only uses differences of already known states.
 
 \paragraph{Automatic restarts and conditioning.}
-The accelerator maintains the best Picard merit seen so far and schedules a history reset (on the \emph{next} call) if any of the following triggers fire: (i) a streak of $\ge k$ consecutive AA rejections; (ii) Picard merit stalls, i.e., $r_{\mathrm{Pic}}^{(m+1)}$ exceeds the best so far by a user factor; (iii) the estimated condition number of $H+\lambda_{\mathrm{AA}}I$ exceeds a threshold. In case of linear-algebra failure in \eqref{eq:kkt}, uniform weights are used as a safe fallback. No preconditioner-driven resets are used; preconditioner maintenance (if any) is decoupled from Anderson.
+The accelerator maintains the best Picard merit seen so far and schedules a history reset (on the \emph{next} call) if any of the following triggers fire: (i) a streak of $\ge k_{\mathrm{rej}}$ consecutive AA rejections; (ii) Picard merit stalls, i.e., $r_{\mathrm{Pic}}^{(m+1)}>\chi_{\mathrm{stall}}\,r_{\mathrm{best}}$ with $r_{\mathrm{best}}$ the best Picard merit so far; (iii) the estimated condition number of $H+\lambda_{\mathrm{AA}}I$ exceeds $\kappa_{\max}$. In case of linear-algebra failure in \eqref{eq:kkt}, uniform weights are used as a safe fallback. No preconditioner-driven resets are used; preconditioner maintenance (if any) is decoupled from Anderson.
 
 \paragraph{Stopping and logging.}
-In the implementation we monitor the projected Picard residual $r_{\mathrm{Pic}}^{(m+1)}$ itself and stop once $r_{\mathrm{Pic}}^{(m+1)}<\mathrm{tol}$ and at least a user-specified minimum number of subiterations has been taken. The Gram-matrix prediction check, safeguard/backtracking \eqref{eq:safeguard}, and step limiting ensure that any accepted Anderson update has a proxy step no worse than the contemporaneous Picard update in this metric. A separate \emph{blockwise relative iterate change} and Anderson diagnostics (history depth, conditioning, restarts) are recorded for analysis but are not used for stopping.
+We monitor the projected Picard residual $r_{\mathrm{Pic}}^{(m+1)}$ itself and stop once $r_{\mathrm{Pic}}^{(m+1)}<\mathrm{tol}$ and at least a user-specified minimum number of subiterations has been taken. The Gram-matrix prediction check, safeguard/backtracking \eqref{eq:safeguard}, and step limiting ensure that any accepted Anderson update has a proxy step no worse than the contemporaneous Picard update in this metric. A separate \emph{blockwise relative iterate change} and Anderson diagnostics (history depth, conditioning, restarts) are recorded for analysis but are not used for stopping.
 
 \paragraph{Well-posedness of subsolves.}
 At each evaluation of $\mathcal{G}$ the four subproblems are uniformly elliptic (for fixed arguments) and admit unique solutions in the chosen finite-dimensional spaces: (i) mechanics has a coercive bilinear form by the density floor and $\nu\in(-1,\tfrac12)$, (ii) stimulus is SPD by $(\tau_S/\Delta t^n+1)$ with $D_S\ge0$, (iii) density is SPD by $(1/\Delta t^n)+A_{\mathrm{surf}}(\rho^{n-1})\big(k_{\mathrm{form}}S_+/\rho_{\max}+k_{\mathrm{res}}S_-/\rho_{\min}\big)\ge 1/\Delta t^n$ together with $\mathbf{D}_\rho=D_\rho\mathbf{I}$, and (iv) fabric is SPD by $(c_A/\Delta t^n)+c_A a(\bar{\mathbf{Q}})/\tau_A>0$ with $D_A\ge 0$. Thus each application of $\mathcal{G}$ is well-defined.
@@ -558,31 +557,34 @@ On bounded sets where the smooth gates/clamps are Lipschitz, $\mathcal{G}$ is lo
 
 \section*{Physical Parameter Analysis and Model Calibration}
 
-We adopt a consistent set of physical parameters for both the full-scale femur simulations and the representative volume element (RVE) verification tests. The reference implementation uses the unit system: millimeters [mm], days [day], megapascals [MPa], and density [g/cm$^3$] (as in \texttt{simulation/params.py}).
+We adopt a consistent set of physical parameters for both the full-scale femur simulations and the representative volume element (RVE) verification tests. Unless stated otherwise, we report length in [mm], time in [day], stress/energy in [MPa], and density in [g/cm$^3$].
 
-\paragraph{Mechanics solver parameters (\texttt{cfg.material}, \texttt{cfg.density}).}
-The density--elasticity law uses $\texttt{material.E0}=7500\,\mathrm{MPa}$ ($7.5\,\mathrm{GPa}$), $\texttt{material.nu0}=0.3$, and a smooth exponent transition from $\texttt{material.n\_trab}=2.0$ to $\texttt{material.n\_cort}=1.3$ over $\texttt{material.rho\_trab\_max}=1.0\,\mathrm{g/cm^3}$ to $\texttt{material.rho\_cort\_min}=1.25\,\mathrm{g/cm^3}$. Density is nondimensionalized by $\texttt{density.rho\_ref}=1.0\,\mathrm{g/cm^3}$ and smoothly clamped from below at $\texttt{density.rho\_min}=0.1\,\mathrm{g/cm^3}$ to preserve coercivity. Fabric-guided directional scaling uses stiffness exponents $\texttt{material.stiff\_pE}=1.0$ (axial) and $\texttt{material.stiff\_pG}=1.0$ (shear), with eigenvalue-ratio caps inherited from the fabric parameters $\texttt{fabric.fabric\_m\_min}=0.2$ and $\texttt{fabric.fabric\_m\_max}=5.0$.
+\paragraph{Mechanical (elasticity) parameters.}
+The density--elasticity law uses $E_0=7500\,\mathrm{MPa}$ ($7.5\,\mathrm{GPa}$), $\nu_0=0.3$, and a smooth exponent transition from $n_{\mathrm{trab}}=2.0$ to $n_{\mathrm{cort}}=1.3$ over the density interval $[\rho_{\mathrm{trab}}^{\max},\rho_{\mathrm{cort}}^{\min}]$ with $\rho_{\mathrm{trab}}^{\max}=1.0\,\mathrm{g/cm^3}$ and $\rho_{\mathrm{cort}}^{\min}=1.25\,\mathrm{g/cm^3}$. We use the reference density $\rho_{\mathrm{ref}}=1.0\,\mathrm{g/cm^3}$ in the power law and the smooth lower clamp $\rho_{\min}=0.1\,\mathrm{g/cm^3}$. Fabric-guided directional scaling uses stiffness exponents $p_E=1.0$ (axial) and $p_G=1.0$ (shear), with eigenvalue-ratio bounds $m_{\min}=0.2$ and $m_{\max}=5.0$.
 
-\paragraph{Stimulus solver parameters (\texttt{cfg.stimulus}, \texttt{cfg.density}).}
-The cycle-weighted power mean in \eqref{eq:stim-psi-nd} uses $\texttt{stimulus.stimulus\_power\_p}=4.0$. The mechanostat is parametrized by $\texttt{stimulus.psi\_ref}=0.01\,\mathrm{MPa}$, diffusion--reaction constants $\texttt{stimulus.stimulus\_tau}=25\,\mathrm{day}$ and $\texttt{stimulus.stimulus\_D}=1.0\,\mathrm{mm^2/day}$, and the dimensionless saturation/lazy-zone parameters $\texttt{stimulus.stimulus\_S\_max}=1.0$, $\texttt{stimulus.stimulus\_kappa}=0.5$, and $\texttt{stimulus.stimulus\_delta0}=0.10$. The specific-energy normalization uses $\texttt{density.rho\_ref}=1.0\,\mathrm{g/cm^3}$ via $m_{\mathrm{ref}}=\psi_{\mathrm{ref}}/\rho_{\mathrm{ref}}$.
+\paragraph{Stimulus (mechanoregulation) parameters.}
+The cycle-weighted power mean in \eqref{eq:stim-psi-nd} uses exponent $p=4.0$. The mechanostat is parametrized by $\psi_{\mathrm{ref}}=0.01\,\mathrm{MPa}$ and the specific-energy reference $m_{\mathrm{ref}}=\psi_{\mathrm{ref}}/\rho_{\mathrm{ref}}$ with $\rho_{\mathrm{ref}}=1.0\,\mathrm{g/cm^3}$. The diffusion--reaction constants are $\tau_S=25\,\mathrm{day}$ and $D_S=1.0\,\mathrm{mm^2/day}$, and the dimensionless saturation/lazy-zone parameters are $S_{\max}=1.0$, $\kappa_S=0.5$, and $\delta_0=0.10$.
 
-\paragraph{Density solver parameters (\texttt{cfg.density}).}
-The density bounds and initialization are $\texttt{density.rho\_min}=0.1\,\mathrm{g/cm^3}$, $\texttt{density.rho\_max}=2.0\,\mathrm{g/cm^3}$, and $\texttt{density.rho0}=1.0\,\mathrm{g/cm^3}$, with reference density $\texttt{density.rho\_ref}=1.0\,\mathrm{g/cm^3}$. Formation and resorption gains are $\texttt{density.k\_rho\_form}=\texttt{density.k\_rho\_resorb}=2\times 10^{-2}\,\mathrm{g/cm^3/day}$, and the isotropic density diffusion coefficient is $\texttt{density.D\_rho}=2\times 10^{-2}\,\mathrm{mm^2/day}$. The optional surface-availability factor $A_{\mathrm{surf}}$ is enabled by default (\texttt{density.surface\_use=True}) and uses $\texttt{density.rho\_tissue}=2.0\,\mathrm{g/cm^3}$, $\texttt{density.surface\_A\_min}=0.02$ (dimensionless), and $\texttt{density.surface\_S0}=1.0\,\mathrm{mm^{-1}}$.
+\paragraph{Density-evolution parameters.}
+The density bounds and initialization are $\rho_{\min}=0.1\,\mathrm{g/cm^3}$, $\rho_{\max}=2.0\,\mathrm{g/cm^3}$, and $\rho_0=1.0\,\mathrm{g/cm^3}$, with reference density $\rho_{\mathrm{ref}}=1.0\,\mathrm{g/cm^3}$. Formation and resorption gains are $k_{\mathrm{form}}=k_{\mathrm{res}}=2\times 10^{-2}\,\mathrm{g/cm^3/day}$, and the isotropic density diffusion coefficient is $D_\rho=2\times 10^{-2}\,\mathrm{mm^2/day}$. The surface-availability factor $A_{\mathrm{surf}}$ is enabled in the results below and uses $\rho_{\mathrm{tissue}}=2.0\,\mathrm{g/cm^3}$, $A_{\min}=0.02$ (dimensionless), and $S_0=1.0\,\mathrm{mm^{-1}}$.
 
-\paragraph{Fabric solver parameters (\texttt{cfg.fabric}).}
-The log-fabric equation \eqref{eq:L-strong-nd} uses $\texttt{fabric.fabric\_tau}=50\,\mathrm{day}$, $\texttt{fabric.fabric\_D}=1.0\,\mathrm{mm^2/day}$, and capacity $\texttt{fabric.fabric\_cA}=1.0$ (dimensionless). The target construction \eqref{eq:M-hat-nd} uses exponent $\texttt{fabric.fabric\_gammaF}=1.0$, diagonal regularization $\texttt{fabric.fabric\_epsQ}=10^{-12}\,\mathrm{MPa^2}$ (added to $\bar{\mathbf Q}$), and eigenvalue-ratio bounds $\texttt{fabric.fabric\_m\_min}=0.2$ and $\texttt{fabric.fabric\_m\_max}=5.0$. The activity gate uses a small $\varepsilon_a$ (implementation constant $10^{-4}$).
+\paragraph{Fabric-evolution parameters.}
+The log-fabric equation \eqref{eq:L-strong-nd} uses $\tau_A=50\,\mathrm{day}$, $D_A=1.0\,\mathrm{mm^2/day}$, and capacity $c_A=1.0$ (dimensionless). The target construction \eqref{eq:M-hat-nd} uses exponent $\gamma_F=1.0$, diagonal regularization $\varepsilon_Q=10^{-12}\,\mathrm{MPa^2}$ (added to $\bar{\mathbf Q}$), and eigenvalue-ratio bounds $m_{\min}=0.2$ and $m_{\max}=5.0$. The activity gate uses $\varepsilon_a=10^{-4}$.
 
-\paragraph{Coupling and linear solver parameters (\texttt{cfg.solver}).}
-Each linear block solve uses PETSc $\texttt{ksp\_type}=\texttt{"minres"}$ with $\texttt{pc\_type}=\texttt{"gamg"}$ and tolerances $\texttt{ksp\_rtol}=10^{-6}$, $\texttt{ksp\_atol}=10^{-7}$, and $\texttt{ksp\_max\_it}=100$. Fixed-point coupling uses $\texttt{accel\_type}=\texttt{"anderson"}$ with history $\texttt{m}=5$, mixing $\texttt{beta}=1.0$, regularization $\texttt{lam}=10^{-9}$, and safeguard threshold $\texttt{gamma}=0.05$; backtracking uses $\texttt{backtrack\_max}=5$ and step limiting uses $\texttt{step\_limit\_factor}=2.0$. Restarts trigger at $\texttt{restart\_on\_reject\_k}=2$, $\texttt{restart\_on\_stall}=1.10$, and $\texttt{restart\_on\_cond}=10^{12}$. Convergence uses $\texttt{coupling\_tol}=10^{-4}$ with $\texttt{min\_subiters}=2$ and $\texttt{max\_subiters}=25$.
+\paragraph{Linear and coupling solver parameters.}
+Each linear block solve uses MINRES with GAMG preconditioning and tolerances $\mathrm{rtol}=10^{-6}$, $\mathrm{atol}=10^{-7}$, and $\mathrm{it}_{\max}=100$; we reuse the Krylov solver object between sweeps and do not force preconditioner reuse between successive assemblies. Nonlinear coupling at a fixed time level uses block Gauss--Seidel with Anderson acceleration (enabled in all results below): history length $m=5$, mixing $\beta=1.0$, regularization $\lambda=10^{-9}$, safeguard threshold $\gamma=0.05$, backtracking cap $N_{\mathrm{bt}}=5$, and step-limit factor $c_{\mathrm{step}}=2.0$. Restarts trigger for $k_{\mathrm{rej}}=2$ consecutive rejections, stall ratio $\chi_{\mathrm{stall}}=1.10$, and conditioning threshold $\kappa_{\max}=10^{12}$. The stopping criterion uses $\mathrm{tol}=10^{-4}$ with $N_{\min}=2$ and $N_{\max}=25$ subiterations.
 
-\paragraph{Time stepping and numerics (\texttt{cfg.time}, \texttt{cfg.numerics}).}
-The default simulation horizon is $\texttt{time.total\_time}=500\,\mathrm{day}$ with constant timestep $\texttt{time.dt\_initial}=25\,\mathrm{day}$ (adaptive stepping is disabled by default: \texttt{time.adaptive\_dt=False}). The quadrature degree is $\texttt{numerics.quadrature\_degree}=4$. Smooth clamps/splits use $\texttt{numerics.smooth\_eps}=10^{-6}$ as a small absolute smoothing width in the code unit system (applied in the units of the quantity being smoothed).
+\paragraph{Time stepping and numerics.}
+We simulate up to $T=500\,\mathrm{day}$ with constant timestep $\Delta t=25\,\mathrm{day}$. Optional adaptive stepping (AB2 predictor with a Gustafsson PI controller; disabled in the results below) is parametrized by tolerances $\mathrm{rtol}_t=10^{-2}$ and $\mathrm{atol}_t=10^{-3}$, bounds $\Delta t_{\min}=10^{-4}\,\mathrm{day}$ and $\Delta t_{\max}=100\,\mathrm{day}$, and PI parameters $s=0.9$, $g_{\max}=5.0$, $g_{\min}=0.1$, $k_{\mathrm{exp}}=1.5$, $k_P=0.20$, and $k_I=0.40$. Smooth clamps/splits use a global smoothing width $\varepsilon=10^{-6}$ (interpreted in the units of the smoothed quantity), and numerical integration uses quadrature degree $q=4$.
+
+\paragraph{Output and mesh tags.}
+We write outputs every $N_{\mathrm{save}}=1$ accepted timesteps to an output directory \texttt{.results} with log file \texttt{simulation.log}. The Dirichlet and Neumann boundary parts $(\Gamma_D,\Gamma_N)$ are defined by mesh facet tags with IDs $(i_D,i_N)=(1,2)$.
 
 \paragraph{Calibration for Convergence Studies.}
 For the spatial convergence analysis presented in \ref{app:convergence}, we employ a cubic control volume of side length $L=5\,\mathrm{mm}$. The material parameters match the baseline set above. Loading is applied via Periodic (PMUBC) or Kinematic (KUBC) boundary conditions to generate an apparent strain of magnitude $\varepsilon_{\mathrm{app}}=10^{-3}$, ensuring the response remains within the linear elastic regime.
 
 \subsection*{Preconditioner maintenance}\label{subsec:ksp_defaults}
-In the implementation, each subsolver keeps a single PETSc KSP object that is reused as $(\rho,\mathbf{L},S)$ evolve, with updated operators supplied via \texttt{setOperators}. Preconditioner setup therefore follows PETSc's standard reuse policy and is decoupled from the AA/GS logic.
+Each subsolver keeps a single PETSc KSP object that is reused as $(\rho,\mathbf{L},S)$ evolve, with the operator updated after each assembly. Preconditioner setup therefore follows PETSc's standard reuse policy and is decoupled from the AA/GS logic.
 
 % ==== End of clarifications ====
 \input{sections/anderson_acceleration}

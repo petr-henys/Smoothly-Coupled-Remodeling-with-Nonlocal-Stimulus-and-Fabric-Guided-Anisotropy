@@ -79,7 +79,7 @@ class BoxMeshBuilder:
         """
         g = self.geometry
         
-        # Create box mesh
+        # Create box mesh (hexahedra for better accuracy)
         self._mesh = mesh.create_box(
             self.comm,
             [np.array([0.0, 0.0, 0.0]), np.array([g.Lx, g.Ly, g.Lz])],

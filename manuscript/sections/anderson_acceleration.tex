@@ -3,7 +3,7 @@
 \label{subsec:anderson}
 \paragraph{Motivation and scope}
 To reduce the number of block fixed-point (block Picard/Gauss--Seidel) sub-iterations, we employ Type-II Anderson acceleration (AA-II) with finite memory $m$. We compare (i) a plain block Picard baseline and (ii) AA-II with standard safeguards (restart on deterioration and backtracking/damping) across representative couplings and time-step sizes $\Delta t$. We also report diagnostics that help choose~$m$ and monitor robustness.
-% ==== Added clarifications (implementation-faithful) ====
+% ==== Added clarifications ====
 \subsection*{Interaction-gain diagnostics and spectral radius}\label{subsec:diag_rhoJ}
 We estimate a $3\times 3$ interaction-gain matrix $J$ of the Gauss--Seidel (GS) fixed-point map $G$ at the current state by finite-difference GS sweeps on the accelerated remodeling state $(\mathbf L,S,\rho)$: for each block we form a small deterministic perturbation $\delta_j$ and measure
 \begin{equation*}
@@ -31,7 +31,7 @@ The accelerated stacked state follows $(\mathbf L,S,\rho)$, while a single GS sw
 
 \subsection*{Anderson acceleration details}\label{subsec:aa_details}
 We employ the Type-II Anderson (Pulay) acceleration scheme described in \S\ref{sec:fp-aa}.
-Specific settings for the results below include a step limit factor $c=2$ and history depths $m$ as indicated in the figures.
+Specific settings for the results below include a step limit factor $c_{\mathrm{step}}=2$ and history depths $m$ as indicated in the figures.
 We restart the AA history upon (i) repeated rejections, (ii) stagnation with respect to the best Picard merit, or (iii) poor conditioning of the regularized Gram system.
 
 \paragraph{Performance diagnostics}

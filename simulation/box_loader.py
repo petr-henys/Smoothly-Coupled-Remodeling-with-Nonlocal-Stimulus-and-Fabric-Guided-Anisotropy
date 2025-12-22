@@ -67,6 +67,7 @@ class BoxLoader:
     
     Applies uniform pressure (or traction) to the top surface of a box.
     Compatible with the Remodeller framework via the same interface as Loader.
+    Traction values are stored ONLY at DOFs on the loaded surface (load_tag).
     """
     
     def __init__(
@@ -96,14 +97,73 @@ class BoxLoader:
         # Traction field (updated by set_loading_case)
         self.traction = fem.Function(self.V, name="Traction")
         
-        # Cache for precomputed tractions
+        # Cache for precomputed tractions (only owned DOFs on load surface)
         self._cached_tractions: dict[str, np.ndarray] = {}
-        self._n_owned: int = 0
         
-        # Compute owned DOFs
-        self._n_owned = (
+        # Total owned DOFs in the function
+        self._n_owned_total: int = (
             self.V.dofmap.index_map.size_local * self.V.dofmap.index_map_bs
         )
+        
+        # Initialize DOF indexing for loaded surface
+        self._init_load_surface_dofs()
+
+    def _init_load_surface_dofs(self) -> None:
+        """Identify DOFs on facets with load_tag and cache their indices/coordinates.
+        
+        After this, traction is only set at DOFs on the loaded surface.
+        Other DOFs remain zero, making it clear where the load is applied.
+        """
+        V = self.V
+        imap = V.dofmap.index_map
+        bs = int(V.dofmap.index_map_bs)
+        n_blocks_total = int(imap.size_local + imap.num_ghosts)
+        
+        # Find facets with load_tag
+        tdim = self.mesh.topology.dim
+        fdim = tdim - 1
+        
+        # Ensure connectivity is created (collective operation)
+        self.mesh.topology.create_connectivity(fdim, tdim)
+        
+        facets = self.facet_tags.find(self.load_tag)
+        
+        # locate_dofs_topological is collective - all ranks must call it
+        dofs = fem.locate_dofs_topological(V, fdim, facets)
+        
+        if dofs.size == 0:
+            block_ids = np.empty(0, dtype=np.int32)
+        else:
+            # Check if DOFs are scalar or block indices
+            if bs > 1 and int(dofs.max()) >= n_blocks_total:
+                block_ids = np.unique(dofs // bs).astype(np.int32, copy=False)
+            else:
+                block_ids = np.unique(dofs).astype(np.int32, copy=False)
+        
+        # Keep only owned (non-ghost) blocks
+        self._owned_blocks = np.ascontiguousarray(
+            block_ids[block_ids < imap.size_local], dtype=np.int32
+        )
+        self._n_owned = int(self._owned_blocks.size)
+        
+        # Cache coordinates for owned blocks on load surface
+        coords = V.tabulate_dof_coordinates()
+        n_coords = int(coords.shape[0])
+        
+        if n_coords == n_blocks_total:
+            block_coords = coords
+        elif bs > 1 and n_coords == n_blocks_total * bs:
+            block_coords = coords[::bs]
+        else:
+            if bs > 1 and n_coords % n_blocks_total == 0 and (n_coords // n_blocks_total) == bs:
+                block_coords = coords[::bs]
+            else:
+                block_coords = coords[:n_blocks_total]
+        
+        if self._n_owned > 0:
+            self._x_owned = np.ascontiguousarray(block_coords[self._owned_blocks])
+        else:
+            self._x_owned = np.empty((0, self.gdim), dtype=np.float64)
     
     def _compute_gradient_factor(
         self,
@@ -161,15 +221,19 @@ class BoxLoader:
     def precompute_loading_cases(self, loading_cases: List[BoxLoadingCase]) -> None:
         """Precompute traction arrays for all loading cases.
         
-        Supports uniform, linear gradient, parabolic, and bending distributions.
+        Traction values are computed ONLY at DOFs on the load surface (load_tag).
+        Other DOFs remain zero. Supports uniform, linear gradient, parabolic, 
+        and bending distributions.
         
         Args:
             loading_cases: List of loading cases to precompute
         """
+        bs = int(self.V.dofmap.index_map_bs)
+        
         for case in loading_cases:
             if case.pressure is None:
-                # No load case - zero traction
-                self._cached_tractions[case.name] = np.zeros(self._n_owned)
+                # No load case - zero traction (store only surface DOF values)
+                self._cached_tractions[case.name] = np.zeros(self._n_owned * bs)
             else:
                 spec = case.pressure
                 p = spec.magnitude
@@ -177,46 +241,35 @@ class BoxLoader:
                 d = d / np.linalg.norm(d)  # Normalize direction
                 
                 if spec.gradient_axis is None:
-                    # Uniform pressure
-                    traction_vec = p * d
-                    
-                    def _uniform_traction(x):
-                        return np.tile(traction_vec.reshape(3, 1), (1, x.shape[1]))
-                    
-                    temp_fn = fem.Function(self.V)
-                    temp_fn.interpolate(_uniform_traction)
+                    # Uniform pressure: same traction at all surface DOFs
+                    traction_vec = p * d  # shape (3,)
+                    # Tile for each owned block DOF
+                    values = np.tile(traction_vec, self._n_owned)
                 else:
-                    # Gradient pressure along specified axis
+                    # Gradient pressure: evaluate at surface DOF coordinates
                     axis = spec.gradient_axis
                     grad_type = spec.gradient_type
                     f_min, f_max = spec.gradient_range
                     x_min, x_max = spec.box_extent
                     
-                    # Capture variables for closure
-                    _axis = axis
-                    _grad_type = grad_type
-                    _f_min, _f_max = f_min, f_max
-                    _x_min, _x_max = x_min, x_max
-                    _p = p
-                    _d = d
-                    _self = self
-                    
-                    def _gradient_traction(x):
-                        factor = _self._compute_gradient_factor(
-                            x, _axis, _grad_type, _f_min, _f_max, _x_min, _x_max
-                        )
-                        # Traction = factor * p * direction
-                        traction = np.outer(_d, factor * _p)
-                        return traction
-                    
-                    temp_fn = fem.Function(self.V)
-                    temp_fn.interpolate(_gradient_traction)
+                    # Compute traction at each owned surface DOF
+                    # self._x_owned is (n_owned, gdim), need to transpose for _compute_gradient_factor
+                    x_transposed = self._x_owned.T  # (gdim, n_owned)
+                    factor = self._compute_gradient_factor(
+                        x_transposed, axis, grad_type, f_min, f_max, x_min, x_max
+                    )  # shape (n_owned,)
+                    # Traction at each DOF: p * factor * d
+                    # Result: (n_owned, gdim)
+                    traction_at_dofs = np.outer(factor * p, d)
+                    values = traction_at_dofs.ravel()  # flatten for storage
                 
-                # Cache the owned DOFs
-                self._cached_tractions[case.name] = temp_fn.x.array[:self._n_owned].copy()
+                # Cache the computed values for surface DOFs only
+                self._cached_tractions[case.name] = values.copy()
     
     def set_loading_case(self, case_name: str) -> None:
         """Set the current loading case by name.
+        
+        Traction is set ONLY at DOFs on the load surface; other DOFs are zeroed.
         
         Args:
             case_name: Name of the precomputed loading case
@@ -230,14 +283,24 @@ class BoxLoader:
                 f"Available cases: {list(self._cached_tractions.keys())}"
             )
         
-        # Copy cached traction to the function
-        self.traction.x.array[:self._n_owned] = self._cached_tractions[case_name]
+        bs = int(self.V.dofmap.index_map_bs)
+        
+        # Zero entire traction field first
+        self.traction.x.array[:self._n_owned_total] = 0.0
+        
+        # Set cached values at surface DOFs only
+        if self._n_owned > 0:
+            blocks = self._owned_blocks
+            # Scalar DOF indices for these blocks
+            dof_idx = (blocks[:, None] * bs + np.arange(bs, dtype=np.int32)[None, :]).ravel()
+            self.traction.x.array[dof_idx] = self._cached_tractions[case_name]
+        
         self.traction.x.scatter_forward()
     
     def set_pressure(self, pressure: float, direction: tuple[float, float, float] = (0.0, 0.0, -1.0)) -> None:
         """Directly set uniform pressure (without caching).
         
-        Convenience method for simple use cases.
+        Traction is set ONLY at DOFs on the load surface; other DOFs are zeroed.
         
         Args:
             pressure: Pressure magnitude [MPa]
@@ -247,8 +310,17 @@ class BoxLoader:
         d = d / np.linalg.norm(d)
         traction_vec = pressure * d
         
-        def _uniform_traction(x):
-            return np.tile(traction_vec.reshape(3, 1), (1, x.shape[1]))
+        bs = int(self.V.dofmap.index_map_bs)
         
-        self.traction.interpolate(_uniform_traction)
+        # Zero entire traction field first
+        self.traction.x.array[:self._n_owned_total] = 0.0
+        
+        # Set values at surface DOFs only
+        if self._n_owned > 0:
+            blocks = self._owned_blocks
+            dof_idx = (blocks[:, None] * bs + np.arange(bs, dtype=np.int32)[None, :]).ravel()
+            # Tile the traction vector for each surface DOF
+            values = np.tile(traction_vec, self._n_owned)
+            self.traction.x.array[dof_idx] = values
+        
         self.traction.x.scatter_forward()
