@@ -1,50 +1,139 @@
-"""Parameter sweep framework with hash-based output naming."""
+"""Parameter sweep framework for bone remodeling simulations.
+
+Supports:
+- Dot-notation parameter paths (e.g., "material.E0", "density.k_rho_form")
+- Cartesian product sweeps with hash-based output directories
+- Integration with run_box_model/run_model via Config patching
+- MPI-aware execution with progress tracking
+
+Example usage:
+    from parametrizer import ParameterSweep, Parametrizer, run_box_simulation
+
+    sweep = ParameterSweep(
+        params={
+            "material.E0": [5000.0, 7500.0, 10000.0],
+            "density.k_rho_form": [0.01, 0.05, 0.1],
+            "time.total_time": [100.0],
+        },
+        base_output_dir=Path("./sweep_results"),
+    )
+    
+    parametrizer = Parametrizer(sweep, run_box_simulation, MPI.COMM_WORLD)
+    parametrizer.run()
+"""
+
+from __future__ import annotations
 
 import csv
 import hashlib
 import itertools
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace, fields as dataclass_fields
 from pathlib import Path
-from typing import Any, Dict, List, Protocol
+from typing import Any, Callable
+
 from mpi4py import MPI
 from tqdm import tqdm
 
+from simulation.box_factory import BoxSolverFactory
+from simulation.box_loader import BoxLoader
+from simulation.box_mesh import BoxGeometry, BoxMeshBuilder
+from simulation.box_scenarios import get_parabolic_pressure_case
+from simulation.config import Config
 from simulation.logger import get_logger
+from simulation.model import Remodeller
+from simulation.params import (
+    DensityParams,
+    FabricParams,
+    GeometryParams,
+    MaterialParams,
+    NumericsParams,
+    OutputParams,
+    SolverParams,
+    StimulusParams,
+    TimeParams,
+)
+from simulation.progress import ProgressReporter
 
 ParamValue = int | float | str | bool | None
-ParamDict = Dict[str, List[ParamValue]]
+ParamDict = dict[str, list[ParamValue] | ParamValue]
+
+# Mapping from group name to dataclass type
+PARAM_GROUPS: dict[str, type] = {
+    "material": MaterialParams,
+    "density": DensityParams,
+    "stimulus": StimulusParams,
+    "fabric": FabricParams,
+    "solver": SolverParams,
+    "time": TimeParams,
+    "numerics": NumericsParams,
+    "output": OutputParams,
+    "geometry": GeometryParams,
+}
 
 
-class Runnable(Protocol):
-    def __call__(self, param_point: Dict[str, ParamValue], output_path: Path, comm: MPI.Comm) -> None: ...
+def parse_param_path(path: str) -> tuple[str, str]:
+    """Parse 'group.field' into (group, field). E.g., 'material.E0' → ('material', 'E0')."""
+    parts = path.split(".", 1)
+    if len(parts) != 2:
+        raise ValueError(f"Invalid parameter path '{path}'. Use 'group.field' format (e.g., 'material.E0').")
+    group, field_name = parts
+    if group not in PARAM_GROUPS:
+        raise ValueError(f"Unknown parameter group '{group}'. Valid: {list(PARAM_GROUPS.keys())}")
+    return group, field_name
+
+
+def validate_param_path(path: str) -> None:
+    """Validate that a parameter path refers to an existing field."""
+    group, field_name = parse_param_path(path)
+    param_cls = PARAM_GROUPS[group]
+    valid_fields = {f.name for f in dataclass_fields(param_cls)}
+    if field_name not in valid_fields:
+        raise ValueError(f"Unknown field '{field_name}' in {group}. Valid: {sorted(valid_fields)}")
+
+
+def patch_param_group(param_obj: Any, field_name: str, value: ParamValue) -> Any:
+    """Return a new dataclass instance with one field replaced."""
+    return replace(param_obj, **{field_name: value})
 
 
 @dataclass
 class ParameterSweep:
-    """Parameter sweep with Cartesian product and hash-based paths."""
+    """Parameter sweep specification with Cartesian product and hash-based paths.
+    
+    Attributes:
+        params: Dict mapping parameter paths to values. Paths use dot notation:
+            - "material.E0": Young's modulus
+            - "density.k_rho_form": Formation rate
+            - "stimulus.psi_ref": Reference SED
+            Values can be single items or lists for sweeping.
+        base_output_dir: Root directory for all sweep outputs.
+        metadata: Optional metadata stored in sweep summary.
+    """
     params: ParamDict
     base_output_dir: Path
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.params:
             raise ValueError("params dictionary cannot be empty")
         
+        # Normalize single values to lists and validate paths
+        normalized: dict[str, list[ParamValue]] = {}
         for key, values in self.params.items():
-            if not isinstance(values, list):
-                self.params[key] = [values]
-        
+            validate_param_path(key)
+            normalized[key] = values if isinstance(values, list) else [values]
+        self.params = normalized
         self.base_output_dir = Path(self.base_output_dir)
     
-    def generate_points(self) -> List[Dict[str, ParamValue]]:
-        """Cartesian product of all parameter values."""
+    def generate_points(self) -> list[dict[str, ParamValue]]:
+        """Generate Cartesian product of all parameter values."""
         param_names = list(self.params.keys())
         param_values = [self.params[k] for k in param_names]
-        return [dict(zip(param_names, values)) for values in itertools.product(*param_values)]
+        return [dict(zip(param_names, combo)) for combo in itertools.product(*param_values)]
     
-    def format_output_path(self, param_point: Dict[str, ParamValue]) -> Path:
-        """Output path via 8-char hash of parameter point."""
+    def format_output_path(self, param_point: dict[str, ParamValue]) -> Path:
+        """Generate output path via 8-char hash of parameter point."""
         param_str = json.dumps(param_point, sort_keys=True, separators=(",", ":"))
         params_hash = hashlib.sha1(param_str.encode("utf-8")).hexdigest()[:8]
         return self.base_output_dir / params_hash
@@ -56,41 +145,63 @@ class ParameterSweep:
             total *= len(values)
         return total
 
+
+# Type alias for simulation runner functions
+SimulationRunner = Callable[[dict[str, ParamValue], Path, MPI.Comm], None]
+
+
 class Parametrizer:
-    """Execute parameter sweeps with arbitrary callables."""
+    """Execute parameter sweeps with configurable simulation runners.
+    
+    Args:
+        sweep: Parameter sweep specification.
+        runner: Callable that runs a single simulation. Signature:
+            runner(param_point: dict[str, ParamValue], output_path: Path, comm: MPI.Comm) -> None
+        comm: MPI communicator.
+    """
     
     def __init__(
         self,
         sweep: ParameterSweep,
-        callable_func: Runnable,
+        runner: SimulationRunner,
         comm: MPI.Comm,
-        verbose: bool = True
-    ):
+    ) -> None:
         self.sweep = sweep
-        self.callable_func = callable_func
+        self.runner = runner
         self.comm = comm
         self.logger = get_logger(comm, name="Parametrizer")
     
-    def run(self) -> None:
-        """Execute parameter sweep and save summary."""
+    def run(self) -> list[dict[str, Any]]:
+        """Execute full parameter sweep and save summary.
+        
+        Returns:
+            List of run metadata dicts (output_dir + param values).
+        """
         param_points = self.sweep.generate_points()
         total_runs = len(param_points)
         
         if self.comm.rank == 0:
-            self.logger.info(f"Parameter sweep: {total_runs} runs")
+            self.logger.info(f"Starting parameter sweep: {total_runs} runs")
+            self.logger.info(f"Parameters: {list(self.sweep.params.keys())}")
         
-        runs_data: List[Dict[str, Any]] = []
+        runs_data: list[dict[str, Any]] = []
         
         iterator = enumerate(param_points)
         if self.comm.rank == 0:
-            iterator = tqdm(iterator, total=total_runs, desc="Parameter Sweep", unit="run", ncols=100)
+            iterator = tqdm(iterator, total=total_runs, desc="Sweep", unit="run", ncols=100)
         
         for idx, param_point in iterator:
             output_path = self.sweep.format_output_path(param_point)
-            self.callable_func(param_point, output_path, self.comm)
+            
+            if self.comm.rank == 0:
+                self.logger.info(f"Run {idx + 1}/{total_runs}: {param_point}")
+            
+            self.runner(param_point, output_path, self.comm)
             
             runs_data.append({
-                "output_dir": output_path.name,
+                "run_id": idx,
+                "output_dir": str(output_path),
+                "hash": output_path.name,
                 **param_point
             })
         
@@ -98,13 +209,18 @@ class Parametrizer:
         
         if self.comm.rank == 0:
             self.logger.info(f"Sweep complete. Summary: {self.sweep.base_output_dir / 'sweep_summary.csv'}")
-    
-    def _save_summary(self, runs_data: List[Dict[str, Any]]) -> None:
-        """Save parameter sweep summary (rank 0 only)."""
-        if self.comm.rank != 0:
-            return
         
-        if not runs_data:
+        return runs_data
+    
+    def run_single(self, param_point: dict[str, ParamValue], output_path: Path | None = None) -> None:
+        """Execute a single run with given parameters."""
+        if output_path is None:
+            output_path = self.sweep.format_output_path(param_point)
+        self.runner(param_point, output_path, self.comm)
+    
+    def _save_summary(self, runs_data: list[dict[str, Any]]) -> None:
+        """Save parameter sweep summary (rank 0 only)."""
+        if self.comm.rank != 0 or not runs_data:
             return
         
         self.sweep.base_output_dir.mkdir(parents=True, exist_ok=True)
@@ -112,24 +228,165 @@ class Parametrizer:
         csv_file = self.sweep.base_output_dir / "sweep_summary.csv"
         json_file = self.sweep.base_output_dir / "sweep_summary.json"
         
-        # Write CSV summary.
+        # Write CSV summary
         header = list(runs_data[0].keys())
         with open(csv_file, "w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=header)
             writer.writeheader()
             writer.writerows(runs_data)
         
-        # Write JSON summary.
+        # Write JSON summary
         summary = {
             "metadata": self.sweep.metadata,
             "total_runs": len(runs_data),
+            "parameters_swept": list(self.sweep.params.keys()),
             "runs": runs_data
         }
         with open(json_file, "w") as f:
             json.dump(summary, f, indent=2)
+
+
+# =============================================================================
+# Box Model Runner
+# =============================================================================
+
+@dataclass
+class BoxModelConfig:
+    """Configuration for box model parameter sweeps.
     
-    def run_single(self, param_point: Dict[str, ParamValue], output_path: Path | None = None) -> None:
-        """Execute single run with given parameters."""
-        if output_path is None:
-            output_path = self.sweep.format_output_path(param_point)
-        self.callable_func(param_point, output_path, self.comm)
+    Non-swept parameters are set here. Swept parameters override these via param_point.
+    """
+    # Geometry [mm]
+    Lx: float = 10.0
+    Ly: float = 10.0
+    Lz: float = 30.0
+    nx: int = 10
+    ny: int = 10
+    nz: int = 30
+    
+    # Loading
+    pressure: float = 1.0
+    gradient_axis: int = 0
+    center_factor: float = 2.0
+    edge_factor: float = 0.3
+
+
+def apply_param_point(cfg: Config, param_point: dict[str, ParamValue]) -> None:
+    """Apply parameter overrides to Config in-place.
+    
+    Args:
+        cfg: Config instance to modify.
+        param_point: Dict of 'group.field' → value overrides.
+    """
+    # Group overrides by param group for efficient patching
+    grouped: dict[str, dict[str, ParamValue]] = {}
+    for path, value in param_point.items():
+        group, field_name = parse_param_path(path)
+        grouped.setdefault(group, {})[field_name] = value
+    
+    # Apply patches to each group
+    for group, overrides in grouped.items():
+        current = getattr(cfg, group)
+        patched = replace(current, **overrides)
+        setattr(cfg, group, patched)
+
+
+def create_box_runner(box_config: BoxModelConfig | None = None) -> SimulationRunner:
+    """Create a simulation runner for box model sweeps.
+    
+    Args:
+        box_config: Base configuration for non-swept parameters.
+                   If None, uses default BoxModelConfig.
+    
+    Returns:
+        Runner function compatible with Parametrizer.
+    """
+    if box_config is None:
+        box_config = BoxModelConfig()
+    
+    def runner(param_point: dict[str, ParamValue], output_path: Path, comm: MPI.Comm) -> None:
+        """Run single box model simulation with parameter overrides."""
+        # Create mesh
+        geometry = BoxGeometry(
+            Lx=box_config.Lx, Ly=box_config.Ly, Lz=box_config.Lz,
+            nx=box_config.nx, ny=box_config.ny, nz=box_config.nz,
+        )
+        builder = BoxMeshBuilder(geometry, comm)
+        domain, facet_tags = builder.build()
+        
+        # Create base config with output path
+        cfg = Config(
+            domain=domain,
+            facet_tags=facet_tags,
+            output=OutputParams(results_dir=str(output_path)),
+            geometry=GeometryParams(
+                fix_tag=BoxMeshBuilder.TAG_BOTTOM,
+                load_tag=BoxMeshBuilder.TAG_TOP,
+            ),
+        )
+        
+        # Apply parameter overrides
+        apply_param_point(cfg, param_point)
+        
+        # Re-validate after patching
+        cfg.validate()
+        
+        # Create loader and loading cases
+        loader = BoxLoader(domain, facet_tags, load_tag=BoxMeshBuilder.TAG_TOP)
+        loading_cases = [get_parabolic_pressure_case(
+            pressure=box_config.pressure,
+            gradient_axis=box_config.gradient_axis,
+            center_factor=box_config.center_factor,
+            edge_factor=box_config.edge_factor,
+            box_extent=(0.0, box_config.Lx),
+            name="parabolic_compression",
+        )]
+        
+        # Create factory and run
+        factory = BoxSolverFactory(cfg)
+        
+        with Remodeller(cfg, loader=loader, loading_cases=loading_cases, factory=factory) as remodeller:
+            with ProgressReporter(comm, cfg.time.total_time, cfg.solver.max_subiters) as reporter:
+                remodeller.simulate(reporter=reporter)
+    
+    return runner
+
+
+# Convenience function for direct use
+def run_box_simulation(param_point: dict[str, ParamValue], output_path: Path, comm: MPI.Comm) -> None:
+    """Run a box model simulation with default configuration.
+    
+    This is a convenience wrapper using default BoxModelConfig.
+    For custom base parameters, use create_box_runner(BoxModelConfig(...)).
+    """
+    runner = create_box_runner()
+    runner(param_point, output_path, comm)
+
+
+# =============================================================================
+# Example usage
+# =============================================================================
+
+if __name__ == "__main__":
+    # Example: sweep over formation rate and reference SED
+    comm = MPI.COMM_WORLD
+    
+    sweep = ParameterSweep(
+        params={
+            "density.k_rho_form": [0.01, 0.05],
+            "stimulus.psi_ref": [1e-5, 5e-5],
+            "time.total_time": [50.0],  # Short runs for testing
+        },
+        base_output_dir=Path("./sweep_test"),
+        metadata={"description": "Formation rate vs psi_ref sweep"},
+    )
+    
+    # Create runner with custom box config
+    box_cfg = BoxModelConfig(
+        Lx=10.0, Ly=10.0, Lz=20.0,
+        nx=5, ny=5, nz=10,  # Coarse mesh for fast testing
+    )
+    runner = create_box_runner(box_cfg)
+    
+    parametrizer = Parametrizer(sweep, runner, comm)
+    parametrizer.run()
