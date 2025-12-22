@@ -186,10 +186,10 @@ class FabricParams:
 class SolverParams:
     """KSP and fixed-point solver settings."""
 
-    # PETSc KSP solver type
+    # PETSc KSP solver type (CG optimal for SPD systems like elasticity)
     ksp_type: str = "minres"
 
-    # PETSc preconditioner type
+    # PETSc preconditioner type (GAMG with Chebyshev/Jacobi smoothing for elasticity)
     pc_type: str = "gamg"
 
     # Relative tolerance for KSP
@@ -263,7 +263,7 @@ class TimeParams:
     """Time stepping and adaptive control."""
 
     # Total simulation time [days]
-    total_time: float = 500.0
+    total_time: float = 25.0
 
     # Initial timestep [days]
     dt_initial: float = 25.0

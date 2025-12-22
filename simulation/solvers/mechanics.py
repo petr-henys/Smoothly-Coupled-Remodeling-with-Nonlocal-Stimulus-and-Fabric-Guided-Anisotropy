@@ -86,7 +86,18 @@ class MechanicsSolver(BaseLinearSolver):
         self.A.setNearNullSpace(self._nullspace)
         self.A.setOption(PETSc.Mat.Option.SPD, True)
 
-        ksp_options = {"ksp_type": self.cfg.solver.ksp_type, "pc_type": self.cfg.solver.pc_type}
+        # CG + GAMG optimized for anisotropic elasticity with high contrast
+        # Best balance: fast per-iteration with reasonable iteration count
+        ksp_options = {
+            "ksp_type": "cg",
+            "pc_type": "gamg",
+            "pc_gamg_type": "agg",
+            "pc_gamg_agg_nsmooths": "1",
+            "pc_gamg_threshold": "0.02",
+            "mg_levels_ksp_type": "chebyshev",
+            "mg_levels_pc_type": "jacobi",
+            "mg_levels_ksp_max_it": "2",
+        }
         self.create_ksp(prefix="mechanics", ksp_options=ksp_options)
 
     @staticmethod
