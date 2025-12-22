@@ -30,10 +30,9 @@ import itertools
 import json
 from dataclasses import dataclass, field, replace, fields as dataclass_fields
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Protocol
 
 from mpi4py import MPI
-from tqdm import tqdm
 
 from simulation.box_factory import BoxSolverFactory
 from simulation.box_loader import BoxLoader
@@ -53,10 +52,26 @@ from simulation.params import (
     StimulusParams,
     TimeParams,
 )
-from simulation.progress import ProgressReporter
+from simulation.progress import ProgressReporter, SweepProgressReporter
 
 ParamValue = int | float | str | bool | None
 ParamDict = dict[str, list[ParamValue] | ParamValue]
+
+
+class SimulationRunner(Protocol):
+    """Protocol for simulation runner functions.
+    
+    Runners receive parameter point, output path, communicator, and an optional
+    progress reporter for unified sweep progress display.
+    """
+    def __call__(
+        self,
+        param_point: dict[str, ParamValue],
+        output_path: Path,
+        comm: MPI.Comm,
+        reporter: SweepProgressReporter | None = None,
+    ) -> None: ...
+
 
 # Mapping from group name to dataclass type
 PARAM_GROUPS: dict[str, type] = {
@@ -72,6 +87,11 @@ PARAM_GROUPS: dict[str, type] = {
 }
 
 
+def is_config_param_path(path: str) -> bool:
+    """Check if path is a Config parameter path (group.field format)."""
+    return "." in path
+
+
 def parse_param_path(path: str) -> tuple[str, str]:
     """Parse 'group.field' into (group, field). E.g., 'material.E0' → ('material', 'E0')."""
     parts = path.split(".", 1)
@@ -83,13 +103,36 @@ def parse_param_path(path: str) -> tuple[str, str]:
     return group, field_name
 
 
-def validate_param_path(path: str) -> None:
-    """Validate that a parameter path refers to an existing field."""
-    group, field_name = parse_param_path(path)
-    param_cls = PARAM_GROUPS[group]
-    valid_fields = {f.name for f in dataclass_fields(param_cls)}
-    if field_name not in valid_fields:
-        raise ValueError(f"Unknown field '{field_name}' in {group}. Valid: {sorted(valid_fields)}")
+def validate_param_path(path: str, strict: bool = True) -> bool:
+    """Validate that a parameter path refers to an existing field.
+    
+    Args:
+        path: Parameter path (e.g., 'material.E0' or 'N').
+        strict: If True, raise for invalid paths. If False, return False.
+    
+    Returns:
+        True if valid Config parameter, False if custom parameter.
+    
+    Raises:
+        ValueError: If strict=True and path is invalid Config parameter.
+    """
+    if not is_config_param_path(path):
+        # Custom parameter (e.g., "N", "dt_days") - not validated
+        return False
+    
+    try:
+        group, field_name = parse_param_path(path)
+        param_cls = PARAM_GROUPS[group]
+        valid_fields = {f.name for f in dataclass_fields(param_cls)}
+        if field_name not in valid_fields:
+            if strict:
+                raise ValueError(f"Unknown field '{field_name}' in {group}. Valid: {sorted(valid_fields)}")
+            return False
+        return True
+    except ValueError:
+        if strict:
+            raise
+        return False
 
 
 def patch_param_group(param_obj: Any, field_name: str, value: ParamValue) -> Any:
@@ -102,26 +145,28 @@ class ParameterSweep:
     """Parameter sweep specification with Cartesian product and hash-based paths.
     
     Attributes:
-        params: Dict mapping parameter paths to values. Paths use dot notation:
-            - "material.E0": Young's modulus
-            - "density.k_rho_form": Formation rate
-            - "stimulus.psi_ref": Reference SED
+        params: Dict mapping parameter paths to values. Supports two formats:
+            - Config paths (group.field): "material.E0", "density.k_rho_form"
+            - Custom parameters: "N", "dt_days" (not validated against Config)
             Values can be single items or lists for sweeping.
         base_output_dir: Root directory for all sweep outputs.
         metadata: Optional metadata stored in sweep summary.
+        validate_config_params: If True, validate Config parameter paths.
     """
     params: ParamDict
     base_output_dir: Path
     metadata: dict[str, Any] = field(default_factory=dict)
+    validate_config_params: bool = True
     
     def __post_init__(self) -> None:
         if not self.params:
             raise ValueError("params dictionary cannot be empty")
         
-        # Normalize single values to lists and validate paths
+        # Normalize single values to lists and optionally validate paths
         normalized: dict[str, list[ParamValue]] = {}
         for key, values in self.params.items():
-            validate_param_path(key)
+            if self.validate_config_params and is_config_param_path(key):
+                validate_param_path(key, strict=True)
             normalized[key] = values if isinstance(values, list) else [values]
         self.params = normalized
         self.base_output_dir = Path(self.base_output_dir)
@@ -186,24 +231,35 @@ class Parametrizer:
         
         runs_data: list[dict[str, Any]] = []
         
-        iterator = enumerate(param_points)
-        if self.comm.rank == 0:
-            iterator = tqdm(iterator, total=total_runs, desc="Sweep", unit="run", ncols=100)
+        # Create unified sweep progress reporter (handles all 3 levels)
+        reporter = SweepProgressReporter(self.comm, total_runs)
+        reporter.start()
         
-        for idx, param_point in iterator:
-            output_path = self.sweep.format_output_path(param_point)
-            
-            if self.comm.rank == 0:
-                self.logger.info(f"Run {idx + 1}/{total_runs}: {param_point}")
-            
-            self.runner(param_point, output_path, self.comm)
-            
-            runs_data.append({
-                "run_id": idx,
-                "output_dir": str(output_path),
-                "hash": output_path.name,
-                **param_point
-            })
+        try:
+            for idx, param_point in enumerate(param_points):
+                output_path = self.sweep.format_output_path(param_point)
+                
+                # Format params for display and signal start of run
+                params_info = " ".join(f"{k}={v}" for k, v in param_point.items())
+                
+                # Start run updates sweep bar and resets inner bars
+                # Note: total_time is set by runner via start_run() call
+                reporter.start_run(run_idx=idx, total_time=100.0, params_info=params_info)
+                
+                # Run simulation with unified reporter
+                self.runner(param_point, output_path, self.comm, reporter)
+                
+                runs_data.append({
+                    "run_id": idx,
+                    "output_dir": str(output_path),
+                    "hash": output_path.name,
+                    **param_point
+                })
+                
+                # Mark run as complete in sweep progress
+                reporter.finish_run()
+        finally:
+            reporter.stop()
         
         self._save_summary(runs_data)
         
@@ -274,6 +330,9 @@ class BoxModelConfig:
 def apply_param_point(cfg: Config, param_point: dict[str, ParamValue]) -> None:
     """Apply parameter overrides to Config in-place.
     
+    Only applies Config parameters (group.field format). Custom parameters
+    (e.g., "N", "dt_days") are skipped - the runner handles them directly.
+    
     Args:
         cfg: Config instance to modify.
         param_point: Dict of 'group.field' → value overrides.
@@ -281,6 +340,9 @@ def apply_param_point(cfg: Config, param_point: dict[str, ParamValue]) -> None:
     # Group overrides by param group for efficient patching
     grouped: dict[str, dict[str, ParamValue]] = {}
     for path, value in param_point.items():
+        if not is_config_param_path(path):
+            # Skip custom parameters (not part of Config)
+            continue
         group, field_name = parse_param_path(path)
         grouped.setdefault(group, {})[field_name] = value
     
@@ -304,7 +366,12 @@ def create_box_runner(box_config: BoxModelConfig | None = None) -> SimulationRun
     if box_config is None:
         box_config = BoxModelConfig()
     
-    def runner(param_point: dict[str, ParamValue], output_path: Path, comm: MPI.Comm) -> None:
+    def runner(
+        param_point: dict[str, ParamValue],
+        output_path: Path,
+        comm: MPI.Comm,
+        reporter: SweepProgressReporter | None = None,
+    ) -> None:
         """Run single box model simulation with parameter overrides."""
         # Create mesh
         geometry = BoxGeometry(
@@ -331,6 +398,12 @@ def create_box_runner(box_config: BoxModelConfig | None = None) -> SimulationRun
         # Re-validate after patching
         cfg.validate()
         
+        # Update reporter with correct total_time for this run
+        if reporter is not None:
+            if reporter.progress is not None and reporter.main_task_id is not None:
+                reporter.progress.reset(reporter.main_task_id)
+                reporter.progress.update(reporter.main_task_id, total=cfg.time.total_time)
+        
         # Create loader and loading cases
         loader = BoxLoader(domain, facet_tags, load_tag=BoxMeshBuilder.TAG_TOP)
         loading_cases = [get_parabolic_pressure_case(
@@ -342,25 +415,35 @@ def create_box_runner(box_config: BoxModelConfig | None = None) -> SimulationRun
             name="parabolic_compression",
         )]
         
-        # Create factory and run
+        # Create factory and run with sweep reporter (or create standalone)
         factory = BoxSolverFactory(cfg)
         
         with Remodeller(cfg, loader=loader, loading_cases=loading_cases, factory=factory) as remodeller:
-            with ProgressReporter(comm, cfg.time.total_time, cfg.solver.max_subiters) as reporter:
+            if reporter is not None:
+                # Use sweep reporter (unified 3-level progress)
                 remodeller.simulate(reporter=reporter)
+            else:
+                # Standalone run: create own progress reporter
+                with ProgressReporter(comm, cfg.time.total_time, cfg.solver.max_subiters) as standalone_reporter:
+                    remodeller.simulate(reporter=standalone_reporter)
     
     return runner
 
 
 # Convenience function for direct use
-def run_box_simulation(param_point: dict[str, ParamValue], output_path: Path, comm: MPI.Comm) -> None:
+def run_box_simulation(
+    param_point: dict[str, ParamValue],
+    output_path: Path,
+    comm: MPI.Comm,
+    reporter: SweepProgressReporter | None = None,
+) -> None:
     """Run a box model simulation with default configuration.
     
     This is a convenience wrapper using default BoxModelConfig.
     For custom base parameters, use create_box_runner(BoxModelConfig(...)).
     """
     runner = create_box_runner()
-    runner(param_point, output_path, comm)
+    runner(param_point, output_path, comm, reporter)
 
 
 # =============================================================================

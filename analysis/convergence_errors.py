@@ -1,7 +1,14 @@
 """Convergence analysis for spatial and temporal refinement.
 
-Phase 2 script: Loads convergence sweep results, computes L2/H1 errors,
+Loads convergence sweep results from checkpoints, computes L2/H1 errors,
 and exports detailed XLSX tables for spatial (fixed dt) and temporal (fixed N) refinement.
+
+Supports two loading backends:
+- adios4dolfinx (preferred): pip install adios4dolfinx
+- Legacy NPZ files (deprecated)
+
+Usage:
+    mpirun -n 1 python convergence_errors.py
 """
 
 import sys
@@ -21,9 +28,96 @@ import basix.ufl
 
 from analysis.analysis_utils import (
     load_sweep_records,
-    load_npz_field,
     compute_l2_h1_errors,
+    HAS_ADIOS4DOLFINX,
 )
+
+# Conditional imports based on backend
+if HAS_ADIOS4DOLFINX:
+    from analysis.analysis_utils import (
+        load_checkpoint_mesh,
+        load_checkpoint_function,
+    )
+else:
+    from analysis.analysis_utils import load_npz_field
+
+
+def create_function_space(
+    domain: mesh.Mesh,
+    field_type: str,
+) -> fem.FunctionSpace:
+    """Create appropriate function space for field type."""
+    cell_name = domain.topology.cell_name()
+    
+    if field_type == "vector":
+        element = basix.ufl.element("Lagrange", cell_name, 1, shape=(3,))
+    elif field_type == "scalar":
+        element = basix.ufl.element("Lagrange", cell_name, 1)
+    elif field_type == "tensor":
+        element = basix.ufl.element("Lagrange", cell_name, 1, shape=(3, 3))
+    else:
+        raise ValueError(f"Unknown field type: {field_type}")
+    
+    return fem.functionspace(domain, element)
+
+
+def load_field_from_checkpoint(
+    run_dir: Path,
+    field_name: str,
+    field_type: str,
+    comm: MPI.Comm,
+    final_time: float | None = None,
+) -> tuple[fem.Function, mesh.Mesh]:
+    """Load a field from a run directory using available backend.
+    
+    Args:
+        run_dir: Path to simulation output directory.
+        field_name: Name of field to load (e.g., "rho", "u").
+        field_type: "scalar", "vector", or "tensor".
+        comm: MPI communicator.
+        final_time: Time to load (for adios4dolfinx). If None, loads latest.
+    
+    Returns:
+        Tuple of (function, mesh).
+    """
+    if HAS_ADIOS4DOLFINX:
+        # Prefer adios4dolfinx checkpoint
+        checkpoint_path = run_dir / "checkpoint.bp"
+        if checkpoint_path.exists():
+            domain, _ = load_checkpoint_mesh(checkpoint_path, comm)
+            space = create_function_space(domain, field_type)
+            func = load_checkpoint_function(
+                checkpoint_path, field_name, space, time=final_time, comm=comm
+            )
+            return func, domain
+    
+    # Fallback to legacy NPZ + create mesh from config
+    npz_path = run_dir / f"{field_name}.npz"
+    if not npz_path.exists():
+        raise FileNotFoundError(
+            f"No checkpoint found in {run_dir}. "
+            f"Expected: checkpoint.bp (adios4dolfinx) or {field_name}.npz (legacy)"
+        )
+    
+    # Load N from config.json to recreate mesh
+    import json
+    config_path = run_dir / "config.json"
+    with open(config_path) as f:
+        cfg = json.load(f)
+    
+    # Determine N from sweep record or config
+    # For unit cube meshes, we need the resolution
+    N = cfg.get("mesh_resolution", 10)  # Default fallback
+    
+    domain = mesh.create_unit_cube(
+        comm, N, N, N,
+        ghost_mode=mesh.GhostMode.shared_facet
+    )
+    space = create_function_space(domain, field_type)
+    func = fem.Function(space, name=field_name)
+    load_npz_field(comm, npz_path, func)
+    
+    return func, domain
 
 
 def analyze_field_errors(
@@ -36,7 +130,19 @@ def analyze_field_errors(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Compute L2/H1 errors for a single field across all sweep points.
     
-    Returns N_values, h_values, l2_errors, h1_errors arrays.
+    Loads fields from checkpoints (adios4dolfinx preferred, NPZ fallback),
+    computes pairwise errors between consecutive refinement levels.
+    
+    Args:
+        records: List of sweep records sorted by refinement level.
+        field_name: Name of field to analyze (e.g., "rho", "u").
+        field_type: "scalar", "vector", or "tensor".
+        comm: MPI communicator.
+        base_dir: Base directory containing sweep outputs.
+        verbose: Print progress messages.
+    
+    Returns:
+        Tuple of (N_values, h_values, l2_errors, h1_errors) as numpy arrays.
     """
     N_values = []
     h_values = []
@@ -44,43 +150,29 @@ def analyze_field_errors(
     h1_errors = []
     
     prev_field = None
+    prev_domain = None
     prev_N = None
     
     total = len(records)
     for idx, record in enumerate(records, start=1):
         output_dir = record["output_dir"]
-        run_dir = base_dir / output_dir
+        run_dir = Path(base_dir) / output_dir
         N = int(record["N"])
         
         if verbose and comm.rank == 0:
-            print(f"  [{idx}/{total}] Loading {field_name} (N={N})...", flush=True)
+            backend = "adios4dolfinx" if HAS_ADIOS4DOLFINX else "NPZ"
+            print(f"  [{idx}/{total}] Loading {field_name} (N={N}) via {backend}...", flush=True)
         
-        # Create mesh and function space
-        domain = mesh.create_unit_cube(
-            comm, N, N, N,
-            ghost_mode=mesh.GhostMode.shared_facet
+        # Load field using available backend
+        field, domain = load_field_from_checkpoint(
+            run_dir, field_name, field_type, comm
         )
-        
-        # Create function space based on field type
-        if field_type == "vector":
-            element = basix.ufl.element("P", domain.topology.cell_name(), 1, shape=(3,))
-        elif field_type == "scalar":
-            element = basix.ufl.element("P", domain.topology.cell_name(), 1)
-        elif field_type == "tensor":
-            element = basix.ufl.element("P", domain.topology.cell_name(), 1, shape=(3, 3))
-        else:
-            raise ValueError(f"Unknown field type: {field_type}")
-        
-        space = fem.functionspace(domain, element)
-        field = fem.Function(space, name=field_name)
-        
-        # Load from NPZ
-        npz_path = run_dir / f"{field_name}.npz"
-        load_npz_field(comm, npz_path, field)
         
         if prev_field is not None:
             if verbose and comm.rank == 0:
-                print(f"  [{idx}/{total}] Computing errors for {field_name} (N_prev={prev_N} vs N={N})...", flush=True)
+                print(f"  [{idx}/{total}] Computing errors (N_prev={prev_N} → N={N})...", flush=True)
+            
+            # Compute errors on the finer mesh
             l2_err, h1_err = compute_l2_h1_errors(prev_field, field, domain)
             N_values.append(prev_N)
             h_values.append(1.0 / prev_N)

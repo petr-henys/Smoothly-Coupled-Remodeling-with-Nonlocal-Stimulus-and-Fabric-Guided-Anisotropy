@@ -1,13 +1,25 @@
 """Utilities for convergence-analysis post-processing.
 
-Provides MPI-independent NPZ I/O, cross-mesh interpolation, error norms, and
-Richardson/GCI helpers used by the convergence scripts and plotting.
+Provides:
+- Checkpoint loading via adios4dolfinx (preferred) or legacy NPZ
+- Cross-mesh interpolation and error norms (L2, H1)
+- Richardson extrapolation and GCI helpers
 
-Note on NPZ snapshots
----------------------
-Fields are stored with DOF coordinates and element metadata. Loading uses
-KDTree matching to handle MPI-partition reordering, making snapshots fully
-MPI-independent (any rank count can load).
+Checkpoint Loading (adios4dolfinx)
+----------------------------------
+Uses adios4dolfinx for MPI-independent checkpoint loading. This is the
+preferred approach as it:
+- Uses a single file format (ADIOS2/BP)
+- Supports N-to-M process count changes
+- Is maintained by the DOLFINx team
+
+Legacy NPZ Loading
+------------------
+For backwards compatibility, NPZ files with DOF coordinate matching are
+still supported. This approach stores DOF coordinates + values and uses
+KDTree matching for MPI-independent loading.
+
+Note: NPZ is deprecated - prefer adios4dolfinx checkpoints.
 """
 
 from __future__ import annotations
@@ -23,6 +35,13 @@ import basix.ufl
 import ufl
 from scipy.spatial import cKDTree
 
+# Check for adios4dolfinx availability
+try:
+    import adios4dolfinx as adx
+    HAS_ADIOS4DOLFINX = True
+except ImportError:
+    HAS_ADIOS4DOLFINX = False
+
 
 # ============================================================================
 # Configuration
@@ -36,11 +55,132 @@ ERROR_SPACE_RAISE = 2  # P1 -> P3 by default
 
 
 # ============================================================================
-# NPZ I/O (MPI-independent with coordinate matching)
+# Checkpoint Loading (adios4dolfinx - preferred)
+# ============================================================================
+
+def load_checkpoint_mesh(
+    checkpoint_path: Path,
+    comm: MPI.Comm,
+) -> Tuple[mesh.Mesh, mesh.MeshTags | None]:
+    """Load mesh from adios4dolfinx checkpoint.
+    
+    Args:
+        checkpoint_path: Path to checkpoint.bp directory.
+        comm: MPI communicator.
+    
+    Returns:
+        Tuple of (mesh, meshtags) where meshtags may be None.
+    
+    Raises:
+        ImportError: If adios4dolfinx is not installed.
+    """
+    if not HAS_ADIOS4DOLFINX:
+        raise ImportError(
+            "adios4dolfinx required for checkpoint loading. "
+            "Install with: pip install adios4dolfinx"
+        )
+    
+    # adios4dolfinx API: read_mesh(filename, comm, ...)
+    domain = adx.read_mesh(checkpoint_path, comm)
+    
+    try:
+        # adios4dolfinx API: read_meshtags(filename, mesh, meshtag_name=...)
+        facet_tags = adx.read_meshtags(checkpoint_path, domain, meshtag_name="meshtags")
+    except (KeyError, RuntimeError):
+        facet_tags = None
+    
+    return domain, facet_tags
+
+
+def load_checkpoint_function(
+    checkpoint_path: Path,
+    name: str,
+    function_space: fem.FunctionSpace,
+    time: float | None = None,
+    comm: MPI.Comm | None = None,
+) -> fem.Function:
+    """Load function from adios4dolfinx checkpoint.
+    
+    Args:
+        checkpoint_path: Path to checkpoint.bp directory.
+        name: Function name as stored in checkpoint.
+        function_space: Target function space.
+        time: Time value to load. If None, loads latest.
+        comm: MPI communicator (unused, kept for API compatibility).
+    
+    Returns:
+        Loaded fem.Function.
+    """
+    if not HAS_ADIOS4DOLFINX:
+        raise ImportError(
+            "adios4dolfinx required for checkpoint loading. "
+            "Install with: pip install adios4dolfinx"
+        )
+    
+    func = fem.Function(function_space, name=name)
+    
+    # adios4dolfinx API: read_function(filename, u, ..., time=..., name=...)
+    if time is not None:
+        adx.read_function(checkpoint_path, func, time=time, name=name)
+    else:
+        # Load latest timestep
+        adx.read_function(checkpoint_path, func, name=name)
+    
+    return func
+
+
+def get_checkpoint_final_time(
+    checkpoint_path: Path,
+    comm: MPI.Comm,
+) -> float:
+    """Get the final (largest) time value in a checkpoint.
+    
+    Args:
+        checkpoint_path: Path to checkpoint.bp directory.
+        comm: MPI communicator.
+    
+    Returns:
+        Final time value as float.
+    """
+    if not HAS_ADIOS4DOLFINX:
+        raise ImportError("adios4dolfinx required")
+    
+    # Read time values from checkpoint metadata
+    # adios4dolfinx stores time as step attributes
+    import adios2
+    
+    final_time = 0.0
+    if comm.rank == 0:
+        try:
+            with adios2.open(str(checkpoint_path), "r", comm=MPI.COMM_SELF) as fh:
+                for step in fh:
+                    # Get time from any available function
+                    available = fh.available_variables()
+                    for var_name in available:
+                        if "/values" in var_name or var_name.endswith("_values"):
+                            try:
+                                time_attr = step.read_attribute("time")
+                                if time_attr is not None:
+                                    final_time = max(final_time, float(time_attr))
+                                break
+                            except (KeyError, RuntimeError):
+                                continue
+        except Exception:
+            pass
+    
+    final_time = comm.bcast(final_time, root=0)
+    return final_time
+
+
+
+# ============================================================================
+# Legacy NPZ I/O (deprecated - use adios4dolfinx checkpoints instead)
 # ============================================================================
 
 def save_function_npz(func: fem.Function, path: Path, comm: MPI.Comm) -> None:
     """Save a function snapshot to NPZ (rank 0 writes).
+    
+    DEPRECATED: Use simulation.checkpoint.CheckpointStorage instead.
 
     Stores owned-DOF coordinates and values plus element metadata so loads can
     match DOFs by coordinates and remain MPI-independent.
@@ -87,6 +227,8 @@ def save_function_npz(func: fem.Function, path: Path, comm: MPI.Comm) -> None:
 
 def load_npz_field(comm: MPI.Comm, npz_file: Path, target: fem.Function) -> None:
     """Load an NPZ snapshot into `target` via DOF coordinate matching.
+    
+    DEPRECATED: Use load_checkpoint_function() with adios4dolfinx instead.
 
     Validates element compatibility and uses a KDTree to map stored coordinates
     onto the current MPI partition.

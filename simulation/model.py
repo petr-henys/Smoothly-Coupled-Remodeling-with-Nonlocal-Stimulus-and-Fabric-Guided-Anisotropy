@@ -14,7 +14,7 @@ from simulation.drivers import GaitDriver
 from simulation.fixedsolver import FixedPointSolver
 from simulation.loader import Loader, LoadingCase
 from simulation.logger import get_logger
-from simulation.progress import ProgressReporter
+from simulation.progress import ProgressReporter, SweepProgressReporter
 from simulation.registry import BlockRegistry
 from simulation.storage import UnifiedStorage
 from simulation.solvers import DensitySolver, FabricSolver, MechanicsSolver, StimulusSolver
@@ -222,7 +222,7 @@ class Remodeller:
     def step(
         self,
         dt: float,
-        reporter: ProgressReporter | None = None,
+        reporter: ProgressReporter | SweepProgressReporter | None = None,
         step_index: int = 0,
         sim_time: float = 0.0,
     ) -> Tuple[float, Dict]:
@@ -250,7 +250,7 @@ class Remodeller:
 
         return error_norm, {"converged": converged, "iters": used_subiters}
 
-    def simulate(self, reporter: ProgressReporter | None = None) -> None:
+    def simulate(self, reporter: ProgressReporter | SweepProgressReporter | None = None) -> None:
         """Run remodeling loop using dt_initial and total_time from Config."""
         t = 0.0
         dt = float(self.cfg.time.dt_initial)
