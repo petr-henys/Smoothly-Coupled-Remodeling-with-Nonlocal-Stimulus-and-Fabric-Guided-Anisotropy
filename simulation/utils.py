@@ -192,28 +192,34 @@ def eigenvalues_sym3(X, *, eps_p: float = 1e-18, eps_r: float = 1e-12, tol: floa
     return l1, l2, l3
 
 
-def projectors_sylvester(X, l1, l2, l3, *, eps_d: float = 1e-12, tol: float = 1e-14):
-    """Spectral projectors for symmetric 3×3 tensor via Sylvester formula."""
+def projectors_sylvester(X, l1, l2, l3, *, eps_d: float = 1e-12, tol: float = 1e-14, tol_deg: float = 1e-8):
+    """
+    Spectral projectors for symmetric 3×3 tensor via Sylvester formula, with robust handling of eigenvalue degeneracy.
+
+    Key behavior (smooth, no hard isotropy switch in the output):
+      - isotropic (all three ~ equal): P1=P2=P3=I/3 (via weights -> w_iso≈1)
+      - transversely isotropic (any pair ~ equal): the two projectors in the degenerate subspace are set to 0.5*(I-P_unique)
+        so the split is stable and basis-invariant.
+      - fully anisotropic: standard Sylvester projectors, with a small correction that enforces P1+P2+P3 = I.
+    """
     Xs = symm(X)
     I = ufl.Identity(3)
 
+    # Scale-aware safety for Sylvester denominators (units: eigenvalue^2)
     q = ufl.tr(Xs) / 3.0
     B = Xs - q * I
     p2 = ufl.tr(ufl.dot(B, B)) / 6.0
     scale2 = ufl.max_value(q * q + p2, 1.0)
-    iso = ufl.lt(p2, tol * scale2)
     eps_d_scaled = eps_d * scale2
 
     def _sign(a):
         return ufl.conditional(ufl.ge(a, 0.0), 1.0, -1.0)
 
     def _safe_denom(a):
-        abs_a = ufl.sqrt(a * a)
+        abs_a = ufl.sqrt(a * a)  # |a| (piecewise-smooth)
         return _sign(a) * ufl.max_value(abs_a, eps_d_scaled)
 
-    def _cond_tensor(A_true, A_false):
-        return ufl.as_tensor([[ufl.conditional(iso, A_true[i, j], A_false[i, j]) for j in range(3)] for i in range(3)])
-
+    # Raw Sylvester projectors (may be ill-conditioned if eigenvalues are (nearly) degenerate)
     X_l2 = Xs - l2 * I
     X_l3 = Xs - l3 * I
     X_l1 = Xs - l1 * I
@@ -226,9 +232,51 @@ def projectors_sylvester(X, l1, l2, l3, *, eps_d: float = 1e-12, tol: float = 1e
     P2_raw = symm(P2_raw)
     P3_raw = symm(P3_raw)
 
-    I3 = I / 3.0
-    P1 = _cond_tensor(I3, P1_raw)
-    P2 = _cond_tensor(I3, P2_raw)
-    P3 = _cond_tensor(I3, P3_raw)
-    return P1, P2, P3
+    # Enforce partition of unity in the fully anisotropic regime (helps keep downstream formulas well-behaved)
+    Psum = P1_raw + P2_raw + P3_raw
+    P_fix = (I - Psum) / 3.0
+    P1_full = symm(P1_raw + P_fix)
+    P2_full = symm(P2_raw + P_fix)
+    P3_full = symm(P3_raw + P_fix)
 
+    # Smooth degeneracy indicators: s_ij ~ 1 if li≈lj, ~0 if well-separated
+    gap_eps2 = (tol_deg * tol_deg) * scale2  # units: eigenvalue^2
+    d12_2 = (l1 - l2) * (l1 - l2)
+    d23_2 = (l2 - l3) * (l2 - l3)
+    d13_2 = (l1 - l3) * (l1 - l3)
+
+    s12 = gap_eps2 / (d12_2 + gap_eps2)
+    s23 = gap_eps2 / (d23_2 + gap_eps2)
+    s13 = gap_eps2 / (d13_2 + gap_eps2)
+
+    # Partition weights (sum to 1): full / pair-degenerate / (double-degenerate -> treated as iso here)
+    w_full = (1.0 - s12) * (1.0 - s23) * (1.0 - s13)
+    w12 = s12 * (1.0 - s23) * (1.0 - s13)
+    w23 = s23 * (1.0 - s12) * (1.0 - s13)
+    w13 = s13 * (1.0 - s12) * (1.0 - s23)
+    w_iso = 1.0 - (w_full + w12 + w23 + w13)
+
+    I3 = I / 3.0
+
+    # TI collapses (unique index is the one NOT in the degenerate pair)
+    # pair (2,3): unique is 1
+    P1_T23 = P1_full
+    P2_T23 = 0.5 * (I - P1_full)
+    P3_T23 = 0.5 * (I - P1_full)
+
+    # pair (1,2): unique is 3
+    P3_T12 = P3_full
+    P1_T12 = 0.5 * (I - P3_full)
+    P2_T12 = 0.5 * (I - P3_full)
+
+    # pair (1,3): unique is 2
+    P2_T13 = P2_full
+    P1_T13 = 0.5 * (I - P2_full)
+    P3_T13 = 0.5 * (I - P2_full)
+
+    # Blended projectors (smooth through degeneracy)
+    P1_out = w_full * P1_full + w23 * P1_T23 + w12 * P1_T12 + w13 * P1_T13 + w_iso * I3
+    P2_out = w_full * P2_full + w23 * P2_T23 + w12 * P2_T12 + w13 * P2_T13 + w_iso * I3
+    P3_out = w_full * P3_full + w23 * P3_T23 + w12 * P3_T12 + w13 * P3_T13 + w_iso * I3
+
+    return symm(P1_out), symm(P2_out), symm(P3_out)

@@ -562,15 +562,15 @@ class FabricSolver(_BaseLinearSolver):
         m2 = clamp(a2**gammaF, m_min, m_max)
         m3 = clamp(a3**gammaF, m_min, m_max)
 
-        # Normalize by trace (ensures tr(M) = 3, i.e., tr(L_target) = 0).
-        s = (m1 + m2 + m3) / 3.0
+        # Normalize in log-space so tr(L_target)=0 exactly (even after clamping).
+        lnm1 = ufl.ln(m1)
+        lnm2 = ufl.ln(m2)
+        lnm3 = ufl.ln(m3)
+        lnm_bar = (lnm1 + lnm2 + lnm3) / 3.0
 
-        m1n = m1 / s
-        m2n = m2 / s
-        m3n = m3 / s
-
-        L_target = ufl.ln(m1n) * P1 + ufl.ln(m2n) * P2 + ufl.ln(m3n) * P3
+        L_target = (lnm1 - lnm_bar) * P1 + (lnm2 - lnm_bar) * P2 + (lnm3 - lnm_bar) * P3
         return symm(L_target)
+
 
     def _setup_ksp(self):
         self.A.setOption(PETSc.Mat.Option.SPD, True)

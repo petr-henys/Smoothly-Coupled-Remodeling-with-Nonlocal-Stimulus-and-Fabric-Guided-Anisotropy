@@ -55,14 +55,17 @@ class StimulusCalculator:
         return fem.Expression(Psi_safe, self.V_psi.element.interpolation_points)
 
     def _build_Q_expression(self) -> fem.Expression:
-        """Build UFL expression for Q_case = sym(sigma*sigma^T) (DG0 tensor 3×3)."""
+        """Build UFL expression for Q_case = sym(dev(sigma)) (DG0 tensor 3×3)."""
         u = self.mech.u
         rho = self.mech.rho
         L = self.mech.L
 
         sig = self.mech.sigma(u, rho, L)
-        Q = ufl.dot(sig, ufl.transpose(sig))
+        I = ufl.Identity(self.gdim)
+        sig_dev = sig - (ufl.tr(sig)/3.0)*I
+        Q = ufl.dot(sig_dev, ufl.transpose(sig_dev))
         Q_sym = symm(Q)
+
         return fem.Expression(Q_sym, self.V_Q.element.interpolation_points)
 
 
