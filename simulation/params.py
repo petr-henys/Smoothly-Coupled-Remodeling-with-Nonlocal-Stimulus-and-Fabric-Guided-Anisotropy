@@ -8,7 +8,7 @@ from typing import Any
 
 @dataclass
 class MaterialParams:
-    """Material constitutive law: E(ρ) = E₀ (ρ/ρ_ref)^k with k blending trab→cort."""
+    """Material law: E(rho) = E0*(rho/rho_ref)^k with k blended trabecular→cortical."""
 
     # Young's modulus reference [MPa]
     E0: float = 7500.0
@@ -67,13 +67,13 @@ class DensityParams:
     # Diffusion coefficient [mm²/day]
     D_rho: float = 2e-2
 
-    # CT apparent density mapping to porosity for surface availability
+    # Tissue density used for a porosity proxy f = 1 - rho/rho_tissue
     rho_tissue: float = 2.0  # Fully mineralized matrix density [g/cm³]
 
     # Surface availability scaling
     surface_use: bool = True
     surface_A_min: float = 0.02  # Residual remodeling activity as ρ → ρ_tissue
-    surface_S0: float = 1.0      # Reference S_V [1/mm] at which A_surf ≈ 1
+    surface_S0: float = 1.0      # Specific-surface scale [1/mm] (half-saturation at S_v=S0)
 
     def validate(self) -> None:
         """Validate density parameter constraints."""
@@ -186,7 +186,7 @@ class FabricParams:
 class SolverParams:
     """KSP and fixed-point solver settings."""
 
-    # PETSc KSP solver type (CG optimal for SPD systems like elasticity)
+    # PETSc KSP solver type (default MINRES; CG is usually best for SPD operators)
     ksp_type: str = "minres"
 
     # PETSc preconditioner type (GAMG with Chebyshev/Jacobi smoothing for elasticity)

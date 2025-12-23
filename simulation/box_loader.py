@@ -1,9 +1,8 @@
-"""Pressure loader for box mesh simulations.
+"""Pressure/traction loader for box mesh simulations.
 
-Provides a simple loader that applies uniform pressure to the top surface
-of a box mesh. Much simpler than the femur-specific Loader class.
+Applies uniform or spatially varying pressure on a tagged surface.
 
-Units: MPa for pressure (consistent with project convention)
+Units: MPa (1 MPa = 1 N/mm²) for pressure/traction with mm-based meshes.
 """
 
 from __future__ import annotations
@@ -65,7 +64,7 @@ class BoxLoadingCase:
 class BoxLoader:
     """Simple pressure loader for box mesh simulations.
     
-    Applies uniform pressure (or traction) to the top surface of a box.
+    Applies pressure-derived traction (uniform or graded) on one surface.
     Compatible with the Remodeller framework via the same interface as Loader.
     Traction values are stored ONLY at DOFs on the loaded surface (load_tag).
     """

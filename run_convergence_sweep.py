@@ -133,10 +133,6 @@ def create_convergence_runner(
             ),
         )
         
-        # Store N in config for later reference (e.g., in analysis)
-        # This is a simple way to persist the mesh resolution
-        sim_cfg._mesh_resolution = N
-        
         # Create loader and loading cases
         loader = BoxLoader(domain, facet_tags, load_tag=BoxMeshBuilder.TAG_TOP)
         loading_cases = [get_parabolic_pressure_case(

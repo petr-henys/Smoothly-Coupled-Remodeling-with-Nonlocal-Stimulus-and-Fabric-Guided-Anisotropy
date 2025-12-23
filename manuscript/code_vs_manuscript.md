@@ -4,7 +4,7 @@ This note summarizes the *current* implementation in `simulation/` and serves as
 
 ## Scope (implementation files)
 
-- Implemented PDE blocks: `simulation/subsolvers.py`
+- Implemented PDE blocks: `simulation/solvers/`
   - `MechanicsSolver` (elasticity)
   - `StimulusSolver` (stimulus field `S`)
   - `DensitySolver` (density field `rho`)
@@ -31,7 +31,7 @@ This note summarizes the *current* implementation in `simulation/` and serves as
      - per case: `sigma_dev = sigma - (tr(sigma)/3)*I`, `Q_i = sym(sigma_dev*sigma_dev^T)` (DG0 tensor)
      - average: `Qbar = sum_i c_i Q_i / sum_i c_i`
      - target `L_target(Qbar)` uses eigenvalue normalization by geometric mean, exponent `gammaF`, clamp to `[m_min, m_max]`, and final log-space mean removal (`tr(L_target)=0`).
-     - implemented in `simulation/drivers.py` (`StimulusCalculator.compute_Q`) and `simulation/subsolvers.py` (`FabricSolver._L_target_from_Qbar()`).
+     - implemented in `simulation/drivers.py` (`StimulusCalculator.compute_Q`) and `simulation/solvers/fabric.py` (`FabricSolver._L_target_from_Qbar()`).
 
 4. **Stimulus PDE + source term**
    - linear diffusion–reaction in `S`, but with a **saturating mechanostat** drive (lazy-zone + `tanh` saturation):
@@ -39,7 +39,7 @@ This note summarizes the *current* implementation in `simulation/` and serves as
      - normalized deviation `delta = (m - m_ref)/m_ref` with `m_ref = psi_ref / rho_ref`
      - optional lazy-zone gate with `stimulus_delta0`
      - final drive `drive = S_max * tanh(delta_eff / stimulus_kappa)`
-     - time constant and diffusion appear as `tau` and `tau*D` (see `StimulusSolver._compile_forms()` in `simulation/subsolvers.py`).
+     - time constant and diffusion appear as `tau` and `tau*D` (see `StimulusSolver._compile_forms()` in `simulation/solvers/stimulus.py`).
 
 5. **Density PDE**
    - **isotropic** diffusion (`D_rho` scalar) and bounded formation/resorption kinetics with separate gains:
@@ -47,7 +47,7 @@ This note summarizes the *current* implementation in `simulation/` and serves as
      - formation: `k_form * S_pos * (1 - rho/rho_max)`
      - resorption: `k_res * S_neg * (1 - rho/rho_min)` (negative for `rho>rho_min`)
      - optional *surface availability factor* `A_surf(rho_old)` (porosity→specific surface proxy), enabled by `density.surface_use`.
-     - implemented in `DensitySolver._compile_forms()` in `simulation/subsolvers.py`.
+     - implemented in `DensitySolver._compile_forms()` in `simulation/solvers/density.py`.
 
 6. **Smooth “max” clamp**
    - code uses `smooth_abs(x) = sqrt(x^2+eps^2) - eps` so that `smooth_max(x,x)=x` exactly (`simulation/utils.py`).

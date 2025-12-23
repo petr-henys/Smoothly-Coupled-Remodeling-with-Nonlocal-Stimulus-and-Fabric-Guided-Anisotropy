@@ -1,4 +1,4 @@
-"""Remodeller: main orchestrator coupling mechanics, stimulus, and density."""
+"""Remodeller: orchestrates coupled mechanics, fabric, stimulus, and density."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 
 class Remodeller:
-    """MPI-parallel coupled mechanics↔density remodeling loop."""
+    """MPI-parallel remodeling loop (mechanics → fabric → stimulus → density)."""
 
     def __init__(
         self,

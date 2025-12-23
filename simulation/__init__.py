@@ -1,7 +1,7 @@
 """Bone remodeling simulation package.
 
 Core components: Config, Remodeller, CouplingBlock protocol, GaitDriver,
-subsolvers (Mechanics, Fabric, Stimulus, Density), ProgressReporter.
+solvers (Mechanics, Fabric, Stimulus, Density), ProgressReporter.
 """
 
 from simulation.config import Config

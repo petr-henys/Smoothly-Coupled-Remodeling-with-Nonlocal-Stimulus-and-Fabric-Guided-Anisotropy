@@ -32,6 +32,9 @@ def idw(image, mesh, threshold=0., power=2, k_neighbors=8, method='nodes', verbo
     else:
         raise ValueError(f"Unknown method: {method}. Use 'nodes' or 'centroids'.")
 
+    u = fem.Function(V)
+    u.name = "interpolated_intensity"
+
     # Get interpolation points (DOF coordinates)
     points = V.tabulate_dof_coordinates()[:, :3]
 
@@ -105,9 +108,6 @@ def idw(image, mesh, threshold=0., power=2, k_neighbors=8, method='nodes', verbo
     valid_mask = voxel_values >= threshold
     valid_voxel_centers = voxel_centers[valid_mask]
     valid_voxel_values = voxel_values[valid_mask]
-
-    u = fem.Function(V)
-    u.name = "interpolated_intensity"
 
     if len(valid_voxel_values) == 0:
         u.x.array[:] = 0.0

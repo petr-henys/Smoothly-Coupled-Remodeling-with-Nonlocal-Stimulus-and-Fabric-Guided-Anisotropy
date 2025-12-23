@@ -3,31 +3,12 @@
 \label{subsec:anderson}
 \paragraph{Motivation and scope}
 To reduce the number of block fixed-point (block Picard/Gauss--Seidel) sub-iterations, we employ Type-II Anderson acceleration (AA-II) with finite memory $m$. We compare (i) a plain block Picard baseline and (ii) AA-II with standard safeguards (restart on deterioration and backtracking/damping) across representative couplings and time-step sizes $\Delta t$. We also report diagnostics that help choose~$m$ and monitor robustness.
-% ==== Added clarifications ====
-\subsection*{Interaction-gain diagnostics and spectral radius}\label{subsec:diag_rhoJ}
-We estimate a $3\times 3$ interaction-gain matrix $J$ of the Gauss--Seidel (GS) fixed-point map $G$ at the current state by finite-difference GS sweeps on the accelerated remodeling state $(\mathbf L,S,\rho)$: for each block we form a small deterministic perturbation $\delta_j$ and measure
-\begin{equation*}
-  J_{ij}\;\approx\;\frac{\big\|\,G_i(x^\star+\delta_j)-G_i(x^\star)\,\big\|}{\|\delta_j\|}\,.
-\end{equation*}
-The block norms $\|\cdot\|$ are the same as in our stopping criterion (\S\ref{subsec:proj_merit}). We report the spectral radius $\rho(J)$ as a diagnostic of local contractivity ($\rho(J)<1$ implies a locally contracting GS map in this block-norm sense). This diagnostic is optional and does not affect the iterate; it can be enabled per sub-iteration.
-
-\paragraph{Contractivity analysis}
-We summarize contractivity and coupling structure across timesteps and configurations (\cref{fig:contractivity}). Panel (a) shows the evolution of the spectral radius $\rho(J)$ over time with the $\rho(J)=1$ threshold; values below unity indicate local contraction. Panel (b) visualizes a representative interaction-gain matrix $\mathbf J$ as a heatmap; panel (c) tracks the strongest gains over time. Panel (d) aggregates the distribution of $\rho(J)$ across $\Delta t$, and panel (e) shows the maximum off-diagonal gain versus time. Together these diagnostics indicate predominantly contractive behavior and stable coupling strengths in the regimes tested.
-
-\begin{figure}[htbp]
-  \centering
-  \IfFileExists{images/contractivity_analysis.png}{%
-    \includegraphics[width=1\linewidth]{images/contractivity_analysis.png}%
-  }{\fbox{\parbox{0.9\linewidth}{\centering Missing image: \texttt{images/contractivity_analysis.png}}}}
-  \caption{Contractivity and interaction gains. (a) Spectral radius $\rho(J)$ over time for several $\Delta t$ (reference line at $\rho(J)=1$). (b) Representative interaction-gain matrix $\mathbf J$ (heatmap). (c) Key gains $J_{i,j}$ versus time. (d) Distribution of $\rho(J)$ across $\Delta t$. (e) Maximum off-diagonal gain versus time.}
-  \label{fig:contractivity}
-\end{figure}
 
 \subsection*{Projected residual merit, stopping, and AA acceptance}\label{subsec:proj_merit}
 We use the \emph{RMS-per-DOF} merit and acceptance/backtracking defined in the solver description (\S\ref{sec:fp-aa}). The norm acts on the flattened state $(\mathbf L,S,\rho)$ with per-block RMS-per-DOF scaling; acceptance follows the safeguard \eqref{eq:safeguard} with the same thresholds and minimal-subiteration requirement as in \S\ref{sec:fp-aa}. Candidate formation and step limiting follow \eqref{eq:kkt}--\eqref{eq:aa-update}.
 
 \subsection*{Stacking vs.\ sweep order}\label{subsec:order}
-The accelerated stacked state follows $(\mathbf L,S,\rho)$, while a single GS sweep updates blocks in the physical order \emph{mechanics driver} $\to$ fabric $\to$ stimulus $\to$ density (mechanics is recomputed inside the driver and is not part of the Anderson state). The interaction-gain matrix $J$ is indexed according to the $(\mathbf L,S,\rho)$ ordering.
+The accelerated stacked state follows $(\mathbf L,S,\rho)$, while a single GS sweep updates blocks in the physical order \emph{mechanics driver} $\to$ fabric $\to$ stimulus $\to$ density (mechanics is recomputed inside the driver and is not part of the Anderson state).
 
 \subsection*{Anderson acceleration details}\label{subsec:aa_details}
 We employ the Type-II Anderson (Pulay) acceleration scheme described in \S\ref{sec:fp-aa}.

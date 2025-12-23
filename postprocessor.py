@@ -14,7 +14,7 @@ from simulation.logger import get_logger
 
 
 class SimulationLoader:
-    """Load one run directory (config, metrics, and saved fields; MPI-safe)."""
+    """Load one run directory (config, metrics, and optional legacy NPZ fields; MPI-safe)."""
     
     __slots__ = (
         "output_dir", "comm", "logger", "_config", "_run_summary",
@@ -132,8 +132,7 @@ class SimulationLoader:
     def get_subiterations_metrics(self) -> pd.DataFrame:
         """Load per-subiteration metrics from subiterations.csv.
         
-        Columns include: step, iter, time_days, residuals, convergence info,
-        subsolver timings, KSP iterations, conservation checks, memory, etc.
+        Columns include: step, iter, residuals, block timings/iterations, AA info, memory.
         
         Returns:
             DataFrame with one row per subiteration
@@ -205,7 +204,7 @@ class SimulationLoader:
             steps_df = self.get_steps_metrics()
             times = steps_df["time_days"].values
             
-            # All four fields saved together at same checkpoints
+            # Expose `steps.csv` times for validation; NPZ itself is single-snapshot.
             self._field_times = {
                 "u": times.copy(),
                 "rho": times.copy(),

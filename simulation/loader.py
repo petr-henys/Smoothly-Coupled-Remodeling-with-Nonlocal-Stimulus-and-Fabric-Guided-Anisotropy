@@ -1,4 +1,7 @@
-"""MPI-parallel traction loader with precomputed loading case cache."""
+"""MPI-parallel traction loader with precomputed loading case cache.
+
+Input forces are in N. With mm-based meshes this produces traction in MPa (N/mm²).
+"""
 
 from __future__ import annotations
 
@@ -20,10 +23,10 @@ from simulation.utils import assign, get_owned_size
 @dataclass
 class HipLoadSpec:
     """Hip joint load specification."""
-    magnitude: float
-    alpha_sag: float       # Sagittal angle (+ anterior)
-    alpha_front: float     # Frontal angle (+ lateral)
-    sigma_deg: float       # Contact patch size
+    magnitude: float       # Resultant force magnitude [N]
+    alpha_sag: float       # Sagittal angle (+ anterior) [deg]
+    alpha_front: float     # Frontal angle (+ lateral) [deg]
+    sigma_deg: float       # Gaussian patch width [deg]
     flip: bool             # Flip direction (compression into head)
 
 
@@ -32,9 +35,9 @@ class MuscleLoadSpec:
     """Muscle load specification."""
     name: str              # Muscle ID (glmed, glmin, glmax, psoas, vastus_*)
     magnitude: float       # Force magnitude [N]
-    alpha_sag: float       # Sagittal angle (+ anterior)
-    alpha_front: float     # Frontal angle (+ lateral)
-    sigma: float           # Attachment area size [mm]
+    alpha_sag: float       # Sagittal angle (+ anterior) [deg]
+    alpha_front: float     # Frontal angle (+ lateral) [deg]
+    sigma: float           # Gaussian width around attachment curve [mm]
     flip: bool             # Flip direction (contraction pulls)
 
 
@@ -305,4 +308,3 @@ class Loader:
             # scalar dof indices for these blocks (flattened)
             dof_idx = (blocks[:, None] * bs + np.arange(bs, dtype=np.int32)[None, :]).ravel()
             self.traction.x.array[dof_idx] += local_values[:, :bs].ravel()
-

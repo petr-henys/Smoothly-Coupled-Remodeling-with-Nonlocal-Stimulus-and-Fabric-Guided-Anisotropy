@@ -34,7 +34,7 @@ def build_load(gait_data, force_vector):
     return full_data
 
 def vector_from_angles(magnitude: float, alpha_sag: float = 0.0, alpha_front: float = 0.0) -> np.ndarray:
-    """Convert magnitude + sagittal/frontal angles to 3D force vector."""
+    """Convert force magnitude [N] and angles [deg] to a 3D force vector."""
     a_sag, a_front = np.deg2rad([alpha_sag, alpha_front])
     t_sag, t_front = np.tan(a_sag), np.tan(a_front)
     
@@ -122,9 +122,7 @@ class GaussianSurfaceLoad:
             mesh = mesh.cell_data_to_point_data(pass_cell_data=False)
             points, values = mesh.points, mesh.point_data['traction']
 
-        # if need to interpolate surface data, we need linear kernel 
-        # and smoothing=0.0 and neighbors=1. works well with dolfinx functions
-        # otherwise we get blurred results
+        # Use a linear RBF with no smoothing to avoid oversmoothing tractions.
         self._interp = RBFInterpolator(points, values, kernel='linear',
                                        smoothing=0.0, neighbors=1)
         self.logger.debug(f"Creating traction mesh ({'cell' if self._use_cell_data else 'point'} data)")

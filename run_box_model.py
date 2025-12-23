@@ -2,7 +2,7 @@
 
 This is a simplified entry point for box-shaped specimens with:
 - Bottom surface fixed (z=0)
-- Top surface loaded with uniform pressure (z=Lz)
+- Top surface loaded with pressure (uniform or graded)
 
 Useful for:
 - Testing remodeling algorithms
@@ -74,11 +74,8 @@ RHO0 = 1.0      # Initial density [g/cm³]
 E0 = 7500.0     # Reference Young's modulus [MPa]
 
 # Stimulus parameters
-# psi_ref calibrated for average loading condition
-# For P=1 MPa average, E=7500 MPa: psi ~ 6.7e-5 MPa
-# With parabolic load (center factor 2.0), peak psi ~ 4*6.7e-5 = 2.7e-4
-# Using slightly lower psi_ref to ensure formation dominates at peak
-PSI_REF = 5e-5             # Reference SED [MPa] - tuned for parabolic
+# PSI_REF sets the reference specific energy (psi/rho); tune per load magnitude and material scaling.
+PSI_REF = 5e-5             # Reference SED [MPa]
 STIMULUS_TAU = 50.0          # Stimulus time constant [days]
 STIMULUS_DELTA0 = 0.20       # Lazy zone half-width (dimensionless)
 STIMULUS_D = 0.01            # Stimulus diffusion [mm²/day] - low for sharp gradients
