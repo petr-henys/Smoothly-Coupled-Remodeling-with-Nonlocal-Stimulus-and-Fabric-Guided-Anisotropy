@@ -1,0 +1,2 @@
+step,time_days,dt_days,num_subiters,converged,error_norm,mech_iters,fab_iters,stim_iters,dens_iters,mech_time,fab_time,stim_time,dens_time,max_condH,aa_rejections,aa_restarts,memory_mb
+1,25.0,25.0,25,0,51.0945653538619,10000,156,166,122,44.424739621346816,12.54083885718137,0.10648935881908983,0.11633873241953552,71.41863704176833,2,4,0.0

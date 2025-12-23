@@ -95,7 +95,7 @@ class MechanicsSolver(BaseLinearSolver):
             "pc_gamg_agg_nsmooths": "1",
             "pc_gamg_threshold": "0.02",
             "mg_levels_ksp_type": "chebyshev",
-            "mg_levels_pc_type": "jacobi",
+            "mg_levels_pc_type": "pbjacobi",
             "mg_levels_ksp_max_it": "2",
         }
         self.create_ksp(prefix="mechanics", ksp_options=ksp_options)
