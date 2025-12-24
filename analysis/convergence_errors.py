@@ -11,6 +11,7 @@ Usage:
     mpirun -n 1 python convergence_errors.py
 """
 
+import json
 import sys
 from pathlib import Path
 from typing import Dict, List, Any
@@ -46,15 +47,27 @@ def create_function_space(
     domain: mesh.Mesh,
     field_type: str,
 ) -> fem.FunctionSpace:
-    """Create appropriate function space for field type."""
+    """Create appropriate function space for field type.
+    
+    Supported types:
+    - "scalar": P1 Lagrange scalar
+    - "scalar_dg0": DG0 scalar (piecewise constant)
+    - "vector": P1 Lagrange vector (3D)
+    - "tensor": P1 Lagrange tensor (3x3)
+    - "tensor_dg0": DG0 tensor (3x3, piecewise constant)
+    """
     cell_name = domain.topology.cell_name()
     
     if field_type == "vector":
         element = basix.ufl.element("Lagrange", cell_name, 1, shape=(3,))
     elif field_type == "scalar":
         element = basix.ufl.element("Lagrange", cell_name, 1)
+    elif field_type == "scalar_dg0":
+        element = basix.ufl.element("DG", cell_name, 0)
     elif field_type == "tensor":
         element = basix.ufl.element("Lagrange", cell_name, 1, shape=(3, 3))
+    elif field_type == "tensor_dg0":
+        element = basix.ufl.element("DG", cell_name, 0, shape=(3, 3))
     else:
         raise ValueError(f"Unknown field type: {field_type}")
     
@@ -75,11 +88,19 @@ def load_field_from_checkpoint(
         field_name: Name of field to load (e.g., "rho", "u").
         field_type: "scalar", "vector", or "tensor".
         comm: MPI communicator.
-        final_time: Time to load (for adios4dolfinx). If None, loads latest.
+        final_time: Time to load (for adios4dolfinx). If None, reads from config.json.
     
     Returns:
         Tuple of (function, mesh).
     """
+    # If final_time not specified, read from config.json
+    if final_time is None:
+        config_path = run_dir / "config.json"
+        if config_path.exists():
+            with open(config_path) as f:
+                cfg = json.load(f)
+            final_time = cfg.get("time", {}).get("total_time", 0.0)
+    
     if HAS_ADIOS4DOLFINX:
         # Prefer adios4dolfinx checkpoint
         checkpoint_path = run_dir / "checkpoint.bp"
@@ -100,7 +121,6 @@ def load_field_from_checkpoint(
         )
     
     # Load N from config.json to recreate mesh
-    import json
     config_path = run_dir / "config.json"
     with open(config_path) as f:
         cfg = json.load(f)
@@ -150,7 +170,6 @@ def analyze_field_errors(
     h1_errors = []
     
     prev_field = None
-    prev_domain = None
     prev_N = None
     
     total = len(records)
@@ -164,9 +183,19 @@ def analyze_field_errors(
             print(f"  [{idx}/{total}] Loading {field_name} (N={N}) via {backend}...", flush=True)
         
         # Load field using available backend
-        field, domain = load_field_from_checkpoint(
-            run_dir, field_name, field_type, comm
-        )
+        try:
+            field, domain = load_field_from_checkpoint(
+                run_dir, field_name, field_type, comm
+            )
+        except FileNotFoundError:
+            if verbose and comm.rank == 0:
+                print(f"      (skip) Field '{field_name}' not found in {run_dir}")
+            return (
+                np.array([], dtype=float),
+                np.array([], dtype=float),
+                np.array([], dtype=float),
+                np.array([], dtype=float),
+            )
         
         if prev_field is not None:
             if verbose and comm.rank == 0:
@@ -175,7 +204,17 @@ def analyze_field_errors(
             # Compute errors on the finer mesh
             l2_err, h1_err = compute_l2_h1_errors(prev_field, field, domain)
             N_values.append(prev_N)
-            h_values.append(1.0 / prev_N)
+            # Use a dimensional mesh size estimate based on the box extent.
+            # For the box sweep we set nx=ny=N and nz scaled by aspect ratio, so
+            # h ~ Lx/N. We infer Lx from the mesh bounding box.
+            x_local = domain.geometry.x
+            if x_local.size == 0:
+                Lx = 1.0
+            else:
+                x_min = domain.comm.allreduce(float(np.min(x_local[:, 0])), op=MPI.MIN)
+                x_max = domain.comm.allreduce(float(np.max(x_local[:, 0])), op=MPI.MAX)
+                Lx = max(x_max - x_min, 1e-14)
+            h_values.append(Lx / float(prev_N))
             l2_errors.append(l2_err)
             h1_errors.append(h1_err)
             if verbose and comm.rank == 0:
@@ -185,11 +224,46 @@ def analyze_field_errors(
         prev_N = N
     
     return (
-        np.array(N_values),
-        np.array(h_values),
-        np.array(l2_errors),
-        np.array(h1_errors),
+        np.array(N_values, dtype=float),
+        np.array(h_values, dtype=float),
+        np.array(l2_errors, dtype=float),
+        np.array(h1_errors, dtype=float),
     )
+
+
+def load_run_performance(run_dir: Path) -> dict[str, float]:
+    """Load performance metrics from steps.csv (rank 0 written).
+
+    Returns totals over the full run.
+    """
+    steps_path = run_dir / "steps.csv"
+    if not steps_path.exists():
+        return {
+            "mech_iters": 0.0,
+            "fab_iters": 0.0,
+            "stim_iters": 0.0,
+            "dens_iters": 0.0,
+            "mech_time": 0.0,
+            "fab_time": 0.0,
+            "stim_time": 0.0,
+            "dens_time": 0.0,
+            "memory_mb": 0.0,
+        }
+
+    df = pd.read_csv(steps_path)
+    # Totals over accepted steps
+    totals = {
+        "mech_iters": float(df.get("mech_iters", 0).sum()),
+        "fab_iters": float(df.get("fab_iters", 0).sum()),
+        "stim_iters": float(df.get("stim_iters", 0).sum()),
+        "dens_iters": float(df.get("dens_iters", 0).sum()),
+        "mech_time": float(df.get("mech_time", 0.0).sum()),
+        "fab_time": float(df.get("fab_time", 0.0).sum()),
+        "stim_time": float(df.get("stim_time", 0.0).sum()),
+        "dens_time": float(df.get("dens_time", 0.0).sum()),
+        "memory_mb": float(df.get("memory_mb", 0.0).max()) if "memory_mb" in df else 0.0,
+    }
+    return totals
 
 
 def filter_records_by_dt(
@@ -224,12 +298,13 @@ def compute_spatial_convergence_data(
     if comm.rank == 0:
         print(f"\n==> Spatial convergence: dt={dt_value}, {len(records_filtered)} meshes")
     
-    # Field definitions
+    # Field definitions (must match checkpoint contents from run_convergence_sweep.py)
+    # Note: psi is cycle-averaged SED (DG0), more meaningful than u which is recomputed per loading case
     fields = [
-        ("u", "vector", "Displacement"),
+        ("psi", "scalar_dg0", "SED (psi)"),
         ("rho", "scalar", "Density"),
         ("S", "scalar", "Stimulus"),
-        ("A", "tensor", "Orientation"),
+        ("L", "tensor", "Log-fabric"),
     ]
     
     # Compute errors for all fields
@@ -243,18 +318,61 @@ def compute_spatial_convergence_data(
             records_filtered, field_name, field_type, comm, base_dir, verbose=True
         )
         
-        df = pd.DataFrame({
-            "N": N_vals,
-            "h": h_vals,
-            "L2_error": l2_errs,
-            "H1_error": h1_errs,
-        })
-        results[field_name] = df
+        if N_vals.size > 0:
+            df = pd.DataFrame({
+                "N": N_vals,
+                "h": h_vals,
+                "L2_error": l2_errs,
+                "H1_error": h1_errs,
+            })
+            results[field_name] = df
         
         if comm.rank == 0:
             print(f"  ✓ Completed {field_label}")
     
     return results
+
+
+def compute_spatial_performance_data(
+    base_dir: Path,
+    dt_value: float,
+    comm: MPI.Comm,
+) -> pd.DataFrame:
+    """Aggregate per-run performance metrics for fixed dt, varying N."""
+    records = load_sweep_records(base_dir, comm)
+    records_filtered = filter_records_by_dt(records, dt_value)
+
+    rows: list[dict[str, float]] = []
+    for record in records_filtered:
+        run_dir = Path(base_dir) / record["output_dir"]
+        perf = load_run_performance(run_dir)
+        rows.append({
+            "N": float(record["N"]),
+            "dt_days": float(record["dt_days"]),
+            **perf,
+        })
+
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+
+    # Compute a dimensional h estimate like in error analysis.
+    # Use the finest run's mesh for Lx.
+    try:
+        finest_dir = Path(base_dir) / records_filtered[-1]["output_dir"]
+        if HAS_ADIOS4DOLFINX and (finest_dir / "checkpoint.bp").exists():
+            domain, _ = load_checkpoint_mesh(finest_dir / "checkpoint.bp", comm)
+            x_local = domain.geometry.x
+            x_min = domain.comm.allreduce(float(np.min(x_local[:, 0])), op=MPI.MIN)
+            x_max = domain.comm.allreduce(float(np.max(x_local[:, 0])), op=MPI.MAX)
+            Lx = max(x_max - x_min, 1e-14)
+        else:
+            Lx = 1.0
+    except Exception:
+        Lx = 1.0
+
+    df["h"] = Lx / df["N"].astype(float)
+    return df.sort_values("N")
 
 
 def compute_temporal_convergence_data(
@@ -273,12 +391,13 @@ def compute_temporal_convergence_data(
     if comm.rank == 0:
         print(f"\n==> Temporal convergence: N={N_value}, {len(records_filtered)} timesteps")
     
-    # Field definitions
+    # Field definitions (must match checkpoint contents from run_convergence_sweep.py)
+    # Note: psi is cycle-averaged SED (DG0), more meaningful than u which is recomputed per loading case
     fields = [
-        ("u", "vector", "Displacement"),
+        ("psi", "scalar_dg0", "SED (psi)"),
         ("rho", "scalar", "Density"),
         ("S", "scalar", "Stimulus"),
-        ("A", "tensor", "Orientation"),
+        ("L", "tensor", "Log-fabric"),
     ]
     
     # Compute errors for all fields
@@ -288,18 +407,56 @@ def compute_temporal_convergence_data(
         if comm.rank == 0:
             print(f"\n  Field [{field_idx}/{total_fields}]: {field_label} ({field_name})")
         
-        N_vals, h_vals, l2_errs, h1_errs = analyze_field_errors(
-            records_filtered, field_name, field_type, comm, base_dir, verbose=True
-        )
-        # For temporal, use dt values not h
-        dt_vals = np.array([r["dt_days"] for r in records_filtered[:-1]])
-        
-        df = pd.DataFrame({
-            "dt_days": dt_vals,
-            "L2_error": l2_errs,
-            "H1_error": h1_errs,
-        })
-        results[field_name] = df
+        # Temporal refinement: compare coarse dt -> finer dt on the same mesh.
+        # Sort dt from largest to smallest so each pair is (prev=coarser, current=finer).
+        records_dt = sorted(records_filtered, key=lambda r: r["dt_days"], reverse=True)
+
+        dt_coarse: list[float] = []
+        l2_errs: list[float] = []
+        h1_errs: list[float] = []
+
+        prev_field = None
+        prev_dt = None
+        total = len(records_dt)
+
+        for idx_rec, record in enumerate(records_dt, start=1):
+            run_dir = Path(base_dir) / record["output_dir"]
+            dt = float(record["dt_days"])
+            if comm.rank == 0:
+                backend = "adios4dolfinx" if HAS_ADIOS4DOLFINX else "NPZ"
+                print(f"  [{idx_rec}/{total}] Loading {field_name} (dt={dt}) via {backend}...", flush=True)
+
+            try:
+                field, domain = load_field_from_checkpoint(
+                    run_dir, field_name, field_type, comm
+                )
+            except FileNotFoundError:
+                if comm.rank == 0:
+                    print(f"      (skip) Field '{field_name}' not found in {run_dir}")
+                prev_field = None
+                prev_dt = None
+                break
+
+            if prev_field is not None and prev_dt is not None:
+                if comm.rank == 0:
+                    print(f"  [{idx_rec}/{total}] Computing errors (dt={prev_dt} → dt={dt})...", flush=True)
+                l2_err, h1_err = compute_l2_h1_errors(prev_field, field, domain)
+                dt_coarse.append(prev_dt)
+                l2_errs.append(l2_err)
+                h1_errs.append(h1_err)
+                if comm.rank == 0:
+                    print(f"      L2 error: {l2_err:.6e}, H1 error: {h1_err:.6e}", flush=True)
+
+            prev_field = field
+            prev_dt = dt
+
+        if len(dt_coarse) > 0:
+            df = pd.DataFrame({
+                "dt_days": np.array(dt_coarse, dtype=float),
+                "L2_error": np.array(l2_errs, dtype=float),
+                "H1_error": np.array(h1_errs, dtype=float),
+            })
+            results[field_name] = df
         
         if comm.rank == 0:
             print(f"  ✓ Completed {field_label}")
@@ -307,9 +464,34 @@ def compute_temporal_convergence_data(
     return results
 
 
+def compute_temporal_performance_data(
+    base_dir: Path,
+    N_value: int,
+    comm: MPI.Comm,
+) -> pd.DataFrame:
+    """Aggregate per-run performance metrics for fixed N, varying dt."""
+    records = load_sweep_records(base_dir, comm)
+    records_filtered = filter_records_by_N(records, N_value)
+    rows: list[dict[str, float]] = []
+    for record in records_filtered:
+        run_dir = Path(base_dir) / record["output_dir"]
+        perf = load_run_performance(run_dir)
+        rows.append({
+            "N": float(record["N"]),
+            "dt_days": float(record["dt_days"]),
+            **perf,
+        })
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    return df.sort_values("dt_days", ascending=False)
+
+
 def save_convergence_xlsx(
     all_spatial_data: Dict[float, Dict[str, pd.DataFrame]],
     all_temporal_data: Dict[int, Dict[str, pd.DataFrame]],
+    all_spatial_perf: Dict[float, pd.DataFrame],
+    all_temporal_perf: Dict[int, pd.DataFrame],
     output_file: Path,
 ) -> None:
     """Save all spatial and temporal convergence data to XLSX with multiple sheets.
@@ -327,12 +509,20 @@ def save_convergence_xlsx(
             for field_name, df in spatial_data.items():
                 sheet_name = f"spatial_{field_name}_dt{dt_value}"
                 df.to_excel(writer, sheet_name=sheet_name, index=False)
+
+        for dt_value, df_perf in all_spatial_perf.items():
+            sheet_name = f"spatial_perf_dt{dt_value}"
+            df_perf.to_excel(writer, sheet_name=sheet_name, index=False)
         
         # Temporal sheets (one per N × field combination)
         for N_value, temporal_data in all_temporal_data.items():
             for field_name, df in temporal_data.items():
                 sheet_name = f"temporal_{field_name}_N{N_value}"
                 df.to_excel(writer, sheet_name=sheet_name, index=False)
+
+        for N_value, df_perf in all_temporal_perf.items():
+            sheet_name = f"temporal_perf_N{N_value}"
+            df_perf.to_excel(writer, sheet_name=sheet_name, index=False)
     
     print(f"Convergence data saved to {output_file}")
 
@@ -367,6 +557,7 @@ if __name__ == "__main__":
         print(f"\n[2/4] Computing spatial convergence ({len(dt_values)} refinement series)...")
     
     all_spatial_data = {}
+    all_spatial_perf = {}
     for idx, dt_val in enumerate(dt_values, start=1):
         if comm.rank == 0:
             print(f"\n{'─' * 80}")
@@ -378,6 +569,13 @@ if __name__ == "__main__":
             comm=comm,
         )
         all_spatial_data[dt_val] = spatial_data
+
+        perf_df = compute_spatial_performance_data(
+            base_dir=base_dir,
+            dt_value=dt_val,
+            comm=comm,
+        )
+        all_spatial_perf[dt_val] = perf_df
         if comm.rank == 0:
             print(f"\n✓ Completed spatial convergence for dt={dt_val}")
     
@@ -386,6 +584,7 @@ if __name__ == "__main__":
         print(f"\n[3/4] Computing temporal convergence ({len(N_values)} refinement series)...")
     
     all_temporal_data = {}
+    all_temporal_perf = {}
     for idx, N_val in enumerate(N_values, start=1):
         if comm.rank == 0:
             print(f"\n{'─' * 80}")
@@ -397,6 +596,13 @@ if __name__ == "__main__":
             comm=comm,
         )
         all_temporal_data[N_val] = temporal_data
+
+        perf_df = compute_temporal_performance_data(
+            base_dir=base_dir,
+            N_value=N_val,
+            comm=comm,
+        )
+        all_temporal_perf[N_val] = perf_df
         if comm.rank == 0:
             print(f"\n✓ Completed temporal convergence for N={N_val}")
     
@@ -406,6 +612,8 @@ if __name__ == "__main__":
         save_convergence_xlsx(
             all_spatial_data=all_spatial_data,
             all_temporal_data=all_temporal_data,
+            all_spatial_perf=all_spatial_perf,
+            all_temporal_perf=all_temporal_perf,
             output_file=output_dir / "convergence_data.xlsx",
         )
         print("\n" + "=" * 80)

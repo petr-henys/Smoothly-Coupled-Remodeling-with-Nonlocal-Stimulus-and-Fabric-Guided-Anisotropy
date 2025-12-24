@@ -15,6 +15,7 @@
 !/run_remodeller.py
 !/run_box_model.py
 !/run_convergence_sweep.py
+!/run_anderson_sweep.py
 !/run_model.py
 !/intensity_mapper.py
 

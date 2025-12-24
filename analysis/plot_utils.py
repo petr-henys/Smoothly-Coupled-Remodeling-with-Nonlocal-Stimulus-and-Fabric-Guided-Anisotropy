@@ -57,46 +57,46 @@ DEFAULT_DPI = 300
 # --- Shared styling configuration ---
 
 # Field styling (convergence plots).
-FIELD_NAMES = ["u", "rho", "S", "A"]
+FIELD_NAMES = ["psi", "rho", "S", "L"]
 FIELD_LABELS = {
-    "u": r"$\mathbf{u}$ (displacement)",
+    "psi": r"$\psi$ (SED)",
     "rho": r"$\rho$ (density)",
     "S": r"$S$ (stimulus)",
-    "A": r"$\mathbf{A}$ (orientation)",
+    "L": r"$\mathbf{L}$ (log-fabric)",
 }
 # Color-blind friendly palette.
 FIELD_COLORS = {
-    "u": "#0173B2",      # Blue (mechanics)
+    "psi": "#0173B2",    # Blue (mechanics/SED)
     "rho": "#DE8F05",    # Orange (density)
     "S": "#029E73",      # Green (stimulus)
-    "A": "#CC78BC",      # Purple (orientation/direction)
+    "L": "#CC78BC",      # Purple (fabric)
 }
 FIELD_MARKERS = {
-    "u": "o",
+    "psi": "o",
     "rho": "s",
     "S": "^",
-    "A": "D",
+    "L": "D",
 }
 
 # Subsolver styling (aligned with field colors).
-SUBSOLVER_NAMES = ["mech", "stim", "dens", "dir"]
+SUBSOLVER_NAMES = ["mech", "stim", "dens", "fab"]
 SUBSOLVER_LABELS = {
-    "mech": r"$\mathbf{u}$ (mechanics)",
+    "mech": r"$\psi$ (mechanics)",
     "stim": r"$S$ (stimulus)", 
     "dens": r"$\rho$ (density)",
-    "dir": r"$\mathbf{A}$ (direction)",
+    "fab": r"$\mathbf{L}$ (fabric)",
 }
 SUBSOLVER_COLORS = {
-    "mech": FIELD_COLORS["u"],      # Blue
+    "mech": FIELD_COLORS["psi"],    # Blue
     "stim": FIELD_COLORS["S"],      # Green
     "dens": FIELD_COLORS["rho"],    # Orange
-    "dir": FIELD_COLORS["A"],       # Purple
+    "fab": FIELD_COLORS["L"],       # Purple
 }
 SUBSOLVER_MARKERS = {
-    "mech": FIELD_MARKERS["u"],
+    "mech": FIELD_MARKERS["psi"],
     "stim": FIELD_MARKERS["S"],
     "dens": FIELD_MARKERS["rho"],
-    "dir": FIELD_MARKERS["A"],
+    "fab": FIELD_MARKERS["L"],
 }
 
 # Timestep styling (performance/Anderson plots): grayscale for print.

@@ -251,8 +251,10 @@ class Parametrizer:
                 
                 runs_data.append({
                     "run_id": idx,
-                    "output_dir": str(output_path),
-                    "hash": output_path.name,
+                    # Store directory name (hash) so analysis can locate runs via base_output_dir/output_dir.
+                    # Keep output_path for convenience/debugging.
+                    "output_dir": output_path.name,
+                    "output_path": str(output_path),
                     **param_point
                 })
                 
