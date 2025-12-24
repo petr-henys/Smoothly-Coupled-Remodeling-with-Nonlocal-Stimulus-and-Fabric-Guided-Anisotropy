@@ -13,7 +13,7 @@ from dolfinx import mesh, fem
 import basix.ufl
 
 from postprocessor import SimulationLoader, SweepLoader
-from analysis.analysis_utils import save_function_npz
+from simulation.checkpoint import CheckpointStorage
 
 
 # =============================================================================
@@ -98,7 +98,7 @@ def mock_run_directory(shared_tmp_path):
 
 @pytest.fixture
 def mock_run_with_fields(mock_run_directory):
-    """Add field NPZ files to mock run directory."""
+    """Add field checkpoint to mock run directory."""
     comm = MPI.COMM_WORLD
     
     domain = mesh.create_unit_cube(comm, 3, 3, 3, ghost_mode=mesh.GhostMode.shared_facet)
@@ -122,10 +122,15 @@ def mock_run_with_fields(mock_run_directory):
         A.x.array[i+2] = A.x.array[i+6]
         A.x.array[i+5] = A.x.array[i+7]
     
-    save_function_npz(u, mock_run_directory / "u.npz", comm)
-    save_function_npz(rho, mock_run_directory / "rho.npz", comm)
-    save_function_npz(S, mock_run_directory / "S.npz", comm)
-    save_function_npz(A, mock_run_directory / "A.npz", comm)
+    # Write checkpoint using adios4dolfinx
+    import adios4dolfinx as adx
+    checkpoint_path = mock_run_directory / "checkpoint.bp"
+    adx.write_mesh(checkpoint_path, domain)
+    final_time = 150.0  # match steps.csv final time
+    adx.write_function(checkpoint_path, u, time=final_time)
+    adx.write_function(checkpoint_path, rho, time=final_time)
+    adx.write_function(checkpoint_path, S, time=final_time)
+    adx.write_function(checkpoint_path, A, time=final_time)
     
     return mock_run_directory, domain, (V, Q, T)
 
@@ -604,12 +609,12 @@ def test_missing_subiterations_csv(shared_tmp_path):
         loader.get_subiterations_metrics()
 
 
-def test_missing_field_npz(mock_run_directory):
-    """Test error when field NPZ file is missing."""
+def test_missing_field_checkpoint(mock_run_directory):
+    """Test error when field checkpoint is missing."""
     comm = MPI.COMM_WORLD
     loader = SimulationLoader(mock_run_directory, comm, verbose=False)
     
-    with pytest.raises(FileNotFoundError, match="Field snapshot not found"):
+    with pytest.raises(FileNotFoundError, match="Field snapshot not found|Checkpoint not found"):
         loader.get_fields_at_time(0.0, fields=["u"])
 
 
@@ -618,8 +623,16 @@ def test_invalid_time_raises_error(mock_run_directory):
     comm = MPI.COMM_WORLD
     loader = SimulationLoader(mock_run_directory, comm, verbose=False)
     
-    if comm.rank == 0:
-        np.savez(mock_run_directory / "rho.npz", values=np.array([0.5]))
+    # Create a minimal checkpoint with data at t=0
+    import adios4dolfinx as adx
+    domain = mesh.create_unit_cube(comm, 2, 2, 2, ghost_mode=mesh.GhostMode.shared_facet)
+    Q = fem.functionspace(domain, basix.ufl.element("P", domain.topology.cell_name(), 1))
+    rho = fem.Function(Q, name="rho")
+    rho.x.array[:] = 0.5
+    
+    checkpoint_path = mock_run_directory / "checkpoint.bp"
+    adx.write_mesh(checkpoint_path, domain)
+    adx.write_function(checkpoint_path, rho, time=0.0)
     comm.Barrier()
     
     with pytest.raises(ValueError, match="Time.*not found in checkpoints"):

@@ -1,7 +1,7 @@
 """Run regularity parameter sweep (data generation).
 
 Sweeps key smoothing parameters that impact solution regularity and
-nonlinear convergence. Outputs telemetry CSVs and NPZ snapshots per run.
+nonlinear convergence. Outputs telemetry CSVs and ADIOS2 checkpoints per run.
 
 Usage:
   python run_regularity.py
@@ -24,8 +24,8 @@ from dolfinx import mesh
 from simulation.config import Config
 from simulation.model import Remodeller
 from simulation.utils import build_facetag
+from simulation.checkpoint import CheckpointStorage
 from parametrizer import Parametrizer, ParameterSweep
-from analysis.analysis_utils import save_function_npz
 
 
 BASE_DIR = Path("results/regularity_sweep")
@@ -81,11 +81,13 @@ def run_regularity(param_point: Dict[str, Any], output_path: Path, comm: MPI.Com
 
     with Remodeller(cfg) as remodeller:
         remodeller.simulate(dt=dt_days, total_time=total_time_days)
-        # NPZ snapshots
-        save_function_npz(remodeller.u, output_path / "u.npz", comm)
-        save_function_npz(remodeller.rho, output_path / "rho.npz", comm)
-        save_function_npz(remodeller.S, output_path / "S.npz", comm)
-        save_function_npz(remodeller.A, output_path / "A.npz", comm)
+        # Write checkpoint
+        with CheckpointStorage(cfg) as ckpt:
+            final_time = float(total_time_days)
+            ckpt.write_function(remodeller.u, final_time)
+            ckpt.write_function(remodeller.rho, final_time)
+            ckpt.write_function(remodeller.S, final_time)
+            ckpt.write_function(remodeller.A, final_time)
 
 
 if __name__ == "__main__":

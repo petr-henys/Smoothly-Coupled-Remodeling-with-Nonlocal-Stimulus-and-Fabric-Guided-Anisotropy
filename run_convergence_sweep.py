@@ -35,7 +35,7 @@ from simulation.box_factory import BoxSolverFactory
 from simulation.box_loader import BoxLoader
 from simulation.box_mesh import BoxGeometry, BoxMeshBuilder
 from simulation.box_scenarios import get_parabolic_pressure_case
-from simulation.checkpoint import CheckpointStorage, HAS_ADIOS4DOLFINX
+from simulation.checkpoint import CheckpointStorage
 from simulation.config import Config
 from simulation.logger import get_logger
 from simulation.model import Remodeller
@@ -172,22 +172,21 @@ def create_convergence_runner(
             # Store state fields + derived quantities for error analysis.
             # Note: We save psi (averaged SED) instead of u, since u is recomputed
             # for each loading case and the final u is not a meaningful state.
-            if HAS_ADIOS4DOLFINX:
-                checkpoint = CheckpointStorage(sim_cfg)
-                final_time = sim_cfg.time.total_time
+            checkpoint = CheckpointStorage(sim_cfg)
+            final_time = sim_cfg.time.total_time
 
-                # Mechanics: psi (cycle-weighted SED average over all loading cases)
-                psi = remodeller.driver.stimulus_field()
-                if psi is not None:
-                    checkpoint.write_function(psi, final_time)
+            # Mechanics: psi (cycle-weighted SED average over all loading cases)
+            psi = remodeller.driver.stimulus_field()
+            if psi is not None:
+                checkpoint.write_function(psi, final_time)
 
-                # Registry state fields (rho, S, L from density/stimulus/fabric solvers)
-                state_fields = remodeller.registry.state_fields
-                for name in ("rho", "S", "L"):
-                    f = state_fields.get(name)
-                    if f is not None:
-                        checkpoint.write_function(f, final_time)
-                checkpoint.close()
+            # Registry state fields (rho, S, L from density/stimulus/fabric solvers)
+            state_fields = remodeller.registry.state_fields
+            for name in ("rho", "S", "L"):
+                f = state_fields.get(name)
+                if f is not None:
+                    checkpoint.write_function(f, final_time)
+            checkpoint.close()
     
     return runner
 
@@ -237,10 +236,7 @@ def main() -> None:
         logger.info(f"dt values: {dt_values}")
         logger.info(f"Total runs: {sweep.total_runs()}")
         logger.info(f"Output: {sweep.base_output_dir}")
-        if HAS_ADIOS4DOLFINX:
-            logger.info("Checkpointing: adios4dolfinx (recommended)")
-        else:
-            logger.info("Checkpointing: DISABLED (install adios4dolfinx)")
+        logger.info("Checkpointing: adios4dolfinx")
         logger.info("=" * 60)
     
     parametrizer = Parametrizer(sweep, runner, comm)

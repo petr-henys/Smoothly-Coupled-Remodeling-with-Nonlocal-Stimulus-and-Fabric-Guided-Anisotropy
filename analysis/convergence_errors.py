@@ -3,9 +3,7 @@
 Loads convergence sweep results from checkpoints, computes L2/H1 errors,
 and exports detailed XLSX tables for spatial (fixed dt) and temporal (fixed N) refinement.
 
-Supports two loading backends:
-- adios4dolfinx (preferred): pip install adios4dolfinx
-- Legacy NPZ files (deprecated)
+Requires adios4dolfinx: pip install adios4dolfinx
 
 Usage:
     mpirun -n 1 python convergence_errors.py
@@ -30,17 +28,9 @@ import basix.ufl
 from analysis.analysis_utils import (
     load_sweep_records,
     compute_l2_h1_errors,
-    HAS_ADIOS4DOLFINX,
+    load_checkpoint_mesh,
+    load_checkpoint_function,
 )
-
-# Conditional imports based on backend
-if HAS_ADIOS4DOLFINX:
-    from analysis.analysis_utils import (
-        load_checkpoint_mesh,
-        load_checkpoint_function,
-    )
-else:
-    from analysis.analysis_utils import load_npz_field
 
 
 def create_function_space(
@@ -81,18 +71,28 @@ def load_field_from_checkpoint(
     comm: MPI.Comm,
     final_time: float | None = None,
 ) -> tuple[fem.Function, mesh.Mesh]:
-    """Load a field from a run directory using available backend.
+    """Load a field from a run directory using adios4dolfinx checkpoint.
     
     Args:
         run_dir: Path to simulation output directory.
         field_name: Name of field to load (e.g., "rho", "u").
         field_type: "scalar", "vector", or "tensor".
         comm: MPI communicator.
-        final_time: Time to load (for adios4dolfinx). If None, reads from config.json.
+        final_time: Time to load. If None, reads from config.json.
     
     Returns:
         Tuple of (function, mesh).
+    
+    Raises:
+        FileNotFoundError: If checkpoint.bp not found in run_dir.
     """
+    checkpoint_path = run_dir / "checkpoint.bp"
+    if not checkpoint_path.exists():
+        raise FileNotFoundError(
+            f"Checkpoint not found: {checkpoint_path}. "
+            f"Run requires adios4dolfinx checkpoint."
+        )
+    
     # If final_time not specified, read from config.json
     if final_time is None:
         config_path = run_dir / "config.json"
@@ -101,42 +101,11 @@ def load_field_from_checkpoint(
                 cfg = json.load(f)
             final_time = cfg.get("time", {}).get("total_time", 0.0)
     
-    if HAS_ADIOS4DOLFINX:
-        # Prefer adios4dolfinx checkpoint
-        checkpoint_path = run_dir / "checkpoint.bp"
-        if checkpoint_path.exists():
-            domain, _ = load_checkpoint_mesh(checkpoint_path, comm)
-            space = create_function_space(domain, field_type)
-            func = load_checkpoint_function(
-                checkpoint_path, field_name, space, time=final_time, comm=comm
-            )
-            return func, domain
-    
-    # Fallback to legacy NPZ + create mesh from config
-    npz_path = run_dir / f"{field_name}.npz"
-    if not npz_path.exists():
-        raise FileNotFoundError(
-            f"No checkpoint found in {run_dir}. "
-            f"Expected: checkpoint.bp (adios4dolfinx) or {field_name}.npz (legacy)"
-        )
-    
-    # Load N from config.json to recreate mesh
-    config_path = run_dir / "config.json"
-    with open(config_path) as f:
-        cfg = json.load(f)
-    
-    # Determine N from sweep record or config
-    # For unit cube meshes, we need the resolution
-    N = cfg.get("mesh_resolution", 10)  # Default fallback
-    
-    domain = mesh.create_unit_cube(
-        comm, N, N, N,
-        ghost_mode=mesh.GhostMode.shared_facet
-    )
+    domain, _ = load_checkpoint_mesh(checkpoint_path, comm)
     space = create_function_space(domain, field_type)
-    func = fem.Function(space, name=field_name)
-    load_npz_field(comm, npz_path, func)
-    
+    func = load_checkpoint_function(
+        checkpoint_path, field_name, space, time=final_time, comm=comm
+    )
     return func, domain
 
 
@@ -179,8 +148,7 @@ def analyze_field_errors(
         N = int(record["N"])
         
         if verbose and comm.rank == 0:
-            backend = "adios4dolfinx" if HAS_ADIOS4DOLFINX else "NPZ"
-            print(f"  [{idx}/{total}] Loading {field_name} (N={N}) via {backend}...", flush=True)
+            print(f"  [{idx}/{total}] Loading {field_name} (N={N})...", flush=True)
         
         # Load field using available backend
         try:
@@ -360,8 +328,9 @@ def compute_spatial_performance_data(
     # Use the finest run's mesh for Lx.
     try:
         finest_dir = Path(base_dir) / records_filtered[-1]["output_dir"]
-        if HAS_ADIOS4DOLFINX and (finest_dir / "checkpoint.bp").exists():
-            domain, _ = load_checkpoint_mesh(finest_dir / "checkpoint.bp", comm)
+        checkpoint_path = finest_dir / "checkpoint.bp"
+        if checkpoint_path.exists():
+            domain, _ = load_checkpoint_mesh(checkpoint_path, comm)
             x_local = domain.geometry.x
             x_min = domain.comm.allreduce(float(np.min(x_local[:, 0])), op=MPI.MIN)
             x_max = domain.comm.allreduce(float(np.max(x_local[:, 0])), op=MPI.MAX)
@@ -423,8 +392,7 @@ def compute_temporal_convergence_data(
             run_dir = Path(base_dir) / record["output_dir"]
             dt = float(record["dt_days"])
             if comm.rank == 0:
-                backend = "adios4dolfinx" if HAS_ADIOS4DOLFINX else "NPZ"
-                print(f"  [{idx_rec}/{total}] Loading {field_name} (dt={dt}) via {backend}...", flush=True)
+                print(f"  [{idx_rec}/{total}] Loading {field_name} (dt={dt})...", flush=True)
 
             try:
                 field, domain = load_field_from_checkpoint(

@@ -8,13 +8,13 @@ import numpy as np
 import pandas as pd
 from mpi4py import MPI
 from dolfinx import fem
+import adios4dolfinx as adx
 
-from analysis.analysis_utils import load_npz_field
 from simulation.logger import get_logger
 
 
 class SimulationLoader:
-    """Load one run directory (config, metrics, and optional legacy NPZ fields; MPI-safe)."""
+    """Load one run directory (config, metrics, and checkpoint fields; MPI-safe)."""
     
     __slots__ = (
         "output_dir", "comm", "logger", "_config", "_run_summary",
@@ -197,19 +197,20 @@ class SimulationLoader:
     def _get_field_times(self) -> Dict[str, np.ndarray]:
         """Return time checkpoints from `steps.csv` for field-loading APIs.
 
-        Note: the current NPZ snapshot format is single-state; time selection is
-        not applied when reading `*.npz`.
+        Times are read from `steps.csv` or from the checkpoint file.
         """
         if self._field_times is None:
             steps_df = self.get_steps_metrics()
             times = steps_df["time_days"].values
             
-            # Expose `steps.csv` times for validation; NPZ itself is single-snapshot.
+            # Expose `steps.csv` times for validation
             self._field_times = {
                 "u": times.copy(),
                 "rho": times.copy(),
                 "S": times.copy(),
                 "A": times.copy(),
+                "psi": times.copy(),
+                "L": times.copy(),
             }
         
         return self._field_times
@@ -220,20 +221,35 @@ class SimulationLoader:
         return times_dict["u"]  # All fields have same times
     
     def _load_field_raw(self, field_name: str, time_days: float) -> np.ndarray:
-        """Load a field snapshot from `output_dir/{field_name}.npz`.
+        """Load a field snapshot from checkpoint.bp at specified time.
 
-        The current NPZ format stores a single `values` array. `time_days` is
-        accepted for API compatibility but is not used to select data.
+        Uses adios4dolfinx for checkpoint loading.
         """
-        npz_file = self.output_dir / f"{field_name}.npz"
-        if not npz_file.exists():
-            raise FileNotFoundError(f"Field snapshot not found: {npz_file}")
+        checkpoint_path = self.output_dir / "checkpoint.bp"
+        if not checkpoint_path.exists():
+            raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
         
-        # NPZ snapshots are treated as single-state files containing `values`.
+        # Read from checkpoint using adios2 directly for raw values
+        import adios2
         
         if self.comm.rank == 0:
-            with np.load(npz_file) as data:
-                values = data["values"].copy()
+            try:
+                with adios2.open(str(checkpoint_path), "r", comm=MPI.COMM_SELF) as fh:
+                    values = None
+                    for step in fh:
+                        available = fh.available_variables()
+                        var_name = f"{field_name}/values"
+                        if var_name in available:
+                            values = step.read(var_name)
+                            break
+                    if values is None:
+                        raise FileNotFoundError(
+                            f"Field '{field_name}' not found in checkpoint"
+                        )
+            except Exception as e:
+                raise FileNotFoundError(
+                    f"Failed to load field '{field_name}' from checkpoint: {e}"
+                )
         else:
             values = None
         
@@ -247,9 +263,7 @@ class SimulationLoader:
     ) -> Dict[str, np.ndarray]:
         """Load field arrays for a given time checkpoint.
 
-        The requested time is validated against `steps.csv`. NPZ loading itself
-        currently returns a single snapshot per field and does not select by
-        time.
+        The requested time is validated against `steps.csv`.
 
         Args:
             time_days: Target time in days (must match a `steps.csv` checkpoint).
@@ -290,17 +304,18 @@ class SimulationLoader:
         field_name: str,
         time_days: Optional[float] = None,
     ) -> None:
-        """Load an NPZ snapshot into a DOLFINx function.
+        """Load a checkpoint field into a DOLFINx function.
 
-        Uses coordinate-based DOF matching from analysis.utils.load_npz_field,
-        making loading MPI-independent (works with any mesh partition).
+        Uses adios4dolfinx for checkpoint loading, making loading MPI-independent
+        (works with any mesh partition).
         
         Args:
             target: DOLFINx Function to populate (must have compatible element)
-            field_name: Field name ('u', 'rho', 'S', 'A')
-            time_days: Target time in days (used only for the default and logs)
+            field_name: Field name ('u', 'rho', 'S', 'A', 'psi', 'L')
+            time_days: Target time in days (uses final checkpoint if None)
             
         Raises:
+            FileNotFoundError: If checkpoint not found
             RuntimeError: If element type mismatch between stored and target
         """
         if time_days is None:
@@ -308,12 +323,12 @@ class SimulationLoader:
             available_times = self.get_available_times()
             time_days = available_times[-1]
         
-        npz_file = self.output_dir / f"{field_name}.npz"
-        if not npz_file.exists():
-            raise FileNotFoundError(f"Field snapshot not found: {npz_file}")
+        checkpoint_path = self.output_dir / "checkpoint.bp"
+        if not checkpoint_path.exists():
+            raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
         
-        # Use analysis.utils coordinate-matching loader
-        load_npz_field(self.comm, npz_file, target)
+        # Use adios4dolfinx to load function
+        adx.read_function(checkpoint_path, target, time=time_days, name=field_name)
         
         self.logger.debug(
             lambda: f"Loaded {field_name} at t={time_days:.1f} days into function"

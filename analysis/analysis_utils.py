@@ -1,25 +1,16 @@
 """Utilities for convergence-analysis post-processing.
 
 Provides:
-- Checkpoint loading via adios4dolfinx (preferred) or legacy NPZ
+- Checkpoint loading via adios4dolfinx
 - Cross-mesh interpolation and error norms (L2, H1)
 - Richardson extrapolation and GCI helpers
 
 Checkpoint Loading (adios4dolfinx)
 ----------------------------------
-Uses adios4dolfinx for MPI-independent checkpoint loading. This is the
-preferred approach as it:
+Uses adios4dolfinx for MPI-independent checkpoint loading:
 - Uses a single file format (ADIOS2/BP)
 - Supports N-to-M process count changes
 - Is maintained by the DOLFINx team
-
-Legacy NPZ Loading
-------------------
-For backwards compatibility, NPZ files with DOF coordinate matching are
-still supported. This approach stores DOF coordinates + values and uses
-KDTree matching for MPI-independent loading.
-
-Note: NPZ is deprecated - prefer adios4dolfinx checkpoints.
 """
 
 from __future__ import annotations
@@ -33,14 +24,7 @@ from mpi4py import MPI
 from dolfinx import mesh, fem
 import basix.ufl
 import ufl
-from scipy.spatial import cKDTree
-
-# Check for adios4dolfinx availability
-try:
-    import adios4dolfinx as adx
-    HAS_ADIOS4DOLFINX = True
-except ImportError:
-    HAS_ADIOS4DOLFINX = False
+import adios4dolfinx as adx
 
 
 # ============================================================================
@@ -70,15 +54,7 @@ def load_checkpoint_mesh(
     
     Returns:
         Tuple of (mesh, meshtags) where meshtags may be None.
-    
-    Raises:
-        ImportError: If adios4dolfinx is not installed.
     """
-    if not HAS_ADIOS4DOLFINX:
-        raise ImportError(
-            "adios4dolfinx required for checkpoint loading. "
-            "Install with: pip install adios4dolfinx"
-        )
     
     # adios4dolfinx API: read_mesh(filename, comm, ...)
     domain = adx.read_mesh(checkpoint_path, comm)
@@ -111,11 +87,6 @@ def load_checkpoint_function(
     Returns:
         Loaded fem.Function.
     """
-    if not HAS_ADIOS4DOLFINX:
-        raise ImportError(
-            "adios4dolfinx required for checkpoint loading. "
-            "Install with: pip install adios4dolfinx"
-        )
     
     func = fem.Function(function_space, name=name)
     
@@ -142,8 +113,6 @@ def get_checkpoint_final_time(
     Returns:
         Final time value as float.
     """
-    if not HAS_ADIOS4DOLFINX:
-        raise ImportError("adios4dolfinx required")
     
     # Read time values from checkpoint metadata
     # adios4dolfinx stores time as step attributes
@@ -170,146 +139,6 @@ def get_checkpoint_final_time(
     
     final_time = comm.bcast(final_time, root=0)
     return final_time
-
-
-
-# ============================================================================
-# Legacy NPZ I/O (deprecated - use adios4dolfinx checkpoints instead)
-# ============================================================================
-
-def save_function_npz(func: fem.Function, path: Path, comm: MPI.Comm) -> None:
-    """Save a function snapshot to NPZ (rank 0 writes).
-    
-    DEPRECATED: Use simulation.checkpoint.CheckpointStorage instead.
-
-    Stores owned-DOF coordinates and values plus element metadata so loads can
-    match DOFs by coordinates and remain MPI-independent.
-    """
-    space = func.function_space
-    element = space.element
-    index_map = space.dofmap.index_map
-    bs = space.dofmap.index_map_bs
-    
-    # Get DOF coordinates for owned DOFs
-    owned_dofs = index_map.size_local
-    dof_coords = space.tabulate_dof_coordinates()[:owned_dofs]
-    owned_values = func.x.array[:owned_dofs * bs].copy()
-    
-    # Gather to rank 0
-    all_coords = comm.gather(dof_coords, root=0)
-    all_values = comm.gather(owned_values, root=0)
-    
-    if comm.rank != 0:
-        return
-    
-    # Concatenate all gathered data
-    global_coords = np.vstack(all_coords)
-    global_values = np.concatenate(all_values)
-    
-    # Extract element metadata
-    basix_element = element.basix_element
-    family_int = basix_element.family
-    degree = basix_element.degree
-    value_shape = element.value_shape
-    
-    # Save everything
-    path.parent.mkdir(parents=True, exist_ok=True)
-    np.savez(
-        path,
-        coords=global_coords,
-        values=global_values,
-        bs=np.int32(bs),
-        family=np.int32(family_int),
-        degree=np.int32(degree),
-        value_shape=np.array(value_shape, dtype=np.int32),
-    )
-
-
-def load_npz_field(comm: MPI.Comm, npz_file: Path, target: fem.Function) -> None:
-    """Load an NPZ snapshot into `target` via DOF coordinate matching.
-    
-    DEPRECATED: Use load_checkpoint_function() with adios4dolfinx instead.
-
-    Validates element compatibility and uses a KDTree to map stored coordinates
-    onto the current MPI partition.
-    """
-    # Rank 0 loads data
-    if comm.rank == 0:
-        with np.load(npz_file) as data:
-            stored_coords = data["coords"]
-            stored_values = data["values"]
-            stored_bs = int(data["bs"])
-            stored_family = int(data["family"])
-            stored_degree = int(data["degree"])
-            stored_shape = tuple(data["value_shape"])
-    else:
-        stored_coords = stored_values = None
-        stored_bs = stored_family = stored_degree = stored_shape = None
-    
-    # Broadcast metadata
-    stored_bs = comm.bcast(stored_bs, root=0)
-    stored_family = comm.bcast(stored_family, root=0)
-    stored_degree = comm.bcast(stored_degree, root=0)
-    stored_shape = comm.bcast(stored_shape, root=0)
-    
-    # Validate element compatibility
-    space = target.function_space
-    element = space.element
-    basix_element = element.basix_element
-    bs = space.dofmap.index_map_bs
-    
-    if bs != stored_bs:
-        raise RuntimeError(f"Block size mismatch: stored={stored_bs}, target={bs}")
-    if basix_element.family != stored_family:
-        raise RuntimeError(
-            f"Element family mismatch: stored={stored_family}, target={basix_element.family}"
-        )
-    if basix_element.degree != stored_degree:
-        raise RuntimeError(
-            f"Element degree mismatch: stored={stored_degree}, target={basix_element.degree}"
-        )
-    
-    # Compare value shapes (handle tuples with arrays)
-    target_shape = element.value_shape
-    if len(target_shape) != len(stored_shape):
-        raise RuntimeError(
-            f"Element shape mismatch: stored={stored_shape}, target={target_shape}"
-        )
-    for i, (s_stored, s_target) in enumerate(zip(stored_shape, target_shape)):
-        if s_stored != s_target:
-            raise RuntimeError(
-                f"Element shape mismatch: stored={stored_shape}, target={target_shape}"
-            )
-    
-    # Get local DOF coordinates
-    index_map = space.dofmap.index_map
-    owned_dofs = index_map.size_local
-    local_coords = space.tabulate_dof_coordinates()[:owned_dofs]
-    
-    # Broadcast stored data to all ranks (needed for coordinate matching)
-    stored_coords = comm.bcast(stored_coords, root=0)
-    stored_values = comm.bcast(stored_values, root=0)
-    
-    # Build KDTree from stored coords and query local DOF coordinates
-    kdtree = cKDTree(stored_coords)
-    distances, indices = kdtree.query(local_coords)
-    
-    # Validate matching (should be exact up to floating-point tolerance)
-    if len(distances) > 0:
-        max_dist = np.max(distances)
-        if max_dist > 1e-10:
-            raise RuntimeError(
-                f"DOF coordinate matching failed: max distance = {max_dist:.2e} > 1e-10\n"
-                f"Stored and target meshes may be incompatible."
-            )
-    
-    # Map values using matched indices
-    for local_dof_idx in range(owned_dofs):
-        stored_dof_idx = indices[local_dof_idx]
-        for component in range(bs):
-            target.x.array[local_dof_idx * bs + component] = stored_values[stored_dof_idx * bs + component]
-    
-    target.x.scatter_forward()
 
 
 # ============================================================================

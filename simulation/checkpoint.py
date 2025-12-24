@@ -33,26 +33,12 @@ from typing import TYPE_CHECKING, Sequence
 
 from mpi4py import MPI
 from dolfinx import fem, mesh
-
-try:
-    import adios4dolfinx as adx
-    HAS_ADIOS4DOLFINX = True
-except ImportError:
-    HAS_ADIOS4DOLFINX = False
+import adios4dolfinx as adx
 
 if TYPE_CHECKING:
     from simulation.config import Config
 
 from simulation.logger import get_logger
-
-
-def _check_adios4dolfinx() -> None:
-    """Raise ImportError if adios4dolfinx is not available."""
-    if not HAS_ADIOS4DOLFINX:
-        raise ImportError(
-            "adios4dolfinx is required for checkpointing. "
-            "Install with: pip install adios4dolfinx"
-        )
 
 
 class CheckpointStorage:
@@ -69,8 +55,6 @@ class CheckpointStorage:
     __slots__ = ("comm", "logger", "checkpoint_path", "_mesh_written", "_domain", "_facet_tags")
     
     def __init__(self, cfg: "Config", filename: str = "checkpoint.bp") -> None:
-        _check_adios4dolfinx()
-        
         self.comm = cfg.domain.comm
         self.logger = get_logger(self.comm, name="Checkpoint")
         self._domain = cfg.domain
@@ -149,8 +133,6 @@ def load_checkpoint_mesh(
     Returns:
         Tuple of (mesh, meshtags) where meshtags may be None.
     """
-    _check_adios4dolfinx()
-    
     checkpoint_path = Path(checkpoint_path)
     # adios4dolfinx API: read_mesh(filename, comm, ...)
     domain = adx.read_mesh(checkpoint_path, comm)
@@ -184,8 +166,6 @@ def load_checkpoint_function(
     Returns:
         fem.Function with loaded data.
     """
-    _check_adios4dolfinx()
-    
     checkpoint_path = Path(checkpoint_path)
     func = fem.Function(function_space, name=name)
     # adios4dolfinx API: read_function(filename, u, ..., time=..., name=...)
@@ -208,8 +188,6 @@ def get_checkpoint_times(
     Returns:
         List of time values.
     """
-    _check_adios4dolfinx()
-    
     # adios4dolfinx stores time as a variable attribute
     # This requires reading the ADIOS2 file directly
     import adios2
