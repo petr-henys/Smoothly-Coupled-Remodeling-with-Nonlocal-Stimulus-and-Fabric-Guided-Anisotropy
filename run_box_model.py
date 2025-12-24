@@ -63,7 +63,7 @@ CENTER_FACTOR = 2.0         # Factor at center (peak for parabolic)
 EDGE_FACTOR = 0.3           # Factor at edges (min for parabolic)
 
 # Time stepping [days]
-TOTAL_TIME = 500.0    # Total simulation time
+TOTAL_TIME = 10.    # Total simulation time
 DT_INITIAL = 10    # Fixed timestep
 ADAPTIVE_DT = False   # Disable adaptive (use fixed dt for speed)
 DT_MIN = 1e-2          # Minimum timestep

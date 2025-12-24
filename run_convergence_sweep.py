@@ -62,7 +62,7 @@ class ConvergenceConfig:
     Lz: float = 20.0
     
     # Loading
-    pressure: float = 0.5
+    pressure: float = 5.0
     
     # Final time for convergence comparison.
     # All runs simulate to the same final time.
@@ -199,10 +199,10 @@ def main() -> None:
     
     # Define sweep parameters
     # Geometric refinement for clearer convergence slopes.
-    N_values = [12, 18, 24, 36]  # Mesh resolutions
+    N_values = [12, 16, 24, 32]  # Mesh resolutions
 
     # Timesteps [days] - geometric series (factor 2) for clean convergence slopes
-    dt_values = [25.0, 12.5, 6.25, 3.125, 1.5625]
+    dt_values = [20.0, 10.0, 5.0, 2.5, 1.25]
     
     # Convert to sweep format
     sweep = ParameterSweep(

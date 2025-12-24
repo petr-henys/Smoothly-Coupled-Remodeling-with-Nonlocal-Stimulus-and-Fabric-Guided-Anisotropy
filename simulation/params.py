@@ -263,7 +263,7 @@ class TimeParams:
     """Time stepping and adaptive control."""
 
     # Total simulation time [days]
-    total_time: float = 500
+    total_time: float = 25.0
 
     # Initial timestep [days]
     dt_initial: float = 25.0
