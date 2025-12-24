@@ -89,7 +89,7 @@ class MechanicsSolver(BaseLinearSolver):
         # CG + GAMG optimized for anisotropic elasticity with high contrast
         # Best balance: fast per-iteration with reasonable iteration count
         ksp_options = {
-            "ksp_type": "cg",
+            "ksp_type": "gmres",
             "pc_type": "gamg",
             "pc_gamg_type": "agg",
             "pc_gamg_agg_nsmooths": "1",
