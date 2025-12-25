@@ -30,7 +30,8 @@ def comm():
 def dummy_callable(
     param_point: Dict[str, Any],
     output_path: Path,
-    comm: MPI.Comm
+    comm: MPI.Comm,
+    reporter=None,
 ) -> None:
     """Simple test callable that creates output directory."""
     if comm.rank == 0:
@@ -177,10 +178,10 @@ class TestParametrizer:
             params={"N": [8]},
             base_output_dir=temp_output_dir
         )
-        parametrizer = Parametrizer(sweep, dummy_callable, comm, verbose=False)
+        parametrizer = Parametrizer(sweep, dummy_callable, comm)
         
         assert parametrizer.sweep == sweep
-        assert parametrizer.callable_func == dummy_callable
+        assert parametrizer.runner == dummy_callable
         assert parametrizer.comm == comm
     
     def test_run_single_point(self, temp_output_dir, comm):
@@ -189,7 +190,7 @@ class TestParametrizer:
             params={"N": [8]},
             base_output_dir=temp_output_dir
         )
-        parametrizer = Parametrizer(sweep, dummy_callable, comm, verbose=False)
+        parametrizer = Parametrizer(sweep, dummy_callable, comm)
         
         parametrizer.run()
         
@@ -211,7 +212,7 @@ class TestParametrizer:
             params={"N": [8, 16, 24]},
             base_output_dir=temp_output_dir
         )
-        parametrizer = Parametrizer(sweep, dummy_callable, comm, verbose=False)
+        parametrizer = Parametrizer(sweep, dummy_callable, comm)
         
         parametrizer.run()
         
@@ -235,7 +236,7 @@ class TestParametrizer:
             params={"N": [8, 16], "dt": [0.5, 1.0]},
             base_output_dir=temp_output_dir
         )
-        parametrizer = Parametrizer(sweep, dummy_callable, comm, verbose=False)
+        parametrizer = Parametrizer(sweep, dummy_callable, comm)
         
         parametrizer.run()
         
@@ -260,7 +261,7 @@ class TestParametrizer:
             params={"N": [8]},
             base_output_dir=temp_output_dir
         )
-        parametrizer = Parametrizer(sweep, dummy_callable, comm, verbose=False)
+        parametrizer = Parametrizer(sweep, dummy_callable, comm)
         
         parametrizer.run()
         
@@ -277,7 +278,7 @@ class TestParametrizer:
             params={"N": [8, 16]},
             base_output_dir=temp_output_dir
         )
-        parametrizer = Parametrizer(sweep, dummy_callable, comm, verbose=False)
+        parametrizer = Parametrizer(sweep, dummy_callable, comm)
         
         parametrizer.run_single({"N": 24})
         
@@ -290,7 +291,7 @@ class TestParametrizer:
             params={"N": [8]},
             base_output_dir=temp_output_dir
         )
-        parametrizer = Parametrizer(sweep, dummy_callable, comm, verbose=False)
+        parametrizer = Parametrizer(sweep, dummy_callable, comm)
         
         custom_path = temp_output_dir / "custom_run"
         parametrizer.run_single({"N": 8}, output_path=custom_path)
@@ -302,7 +303,7 @@ class TestParametrizer:
         """Test callable receives correct arguments."""
         received_args = {}
         
-        def test_callable(param_point, output_path, comm):
+        def test_callable(param_point, output_path, comm, reporter=None):
             received_args["param_point"] = param_point
             received_args["output_path"] = output_path
             received_args["comm"] = comm
@@ -311,7 +312,7 @@ class TestParametrizer:
             params={"N": [8]},
             base_output_dir=temp_output_dir
         )
-        parametrizer = Parametrizer(sweep, test_callable, comm, verbose=False)
+        parametrizer = Parametrizer(sweep, test_callable, comm)
         parametrizer.run()
         
         assert received_args["param_point"] == {"N": 8}
@@ -333,7 +334,7 @@ class TestIntegration:
             metadata={"study": "integration_test"}
         )
         
-        parametrizer = Parametrizer(sweep, dummy_callable, comm, verbose=False)
+        parametrizer = Parametrizer(sweep, dummy_callable, comm)
         parametrizer.run()
         
         if comm.rank == 0:
@@ -366,7 +367,7 @@ class TestIntegration:
             base_output_dir=temp_output_dir
         )
         
-        parametrizer = Parametrizer(sweep, dummy_callable, comm, verbose=False)
+        parametrizer = Parametrizer(sweep, dummy_callable, comm)
         parametrizer.run()
         
         if comm.rank == 0:

@@ -170,8 +170,20 @@ class GaussianSurfaceLoad:
 class HIPJointLoad(GaussianSurfaceLoad):
     """Hip joint load via ray-traced Gaussian on femoral head."""
 
-    def get_contact_point_css(self, force_vector_css: np.ndarray) -> np.ndarray:
-        """Find the center of the contact patch on the CSS surface."""
+    def get_contact_point_css(
+        self,
+        force_vector_css: np.ndarray,
+        *,
+        allow_ray_miss_fallback: bool = False,
+    ) -> np.ndarray:
+        """Find the center of the contact patch on the CSS surface.
+
+        By default this method is strict: if ray tracing misses the surface, it
+        raises an error rather than silently projecting to a sphere.
+
+        Set allow_ray_miss_fallback=True to use a geometric fallback for
+        imperfect meshes (ray miss -> project direction to head sphere).
+        """
         F_world, F_norm = self._resolve_force_vector(force_vector_css)
         unit_force = F_world / F_norm
 
@@ -181,9 +193,13 @@ class HIPJointLoad(GaussianSurfaceLoad):
         _, hits = self.mesh_world.ray_trace(start, end, first_point=True)
         
         if not hits:
-            # Fallback: project to sphere surface in CSS
-            # This happens if ray misses the mesh (e.g. gaps or bad geometry)
-            # We assume FHC is origin in CSS.
+            if not allow_ray_miss_fallback:
+                raise RuntimeError(
+                    "Ray cast missed femoral head surface (no hit). "
+                    "Fix head mesh geometry or call get_contact_point_css(..., allow_ray_miss_fallback=True)."
+                )
+            # Explicit fallback: project direction to sphere surface in CSS.
+            self.logger.warning("Ray cast missed surface; using sphere projection fallback")
             v_css = force_vector_css / np.linalg.norm(force_vector_css)
             return v_css * self.head_radius
             

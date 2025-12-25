@@ -123,6 +123,8 @@ class CheckpointStorage:
 def load_checkpoint_mesh(
     checkpoint_path: Path | str,
     comm: MPI.Comm,
+    *,
+    require_meshtags: bool = False,
 ) -> tuple[mesh.Mesh, mesh.MeshTags | None]:
     """Load mesh and optional meshtags from checkpoint.
     
@@ -137,11 +139,18 @@ def load_checkpoint_mesh(
     # adios4dolfinx API: read_mesh(filename, comm, ...)
     domain = adx.read_mesh(checkpoint_path, comm)
     
-    # Try to read meshtags (may not exist)
+    # Try to read meshtags (may not exist). Be explicit: either raise or return None.
     try:
         # adios4dolfinx API: read_meshtags(filename, mesh, meshtag_name=...)
         facet_tags = adx.read_meshtags(checkpoint_path, domain, meshtag_name="meshtags")
-    except (KeyError, RuntimeError):
+    except (KeyError, RuntimeError) as exc:
+        if require_meshtags:
+            raise RuntimeError(
+                f"Checkpoint {checkpoint_path} does not contain meshtags 'meshtags'."
+            ) from exc
+        if comm.rank == 0:
+            logger = get_logger(comm, name="CheckpointLoad")
+            logger.warning(f"No meshtags found in checkpoint {checkpoint_path}; returning facet_tags=None")
         facet_tags = None
     
     return domain, facet_tags

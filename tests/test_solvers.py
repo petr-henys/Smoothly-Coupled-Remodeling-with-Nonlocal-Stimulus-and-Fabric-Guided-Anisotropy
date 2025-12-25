@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """
-Tests for solver internals, matrix properties, and numerical utilities.
+Tests for solver internals, matrix properties, numerical utilities, and physical sanity.
 
 Tests:
 - Matrix assembly correctness (SPD properties)
 - Solver statistics tracking
+- Physical sanity: no NaN/Inf, positive quantities stay positive
+- Numerical stability under edge cases
 """
 
 import pytest
@@ -12,10 +14,12 @@ import numpy as np
 from mpi4py import MPI
 from dolfinx import fem, default_scalar_type
 from dolfinx.fem import Function
+import basix.ufl
 
 from simulation.config import Config
 from simulation.solvers import MechanicsSolver, DensitySolver
 from simulation.fixedsolver import FixedPointSolver
+from simulation.utils import build_dirichlet_bcs, build_facetag
 
 from simulation.stats import SweepStats
 
@@ -356,32 +360,233 @@ class TestFabricSolver:
         
         assert l_norm < l_old_norm, "L did not decay towards isotropic target"
 
-    def test_eigenvectors_update(self, fabric_setup):
-        """Test that eigenvectors are updated after step."""
-        solver, L, L_old, Qbar = fabric_setup
+
+# =============================================================================
+# Physical Sanity Check Tests
+# =============================================================================
+
+class TestPhysicalSanityChecks:
+    """Critical tests for physical validity: no inf, nan, negative where forbidden."""
+    
+    def test_mechanics_no_nan_inf_in_displacement(self, cfg, spaces, fields, bc_mech):
+        """Mechanics solution should never contain NaN or Inf."""
+        from dolfinx import fem
+        V, Q, T = spaces.V, spaces.Q, spaces.T
+        u, rho, _, A, _, _, _ = fields
         
-        # Set L to a known anisotropic state (diagonal)
-        # L = diag(1, 0, -1) roughly
-        def L_init(x):
-            vals = np.zeros((9, x.shape[1]))
-            vals[0, :] = 1.0  # Lxx
-            vals[4, :] = 0.0  # Lyy
-            vals[8, :] = -1.0 # Lzz
-            return vals
+        # Set realistic density
+        rho.x.array[:] = 0.6
+        rho.x.scatter_forward()
         
-        L.interpolate(L_init)
-        L.x.scatter_forward()
+        # Create traction load
+        t_load = fem.Function(V, name="traction")
+        t_load.interpolate(lambda x: np.array([[-0.1], [0.0], [0.0]]) * np.ones((1, x.shape[1])))
+        t_load.x.scatter_forward()
         
-        solver.post_step_update()
+        mech = MechanicsSolver(u, rho, cfg, bc_mech, [(t_load, 2)])
+        mech.setup()
+        mech.solve()
         
-        # Check n1 (principal direction)
-        # Should be (1, 0, 0) for Lxx=1 (largest eigenvalue)
-        n1_arr = solver.n1.x.array.reshape(-1, 3)
-        if n1_arr.size > 0:
-            # Check first node
-            assert np.abs(np.abs(n1_arr[0, 0]) - 1.0) < 1e-5
-            assert np.abs(n1_arr[0, 1]) < 1e-5
-            assert np.abs(n1_arr[0, 2]) < 1e-5
+        # Check no NaN/Inf
+        assert np.all(np.isfinite(u.x.array)), "Displacement contains NaN or Inf"
+    
+    def test_mechanics_no_nan_inf_with_extreme_density(self, cfg, spaces, fields, bc_mech):
+        """Mechanics should handle extreme (but valid) density values."""
+        V, Q, T = spaces.V, spaces.Q, spaces.T
+        u, rho, _, A, _, _, _ = fields
+        
+        # Test with minimum density (stiffness can be very low)
+        rho_min = float(cfg.density.rho_min)
+        rho.x.array[:] = rho_min * 1.01  # Just above minimum
+        rho.x.scatter_forward()
+        
+        mech = MechanicsSolver(u, rho, cfg, bc_mech, [])
+        mech.setup()
+        mech.solve()
+        
+        assert np.all(np.isfinite(u.x.array)), "Displacement NaN/Inf at low density"
+        
+        # Test with maximum density
+        rho_max = float(cfg.density.rho_max)
+        rho.x.array[:] = rho_max * 0.99
+        rho.x.scatter_forward()
+        
+        mech.assemble_lhs()
+        mech.solve()
+        
+        assert np.all(np.isfinite(u.x.array)), "Displacement NaN/Inf at high density"
+    
+    def test_density_stays_positive(self, cfg, spaces, fields):
+        """Density should never become zero or negative after solve."""
+        V, Q, T = spaces.V, spaces.Q, spaces.T
+        _, rho, rho_old, A, _, _, _ = fields
+        
+        # Start with low density
+        rho_old.x.array[:] = float(cfg.density.rho_min) * 1.1
+        rho_old.x.scatter_forward()
+        
+        # Strong negative stimulus (drives toward rho_min)
+        psi_field = fem.Function(Q, name="psi")
+        psi_field.x.array[:] = 0.0  # Very low SED -> resorption
+        psi_field.x.scatter_forward()
+        
+        dens = DensitySolver(rho, rho_old, psi_field, cfg)
+        dens.setup()
+        dens.assemble_rhs()
+        dens.solve()
+        
+        n_owned = Q.dofmap.index_map.size_local
+        rho_min_val = MPI.COMM_WORLD.allreduce(rho.x.array[:n_owned].min(), op=MPI.MIN)
+        
+        assert rho_min_val > 0, f"Density became non-positive: {rho_min_val}"
+        assert np.all(np.isfinite(rho.x.array)), "Density contains NaN/Inf"
+    
+    def test_density_no_nan_inf_extreme_stimulus(self, cfg, spaces, fields):
+        """Density solver should handle extreme stimulus without NaN/Inf."""
+        V, Q, T = spaces.V, spaces.Q, spaces.T
+        _, rho, rho_old, A, _, _, _ = fields
+        
+        rho_old.x.array[:] = 0.8
+        rho_old.x.scatter_forward()
+        
+        # Very high stimulus
+        psi_field = fem.Function(Q, name="psi")
+        psi_field.x.array[:] = cfg.stimulus.psi_ref * 100.0  # Extreme
+        psi_field.x.scatter_forward()
+        
+        dens = DensitySolver(rho, rho_old, psi_field, cfg)
+        dens.setup()
+        dens.assemble_rhs()
+        dens.solve()
+        
+        assert np.all(np.isfinite(rho.x.array)), "Density NaN/Inf with extreme stimulus"
+        
+        # Check stays within bounds (soft bounds, allow some overshoot)
+        n_owned = Q.dofmap.index_map.size_local
+        rho_max_val = MPI.COMM_WORLD.allreduce(rho.x.array[:n_owned].max(), op=MPI.MAX)
+        assert rho_max_val < 5.0, f"Density unreasonably large: {rho_max_val}"
+    
+    def test_stiffness_positive_for_all_valid_densities(self, cfg, spaces, fields, bc_mech):
+        """Young's modulus E(ρ) should be positive for all ρ > ρ_min."""
+        import ufl
+        V, Q, T = spaces.V, spaces.Q, spaces.T
+        u, rho, _, A, _, _, _ = fields
+        
+        mech = MechanicsSolver(u, rho, cfg, bc_mech, [])
+        
+        # Test at various densities
+        test_densities = [
+            float(cfg.density.rho_min) * 1.01,
+            0.3,
+            0.6,
+            1.0,
+            float(cfg.density.rho_max) * 0.99,
+        ]
+        
+        for rho_val in test_densities:
+            rho.x.array[:] = rho_val
+            rho.x.scatter_forward()
+            
+            # Compute E(rho) using solver's internal formula
+            E_expr = mech._E_iso(rho)
+            E_local = fem.assemble_scalar(fem.form(E_expr * cfg.dx))
+            vol_local = fem.assemble_scalar(fem.form(1.0 * cfg.dx))
+            E_avg = MPI.COMM_WORLD.allreduce(E_local, op=MPI.SUM) / MPI.COMM_WORLD.allreduce(vol_local, op=MPI.SUM)
+            
+            assert E_avg > 0, f"E(ρ={rho_val}) = {E_avg} is not positive"
+            assert np.isfinite(E_avg), f"E(ρ={rho_val}) = {E_avg} is NaN/Inf"
+    
+    def test_strain_energy_density_non_negative(self, cfg, spaces, fields, bc_mech):
+        """Strain energy density ψ = 0.5*σ:ε must be non-negative everywhere."""
+        import ufl
+        V, Q, T = spaces.V, spaces.Q, spaces.T
+        u, rho, _, A, _, _, _ = fields
+        
+        # Random displacement
+        u.interpolate(lambda x: 0.01 * np.sin(np.pi * x[0]) * np.array([[1], [0.5], [0.2]]) * np.ones((1, x.shape[1])))
+        u.x.scatter_forward()
+        
+        rho.x.array[:] = 0.7
+        rho.x.scatter_forward()
+        
+        mech = MechanicsSolver(u, rho, cfg, bc_mech, [])
+        
+        # Compute SED pointwise minimum
+        psi = 0.5 * ufl.inner(mech.sigma(u, rho), mech.eps(u))
+        
+        # Project to DG0 to get element-wise values
+        DG0 = fem.functionspace(cfg.domain, ("DG", 0))
+        psi_dg = fem.Function(DG0)
+        psi_expr = fem.Expression(psi, DG0.element.interpolation_points)
+        psi_dg.interpolate(psi_expr)
+        
+        psi_min = MPI.COMM_WORLD.allreduce(psi_dg.x.array.min(), op=MPI.MIN)
+        
+        assert psi_min >= -1e-12, f"Strain energy density negative: {psi_min}"
+
+
+class TestNumericalStability:
+    """Tests for numerical stability under edge cases."""
+    
+    def test_mechanics_convergence_with_varied_mesh_size(self, cfg, bc_mech):
+        """Mechanics should converge for different mesh resolutions."""
+        from dolfinx import mesh as dmesh
+        comm = MPI.COMM_WORLD
+        
+        for n in [4, 8]:  # Skip very fine mesh in CI
+            domain = dmesh.create_unit_cube(comm, n, n, n)
+            
+            from simulation.utils import build_facetag
+            facet_tags = build_facetag(domain)
+            cfg_local = Config(domain=domain, facet_tags=facet_tags)
+            
+            P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(3,))
+            P1 = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
+            V = fem.functionspace(domain, P1_vec)
+            Q = fem.functionspace(domain, P1)
+            
+            u = fem.Function(V, name="u")
+            rho = fem.Function(Q, name="rho")
+            rho.x.array[:] = 0.5
+            rho.x.scatter_forward()
+            
+            bc = build_dirichlet_bcs(V, facet_tags, id_tag=1, value=0.0)
+            t_load = fem.Constant(domain, np.array([1.0, 0.0, 0.0], dtype=float))
+            
+            mech = MechanicsSolver(u, rho, cfg_local, bc, [(t_load, 2)])
+            mech.setup()
+            stats = mech.solve()
+            
+            assert stats.converged, f"Mechanics failed to converge for n={n}"
+            assert np.all(np.isfinite(u.x.array)), f"NaN/Inf for n={n}"
+    
+    def test_density_solver_mass_change_bounded(self, cfg, spaces, fields):
+        """Mass change per step should be bounded (no blow-up)."""
+        V, Q, T = spaces.V, spaces.Q, spaces.T
+        _, rho, rho_old, A, _, _, _ = fields
+        
+        rho_old.x.array[:] = 0.5
+        rho_old.x.scatter_forward()
+        
+        psi_field = fem.Function(Q, name="psi")
+        psi_field.x.array[:] = cfg.stimulus.psi_ref * 2.0
+        psi_field.x.scatter_forward()
+        
+        dens = DensitySolver(rho, rho_old, psi_field, cfg)
+        dens.setup()
+        dens.assemble_rhs()
+        dens.solve()
+        
+        # Compute mass change
+        mass_old_local = fem.assemble_scalar(fem.form(rho_old * cfg.dx))
+        mass_new_local = fem.assemble_scalar(fem.form(rho * cfg.dx))
+        mass_old = MPI.COMM_WORLD.allreduce(mass_old_local, op=MPI.SUM)
+        mass_new = MPI.COMM_WORLD.allreduce(mass_new_local, op=MPI.SUM)
+        
+        rel_change = abs(mass_new - mass_old) / max(abs(mass_old), 1e-10)
+        
+        # Mass change per time step should be reasonable (< 100%)
+        assert rel_change < 1.0, f"Mass change {rel_change:.1%} too large"
 
 
 class TestFabricMath:

@@ -9,11 +9,25 @@ Both use a single Rich Progress instance to avoid line jumping.
 
 from __future__ import annotations
 
+import os
+import sys
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from mpi4py import MPI
     from rich.progress import Progress, TaskID
+
+
+def _is_interactive() -> bool:
+    """Check if we're in an interactive terminal (not pytest/CI)."""
+    # Pytest sets this
+    if "PYTEST_CURRENT_TEST" in os.environ:
+        return False
+    # CI environments
+    if os.environ.get("CI"):
+        return False
+    # Check if stderr is a TTY
+    return hasattr(sys.stderr, "isatty") and sys.stderr.isatty()
 
 
 class ProgressReporter:
@@ -53,7 +67,8 @@ class ProgressReporter:
             TimeRemainingColumn,
         )
 
-        console = Console(stderr=True, force_terminal=True)
+        # Only force terminal in interactive mode to avoid hanging in pytest
+        console = Console(stderr=True, force_terminal=_is_interactive())
         self.progress = Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
@@ -179,7 +194,8 @@ class SweepProgressReporter:
             TimeRemainingColumn,
         )
 
-        console = Console(stderr=True, force_terminal=True)
+        # Only force terminal in interactive mode to avoid hanging in pytest
+        console = Console(stderr=True, force_terminal=_is_interactive())
         self.progress = Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),

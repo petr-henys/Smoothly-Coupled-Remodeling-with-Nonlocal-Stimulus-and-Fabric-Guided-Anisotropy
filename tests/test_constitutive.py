@@ -143,19 +143,19 @@ class TestAdvancedConstitutiveLaws:
         
         rho = Function(Q, name="rho")
         rho_old = Function(Q, name="rho_old")
-        psi_field = Function(Q, name="psi")
+        S_field = Function(Q, name="S")
         rho_val = cfg.density.rho_ref  # Use reference density for simpler math
         rho_old.x.array[:] = rho_val
         rho_old.x.scatter_forward()
         
-        def get_rate(psi_val):
-            psi_field.x.array[:] = psi_val
-            psi_field.x.scatter_forward()
+        def get_rate(S_val):
+            S_field.x.array[:] = S_val
+            S_field.x.scatter_forward()
             
             rho.x.array[:] = rho_val
             rho.x.scatter_forward()
             
-            dens = DensitySolver(rho, rho_old, psi_field, cfg)
+            dens = DensitySolver(rho, rho_old, S_field, cfg)
             dens.setup()
             dens.assemble_rhs()
             dens.solve()
@@ -167,7 +167,7 @@ class TestAdvancedConstitutiveLaws:
             
             return (dM / vol) / cfg.dt
         
-        # DensitySolver expects dimensionless stimulus S, not SED psi.
+        # DensitySolver expects dimensionless stimulus S (e.g. S = psi - psi_ref)
         
         def expected_rate_implicit(S_val, rho_val, k, limit):
             # Rate = (A - B*rho) / (1 + B*dt) for implicit Euler

@@ -103,26 +103,34 @@ class Anderson:
 
         return self.comm.allreduce(H_loc, op=MPI.SUM)
 
-    def _solve_kkt(self, H: np.ndarray, lam_eff: float) -> np.ndarray:
-        """Solve min ||alpha||_H s.t. 1^T alpha = 1."""
+    def _solve_kkt(self, H: np.ndarray, lam_eff: float) -> tuple[np.ndarray, str]:
+        """Solve min ||alpha||_H s.t. 1^T alpha = 1.
+
+        Returns (alpha, method) where method is one of:
+        - "solve": direct solve succeeded
+        - "eigh": eigen-based fallback used (regularized)
+        - "uniform": degenerate constraint normalization -> uniform weights
+        """
         p = int(H.shape[0])
         if p == 0:
-            return np.zeros(0, dtype=float)
+            return np.zeros(0, dtype=float), "solve"
 
         Hp = H + lam_eff * np.eye(p)
         one = np.ones(p, dtype=float)
 
+        method = "solve"
         try:
             y = np.linalg.solve(Hp, one)
         except np.linalg.LinAlgError:
+            method = "eigh"
             w, V = np.linalg.eigh(Hp + self._eig_floor * np.eye(p))
             w = np.clip(w, self._eig_floor, None)
             y = V @ (V.T @ one / w)
 
         denom = float(one @ y)
         if abs(denom) <= 1e-30:
-            return np.full(p, 1.0 / p, dtype=float)
-        return y / denom
+            return np.full(p, 1.0 / p, dtype=float), "uniform"
+        return y / denom, method
 
     def _cond_number(self, H: np.ndarray, lam_eff: float) -> float:
         p = int(H.shape[0])
@@ -159,6 +167,7 @@ class Anderson:
             "aa_hist": int(p),
             "accepted": True,
             "restart_reason": "",
+            "alpha_method": None,
             "condH": None,
             "r_norm": None,
             "r_proxy_norm": None,
@@ -176,7 +185,8 @@ class Anderson:
         # history-averaging (often slower than plain Picard).
         lam_eff = self.lam * max(avg_diag, self._eig_floor)
 
-        alpha = self._solve_kkt(H, lam_eff)
+        alpha, alpha_method = self._solve_kkt(H, lam_eff)
+        info["alpha_method"] = str(alpha_method)
 
         # Diagnostics: current residual norm and predicted residual proxy.
         r_norm = self._rel_step(x_old, x_raw, x_raw)
