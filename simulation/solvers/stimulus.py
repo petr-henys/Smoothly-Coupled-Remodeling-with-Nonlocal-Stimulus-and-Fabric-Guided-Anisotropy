@@ -96,8 +96,7 @@ class StimulusSolver(BaseLinearSolver):
 
     def assemble_rhs(self):
         self.S_old.x.scatter_forward()
-        if hasattr(self.psi, "x"):
-            self.psi.x.scatter_forward()
+        self.psi.x.scatter_forward()
         self.rho.x.scatter_forward()
 
         with self.b.localForm() as b_local:

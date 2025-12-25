@@ -153,7 +153,7 @@ class TimeIntegrator:
             val_corr = hist.f.x.array[:n_owned]
             val_pred = np.asarray(pred, dtype=val_corr.dtype)[:n_owned]
 
-            scale = rtol * np.abs(val_corr) + atol
+            scale = rtol * np.maximum(np.abs(val_corr), np.abs(val_pred)) + atol
             diff = val_corr - val_pred
             sq_error_local += float(np.sum(np.abs(diff / scale) ** 2))
 
@@ -162,71 +162,100 @@ class TimeIntegrator:
 
     # ----------------------------- time-step control ---------------------------
 
+    def _clamp_dt(self, dt: float) -> float:
+        """Clamp dt into [dt_min, dt_max] and ensure finite positive."""
+        dt = float(dt)
+        if not np.isfinite(dt) or dt <= 0.0:
+            return float(self.dt_min)
+        return float(max(self.dt_min, min(self.dt_max, dt)))
+
+
     def suggest_dt(self, dt: float, converged: bool, error_norm: float) -> Tuple[bool, float, str]:
-        """PI controller: returns (accepted, next_dt, reason)."""
+        """PI controller: returns (accepted, next_dt, reason).
+
+        Notes:
+            - `error_norm` is expected to be a scaled error estimate where <= 1.0 means "OK".
+            - On rejection we do NOT update `error_prev` (it tracks the last *accepted* step),
+              which avoids polluting the PI memory with failed attempts.
+        """
+        dt = float(dt)
+
+        # If the coupled solve did not converge, reject and cut quickly.
         if not converged:
-            # Divergence: Cut aggressively
-            next_dt = max(self.dt_min, dt * 0.5)
+            # Use the configured minimum shrink factor (often 0.1) rather than a fixed 0.5.
+            next_dt = self._clamp_dt(dt * float(self.shrink_factor))
+            # Reset PI memory to a neutral value; caller may also reset AB history.
+            self.error_prev = 1.0
             self.logger.debug(
                 f"dt={dt:.3e} -> {next_dt:.3e} | REJECT (diverged) | err={error_norm:.2e}"
             )
             return False, next_dt, "diverged"
-        
-        if self.step_count == 0:
-            # Initialize PI history; do not reject the very first step.
-            self.error_prev = max(error_norm, 1.0)
-            self.logger.debug(
-                f"dt={dt:.3e} -> {dt:.3e} | ACCEPT (first step) | err={error_norm:.2e}"
-            )
-            return True, dt, "first step accepted (no rejection)"
 
-        # Rejection (Error too high)
-        if error_norm > 1.0:
-            # Standard rejection: h_new = h * safety * (1/err)^(1/k)
-            factor = self.safety * (1.0 / error_norm) ** (1.0 / self.k_exp)
-            factor = max(self.shrink_factor, min(0.9, factor))  # Ensure reduction
-            
-            next_dt = max(self.dt_min, dt * factor)
-            
-            # Reset PI history on rejection to avoid bad memory
-            self.error_prev = error_norm
-            self.logger.info(
-                f"dt={dt:.3e} -> {next_dt:.3e} | REJECT | err={error_norm:.2e} > 1.0 | factor={factor:.3f}"
+        # First ever accepted step: do not roll back state, but we can already size the *next* dt.
+        if self.step_count == 0:
+            safe_error = max(1e-10, float(error_norm))
+            self.error_prev = safe_error
+
+            if safe_error > 1.0:
+                # "Accept but reduce next": avoids wasting the work of the first coupled solve,
+                # while preventing a too-large dt from persisting.
+                factor = self.safety * (1.0 / safe_error) ** (1.0 / self.k_exp)
+                factor = max(self.shrink_factor, min(0.9, factor))
+                next_dt = self._clamp_dt(dt * factor)
+                self.logger.info(
+                    f"dt={dt:.3e} -> {next_dt:.3e} | ACCEPT (first step, reduce next) | err={safe_error:.2e} | factor={factor:.3f}"
+                )
+                return True, next_dt, "first step accepted (reduce next dt)"
+
+            self.logger.debug(
+                f"dt={dt:.3e} -> {dt:.3e} | ACCEPT (first step) | err={safe_error:.2e}"
             )
-            return False, next_dt, f"error {error_norm:.2f} > 1.0"
+            return True, self._clamp_dt(dt), "first step accepted"
+
+        # Rejection (Error too high) — reject and retry with smaller dt.
+        if error_norm > 1.0:
+            safe_error = max(1e-10, float(error_norm))
+
+            # Standard rejection: h_new = h * safety * (1/err)^(1/k_exp)
+            factor = self.safety * (1.0 / safe_error) ** (1.0 / self.k_exp)
+            factor = max(self.shrink_factor, min(0.9, factor))  # ensure reduction
+
+            next_dt = self._clamp_dt(dt * factor)
+
+            # IMPORTANT: do not overwrite error_prev here (keep last accepted)
+            self.logger.info(
+                f"dt={dt:.3e} -> {next_dt:.3e} | REJECT | err={safe_error:.2e} > 1.0 | factor={factor:.3f}"
+            )
+            return False, next_dt, f"error {safe_error:.2f} > 1.0"
 
         # Acceptance (Error OK)
-        safe_error = max(1e-10, error_norm)
+        safe_error = max(1e-10, float(error_norm))
 
-        # Gustafsson PI controller
-        # Factor = S * (err_n)^(-kI) * (err_n / err_{n-1})^(-kP)
-        # Equivalently: S * (err_n)^(-kI - kP) * (err_{n-1})^(kP)
-        
+        # Gustafsson PI controller:
+        # factor = S * err_n^(-ki) * (err_{n-1} / err_n)^(kp)
         if self.step_count > 1:
-            # PI Control
             factor = self.safety * (safe_error ** (-self.ki)) * ((self.error_prev / safe_error) ** self.kp)
         else:
-            # I Control (First step, no history)
-            # Use same gain as PI integral part for consistency
+            # "I-only" control on the second step (no reliable history yet)
             factor = self.safety * (safe_error ** (-self.ki))
 
         # Apply limiters
         factor = min(self.growth_factor, max(self.shrink_factor, factor))
-        
-        # Don't shrink if error is good (unless factor < 1.0 due to noise, but we clamp at 1.0 for very good steps usually)
+
+        # Avoid accidental shrink on very good steps due to noisy PI memory
         if safe_error < 0.5:
-             factor = max(1.0, factor)
+            factor = max(1.0, factor)
 
-        next_dt = dt * factor
-        next_dt = max(self.dt_min, min(self.dt_max, next_dt))
+        next_dt = self._clamp_dt(dt * factor)
 
-        # Store error for next step
+        # Store error for next step (accepted only)
         self.error_prev = safe_error
 
         self.logger.debug(
-            f"dt={dt:.3e} -> {next_dt:.3e} | ACCEPT | err={error_norm:.2e} | factor={factor:.3f}"
+            f"dt={dt:.3e} -> {next_dt:.3e} | ACCEPT | err={safe_error:.2e} | factor={factor:.3f}"
         )
         return True, next_dt, "accepted"
+
 
     def commit_step(self, dt: float, new_fields: Mapping[str, fem.Function], old_fields: Mapping[str, fem.Function]) -> None:
         """Update AB2 history after an accepted step."""

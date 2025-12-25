@@ -104,7 +104,7 @@ def load_field_from_checkpoint(
     domain, _ = load_checkpoint_mesh(checkpoint_path, comm)
     space = create_function_space(domain, field_type)
     func = load_checkpoint_function(
-        checkpoint_path, field_name, space, time=final_time, comm=comm
+        checkpoint_path, field_name, space, time=final_time
     )
     return func, domain
 

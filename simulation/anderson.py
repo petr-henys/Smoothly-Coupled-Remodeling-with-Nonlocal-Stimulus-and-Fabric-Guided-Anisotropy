@@ -158,7 +158,6 @@ class Anderson:
         info: Dict = {
             "aa_hist": int(p),
             "accepted": True,
-            "backtracks": 0,
             "restart_reason": "",
             "condH": None,
             "r_norm": None,
@@ -237,29 +236,6 @@ class Anderson:
         self._check_restart(float(r_norm), float(info["condH"]), info)
 
         return x_cand, info
-
-    def _backtrack(
-        self,
-        x_old: np.ndarray,
-        s: np.ndarray,
-        x_raw: np.ndarray,
-        r_norm: float,
-    ) -> Tuple[np.ndarray, bool, int]:
-        """Legacy backtracking routine (kept for compatibility).
-
-        mix() no longer calls this method. The previous step-length proxy
-        logic was systematically over-restrictive with gamma>0 and could
-        damp even valid Picard/Anderson steps.
-        """
-        theta = 0.5
-        for bt in range(self.backtrack_max):
-            x_try = x_old + theta * s
-            rp_try = self._rel_step(x_old, x_try, x_raw)
-            if rp_try <= (1.0 + self.gamma) * r_norm:
-                return x_try, True, bt
-            theta *= 0.5
-        # Fall back to (possibly damped) Picard step to keep beta-consistent meaning.
-        return x_old + self.beta * (x_raw - x_old), False, self.backtrack_max
 
     def _check_restart(self, r_norm: float, condH: float, info: Dict) -> None:
         if self.reject_streak >= self.restart_on_reject_k:

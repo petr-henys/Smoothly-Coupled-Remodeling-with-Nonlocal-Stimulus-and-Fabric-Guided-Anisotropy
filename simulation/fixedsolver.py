@@ -63,7 +63,7 @@ class FixedPointSolver:
             n_owned = int(get_owned_size(f))
             N_global = int(self.comm.allreduce(n_owned, op=MPI.SUM))
             inv_sqrt_N = 1.0 / max(np.sqrt(float(N_global)), 1e-30)
-            name = getattr(f, "name", "field")
+            name = f.name
             self._specs.append(_FieldSpec(f=f, n_owned=n_owned, N_global=N_global, inv_sqrt_N=inv_sqrt_N, offset=off, name=name))
             off += n_owned
 
@@ -251,7 +251,7 @@ class FixedPointSolver:
             else:
                 beta = float(self.cfg.solver.beta)
                 x_new_s = x_old_s + beta * (x_raw_s - x_old_s)
-                aa = {"aa_hist": 0, "accepted": True, "backtracks": 0, "restart_reason": "", "condH": 1.0}
+                aa = {"aa_hist": 0, "accepted": True, "restart_reason": "", "condH": 1.0}
 
             aa_step_res = self._proj_step(x_old_s, x_new_s, x_raw_s)
 
@@ -272,7 +272,6 @@ class FixedPointSolver:
                 "aa_step_res": float(aa_step_res),
                 "aa_hist": int(aa.get("aa_hist", 0)),
                 "aa_accepted": bool(aa.get("accepted", True)),
-                "aa_backtracks": int(aa.get("backtracks", 0)),
                 "aa_restart": str(aa.get("restart_reason", "")),
                 "condH": float(cond_val) if cond_val is not None else 0.0,
                 "mem_mb": float(mem_mb),

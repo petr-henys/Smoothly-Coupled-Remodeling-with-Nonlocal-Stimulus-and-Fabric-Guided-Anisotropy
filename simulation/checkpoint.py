@@ -21,7 +21,7 @@ Usage in analysis:
     
     mesh, facet_tags = load_checkpoint_mesh(checkpoint_path, comm)
     V = fem.functionspace(mesh, ("Lagrange", 1))
-    rho = load_checkpoint_function(checkpoint_path, "rho", V, t_final, comm)
+    rho = load_checkpoint_function(checkpoint_path, "rho", V, t_final)
 
 Note: Requires adios4dolfinx >= 0.10.0 (pip install adios4dolfinx)
 """
@@ -152,7 +152,6 @@ def load_checkpoint_function(
     name: str,
     function_space: fem.FunctionSpace,
     time: float,
-    comm: MPI.Comm,
 ) -> fem.Function:
     """Load a function from checkpoint at a specific time.
     
@@ -161,7 +160,6 @@ def load_checkpoint_function(
         name: Function name (as registered during write).
         function_space: Target function space (must match saved function).
         time: Time value to load.
-        comm: MPI communicator (unused, kept for API compatibility).
     
     Returns:
         fem.Function with loaded data.

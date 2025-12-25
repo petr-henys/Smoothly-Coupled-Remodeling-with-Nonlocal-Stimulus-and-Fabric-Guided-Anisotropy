@@ -63,7 +63,7 @@ class BlockRegistry:
             fid = id(f)
             if fid not in self._state_field_ids:
                 self._state_field_ids.add(fid)
-                name = getattr(f, "name", f"field_{len(self._state_fields)}")
+                name = f.name
                 self._state_fields[name] = f
                 self._state_fields_old[name] = f_old
                 self.logger.debug(f"Registered state field: {name}")
@@ -74,8 +74,7 @@ class BlockRegistry:
             if fid not in self._output_field_ids:
                 self._output_field_ids.add(fid)
                 self._output_fields.append(f)
-                name = getattr(f, "name", "unnamed")
-                self.logger.debug(f"Registered output field: {name}")
+                self.logger.debug(f"Registered output field: {f.name}")
 
     @property
     def blocks(self) -> Tuple[CouplingBlock, ...]:

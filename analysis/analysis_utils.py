@@ -73,7 +73,6 @@ def load_checkpoint_function(
     name: str,
     function_space: fem.FunctionSpace,
     time: float | None = None,
-    comm: MPI.Comm | None = None,
 ) -> fem.Function:
     """Load function from adios4dolfinx checkpoint.
     
@@ -82,7 +81,6 @@ def load_checkpoint_function(
         name: Function name as stored in checkpoint.
         function_space: Target function space.
         time: Time value to load. If None, loads latest.
-        comm: MPI communicator (unused, kept for API compatibility).
     
     Returns:
         Loaded fem.Function.
