@@ -1,19 +1,19 @@
-"""Compare Anderson acceleration vs Picard iteration convergence rates.
+"""Anderson vs Picard comparison plot with explicit *failure* markers.
 
-Reads sweep output from run_anderson_sweep.py and generates publication plots.
+This script is meant to make the conclusion unambiguous:
+
+  - For each (dt, method) we compute whether each timestep converged
+    (final residual <= tolerance).
+  - We highlight timesteps where Picard hits `max_subiters` without
+    reaching tolerance.
+
+It reads the sweep output produced by `run_anderson_sweep_strict.py`.
 
 Usage:
-    python analysis/anderson_vs_picard_plot.py
+    python anderson_vs_picard_plot_strict.py
 
-Input:
-    results/anderson_sweep/
-    ├── sweep_summary.csv
-    └── <hash>/
-        ├── steps.csv
-        └── subiterations.csv
-
-Output:
-    manuscript/images/anderson_vs_picard.png
+Optional:
+    python anderson_vs_picard_plot_strict.py results/anderson_sweep_strict
 """
 
 from __future__ import annotations
@@ -21,272 +21,187 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-project_root = Path(__file__).resolve().parent.parent
-if str(project_root) not in sys.path:
-    sys.path.insert(0, str(project_root))
-
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from matplotlib.gridspec import GridSpec
 
 from postprocessor import SweepLoader
-from analysis.plot_utils import (
-    COLORS,
-    FIGSIZE_DOUBLE_COLUMN,
-    LEGEND_EDGECOLOR,
-    LEGEND_FANCYBOX,
-    LEGEND_FONTSIZE,
-    LEGEND_FRAMEALPHA,
-    PLOT_ALPHA_OVERLAY,
-    PLOT_LINEWIDTH,
-    PLOT_MARKERSIZE,
-    PUBLICATION_DPI,
-    print_banner,
-    save_manuscript_figure,
-    setup_axis_style,
-)
 
 
-# =============================================================================
-# Acceleration type styling (consistent with COLORS from plot_utils)
-# =============================================================================
+def _get_cfg_value(cfg: dict, *paths: str, default=None):
+    """Try multiple key paths against either nested or flat config dicts."""
+    # 1) Nested paths like ("solver", "coupling_tol")
+    for path in paths:
+        cur = cfg
+        ok = True
+        for k in path.split("."):
+            if isinstance(cur, dict) and k in cur:
+                cur = cur[k]
+            else:
+                ok = False
+                break
+        if ok:
+            return cur
 
-ACCEL_COLORS = {
-    "picard": COLORS["black"],    # Black for baseline
-    "anderson": COLORS["blue"],   # Blue (colorblind-friendly)
-}
-ACCEL_LINESTYLES = {
-    "picard": "-",
-    "anderson": "--",
-}
-ACCEL_MARKERS = {
-    "picard": "o",
-    "anderson": "s",
-}
-ACCEL_LABELS = {
-    "picard": "Picard",
-    "anderson": "Anderson",
-}
+    # 2) Flat keys like "solver.coupling_tol"
+    for path in paths:
+        if path in cfg:
+            return cfg[path]
 
-
-def plot_convergence_curves(
-    ax: plt.Axes,
-    df: pd.DataFrame,
-    color: str,
-    linestyle: str,
-    alpha: float = PLOT_ALPHA_OVERLAY,
-) -> None:
-    """Plot convergence curves (residual vs subiteration) for all timesteps.
-    
-    Args:
-        ax: Matplotlib axis.
-        df: DataFrame with columns: step, iter, proj_res.
-        color: Line color.
-        linestyle: Line style.
-        alpha: Line transparency (for overlapping curves).
-    """
-    for step in sorted(df["step"].unique()):
-        step_data = df[df["step"] == step].sort_values("iter")
-        ax.plot(
-            step_data["iter"].values,
-            step_data["proj_res"].values,
-            linewidth=PLOT_LINEWIDTH * 0.8,
-            alpha=alpha,
-            color=color,
-            linestyle=linestyle,
-        )
+    return default
 
 
-def plot_subiter_statistics(
-    ax: plt.Axes,
-    df_steps: pd.DataFrame,
-    color: str,
-    marker: str,
-    label: str,
-) -> None:
-    """Plot subiteration count per timestep.
-    
-    Args:
-        ax: Matplotlib axis.
-        df_steps: DataFrame with columns: step, subiters.
-        color: Marker/line color.
-        marker: Marker style.
-        label: Legend label.
-    """
-    ax.plot(
-        df_steps["step"].values,
-        df_steps["num_subiters"].values,
-        marker=marker,
-        color=color,
-        linewidth=PLOT_LINEWIDTH,
-        markersize=PLOT_MARKERSIZE,
-        label=label,
+def _step_convergence(subiters: pd.DataFrame, tol: float) -> pd.DataFrame:
+    """Return per-step final residual, iterations and convergence flag."""
+    if subiters.empty:
+        return pd.DataFrame(columns=["step", "final_res", "iters", "converged"])
+
+    g = subiters.sort_values(["step", "iter"]).groupby("step", as_index=False)
+    last = g.tail(1)[["step", "iter", "proj_res"]].rename(
+        columns={"iter": "iters", "proj_res": "final_res"}
     )
+    last["converged"] = last["final_res"].astype(float) <= float(tol)
+    return last
 
 
 def main() -> None:
-    """Generate Anderson vs Picard comparison plots."""
+    sweep_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("results/anderson_sweep_strict")
+
     from mpi4py import MPI
-    
+
     comm = MPI.COMM_WORLD
-    
-    if comm.rank == 0:
-        print_banner("ANDERSON VS PICARD COMPARISON")
-    
-    # Load sweep data
-    sweep_dir = Path("results/anderson_sweep")
-    if not sweep_dir.exists():
-        if comm.rank == 0:
-            print(f"Error: Sweep directory not found: {sweep_dir}")
-            print("Run: mpirun -n 4 python run_anderson_sweep.py")
-        return
-    
-    simulations = SweepLoader(str(sweep_dir), comm)
-    summary = simulations.get_summary()
-    
-    if summary.empty:
-        if comm.rank == 0:
-            print("Error: No simulation data found.")
-        return
-    
-    # Debug: show available columns and sample data
-    if comm.rank == 0:
-        print(f"Summary columns: {list(summary.columns)}")
-        print(f"Total runs: {len(summary)}")
-    
-    # Organize data by dt and accel_type
-    # For runs with multiple (m, beta), pick first matching run per (dt, accel_type)
-    data_by_dt: dict[float, dict[str, dict]] = {}
-    
-    for _, row in summary.iterrows():
-        dt = float(row["dt_days"])
-        accel = str(row["accel_type"])
-        
-        if dt not in data_by_dt:
-            data_by_dt[dt] = {}
-        
-        if accel in data_by_dt[dt]:
-            # Already have this combination, skip duplicates
-            continue
-        
-        loader = simulations.get_loader(row["output_dir"])
-        
-        data_by_dt[dt][accel] = {
-            "subiter": loader.get_subiterations_metrics(),
-            "steps": loader.get_steps_metrics(),
-        }
-    
-    # Only rank 0 plots
     if comm.rank != 0:
         return
-    
-    dt_values = sorted(data_by_dt.keys())
+
+    if not sweep_dir.exists():
+        raise FileNotFoundError(f"Sweep directory not found: {sweep_dir}")
+
+    sweep = SweepLoader(str(sweep_dir), comm)
+    summary = sweep.get_summary()
+    if summary.empty:
+        raise RuntimeError("No runs found in sweep summary.")
+
+    # We expect at least these columns from the strict sweep
+    for col in ("dt_days", "accel_type", "output_dir"):
+        if col not in summary.columns:
+            raise ValueError(f"Missing '{col}' in sweep_summary.csv. Columns: {list(summary.columns)}")
+
+    # Build run objects grouped by dt + accel
+    runs: dict[tuple[float, str], dict] = {}
+    for _, row in summary.iterrows():
+        key = (float(row["dt_days"]), str(row["accel_type"]))
+        if key in runs:
+            # Multiple runs per bucket: keep the first (strict sweep shouldn't do this).
+            continue
+        loader = sweep.get_loader(str(row["output_dir"]))
+        cfg = loader.get_config()
+        tol = float(_get_cfg_value(cfg, "solver.coupling_tol", "coupling_tol", default=1e-6))
+        max_subiters = int(_get_cfg_value(cfg, "solver.max_subiters", "max_subiters", default=0))
+        subiters = loader.get_subiterations_metrics()
+        steps = loader.get_steps_metrics()
+
+        per_step = _step_convergence(subiters, tol)
+        # Mark hard failures: reached max_subiters but still not converged
+        if max_subiters > 0 and not per_step.empty:
+            per_step["hit_max"] = (per_step["iters"].astype(int) >= max_subiters) & (~per_step["converged"])
+        else:
+            per_step["hit_max"] = False
+
+        runs[key] = {
+            "tol": tol,
+            "max_subiters": max_subiters,
+            "subiters": subiters,
+            "steps": steps,
+            "per_step": per_step,
+        }
+
+    dt_values = sorted({k[0] for k in runs.keys()})
+    if not dt_values:
+        raise RuntimeError("No dt values found.")
+
+    # Console summary (this is the quickest sanity check)
+    print("\n=== ANDERSON vs PICARD: convergence summary ===")
+    for dt in dt_values:
+        for accel in ("picard", "anderson"):
+            key = (dt, accel)
+            if key not in runs:
+                print(f"dt={dt:>6.1f}  {accel:<8}: MISSING")
+                continue
+            per = runs[key]["per_step"]
+            if per.empty:
+                print(f"dt={dt:>6.1f}  {accel:<8}: no data")
+                continue
+            n = len(per)
+            conv = int(per["converged"].sum())
+            hit_max = int(per["hit_max"].sum())
+            med_it = float(np.median(per["iters"].values))
+            p90_it = float(np.percentile(per["iters"].values, 90))
+            worst_res = float(np.max(per["final_res"].values))
+            tol = runs[key]["tol"]
+            ms = runs[key]["max_subiters"]
+            print(
+                f"dt={dt:>6.1f}  {accel:<8}: conv {conv:>3}/{n:<3}  "
+                f"hit_max {hit_max:>3}  it_med {med_it:>6.1f}  it_p90 {p90_it:>6.1f}  "
+                f"worst_res {worst_res:.2e}  (tol={tol:.1e}, max_subiters={ms})"
+            )
+
+    # ----------------- plotting -----------------
     n_dt = len(dt_values)
-    
-    if n_dt == 0:
-        print("Error: No dt values found in sweep data.")
-        return
-    
-    # Layout: 2 rows x n_dt cols
-    # Row 1: Convergence curves (residual vs iteration)
-    # Row 2: Subiterations per timestep
-    fig_width = min(3.5 * n_dt, FIGSIZE_DOUBLE_COLUMN[0])
-    fig = plt.figure(figsize=(fig_width, 5.5))
-    gs = GridSpec(
-        3, n_dt,
-        figure=fig,
-        height_ratios=[1.0, 0.08, 1.0],  # plots, legend gap, plots
-        hspace=0.35,
-        wspace=0.35,
-    )
-    
-    subplot_labels = [chr(97 + i) for i in range(26)]  # a, b, c, ...
-    
-    # Row 1: Convergence curves
-    for idx, dt in enumerate(dt_values):
-        ax = fig.add_subplot(gs[0, idx])
-        
-        for accel_type in ["picard", "anderson"]:
-            if accel_type in data_by_dt[dt]:
-                df = data_by_dt[dt][accel_type]["subiter"]
-                if df is not None and not df.empty:
-                    plot_convergence_curves(
-                        ax, df,
-                        color=ACCEL_COLORS[accel_type],
-                        linestyle=ACCEL_LINESTYLES[accel_type],
-                    )
-        
-        label = f"({subplot_labels[idx]})"
-        setup_axis_style(
-            ax,
-            xlabel="Subiteration" if idx == n_dt // 2 else "",
-            ylabel="Residual" if idx == 0 else "",
-            title=rf"{label} $\Delta t = {dt:.0f}$ days",
-            loglog=False,
-            grid=True,
-        )
-        ax.set_yscale("log")
-        
-        # Consistent y-limits across panels
-        ax.set_ylim(1e-8, 1e1)
-    
-    # Row 2: Subiterations per step
-    for idx, dt in enumerate(dt_values):
-        ax = fig.add_subplot(gs[2, idx])
-        
-        for accel_type in ["picard", "anderson"]:
-            if accel_type in data_by_dt[dt]:
-                df = data_by_dt[dt][accel_type]["steps"]
-                if df is not None and not df.empty:
-                    plot_subiter_statistics(
-                        ax, df,
-                        color=ACCEL_COLORS[accel_type],
-                        marker=ACCEL_MARKERS[accel_type],
-                        label=ACCEL_LABELS[accel_type],
-                    )
-        
-        label = f"({subplot_labels[n_dt + idx]})"
-        setup_axis_style(
-            ax,
-            xlabel="Timestep" if idx == n_dt // 2 else "",
-            ylabel="Subiterations" if idx == 0 else "",
-            title=rf"{label} $\Delta t = {dt:.0f}$ days",
-            loglog=False,
-            grid=True,
-        )
-    
-    # Create shared legend below the first row
-    legend_handles = [
-        plt.Line2D([0], [0], color=ACCEL_COLORS["picard"],
-                   linestyle=ACCEL_LINESTYLES["picard"],
-                   marker=ACCEL_MARKERS["picard"],
-                   markersize=PLOT_MARKERSIZE,
-                   linewidth=PLOT_LINEWIDTH, label="Picard"),
-        plt.Line2D([0], [0], color=ACCEL_COLORS["anderson"],
-                   linestyle=ACCEL_LINESTYLES["anderson"],
-                   marker=ACCEL_MARKERS["anderson"],
-                   markersize=PLOT_MARKERSIZE,
-                   linewidth=PLOT_LINEWIDTH, label="Anderson"),
-    ]
-    
-    fig.legend(
-        handles=legend_handles,
-        loc="upper center",
-        bbox_to_anchor=(0.5, 0.52),
-        ncol=2,
-        fontsize=LEGEND_FONTSIZE,
-        framealpha=LEGEND_FRAMEALPHA,
-        edgecolor=LEGEND_EDGECOLOR,
-        frameon=True,
-        fancybox=LEGEND_FANCYBOX,
-    )
-    
-    # Save figure using manuscript utility
-    output_path = save_manuscript_figure(fig, "anderson_vs_picard", dpi=PUBLICATION_DPI)
-    
-    print_banner("ANDERSON VS PICARD PLOTTING COMPLETE")
-    print(f"Output: {output_path}")
+    fig, axes = plt.subplots(2, n_dt, figsize=(min(3.6 * n_dt, 12.0), 6.0), squeeze=False)
+
+    for j, dt in enumerate(dt_values):
+        ax1 = axes[0, j]
+        ax2 = axes[1, j]
+
+        for accel in ("picard", "anderson"):
+            key = (dt, accel)
+            if key not in runs:
+                continue
+            sub = runs[key]["subiters"]
+            per = runs[key]["per_step"]
+            steps = runs[key]["steps"]
+
+            # Convergence curves: overlay all timesteps
+            for step in sorted(sub["step"].unique()):
+                sd = sub[sub["step"] == step].sort_values("iter")
+                ax1.plot(sd["iter"].values, sd["proj_res"].values, alpha=0.25, linestyle="-" if accel == "picard" else "--")
+
+            # Subiteration counts, with failure markers
+            ax2.plot(
+                steps["step"].values,
+                steps["num_subiters"].values,
+                marker="o" if accel == "picard" else "s",
+                linestyle="-" if accel == "picard" else "--",
+                linewidth=1.5,
+                label=accel,
+            )
+
+            # Overlay hard failures as 'x'
+            if "hit_max" in per.columns and per["hit_max"].any():
+                failed_steps = per.loc[per["hit_max"], "step"].values
+                # Map to y values using steps dataframe
+                y = steps.set_index("step").loc[failed_steps, "num_subiters"].values
+                ax2.scatter(failed_steps, y, marker="x", s=40)
+
+        ax1.set_title(f"Δt = {dt:.0f} days")
+        ax1.set_yscale("log")
+        ax1.set_xlabel("Subiteration")
+        if j == 0:
+            ax1.set_ylabel("Residual (proj_res)")
+        ax1.grid(True, which="both", alpha=0.2)
+        ax1.set_ylim(1e-10, 1e2)
+
+        ax2.set_xlabel("Timestep")
+        if j == 0:
+            ax2.set_ylabel("Subiterations")
+        ax2.grid(True, alpha=0.2)
+
+    axes[1, 0].legend(loc="upper right")
+
+    out = sweep_dir / "anderson_vs_picard_strict.png"
+    fig.tight_layout()
+    fig.savefig(out, dpi=200)
+    print(f"\nSaved: {out}")
 
 
 if __name__ == "__main__":

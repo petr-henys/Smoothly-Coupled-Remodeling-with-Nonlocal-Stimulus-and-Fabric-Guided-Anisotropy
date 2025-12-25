@@ -220,7 +220,7 @@ class SolverParams:
     gamma: float = 0.05
 
     # Enable safeguard with backtracking
-    safeguard: bool = True
+    safeguard: bool = False
 
     # Maximum backtrack attempts
     backtrack_max: int = 5

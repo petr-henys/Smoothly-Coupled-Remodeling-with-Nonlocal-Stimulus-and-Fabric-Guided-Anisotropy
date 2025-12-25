@@ -63,8 +63,8 @@ CENTER_FACTOR = 2.0         # Factor at center (peak for parabolic)
 EDGE_FACTOR = 0.3           # Factor at edges (min for parabolic)
 
 # Time stepping [days]
-TOTAL_TIME = 10.    # Total simulation time
-DT_INITIAL = 10    # Fixed timestep
+TOTAL_TIME = 500.    # Total simulation time
+DT_INITIAL = 10.    # Fixed timestep
 ADAPTIVE_DT = False   # Disable adaptive (use fixed dt for speed)
 DT_MIN = 1e-2          # Minimum timestep
 DT_MAX = 50.0         # Maximum timestep
@@ -92,6 +92,7 @@ FABRIC_D = 0.01           # Fabric diffusion [mm²/day] - moderate
 ACCEL_TYPE = "anderson"  # Fixed-point acceleration: "anderson" or "picard"
 COUPLING_TOL = 1e-4      # Coupling tolerance (relaxed for faster demos)
 MAX_SUBITERS = 50        # Maximum sub-iterations per timestep
+SAFEGUARD = False        # Enable safeguard for Anderson acceleration
 
 # Output
 OUTPUT_DIR = ".results_box"  # Output directory

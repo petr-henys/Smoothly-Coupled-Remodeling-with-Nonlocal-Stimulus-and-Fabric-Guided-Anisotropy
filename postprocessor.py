@@ -177,6 +177,12 @@ class SimulationLoader:
         step_subiters = subiters_df[subiters_df["step"] == step_num]
         
         # Aggregate subiteration stats
+        # Column name compatibility:
+        # - older CSVs used `accepted` / `restart`
+        # - current fixed-point solver writes `aa_accepted` / `aa_restart`
+        acc_col = "aa_accepted" if "aa_accepted" in step_subiters.columns else "accepted"
+        rst_col = "aa_restart" if "aa_restart" in step_subiters.columns else "restart"
+
         subiters_summary = {
             "num_subiters": len(step_subiters),
             "final_proj_res": step_subiters["proj_res"].iloc[-1] if len(step_subiters) > 0 else np.nan,
@@ -184,8 +190,8 @@ class SimulationLoader:
             "total_fab_iters": step_subiters["fab_iters"].sum() if "fab_iters" in step_subiters else 0,
             "total_stim_iters": step_subiters["stim_iters"].sum() if "stim_iters" in step_subiters else 0,
             "total_dens_iters": step_subiters["dens_iters"].sum() if "dens_iters" in step_subiters else 0,
-            "aa_acceptances": step_subiters["accepted"].sum() if "accepted" in step_subiters else 0,
-            "aa_restarts": step_subiters["restart"].sum() if "restart" in step_subiters else 0,
+            "aa_acceptances": step_subiters[acc_col].sum() if acc_col in step_subiters else 0,
+            "aa_restarts": step_subiters[rst_col].astype(str).ne("").sum() if rst_col in step_subiters else 0,
         }
         
         return {**step_metrics, **subiters_summary}

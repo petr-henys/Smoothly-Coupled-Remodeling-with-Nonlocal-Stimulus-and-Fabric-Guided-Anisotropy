@@ -1,30 +1,27 @@
-"""Run Anderson vs Picard acceleration comparison sweep.
+"""Run Anderson vs Picard acceleration comparison sweep (strict + reproducible).
 
-This script demonstrates the necessity of Anderson acceleration by comparing
-convergence behavior between Anderson and Picard (no acceleration) across
-different timesteps.
+This is a hardened variant of `run_anderson_sweep.py` that avoids the two most
+common failure modes when you want a *clean* Anderson-vs-Picard story:
+
+1) **Stale output contamination**: because output directories are hash-based and
+   deterministic, rerunning after changing *base* (non-swept) parameters can
+   silently mix old CSVs/checkpoints with new configs.
+2) **Ambiguous plotting**: if the analysis script can't clearly tell whether a
+   timestep converged (vs. merely hit `max_subiters`), you can end up “proving”
+   the wrong thing.
+
+This script fixes (1) by:
+  - deleting the run directory before each run (rank 0 + barrier)
+  - including all base parameters in the sweep hash (as single-valued custom
+    parameters), so changing them creates *new* hashes automatically.
 
 Usage:
-    mpirun -n 4 python run_anderson_sweep.py
-
-Outputs:
-    results/anderson_sweep/
-    ├── sweep_summary.csv
-    ├── sweep_summary.json
-    ├── <hash1>/
-    │   ├── config.json
-    │   ├── steps.csv           <- Per-timestep metrics (subiters, errors, etc.)
-    │   ├── subiterations.csv   <- Per-subiteration details
-    │   └── fields.bp/          <- Visualization output
-    ├── <hash2>/
-    │   └── ...
-
-Post-processing:
-    python analysis/anderson_performance_plot.py
+    mpirun -n 4 python run_anderson_sweep_strict.py
 """
 
 from __future__ import annotations
 
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -56,105 +53,104 @@ from simulation.progress import SweepProgressReporter
 
 @dataclass
 class AndersonSweepConfig:
-    """Configuration for Anderson acceleration sweep.
-    
-    Non-swept parameters for the box model.
-    Parameters chosen to create an ill-conditioned problem where
-    Anderson acceleration provides clear benefits over Picard.
-    """
+    """Non-swept parameters chosen to make Picard struggle."""
+
     # Box dimensions [mm]
     Lx: float = 10.0
     Ly: float = 10.0
     Lz: float = 20.0
-    
+
     # Mesh resolution (fixed for acceleration comparison)
     N: int = 24
-    
+
     # Loading - higher pressure for stronger coupling
     pressure: float = 5.0
-    
-    # Final time - long enough to see acceleration benefits
-    total_time: float = 200.0
-
-    # Solver settings - tight tolerance to stress the solver
-    coupling_tol: float = 1e-6
-    max_subiters: int = 100  # High limit to observe convergence behavior
-
-    # Loading smoothness
     load_edge_factor: float = 0.0
-    
-    # Reaction kinetics - higher rates for stronger coupling
-    k_rho_form: float = 0.02      # 10x higher than default
-    k_rho_resorb: float = 0.02    # 10x higher than default
-    
-    # Stimulus dynamics - faster response for tighter coupling
-    stimulus_tau: float = 5.0     # 5x faster than default (25.0)
+
+    # Final time
+    total_time: float = 100.0
+
+    # Solver settings
+    coupling_tol: float = 1e-6
+    max_subiters: int = 100
+
+    # Reaction kinetics - stronger coupling
+    k_rho_form: float = 0.02
+    k_rho_resorb: float = 0.02
+
+    # Stimulus dynamics - faster response
+    stimulus_tau: float = 5.0
+
+
+def _clean_dir(comm: MPI.Comm, path: Path) -> None:
+    """Remove `path` on rank 0 and synchronize."""
+    if comm.rank == 0:
+        if path.exists():
+            shutil.rmtree(path, ignore_errors=True)
+        path.mkdir(parents=True, exist_ok=True)
+    comm.barrier()
 
 
 def create_anderson_runner(cfg: AndersonSweepConfig) -> SimulationRunner:
-    """Create a runner for Anderson vs Picard comparison.
-    
-    Args:
-        cfg: Base configuration.
-    
-    Returns:
-        Runner function for Parametrizer.
-    """
-    
     def runner(
         param_point: dict[str, ParamValue],
         output_path: Path,
         comm: MPI.Comm,
         reporter: SweepProgressReporter | None = None,
     ) -> None:
-        """Run single simulation with specified acceleration settings."""
-        
-        # Extract parameters
+        # Extract swept knobs
         dt_days = float(param_point["dt_days"])
         accel_type = str(param_point["accel_type"])
         m = int(param_point.get("m", 5))
         beta = float(param_point.get("beta", 1.0))
-        
+
+        # Hard safety: never reuse an old run directory.
+        _clean_dir(comm, output_path)
+
         # Update reporter with correct total_time
         if reporter is not None:
             if reporter.progress is not None and reporter.main_task_id is not None:
                 reporter.progress.reset(reporter.main_task_id)
                 reporter.progress.update(reporter.main_task_id, total=cfg.total_time)
-        
-        # Create mesh with fixed resolution
-        N = cfg.N
+
+        # Mesh
+        N = int(cfg.N)
         geometry = BoxGeometry(
-            Lx=cfg.Lx, Ly=cfg.Ly, Lz=cfg.Lz,
-            nx=N, ny=N, nz=int(N * cfg.Lz / cfg.Lx),
+            Lx=cfg.Lx,
+            Ly=cfg.Ly,
+            Lz=cfg.Lz,
+            nx=N,
+            ny=N,
+            nz=int(N * cfg.Lz / cfg.Lx),
         )
         builder = BoxMeshBuilder(geometry, comm)
         domain, facet_tags = builder.build()
-        
-        # Create config with ill-conditioned parameters
+
+        # Config
         sim_cfg = Config(
             domain=domain,
             facet_tags=facet_tags,
             density=DensityParams(
-                k_rho_form=cfg.k_rho_form,
-                k_rho_resorb=cfg.k_rho_resorb,
+                k_rho_form=float(cfg.k_rho_form),
+                k_rho_resorb=float(cfg.k_rho_resorb),
             ),
             stimulus=StimulusParams(
-                stimulus_tau=cfg.stimulus_tau,
+                stimulus_tau=float(cfg.stimulus_tau),
             ),
             time=TimeParams(
-                total_time=cfg.total_time,
+                total_time=float(cfg.total_time),
                 dt_initial=dt_days,
                 adaptive_dt=False,
             ),
             solver=SolverParams(
-                coupling_tol=cfg.coupling_tol,
-                max_subiters=cfg.max_subiters,
+                coupling_tol=float(cfg.coupling_tol),
+                max_subiters=int(cfg.max_subiters),
                 accel_type=accel_type,
                 m=m,
                 beta=beta,
-                # No safeguard for fair comparison on well-conditioned problems.
-                # Safeguard is useful for ill-conditioned problems where AA may diverge.
-                safeguard=False,
+                # IMPORTANT: enable safeguard for robustness on hard cases.
+                # (Does nothing for accel_type="picard" because AA is not constructed.)
+                safeguard=True,
             ),
             output=OutputParams(results_dir=str(output_path)),
             geometry=GeometryParams(
@@ -162,93 +158,85 @@ def create_anderson_runner(cfg: AndersonSweepConfig) -> SimulationRunner:
                 load_tag=BoxMeshBuilder.TAG_TOP,
             ),
         )
-        
-        # Create loader and loading cases
+
         loader = BoxLoader(domain, facet_tags, load_tag=BoxMeshBuilder.TAG_TOP)
-        loading_cases = [get_parabolic_pressure_case(
-            pressure=cfg.pressure,
-            gradient_axis=0,
-            center_factor=2.0,
-            edge_factor=cfg.load_edge_factor,
-            box_extent=(0.0, cfg.Lx),
-            name="parabolic_compression",
-        )]
-        
-        # Create factory and run
+        loading_cases = [
+            get_parabolic_pressure_case(
+                pressure=float(cfg.pressure),
+                gradient_axis=0,
+                center_factor=2.0,
+                edge_factor=float(cfg.load_edge_factor),
+                box_extent=(0.0, cfg.Lx),
+                name="parabolic_compression",
+            )
+        ]
+
         factory = BoxSolverFactory(sim_cfg)
-        
         with Remodeller(sim_cfg, loader=loader, loading_cases=loading_cases, factory=factory) as remodeller:
             remodeller.simulate(reporter=reporter)
-    
+
     return runner
 
 
 def main() -> None:
-    """Run Anderson vs Picard comparison sweep."""
     comm = MPI.COMM_WORLD
-    logger = get_logger(comm, name="AndersonSweep")
-    
-    # Define sweep parameters
-    # Compare Anderson vs Picard across different timesteps
+    logger = get_logger(comm, name="AndersonSweepStrict")
+
     accel_types = ["picard", "anderson"]
-    
-    # Timesteps [days] - larger steps for ill-conditioned problem
-    # With fast kinetics (tau=5, k=0.02), larger dt creates more nonlinearity
     dt_values = [50, 25, 10]
-    
-    # Anderson history sizes (only used when accel_type="anderson")
-    m_values = [5]  # Default history size
-    
-    # Mixing parameter
-    beta_values = [1.0]  # Full step (no damping)
-    
+    m_values = [5]
+    beta_values = [1.0]
+
+    cfg = AndersonSweepConfig()
+
+    # Include *all* base parameters in the hash to avoid directory re-use when you tweak cfg.
+    base_hash_params = {
+        "base.N": [cfg.N],
+        "base.pressure": [cfg.pressure],
+        "base.k_rho_form": [cfg.k_rho_form],
+        "base.k_rho_resorb": [cfg.k_rho_resorb],
+        "base.stimulus_tau": [cfg.stimulus_tau],
+        "base.coupling_tol": [cfg.coupling_tol],
+        "base.max_subiters": [cfg.max_subiters],
+        "base.total_time": [cfg.total_time],
+    }
+
     sweep = ParameterSweep(
         params={
+            **base_hash_params,
             "accel_type": accel_types,
             "dt_days": dt_values,
             "m": m_values,
             "beta": beta_values,
         },
-        base_output_dir=Path("results/anderson_sweep"),
+        base_output_dir=Path("results/anderson_sweep_strict"),
         metadata={
-            "description": "Anderson vs Picard acceleration comparison",
+            "description": "Anderson vs Picard (strict, no stale outputs)",
             "accel_types": accel_types,
             "dt_values": dt_values,
             "m_values": m_values,
             "beta_values": beta_values,
+            "cfg": cfg.__dict__,
         },
+        validate_config_params=False,  # we intentionally use custom keys like 'base.*'
     )
-    
-    # Configuration for non-swept parameters
-    cfg = AndersonSweepConfig(
-        N=32,
-        total_time=100.0,
-        coupling_tol=1e-6,
-        max_subiters=100,
-    )
-    
-    # Create runner
+
     runner = create_anderson_runner(cfg)
-    
-    # Run sweep
+
     if comm.rank == 0:
         logger.info("=" * 60)
-        logger.info("ANDERSON VS PICARD ACCELERATION SWEEP")
+        logger.info("ANDERSON VS PICARD (STRICT) SWEEP")
         logger.info("=" * 60)
-        logger.info(f"Acceleration types: {accel_types}")
-        logger.info(f"dt values: {dt_values}")
-        logger.info(f"Anderson m values: {m_values}")
-        logger.info(f"Mesh resolution: N={cfg.N}")
-        logger.info(f"Total runs: {sweep.total_runs()}")
         logger.info(f"Output: {sweep.base_output_dir}")
+        logger.info(f"Total runs: {sweep.total_runs()}")
+        logger.info(f"dt values: {dt_values}")
+        logger.info(f"cfg: {cfg}")
         logger.info("=" * 60)
-    
-    parametrizer = Parametrizer(sweep, runner, comm)
-    parametrizer.run()
-    
+
+    Parametrizer(sweep, runner, comm).run()
+
     if comm.rank == 0:
         logger.info("Sweep complete!")
-        logger.info("Analyze with: python analysis/anderson_performance_plot.py")
 
 
 if __name__ == "__main__":
