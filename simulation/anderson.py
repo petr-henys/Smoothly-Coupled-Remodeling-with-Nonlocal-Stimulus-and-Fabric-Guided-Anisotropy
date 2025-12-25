@@ -135,12 +135,22 @@ class Anderson:
     # ------------------------------ main update ------------------------------
 
     def mix(self, x_old: np.ndarray, x_raw: np.ndarray) -> Tuple[np.ndarray, Dict]:
-        """Return accelerated iterate based on stored history."""
+        """Return accelerated iterate based on stored history.
+
+        Args:
+            x_old: Current iterate (scaled global vector).
+            x_raw: Picard image g(x_old) from one block sweep (scaled global vector).
+
+        Returns:
+            (x_new, info) where x_new is the mixed iterate and info holds diagnostics.
+        """
         if self.pending_reset:
             self.reset()
 
+        # Picard residual at the *current* iterate: r_k = g(x_k) - x_k
         r = x_raw - x_old
 
+        # Store current iterate/residual pair in history (bounded by maxlen)
         self.x_hist.append(x_old.copy())
         self.r_hist.append(r.copy())
         p = len(self.r_hist)
@@ -153,67 +163,78 @@ class Anderson:
             "condH": None,
             "r_norm": None,
             "r_proxy_norm": None,
+            "r2_curr": None,
+            "r2_pred": None,
         }
 
+        # Build Gram matrix of residuals and a scale-aware regularization.
         H = self._build_gram(list(self.r_hist))
         tr = float(np.trace(H)) if p > 0 else 0.0
-        lam_eff = self.lam * max(tr / max(p, 1), 1.0)
+        avg_diag = tr / max(p, 1)
+
+        # IMPORTANT: regularize *relative* to the scale of H, otherwise the
+        # regularization dominates near convergence and AA degenerates into
+        # history-averaging (often slower than plain Picard).
+        lam_eff = self.lam * max(avg_diag, self._eig_floor)
 
         alpha = self._solve_kkt(H, lam_eff)
 
-        # Current residual (Picard step) norm and Gram-matrix residual proxies.
+        # Diagnostics: current residual norm and predicted residual proxy.
         r_norm = self._rel_step(x_old, x_raw, x_raw)
         r2_curr = float(H[-1, -1]) if p > 0 else 0.0
-        r2_pred = float(alpha @ H @ alpha) if p > 0 else 0.0
+        r2_curr = max(r2_curr, 0.0)
 
-        # Safeguard (residual-based): accept acceleration only if predicted residual
-        # is sufficiently smaller than the current residual.
+        r2_pred = float(alpha @ H @ alpha) if p > 0 else 0.0
+        if not np.isfinite(r2_pred):
+            r2_pred = float("inf")
+        else:
+            r2_pred = max(r2_pred, 0.0)
+
         info["r_norm"] = float(r_norm)
         info["condH"] = float(self._cond_number(H, lam_eff))
         info["r2_curr"] = float(r2_curr)
         info["r2_pred"] = float(r2_pred)
+
+        # Track best observed Picard residual for stall detection.
         self.best_picard = min(self.best_picard, float(r_norm))
 
+        # Baseline: (possibly damped) Picard iterate.
+        x_pic = x_old + self.beta * r
+
+        # Anderson iterate (Walker–Ni / Type-I form) using under-relaxed images.
+        x_cand = x_pic
+        if p >= 2:
+            y = np.zeros_like(x_old)
+            for a_i, x_i, r_i in zip(alpha, self.x_hist, self.r_hist):
+                y += float(a_i) * (x_i + self.beta * r_i)
+            x_cand = y
+
+        # Safeguard (residual-based): if AA does not predict improvement, fall back
+        # to Picard.
         if self.safeguard and p >= 2 and r2_curr > self._tiny:
-            if (not np.isfinite(r2_pred)) or (r2_pred > ((1.0 - self.gamma) ** 2) * r2_curr):
-                x_pic = x_old + self.beta * r
+            thresh = ((1.0 - self.gamma) ** 2) * r2_curr
+            if (not np.isfinite(r2_pred)) or (r2_pred > thresh):
+                x_cand = x_pic
                 info["accepted"] = False
-                info["r_proxy_norm"] = float(self._rel_step(x_old, x_pic, x_raw))
                 self.reject_streak += 1
-                self._check_restart(float(r_norm), float(info["condH"]), info)
-                return x_pic, info
-
-        # Anderson combination (Walker-Ni form)
-        y = np.zeros_like(x_old)
-        for a_i, x_i, r_i in zip(alpha, self.x_hist, self.r_hist):
-            y += float(a_i) * (x_i + self.beta * r_i)
-
-        s = y - x_old
-
-        # Step limiting relative to Picard step length
-        s_norm = self._rel_step(x_old, x_old + s, x_raw)
-        if s_norm > self.step_limit_factor * max(r_norm, self._tiny):
-            s *= (self.step_limit_factor * max(r_norm, self._tiny)) / max(s_norm, self._tiny)
-
-        x_cand = x_old + s
-
-        # Safeguard (step-proxy): accept if proxy step is sufficiently smaller than Picard step
-        rp_norm = self._rel_step(x_old, x_cand, x_raw)
-        info["r_proxy_norm"] = float(rp_norm)
-
-        if self.safeguard and r_norm > self._tiny:
-            if rp_norm > (1.0 - self.gamma) * r_norm:
-                x_cand, accepted, bt = self._backtrack(x_old, s, x_raw, r_norm)
-                info["backtracks"] = int(bt)
-                if not accepted:
-                    info["accepted"] = False
-                    self.reject_streak += 1
-                else:
-                    self.reject_streak = 0
             else:
                 self.reject_streak = 0
+        else:
+            # If safeguard is disabled, we do not treat any step as a "rejection".
+            self.reject_streak = 0
 
-            self._check_restart(float(r_norm), float(info["condH"]), info)
+        # Step limiting relative to the Picard step length (robustness).
+        s = x_cand - x_old
+        s_norm = self._rel_step(x_old, x_old + s, x_raw)
+        info["r_proxy_norm"] = float(s_norm)
+
+        if s_norm > self.step_limit_factor * max(r_norm, self._tiny):
+            s *= (self.step_limit_factor * max(r_norm, self._tiny)) / max(s_norm, self._tiny)
+            x_cand = x_old + s
+            info["r_proxy_norm"] = float(self._rel_step(x_old, x_cand, x_raw))
+
+        # History restart logic (cheap, improves robustness in practice).
+        self._check_restart(float(r_norm), float(info["condH"]), info)
 
         return x_cand, info
 
@@ -224,11 +245,17 @@ class Anderson:
         x_raw: np.ndarray,
         r_norm: float,
     ) -> Tuple[np.ndarray, bool, int]:
+        """Legacy backtracking routine (kept for compatibility).
+
+        mix() no longer calls this method. The previous step-length proxy
+        logic was systematically over-restrictive with gamma>0 and could
+        damp even valid Picard/Anderson steps.
+        """
         theta = 0.5
         for bt in range(self.backtrack_max):
             x_try = x_old + theta * s
             rp_try = self._rel_step(x_old, x_try, x_raw)
-            if rp_try <= (1.0 - self.gamma) * r_norm:
+            if rp_try <= (1.0 + self.gamma) * r_norm:
                 return x_try, True, bt
             theta *= 0.5
         # Fall back to (possibly damped) Picard step to keep beta-consistent meaning.

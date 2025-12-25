@@ -193,13 +193,13 @@ class SolverParams:
     pc_type: str = "gamg"
 
     # Relative tolerance for KSP
-    ksp_rtol: float = 1e-6
+    ksp_rtol: float = 1e-7
 
     # Absolute tolerance for KSP
-    ksp_atol: float = 1e-7
+    ksp_atol: float = 1e-8
 
     # Maximum KSP iterations
-    ksp_max_it: int = 100
+    ksp_max_it: int = 200
 
     # Reuse preconditioner across solves
     ksp_reuse_pc: bool = False
@@ -213,8 +213,8 @@ class SolverParams:
     # Mixing parameter (relaxation)
     beta: float = 1.0
 
-    # Tikhonov regularization for Anderson least-squares
-    lam: float = 1e-9
+    # Relative Tikhonov regularization for Anderson (scaled by average Gram diagonal)
+    lam: float = 1e-2
 
     # Safeguard tolerance (residual improvement threshold)
     gamma: float = 0.05
@@ -226,7 +226,7 @@ class SolverParams:
     backtrack_max: int = 5
 
     # Fixed-point convergence tolerance
-    coupling_tol: float = 1e-4
+    coupling_tol: float = 1e-6
 
     # Restart Anderson after k consecutive rejections
     restart_on_reject_k: int = 2

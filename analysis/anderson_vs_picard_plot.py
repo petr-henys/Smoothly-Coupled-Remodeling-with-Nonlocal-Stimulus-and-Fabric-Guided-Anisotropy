@@ -21,7 +21,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+project_root = Path(__file__).resolve().parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -30,27 +32,37 @@ from matplotlib.gridspec import GridSpec
 
 from postprocessor import SweepLoader
 from analysis.plot_utils import (
-    FIGSIZE_FULL_WIDTH,
+    COLORS,
+    FIGSIZE_DOUBLE_COLUMN,
     LEGEND_EDGECOLOR,
+    LEGEND_FANCYBOX,
     LEGEND_FONTSIZE,
     LEGEND_FRAMEALPHA,
     PLOT_ALPHA_OVERLAY,
     PLOT_LINEWIDTH,
+    PLOT_MARKERSIZE,
     PUBLICATION_DPI,
     print_banner,
-    save_figure,
+    save_manuscript_figure,
     setup_axis_style,
 )
 
 
-# Acceleration type styling (grayscale for print)
+# =============================================================================
+# Acceleration type styling (consistent with COLORS from plot_utils)
+# =============================================================================
+
 ACCEL_COLORS = {
-    "picard": "#000000",    # Black
-    "anderson": "#0173B2",  # Blue (colorblind-friendly)
+    "picard": COLORS["black"],    # Black for baseline
+    "anderson": COLORS["blue"],   # Blue (colorblind-friendly)
 }
 ACCEL_LINESTYLES = {
     "picard": "-",
     "anderson": "--",
+}
+ACCEL_MARKERS = {
+    "picard": "o",
+    "anderson": "s",
 }
 ACCEL_LABELS = {
     "picard": "Picard",
@@ -104,11 +116,11 @@ def plot_subiter_statistics(
     """
     ax.plot(
         df_steps["step"].values,
-        df_steps["subiters"].values,
+        df_steps["num_subiters"].values,
         marker=marker,
         color=color,
         linewidth=PLOT_LINEWIDTH,
-        markersize=4,
+        markersize=PLOT_MARKERSIZE,
         label=label,
     )
 
@@ -138,19 +150,31 @@ def main() -> None:
             print("Error: No simulation data found.")
         return
     
+    # Debug: show available columns and sample data
+    if comm.rank == 0:
+        print(f"Summary columns: {list(summary.columns)}")
+        print(f"Total runs: {len(summary)}")
+    
     # Organize data by dt and accel_type
+    # For runs with multiple (m, beta), pick first matching run per (dt, accel_type)
     data_by_dt: dict[float, dict[str, dict]] = {}
+    
     for _, row in summary.iterrows():
         dt = float(row["dt_days"])
         accel = str(row["accel_type"])
-        loader = simulations.get_loader(row["output_dir"])
         
         if dt not in data_by_dt:
             data_by_dt[dt] = {}
         
+        if accel in data_by_dt[dt]:
+            # Already have this combination, skip duplicates
+            continue
+        
+        loader = simulations.get_loader(row["output_dir"])
+        
         data_by_dt[dt][accel] = {
             "subiter": loader.get_subiterations_metrics(),
-            "steps": loader.get_step_metrics(),
+            "steps": loader.get_steps_metrics(),
         }
     
     # Only rank 0 plots
@@ -160,10 +184,15 @@ def main() -> None:
     dt_values = sorted(data_by_dt.keys())
     n_dt = len(dt_values)
     
+    if n_dt == 0:
+        print("Error: No dt values found in sweep data.")
+        return
+    
     # Layout: 2 rows x n_dt cols
     # Row 1: Convergence curves (residual vs iteration)
     # Row 2: Subiterations per timestep
-    fig = plt.figure(figsize=(min(3.5 * n_dt, FIGSIZE_FULL_WIDTH[0]), 5.5))
+    fig_width = min(3.5 * n_dt, FIGSIZE_DOUBLE_COLUMN[0])
+    fig = plt.figure(figsize=(fig_width, 5.5))
     gs = GridSpec(
         3, n_dt,
         figure=fig,
@@ -213,7 +242,7 @@ def main() -> None:
                     plot_subiter_statistics(
                         ax, df,
                         color=ACCEL_COLORS[accel_type],
-                        marker="o" if accel_type == "picard" else "s",
+                        marker=ACCEL_MARKERS[accel_type],
                         label=ACCEL_LABELS[accel_type],
                     )
         
@@ -231,9 +260,13 @@ def main() -> None:
     legend_handles = [
         plt.Line2D([0], [0], color=ACCEL_COLORS["picard"],
                    linestyle=ACCEL_LINESTYLES["picard"],
+                   marker=ACCEL_MARKERS["picard"],
+                   markersize=PLOT_MARKERSIZE,
                    linewidth=PLOT_LINEWIDTH, label="Picard"),
         plt.Line2D([0], [0], color=ACCEL_COLORS["anderson"],
                    linestyle=ACCEL_LINESTYLES["anderson"],
+                   marker=ACCEL_MARKERS["anderson"],
+                   markersize=PLOT_MARKERSIZE,
                    linewidth=PLOT_LINEWIDTH, label="Anderson"),
     ]
     
@@ -246,12 +279,11 @@ def main() -> None:
         framealpha=LEGEND_FRAMEALPHA,
         edgecolor=LEGEND_EDGECOLOR,
         frameon=True,
-        fancybox=False,
+        fancybox=LEGEND_FANCYBOX,
     )
     
-    # Save figure
-    output_path = Path("manuscript/images/anderson_vs_picard.png")
-    save_figure(fig, output_path, dpi=PUBLICATION_DPI)
+    # Save figure using manuscript utility
+    output_path = save_manuscript_figure(fig, "anderson_vs_picard", dpi=PUBLICATION_DPI)
     
     print_banner("ANDERSON VS PICARD PLOTTING COMPLETE")
     print(f"Output: {output_path}")
@@ -259,4 +291,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

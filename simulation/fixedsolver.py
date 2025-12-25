@@ -160,7 +160,7 @@ class FixedPointSolver:
         """Format one Picard iteration as multi-line hierarchical output.
 
         Option D format:
-            Picard 5: res=5.63e-02 → 2.85e-02 (cond=2.1e+03, m=5, ACC)
+            Picard 5: res=5.63e-02 | step=2.85e-02 (cond=2.1e+03, m=5, ACC)
                 mech  81it  0.572s │ fab  6it  0.272s │ stim  6it  0.002s │ dens  4it  0.003s
                 └─ aniso: a=[0.56, 1.82]  p2=[0.01, 0.09]
         """
@@ -170,7 +170,7 @@ class FixedPointSolver:
         rst_str = f", RST:{aa_info['restart_reason']}" if aa_info.get("restart_reason") else ""
 
         # Line 1: Picard header
-        line1 = f"Picard {itr:>2}: res={picard_res:.2e} → {aa_step_res:.2e} (cond={cond_str}, m={aa_info.get('aa_hist', 0)}, {acc_str}{rst_str})"
+        line1 = f"Picard {itr:>2}: res={picard_res:.2e} | step={aa_step_res:.2e} (cond={cond_str}, m={aa_info.get('aa_hist', 0)}, {acc_str}{rst_str})"
 
         # Line 2: Block performance (compact, aligned)
         block_parts = [s.format_short(width=4) for s in block_stats]

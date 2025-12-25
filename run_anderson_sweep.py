@@ -59,6 +59,8 @@ class AndersonSweepConfig:
     """Configuration for Anderson acceleration sweep.
     
     Non-swept parameters for the box model.
+    Parameters chosen to create an ill-conditioned problem where
+    Anderson acceleration provides clear benefits over Picard.
     """
     # Box dimensions [mm]
     Lx: float = 10.0
@@ -68,11 +70,11 @@ class AndersonSweepConfig:
     # Mesh resolution (fixed for acceleration comparison)
     N: int = 24
     
-    # Loading
-    pressure: float = 0.5
+    # Loading - higher pressure for stronger coupling
+    pressure: float = 5.0
     
     # Final time - long enough to see acceleration benefits
-    total_time: float = 100.0
+    total_time: float = 200.0
 
     # Solver settings - tight tolerance to stress the solver
     coupling_tol: float = 1e-6
@@ -80,6 +82,13 @@ class AndersonSweepConfig:
 
     # Loading smoothness
     load_edge_factor: float = 0.0
+    
+    # Reaction kinetics - higher rates for stronger coupling
+    k_rho_form: float = 0.02      # 10x higher than default
+    k_rho_resorb: float = 0.02    # 10x higher than default
+    
+    # Stimulus dynamics - faster response for tighter coupling
+    stimulus_tau: float = 5.0     # 5x faster than default (25.0)
 
 
 def create_anderson_runner(cfg: AndersonSweepConfig) -> SimulationRunner:
@@ -121,16 +130,16 @@ def create_anderson_runner(cfg: AndersonSweepConfig) -> SimulationRunner:
         builder = BoxMeshBuilder(geometry, comm)
         domain, facet_tags = builder.build()
         
-        # Create config
+        # Create config with ill-conditioned parameters
         sim_cfg = Config(
             domain=domain,
             facet_tags=facet_tags,
             density=DensityParams(
-                k_rho_form=2e-3,
-                k_rho_resorb=2e-3,
+                k_rho_form=cfg.k_rho_form,
+                k_rho_resorb=cfg.k_rho_resorb,
             ),
             stimulus=StimulusParams(
-                stimulus_tau=25.0,
+                stimulus_tau=cfg.stimulus_tau,
             ),
             time=TimeParams(
                 total_time=cfg.total_time,
@@ -143,10 +152,9 @@ def create_anderson_runner(cfg: AndersonSweepConfig) -> SimulationRunner:
                 accel_type=accel_type,
                 m=m,
                 beta=beta,
-                # Safeguard settings for fair comparison
-                safeguard=True,
-                gamma=0.05,
-                restart_on_reject_k=2,
+                # No safeguard for fair comparison on well-conditioned problems.
+                # Safeguard is useful for ill-conditioned problems where AA may diverge.
+                safeguard=False,
             ),
             output=OutputParams(results_dir=str(output_path)),
             geometry=GeometryParams(
@@ -184,14 +192,15 @@ def main() -> None:
     # Compare Anderson vs Picard across different timesteps
     accel_types = ["picard", "anderson"]
     
-    # Timesteps [days] - geometric series (factor 2) for clean convergence slopes
-    dt_values = [50.0, 25.0, 12.5, 6.25, 3.125, 1.5625]
+    # Timesteps [days] - larger steps for ill-conditioned problem
+    # With fast kinetics (tau=5, k=0.02), larger dt creates more nonlinearity
+    dt_values = [50, 25, 10]
     
     # Anderson history sizes (only used when accel_type="anderson")
     m_values = [5]  # Default history size
     
     # Mixing parameter
-    beta_values = [1.0]  # No damping
+    beta_values = [1.0]  # Full step (no damping)
     
     sweep = ParameterSweep(
         params={
@@ -212,7 +221,7 @@ def main() -> None:
     
     # Configuration for non-swept parameters
     cfg = AndersonSweepConfig(
-        N=12,
+        N=32,
         total_time=100.0,
         coupling_tol=1e-6,
         max_subiters=100,
