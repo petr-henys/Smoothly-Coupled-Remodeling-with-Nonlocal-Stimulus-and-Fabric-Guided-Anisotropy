@@ -8,7 +8,7 @@ Tests ghost cell updates, domain decomposition, collective operations, I/O, and 
 import pytest
 pytestmark = [pytest.mark.integration, pytest.mark.slow, pytest.mark.performance]
 import numpy as np
-np.random.seed(1234)
+_RNG = np.random.default_rng(1234)
 from mpi4py import MPI
 from dolfinx import mesh, fem
 from dolfinx.fem import Function, functionspace
@@ -344,8 +344,8 @@ class TestMemoryUsage:
         
         # Add more than m updates
         for i in range(10):
-            x = np.random.rand(n)
-            f = np.random.rand(n)
+            x = _RNG.random(n)
+            f = _RNG.random(n)
             _ = aa.mix(x, f)
         
         # History length should not exceed m+1 (deque maxlen)

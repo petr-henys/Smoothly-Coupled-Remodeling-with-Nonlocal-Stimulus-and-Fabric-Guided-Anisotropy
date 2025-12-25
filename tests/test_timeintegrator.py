@@ -641,8 +641,8 @@ class TestAB2Predictor:
         error_ab2 = abs(y_pred_ab2 - t2_exact)
         error_ab1 = abs(y_pred_ab1 - t2_exact)
         
-        # For quadratic, AB2 is exact (within floating point)
-        assert error_ab2 < 0.1, f"AB2 error too large: {error_ab2}"
+        # For linear-in-time rate, AB2 integrates exactly (up to roundoff)
+        assert error_ab2 < 1e-12, f"AB2 error too large: {error_ab2}"
         assert error_ab2 < error_ab1, f"AB2 ({error_ab2}) should be better than AB1 ({error_ab1})"
 
     def test_ab2_reduces_wrms_error(self, adaptive_integrator):
@@ -675,8 +675,8 @@ class TestAB2Predictor:
         
         error_ab2 = ti.compute_wrms_error(pred_ab2)
         
-        # Error should be very small (predictor == corrector for linear)
-        assert error_ab2 < 0.1, f"AB2 error should be small for linear problem: {error_ab2}"
+        # Predictor == corrector for this linear setup -> WRMS error should be ~0.
+        assert error_ab2 < 1e-12, f"AB2 error should be near zero for linear problem: {error_ab2}"
 
 
 # =============================================================================

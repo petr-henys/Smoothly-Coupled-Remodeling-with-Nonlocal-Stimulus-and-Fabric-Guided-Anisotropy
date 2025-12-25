@@ -151,8 +151,7 @@ class GaitDriver:
             # Load cached traction (cheap, no geometry work)
             self.loader.set_loading_case(case.name)
 
-            # Reassemble RHS (traction is referenced in the form)
-            self.mech.assemble_rhs()
+            # Reassemble RHS (traction is referenced in the form) in solve
             stats = self.mech.solve()
             total_iters += stats.ksp_iters
             total_time += stats.solve_time

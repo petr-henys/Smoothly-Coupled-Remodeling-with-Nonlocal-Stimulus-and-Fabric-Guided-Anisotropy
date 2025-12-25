@@ -49,7 +49,7 @@ class MockDriver:
         self.mech.assemble_lhs()
 
 
-np.random.seed(1234)
+_RNG = np.random.default_rng(1234)
 
 # =============================================================================
 # Solver Statistics Tests
@@ -149,7 +149,7 @@ class TestMatrixAssembly:
             # Random vector with Dirichlet DOFs zeroed
             z = Function(V, name="z")
             n_owned = V.dofmap.index_map.size_local * V.dofmap.index_map_bs
-            z.x.array[:n_owned] = np.random.randn(n_owned)
+            z.x.array[:n_owned] = _RNG.standard_normal(n_owned)
             from simulation.utils import collect_dirichlet_dofs
             fixed = collect_dirichlet_dofs(bc_mech, n_owned)
             if fixed.size:
@@ -172,7 +172,7 @@ class TestMatrixAssembly:
             # Random vector
             z = Function(Q, name="z")
             n_owned = Q.dofmap.index_map.size_local
-            z.x.array[:n_owned] = np.random.randn(n_owned)
+            z.x.array[:n_owned] = _RNG.standard_normal(n_owned)
             z.x.scatter_forward()
             
             y = z.x.petsc_vec.duplicate()
