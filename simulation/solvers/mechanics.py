@@ -292,5 +292,4 @@ class MechanicsSolver(BaseLinearSolver):
         return ()
 
     def sweep(self) -> SweepStats:
-        self.assemble_rhs()
-        return self._solve()
+        return self.solve()
