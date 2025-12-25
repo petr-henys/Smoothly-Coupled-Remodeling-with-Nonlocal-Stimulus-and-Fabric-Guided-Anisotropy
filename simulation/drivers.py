@@ -122,11 +122,11 @@ class GaitDriver:
         """Release solver resources."""
         self.mech.destroy()
 
-    def _update_snapshots(self) -> Tuple[int, float, Dict[str, Any]]:
+    def _update_snapshots(self) -> Tuple[int, int, float, Dict[str, Any]]:
         """Solve all enabled loading cases and update averaged `psi` and `Qbar`.
 
         Returns:
-            Tuple of (total_ksp_iters, total_solve_time, extra_stats_from_last_solve).
+            Tuple of (n_enabled_cases, avg_ksp_iters, total_solve_time, extra_stats_from_last_solve).
         """
         # Zero out accumulated fields (owned DOFs only; single scatter at the end)
         assign(self.psi, 0.0, scatter=False)
@@ -140,12 +140,14 @@ class GaitDriver:
         total_iters = 0
         total_time = 0.0
         last_extra: Dict[str, Any] = {}
+        n_enabled_cases = 0
 
         for case in self.loading_cases:
             day_cycles = float(case.day_cycles)
             if day_cycles <= 0.0:
                 # Disabled case (day_cycles == 0) → skip solve.
                 continue
+            n_enabled_cases += 1
             sum_cycles += day_cycles
 
             # Load cached traction (cheap, no geometry work)
@@ -182,7 +184,14 @@ class GaitDriver:
         self.psi.x.scatter_forward()
         self.Qbar.x.scatter_forward()
 
-        return total_iters, total_time, last_extra
+        avg_ksp_iters = int(round(total_iters / n_enabled_cases)) if n_enabled_cases > 0 else 0
+
+        extra = dict(last_extra)
+        extra["n_load_cases"] = n_enabled_cases
+        extra["ksp_iters_total"] = total_iters
+        extra["ksp_iters_avg"] = float(total_iters) / float(n_enabled_cases) if n_enabled_cases > 0 else 0.0
+
+        return n_enabled_cases, avg_ksp_iters, total_time, extra
 
     def stimulus_field(self) -> fem.Function:
         """Return the averaged `psi` function (DG0 field)."""
@@ -222,10 +231,10 @@ class GaitDriver:
         - Update averaged psi (DG0)
         """
         self.assemble_lhs()
-        total_iters, total_time, extra = self._update_snapshots()
+        _n_cases, avg_iters, total_time, extra = self._update_snapshots()
         return SweepStats(
             label="mech",
-            ksp_iters=total_iters,
+            ksp_iters=avg_iters,
             ksp_reason=int(self.mech.last_reason),
             solve_time=total_time,
             extra=extra,
