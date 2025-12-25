@@ -162,10 +162,25 @@ class Loader:
         # --- 2) Cache coordinates for owned blocks
         # DOLFINx 0.10: tabulate_dof_coordinates returns one row per scalar DOF.
         # For vector spaces (bs > 1), coordinates are duplicated per component.
+        # Handle various DOLFINx layouts (owned only vs owned+ghosts, per-block vs per-scalar).
         coords = V.tabulate_dof_coordinates()
-        block_coords = coords[::bs] if bs > 1 else coords
+        n_coords = int(coords.shape[0])
 
+        if n_coords == n_blocks_total:
+            # One coordinate per block DOF
+            block_coords = coords
+        elif bs > 1 and n_coords == n_blocks_total * bs:
+            # One coordinate per scalar DOF (duplicated per component); take first in each block
+            block_coords = coords[::bs]
+        else:
+            # Fallback: try a conservative stride interpretation, else assume block layout
+            if bs > 1 and n_coords % n_blocks_total == 0 and (n_coords // n_blocks_total) == bs:
+                block_coords = coords[::bs]
+            else:
+                block_coords = coords[:n_blocks_total]
+        
         self._x_owned = np.ascontiguousarray(block_coords[self._owned_blocks])
+
 
         # --- 3) MPI gather/scatter layout in "number of points" (NOT multiplied by gdim here)
         all_n = self.comm.allgather(self._n_owned)
