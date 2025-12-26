@@ -231,9 +231,6 @@ class SolverParams:
     # Restart Anderson after k consecutive rejections
     restart_on_reject_k: int = 2
 
-    # Restart on stall (ratio threshold)
-    restart_on_stall: float = 1.10
-
     # Restart on ill-conditioning
     restart_on_cond: float = 1e12
 

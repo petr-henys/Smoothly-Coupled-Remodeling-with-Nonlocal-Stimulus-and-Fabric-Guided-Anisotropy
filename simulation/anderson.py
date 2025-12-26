@@ -24,7 +24,6 @@ class Anderson:
         safeguard: bool,
         backtrack_max: int,
         restart_on_reject_k: int,
-        restart_on_stall: float,
         restart_on_cond: float,
         step_limit_factor: float,
         verbose: bool,
@@ -39,7 +38,6 @@ class Anderson:
         self.backtrack_max = int(backtrack_max)
 
         self.restart_on_reject_k = int(restart_on_reject_k)
-        self.restart_on_stall = float(restart_on_stall)
         self.restart_on_cond = float(restart_on_cond)
 
         self.step_limit_factor = float(step_limit_factor)
@@ -51,7 +49,6 @@ class Anderson:
         self.r_hist: Deque[np.ndarray] = deque(maxlen=self.m + 1)
 
         self.reject_streak = 0
-        self.best_picard = np.inf
         self.pending_reset = False
 
         # Numerical floors (internal constants; not exposed as knobs)
@@ -62,7 +59,6 @@ class Anderson:
         self.x_hist.clear()
         self.r_hist.clear()
         self.reject_streak = 0
-        self.best_picard = np.inf
         self.pending_reset = False
 
     # ------------------------- linear algebra helpers -------------------------
@@ -204,9 +200,6 @@ class Anderson:
         info["r2_curr"] = float(r2_curr)
         info["r2_pred"] = float(r2_pred)
 
-        # Track best observed Picard residual for stall detection.
-        self.best_picard = min(self.best_picard, float(r_norm))
-
         # Baseline: (possibly damped) Picard iterate.
         x_pic = x_old + self.beta * r
 
@@ -251,9 +244,6 @@ class Anderson:
         if self.reject_streak >= self.restart_on_reject_k:
             self.pending_reset = True
             info["restart_reason"] = f"reject_streak>={self.restart_on_reject_k}"
-        elif r_norm > self.restart_on_stall * self.best_picard:
-            self.pending_reset = True
-            info["restart_reason"] = f"stall>x{self.restart_on_stall:.2f}"
         elif condH > self.restart_on_cond:
             self.pending_reset = True
             info["restart_reason"] = f"illcond~{condH:.1e}"

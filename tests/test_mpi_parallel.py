@@ -336,7 +336,6 @@ class TestMemoryUsage:
             safeguard=False,
             backtrack_max=3,
             restart_on_reject_k=3,
-            restart_on_stall=1.0,
             restart_on_cond=1e10,
             step_limit_factor=2.0,
             verbose=False,

@@ -30,7 +30,6 @@ def make_anderson(comm: MPI.Comm, **kwargs) -> Anderson:
         "safeguard": True,
         "backtrack_max": 5,
         "restart_on_reject_k": 3,
-        "restart_on_stall": 2.0,
         "restart_on_cond": 1e12,
         "step_limit_factor": 2.0,
         "verbose": False,
@@ -342,29 +341,6 @@ class TestSafeguarding:
 class TestHistoryRestart:
     """Tests for history restart mechanisms."""
     
-    def test_restart_on_stall(self):
-        """History should restart when convergence stalls."""
-        aa = make_anderson(MPI.COMM_SELF, m=5, restart_on_stall=1.5)
-        n = 20
-        
-        # Simulate improving residuals, then stall
-        x = np.zeros(n)
-        for i in range(5):
-            # Decreasing residuals
-            x_raw = x + 0.5 ** (i + 1) * np.ones(n)
-            x, info = aa.mix(x, x_raw)
-        
-        best_before_stall = aa.best_picard
-        
-        # Now residual increases (stall)
-        x_raw = x + 3.0 * best_before_stall * np.ones(n)
-        x, info = aa.mix(x, x_raw)
-        
-        # Should trigger restart
-        assert aa.pending_reset or info["restart_reason"] != "", (
-            "Stalled convergence should trigger restart"
-        )
-    
     def test_restart_on_reject_streak(self):
         """History should restart after consecutive rejections."""
         aa = make_anderson(MPI.COMM_SELF, m=3, safeguard=True, gamma=0.0, restart_on_reject_k=2)
@@ -535,7 +511,6 @@ class TestAndersonComprehensive:
             gamma=0.1,
             safeguard=True,
             restart_on_reject_k=3,
-            restart_on_stall=2.0,
             restart_on_cond=1e10,
             step_limit_factor=2.0,
         )

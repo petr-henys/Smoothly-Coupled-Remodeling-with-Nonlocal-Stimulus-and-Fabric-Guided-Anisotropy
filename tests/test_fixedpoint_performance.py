@@ -180,7 +180,6 @@ def make_config_with_solver_params(
         gamma=0.1,
         lam=1e-8,
         restart_on_reject_k=3,
-        restart_on_stall=2.0,
         restart_on_cond=1e10,
         step_limit_factor=2.0,
     )

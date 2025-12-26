@@ -96,7 +96,7 @@ This note summarizes the *current* implementation in `simulation/` and serves as
 ### Solver (`cfg.solver`)
 
 - Linear: `ksp_type = "minres"`, `pc_type = "gamg"`, `ksp_rtol = 1e-6`, `ksp_atol = 1e-7`, `ksp_max_it = 100`, `ksp_reuse_pc = False`
-- Fixed-point/AA: `accel_type="anderson"`, `m=5`, `beta=1.0`, `lam=1e-9`, `gamma=0.05`, `safeguard=True`, `backtrack_max=5`, `step_limit_factor=2.0`, `restart_on_reject_k=2`, `restart_on_stall=1.10`, `restart_on_cond=1e12`, `coupling_tol=1e-4`, `max_subiters=25`, `min_subiters=2`
+- Fixed-point/AA: `accel_type="anderson"`, `m=5`, `beta=1.0`, `lam=1e-9`, `gamma=0.05`, `safeguard=True`, `backtrack_max=5`, `step_limit_factor=2.0`, `restart_on_reject_k=2`, `restart_on_cond=1e12`, `coupling_tol=1e-4`, `max_subiters=25`, `min_subiters=2`
 
 ### Time (`cfg.time`)
 
