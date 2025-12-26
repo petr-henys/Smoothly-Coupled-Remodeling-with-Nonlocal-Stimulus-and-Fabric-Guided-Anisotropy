@@ -19,15 +19,15 @@ if TYPE_CHECKING:
 
 
 def _is_interactive() -> bool:
-    """Check if we're in an interactive terminal (not pytest/CI)."""
+    """Check if we should show progress (not pytest/CI)."""
     # Pytest sets this
     if "PYTEST_CURRENT_TEST" in os.environ:
         return False
     # CI environments
     if os.environ.get("CI"):
         return False
-    # Check if stderr is a TTY
-    return hasattr(sys.stderr, "isatty") and sys.stderr.isatty()
+    # Always show progress in normal runs (mpirun redirects streams but we still want output)
+    return True
 
 
 class ProgressReporter:

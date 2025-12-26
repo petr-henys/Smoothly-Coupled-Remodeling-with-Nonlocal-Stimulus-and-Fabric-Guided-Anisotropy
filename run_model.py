@@ -2,19 +2,19 @@
 
 This is a thin entry point that:
 1. Loads the mesh
-2. Configures the simulation
+2. Configures the simulation from default_params_femur.json
 3. Sets up loading scenarios
 4. Runs the remodeling loop
 """
 
 from mpi4py import MPI
 
-from simulation.config import Config
 from simulation.factory import DefaultSolverFactory
 from simulation.febio_parser import FEBio2Dolfinx
 from simulation.loader import Loader
 from simulation.logger import get_logger
 from simulation.model import Remodeller
+from simulation.params import create_config, load_default_params
 from simulation.paths import FemurPaths
 from simulation.progress import ProgressReporter
 from simulation.scenarios import get_standard_gait_cases
@@ -28,8 +28,15 @@ def main() -> None:
     mdl = FEBio2Dolfinx(FemurPaths.FEMUR_MESH_FEB)
     mesh = mdl.mesh_dolfinx
 
+    # Load parameters from JSON
+    params = load_default_params("default_params_femur.json")
+    
+    # Modify params as needed (example):
+    # params["time"].total_time = 200.0
+    # params["density"].k_rho_form = 0.05
+
     # Create simulation configuration
-    cfg = Config(domain=mesh, facet_tags=mdl.meshtags)
+    cfg = create_config(mesh, mdl.meshtags, params)
 
     # Reset log file on rank 0
     if comm.rank == 0:

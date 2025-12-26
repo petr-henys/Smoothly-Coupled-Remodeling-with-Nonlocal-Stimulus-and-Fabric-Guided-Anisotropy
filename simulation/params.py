@@ -263,10 +263,10 @@ class TimeParams:
     """Time stepping and adaptive control."""
 
     # Total simulation time [days]
-    total_time: float = 25.0
+    total_time: float = 500
 
     # Initial timestep [days]
-    dt_initial: float = 25.0
+    dt_initial: float = 25
 
     # Enable adaptive time stepping
     adaptive_dt: bool = False
@@ -390,3 +390,131 @@ def params_to_dict(params) -> dict[str, Any]:
         if isinstance(val, (int, float, bool, str, type(None))):
             result[f.name] = val
     return result
+
+
+def load_default_params(json_path: str) -> dict[str, Any]:
+    """Load parameters from JSON file.
+    
+    Args:
+        json_path: Path to JSON config file (required, no default).
+    
+    Returns:
+        Dict with param dataclass instances keyed by section name.
+        Modify the returned params directly before calling create_config().
+        
+    Raises:
+        FileNotFoundError: If JSON file doesn't exist.
+        ValueError: If required section or field is missing in JSON.
+        
+    Example:
+        params = load_default_params("default_params_box.json")
+        params["time"].total_time = 100.0
+        params["density"].k_rho_form = 0.1
+        cfg = create_config(domain, facet_tags, params)
+    """
+    import json
+    from pathlib import Path
+    
+    path = Path(json_path)
+    if not path.exists():
+        # Try relative to this file's directory (for imports from subdirs)
+        path = Path(__file__).parent.parent / json_path
+    
+    if not path.exists():
+        raise FileNotFoundError(f"Config file not found: {json_path}")
+    
+    with open(path) as f:
+        data = json.load(f)
+    
+    # Map section names to dataclass types
+    section_to_class = {
+        "material": MaterialParams,
+        "density": DensityParams,
+        "stimulus": StimulusParams,
+        "fabric": FabricParams,
+        "solver": SolverParams,
+        "time": TimeParams,
+        "numerics": NumericsParams,
+        "output": OutputParams,
+        "geometry": GeometryParams,
+    }
+    
+    result: dict[str, Any] = {}
+    for section, cls in section_to_class.items():
+        if section not in data:
+            raise ValueError(f"Missing required section '{section}' in {json_path}")
+        
+        # Get expected fields from dataclass
+        expected_fields = {f.name for f in dataclass_fields(cls)}
+        provided_fields = set(data[section].keys())
+        
+        # Check for missing fields
+        missing = expected_fields - provided_fields
+        if missing:
+            raise ValueError(
+                f"Missing fields in '{section}' section of {json_path}: {sorted(missing)}"
+            )
+        
+        # Check for unknown fields (warn but allow)
+        unknown = provided_fields - expected_fields
+        if unknown:
+            import warnings
+            warnings.warn(
+                f"Unknown fields in '{section}' section of {json_path}: {sorted(unknown)}. "
+                "These will be ignored."
+            )
+        
+        # Create dataclass with only valid fields
+        filtered = {k: v for k, v in data[section].items() if k in expected_fields}
+        result[section] = cls(**filtered)
+    
+    # Pass through non-dataclass sections (like "box") as raw dicts
+    for section in data:
+        if section not in section_to_class and not section.startswith("_"):
+            result[section] = data[section]
+    
+    return result
+
+
+def create_config(domain, facet_tags, params: dict[str, Any]):
+    """Create Config from loaded params dict.
+    
+    Args:
+        domain: DOLFINx mesh.
+        facet_tags: MeshTags for boundaries.
+        params: Dict from load_default_params() - must contain all required sections.
+    
+    Returns:
+        Config instance.
+        
+    Raises:
+        KeyError: If required section is missing from params.
+        
+    Example:
+        params = load_default_params("default_params_box.json")
+        params["time"].total_time = 100.0
+        params["output"].results_dir = ".results_box"
+        cfg = create_config(domain, facet_tags, params)
+    """
+    # Import here to avoid circular import
+    from simulation.config import Config
+    
+    required_sections = ["material", "density", "stimulus", "fabric", 
+                         "solver", "time", "numerics", "output", "geometry"]
+    missing = [s for s in required_sections if s not in params]
+    if missing:
+        raise KeyError(f"Missing required param sections: {missing}")
+    
+    return Config(
+        domain=domain,
+        facet_tags=facet_tags,
+        material=params["material"],
+        density=params["density"],
+        stimulus=params["stimulus"],
+        fabric=params["fabric"],
+        solver=params["solver"],
+        time=params["time"],
+        numerics=params["numerics"],
+        output=params["output"],
+        geometry=params["geometry"],
+    )
