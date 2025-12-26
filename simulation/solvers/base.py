@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Tuple, TYPE_CHECKING
 import time
+from typing import Any, Dict, List, Tuple, TYPE_CHECKING
 
 from mpi4py import MPI
 from petsc4py import PETSc

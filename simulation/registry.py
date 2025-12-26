@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, List, Sequence, Tuple, TYPE_CHECKING
+from typing import Dict, List, Tuple, TYPE_CHECKING
 
 from mpi4py import MPI
 from dolfinx import fem

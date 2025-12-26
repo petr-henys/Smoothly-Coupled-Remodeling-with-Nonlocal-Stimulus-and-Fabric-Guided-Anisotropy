@@ -10,16 +10,14 @@ from dolfinx import fem
 from dolfinx.fem import Function, functionspace
 
 from simulation.config import Config
-from simulation.drivers import GaitDriver
 from simulation.fixedsolver import FixedPointSolver
 from simulation.loader import Loader, LoadingCase
 from simulation.logger import get_logger
 from simulation.progress import ProgressReporter, SweepProgressReporter
 from simulation.registry import BlockRegistry
 from simulation.storage import UnifiedStorage
-from simulation.solvers import DensitySolver, FabricSolver, MechanicsSolver, StimulusSolver
 from simulation.timeintegrator import TimeIntegrator
-from simulation.utils import assign, build_dirichlet_bcs
+from simulation.utils import assign
 from simulation.factory import SolverFactory, DefaultSolverFactory
 
 if TYPE_CHECKING:

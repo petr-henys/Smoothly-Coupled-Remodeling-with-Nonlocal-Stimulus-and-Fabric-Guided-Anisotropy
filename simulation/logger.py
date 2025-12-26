@@ -26,7 +26,7 @@ class Logger:
 
     __slots__ = ("comm", "console_level", "file_level", "name", "prefix", "log_file")
 
-    def __init__(self, comm: MPI.Comm, console_level: Level, file_level: Level, name: str, log_file: str = None):
+    def __init__(self, comm: MPI.Comm, console_level: Level, file_level: Level, name: str, log_file: str | None = None):
         self.comm = comm
         self.console_level = console_level
         self.file_level = file_level
@@ -71,7 +71,7 @@ class Logger:
         self.log(Level.ERROR, msg, *args)
 
 
-def get_logger(comm: MPI.Comm, name: str = "", log_file: str = None) -> Logger:
+def get_logger(comm: MPI.Comm, name: str = "", log_file: str | None = None) -> Logger:
     """Create an MPI-safe logger with default levels (console: WARNING, file: DEBUG)."""
     console_level = Level.WARNING
     file_level = Level.DEBUG
