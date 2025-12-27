@@ -24,6 +24,7 @@ class Anderson:
         safeguard: bool,
         backtrack_max: int,
         restart_on_reject_k: int,
+        restart_on_stall: float,
         restart_on_cond: float,
         step_limit_factor: float,
         verbose: bool,
@@ -38,6 +39,7 @@ class Anderson:
         self.backtrack_max = int(backtrack_max)
 
         self.restart_on_reject_k = int(restart_on_reject_k)
+        self.restart_on_stall = float(restart_on_stall)
         self.restart_on_cond = float(restart_on_cond)
 
         self.step_limit_factor = float(step_limit_factor)
@@ -49,6 +51,7 @@ class Anderson:
         self.r_hist: Deque[np.ndarray] = deque(maxlen=self.m + 1)
 
         self.reject_streak = 0
+        self.best_picard_res = float("inf")
         self.pending_reset = False
 
         # Numerical floors (internal constants; not exposed as knobs)
@@ -60,6 +63,7 @@ class Anderson:
         self.x_hist.clear()
         self.r_hist.clear()
         self.reject_streak = 0
+        self.best_picard_res = float("inf")
         self.pending_reset = False
 
     # ------------------------- linear algebra helpers -------------------------
@@ -210,6 +214,10 @@ class Anderson:
 
         # Diagnostics: current residual norm and predicted residual proxy.
         r_norm = self._rel_step(x_old, x_raw, x_raw)
+
+        # Update best residual for stall detection.
+        self.best_picard_res = min(self.best_picard_res, r_norm)
+
         r2_curr = float(H[-1, -1]) if p > 0 else 0.0
         r2_curr = max(r2_curr, 0.0)
 
@@ -309,6 +317,10 @@ class Anderson:
         if self.reject_streak >= self.restart_on_reject_k:
             self.pending_reset = True
             info["restart_reason"] = f"reject_streak>={self.restart_on_reject_k}"
+        elif r_norm > self.restart_on_stall * self.best_picard_res:
+            # Stall detection: residual exceeded best by the stall factor.
+            self.pending_reset = True
+            info["restart_reason"] = f"stall>(x{self.restart_on_stall:.2f})"
         elif condH > self.restart_on_cond:
             self.pending_reset = True
             info["restart_reason"] = f"illcond~{condH:.1e}"

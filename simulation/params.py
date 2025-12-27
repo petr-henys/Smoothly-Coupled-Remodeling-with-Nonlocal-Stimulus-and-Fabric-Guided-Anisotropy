@@ -234,6 +234,9 @@ class SolverParams:
     # Restart on ill-conditioning
     restart_on_cond: float = 1e12
 
+    # Restart on stall (ratio of current residual to best residual)
+    restart_on_stall: float = 1.1
+
     # Step size limit factor
     step_limit_factor: float = 1.5
 

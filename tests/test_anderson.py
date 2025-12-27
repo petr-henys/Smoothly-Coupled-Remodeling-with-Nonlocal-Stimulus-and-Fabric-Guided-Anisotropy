@@ -13,7 +13,7 @@ from simulation.anderson import Anderson
 
 
 def make_anderson(comm, m=5, beta=1.0, lam=1e-8, gamma=0.05, safeguard=True,
-                  backtrack_max=5, restart_on_reject_k=2,
+                  backtrack_max=5, restart_on_reject_k=2, restart_on_stall=1.1,
                   restart_on_cond=1e12, step_limit_factor=2.0, verbose=False):
     """Factory for Anderson accelerator with explicit parameters."""
     return Anderson(
@@ -25,6 +25,7 @@ def make_anderson(comm, m=5, beta=1.0, lam=1e-8, gamma=0.05, safeguard=True,
         safeguard=safeguard,
         backtrack_max=backtrack_max,
         restart_on_reject_k=restart_on_reject_k,
+        restart_on_stall=restart_on_stall,
         restart_on_cond=restart_on_cond,
         step_limit_factor=step_limit_factor,
         verbose=verbose,

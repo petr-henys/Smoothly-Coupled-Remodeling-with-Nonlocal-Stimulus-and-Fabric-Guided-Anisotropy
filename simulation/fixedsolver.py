@@ -84,6 +84,7 @@ class FixedPointSolver:
                 safeguard=bool(self.cfg.solver.safeguard),
                 backtrack_max=int(self.cfg.solver.backtrack_max),
                 restart_on_reject_k=int(self.cfg.solver.restart_on_reject_k),
+                restart_on_stall=float(self.cfg.solver.restart_on_stall),
                 restart_on_cond=float(self.cfg.solver.restart_on_cond),
                 step_limit_factor=float(self.cfg.solver.step_limit_factor),
                 verbose=False,
