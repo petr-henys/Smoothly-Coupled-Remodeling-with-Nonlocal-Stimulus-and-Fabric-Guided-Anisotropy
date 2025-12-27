@@ -32,6 +32,7 @@ from analysis.plot_utils import (
     DT_COLORS, DT_MARKERS, format_dt_label,
     add_subplot_legend, FIGSIZE_DOUBLE_COLUMN,
     LEGEND_FONTSIZE,
+    apply_style,
 )
 
 

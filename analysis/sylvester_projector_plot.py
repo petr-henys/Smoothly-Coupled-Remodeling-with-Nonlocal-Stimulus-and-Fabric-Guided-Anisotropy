@@ -21,32 +21,7 @@ from __future__ import annotations
 import numpy as np
 import matplotlib.pyplot as plt
 
-from plot_utils import COLORS, save_manuscript_figure
-
-
-def set_modern_style() -> None:
-    """Configure matplotlib for publication-quality look (CMAME-like)."""
-    plt.rcParams.update(
-        {
-            "font.family": "serif",
-            "font.serif": ["Times New Roman", "DejaVu Serif"],
-            "font.size": 8,
-            "axes.labelsize": 8,
-            "axes.titlesize": 9,
-            "xtick.labelsize": 7,
-            "ytick.labelsize": 7,
-            "legend.fontsize": 7,
-            "axes.linewidth": 0.8,
-            "axes.grid": True,
-            "grid.alpha": 0.2,
-            "grid.linewidth": 0.5,
-            "axes.spines.top": False,
-            "axes.spines.right": False,
-            "figure.facecolor": "white",
-            "axes.facecolor": "white",
-            "legend.frameon": False,
-        }
-    )
+from plot_utils import COLORS, save_manuscript_figure, apply_style
 
 
 def symm(A: np.ndarray) -> np.ndarray:
@@ -206,7 +181,7 @@ def projectors_sylvester_blended(
 
 
 def generate_sylvester_projector_figure() -> None:
-    set_modern_style()
+    apply_style()
 
     fig = plt.figure(figsize=(11.69, 7.0))
 

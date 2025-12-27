@@ -9,30 +9,7 @@ Reflects the actual MechanicsSolver implementation:
 import numpy as np
 import matplotlib.pyplot as plt
 
-from plot_utils import COLORS, smooth_max, smoothstep01, save_manuscript_figure
-
-
-def set_modern_style():
-    """Configure matplotlib for publication-quality look."""
-    plt.rcParams.update({
-        'font.family': 'serif',
-        'font.serif': ['Times New Roman', 'DejaVu Serif'],
-        'font.size': 8,
-        'axes.labelsize': 8,
-        'axes.titlesize': 9,
-        'xtick.labelsize': 7,
-        'ytick.labelsize': 7,
-        'legend.fontsize': 7,
-        'axes.linewidth': 0.8,
-        'axes.grid': True,
-        'grid.alpha': 0.2,
-        'grid.linewidth': 0.5,
-        'axes.spines.top': False,
-        'axes.spines.right': False,
-        'figure.facecolor': 'white',
-        'axes.facecolor': 'white',
-        'legend.frameon': False,
-    })
+from plot_utils import COLORS, smooth_max, smoothstep01, save_manuscript_figure, apply_style
 
 
 # Default material parameters (from MaterialParams and DensityParams)
@@ -274,7 +251,7 @@ def plot_log_log_view(ax):
 
 def generate_constitutive_plot():
     """Generate comprehensive 6-panel constitutive law visualization."""
-    set_modern_style()
+    apply_style()
     
     fig, axes = plt.subplots(2, 3, figsize=(12, 7))
     

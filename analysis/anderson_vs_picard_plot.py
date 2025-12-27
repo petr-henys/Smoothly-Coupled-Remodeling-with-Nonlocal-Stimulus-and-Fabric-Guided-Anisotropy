@@ -7,13 +7,13 @@ This script is meant to make the conclusion unambiguous:
   - We highlight timesteps where Picard hits `max_subiters` without
     reaching tolerance.
 
-It reads the sweep output produced by `run_anderson_sweep_strict.py`.
+It reads the sweep output produced by `run_anderson_sweep.py`.
 
 Usage:
-    python anderson_vs_picard_plot_strict.py
+    python anderson_vs_picard_plot.py
 
 Optional:
-    python anderson_vs_picard_plot_strict.py results/anderson_sweep_strict
+    python anderson_vs_picard_plot.py results/anderson_sweep
 """
 
 from __future__ import annotations
@@ -21,11 +21,34 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+project_root = Path(__file__).resolve().parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
 from postprocessor import SweepLoader
+from analysis.plot_utils import (
+    apply_style, setup_axis_style, save_manuscript_figure,
+    FIGSIZE_DOUBLE_COLUMN, PUBLICATION_DPI,
+    PLOT_LINEWIDTH, PLOT_ALPHA_OVERLAY,
+)
+
+# Accelerator styling - consistent colors for Picard vs Anderson
+ACCEL_COLORS = {
+    "picard": "#D55E00",    # Vermillion (warm) - slower method
+    "anderson": "#0072B2",  # Blue - faster method
+}
+ACCEL_LINESTYLES = {
+    "picard": "-",
+    "anderson": "--",
+}
+ACCEL_LABELS = {
+    "picard": "Picard",
+    "anderson": "Anderson",
+}
 
 
 def _get_cfg_value(cfg: dict, *paths: str, default=None):
@@ -65,23 +88,22 @@ def _step_convergence(subiters: pd.DataFrame, tol: float) -> pd.DataFrame:
 
 
 def main() -> None:
-    sweep_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("results/anderson_sweep_strict")
+    sweep_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("results/anderson_sweep")
+    output_file = Path("manuscript/images/anderson_vs_picard.png")
 
-    from mpi4py import MPI
-
-    comm = MPI.COMM_WORLD
-    if comm.rank != 0:
-        return
-
+    # This script should run serial only - no MPI needed for postprocessing
     if not sweep_dir.exists():
         raise FileNotFoundError(f"Sweep directory not found: {sweep_dir}")
+
+    from mpi4py import MPI
+    comm = MPI.COMM_SELF  # Use COMM_SELF for serial postprocessing
 
     sweep = SweepLoader(str(sweep_dir), comm)
     summary = sweep.get_summary()
     if summary.empty:
         raise RuntimeError("No runs found in sweep summary.")
 
-    # We expect at least these columns from the strict sweep
+    # We expect at least these columns from the sweep
     for col in ("dt_days", "accel_type", "output_dir"):
         if col not in summary.columns:
             raise ValueError(f"Missing '{col}' in sweep_summary.csv. Columns: {list(summary.columns)}")
@@ -146,62 +168,51 @@ def main() -> None:
             )
 
     # ----------------- plotting -----------------
+    apply_style()
+    
     n_dt = len(dt_values)
-    fig, axes = plt.subplots(2, n_dt, figsize=(min(3.6 * n_dt, 12.0), 6.0), squeeze=False)
+    fig, axes = plt.subplots(1, n_dt, figsize=(min(3.5 * n_dt, FIGSIZE_DOUBLE_COLUMN[0]), 2.8), squeeze=False)
 
     for j, dt in enumerate(dt_values):
-        ax1 = axes[0, j]
-        ax2 = axes[1, j]
+        ax = axes[0, j]
 
         for accel in ("picard", "anderson"):
             key = (dt, accel)
             if key not in runs:
                 continue
             sub = runs[key]["subiters"]
-            per = runs[key]["per_step"]
-            steps = runs[key]["steps"]
+            color = ACCEL_COLORS[accel]
+            ls = ACCEL_LINESTYLES[accel]
 
-            # Convergence curves: overlay all timesteps
+            # Convergence curves: overlay all timesteps with same color per method
+            first_line = True
             for step in sorted(sub["step"].unique()):
                 sd = sub[sub["step"] == step].sort_values("iter")
-                ax1.plot(sd["iter"].values, sd["proj_res"].values, alpha=0.25, linestyle="-" if accel == "picard" else "--")
+                line, = ax.plot(
+                    sd["iter"].values, sd["proj_res"].values,
+                    alpha=PLOT_ALPHA_OVERLAY,
+                    linestyle=ls,
+                    linewidth=PLOT_LINEWIDTH,
+                    color=color,
+                    label=ACCEL_LABELS[accel] if first_line else None,
+                )
+                first_line = False
 
-            # Subiteration counts, with failure markers
-            ax2.plot(
-                steps["step"].values,
-                steps["num_subiters"].values,
-                marker="o" if accel == "picard" else "s",
-                linestyle="-" if accel == "picard" else "--",
-                linewidth=1.5,
-                label=accel,
-            )
-
-            # Overlay hard failures as 'x'
-            if "hit_max" in per.columns and per["hit_max"].any():
-                failed_steps = per.loc[per["hit_max"], "step"].values
-                # Map to y values using steps dataframe
-                y = steps.set_index("step").loc[failed_steps, "num_subiters"].values
-                ax2.scatter(failed_steps, y, marker="x", s=40)
-
-        ax1.set_title(f"Δt = {dt:.0f} days")
-        ax1.set_yscale("log")
-        ax1.set_xlabel("Subiteration")
+        setup_axis_style(
+            ax,
+            xlabel="Subiteration",
+            ylabel="Residual" if j == 0 else "",
+            title=rf"$\Delta t = {dt:.0f}$ days",
+            loglog=False,
+        )
+        ax.set_yscale("log")
+        ax.set_ylim(1e-10, 1e2)
+        
         if j == 0:
-            ax1.set_ylabel("Residual (proj_res)")
-        ax1.grid(True, which="both", alpha=0.2)
-        ax1.set_ylim(1e-10, 1e2)
+            ax.legend(loc="upper right")
 
-        ax2.set_xlabel("Timestep")
-        if j == 0:
-            ax2.set_ylabel("Subiterations")
-        ax2.grid(True, alpha=0.2)
-
-    axes[1, 0].legend(loc="upper right")
-
-    out = sweep_dir / "anderson_vs_picard_strict.png"
-    fig.tight_layout()
-    fig.savefig(out, dpi=200)
-    print(f"\nSaved: {out}")
+    save_manuscript_figure(fig, output_file.name, dpi=PUBLICATION_DPI)
+    print(f"\nSaved: {output_file}")
 
 
 if __name__ == "__main__":

@@ -26,6 +26,7 @@ from analysis.plot_utils import (
     SUBSOLVER_COLORS, SUBSOLVER_LABELS,
     DT_COLORS, DT_MARKERS, format_dt_label,
     FIGSIZE_FULL_WIDTH, add_subplot_legend,
+    apply_style,
 )
 
 

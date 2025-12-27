@@ -10,30 +10,7 @@ Reflects the actual FabricSolver implementation:
 import numpy as np
 import matplotlib.pyplot as plt
 
-from plot_utils import COLORS, save_manuscript_figure
-
-
-def set_modern_style():
-    """Configure matplotlib for publication-quality look."""
-    plt.rcParams.update({
-        'font.family': 'serif',
-        'font.serif': ['Times New Roman', 'DejaVu Serif'],
-        'font.size': 8,
-        'axes.labelsize': 8,
-        'axes.titlesize': 9,
-        'xtick.labelsize': 7,
-        'ytick.labelsize': 7,
-        'legend.fontsize': 7,
-        'axes.linewidth': 0.8,
-        'axes.grid': True,
-        'grid.alpha': 0.2,
-        'grid.linewidth': 0.5,
-        'axes.spines.top': False,
-        'axes.spines.right': False,
-        'figure.facecolor': 'white',
-        'axes.facecolor': 'white',
-        'legend.frameon': False,
-    })
+from plot_utils import COLORS, save_manuscript_figure, apply_style
 
 
 # Default fabric parameters (from FabricParams)
@@ -323,7 +300,7 @@ def plot_log_fabric_space(ax):
 
 
 def generate_anisotropy_plot():
-    set_modern_style()
+    apply_style()
     
     # Layout: 2 rows x 3 columns
     # Row 1: (a) Stiffness Polar, (b) Diffusion Polar, (c) p Sensitivity

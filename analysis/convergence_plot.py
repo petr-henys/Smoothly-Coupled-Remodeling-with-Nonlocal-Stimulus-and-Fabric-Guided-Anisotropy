@@ -23,6 +23,7 @@ from analysis.plot_utils import (
     PLOT_LINEWIDTH, PLOT_MARKERSIZE,
     estimate_convergence_order, add_reference_line, setup_axis_style,
     save_figure, print_banner, add_subplot_legend,
+    apply_style,
 )
 
 

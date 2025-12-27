@@ -24,6 +24,7 @@ from analysis.plot_utils import (
     FIGSIZE_TALL, PUBLICATION_DPI,
     PLOT_LINEWIDTH, PLOT_MARKERSIZE,
     add_subplot_legend,
+    apply_style,
 )
 
 

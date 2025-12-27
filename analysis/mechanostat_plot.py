@@ -18,30 +18,7 @@ Reflects the actual StimulusSolver and DensitySolver implementations:
 import numpy as np
 import matplotlib.pyplot as plt
 
-from plot_utils import COLORS, smooth_max, smoothstep01, save_manuscript_figure
-
-
-def set_modern_style():
-    """Configure matplotlib for publication-quality look."""
-    plt.rcParams.update({
-        'font.family': 'serif',
-        'font.serif': ['Times New Roman', 'DejaVu Serif'],
-        'font.size': 8,
-        'axes.labelsize': 8,
-        'axes.titlesize': 9,
-        'xtick.labelsize': 7,
-        'ytick.labelsize': 7,
-        'legend.fontsize': 7,
-        'axes.linewidth': 0.8,
-        'axes.grid': True,
-        'grid.alpha': 0.2,
-        'grid.linewidth': 0.5,
-        'axes.spines.top': False,
-        'axes.spines.right': False,
-        'figure.facecolor': 'white',
-        'axes.facecolor': 'white',
-        'legend.frameon': False,
-    })
+from plot_utils import COLORS, smooth_max, smoothstep01, save_manuscript_figure, apply_style
 
 
 # Default parameters (from StimulusParams, DensityParams, MaterialParams)
@@ -320,7 +297,7 @@ def plot_rate_components(ax):
 
 def generate_mechanostat_plot():
     """Generate comprehensive 6-panel mechanostat visualization."""
-    set_modern_style()
+    apply_style()
     fig, axes = plt.subplots(2, 3, figsize=(12, 7))
     
     plot_stimulus_drive(axes[0, 0])

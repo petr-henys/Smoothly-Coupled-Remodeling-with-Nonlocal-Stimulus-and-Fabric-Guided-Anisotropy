@@ -24,35 +24,15 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 from analysis.plot_utils import (
-    FIELD_NAMES, FIELD_LABELS, FIELD_COLORS, FIELD_MARKERS, COLORS,
+    FIELD_NAMES as _ALL_FIELD_NAMES, FIELD_LABELS, FIELD_COLORS, FIELD_MARKERS, COLORS,
     FIGSIZE_DOUBLE_COLUMN, PUBLICATION_DPI,
     PLOT_LINEWIDTH, PLOT_MARKERSIZE,
     estimate_convergence_order, add_reference_line, setup_axis_style,
-    save_manuscript_figure, print_banner,
+    save_manuscript_figure, print_banner, apply_style,
 )
 
-
-def set_modern_style():
-    """Configure matplotlib for publication-quality look."""
-    plt.rcParams.update({
-        'font.family': 'serif',
-        'font.serif': ['Times New Roman', 'DejaVu Serif'],
-        'font.size': 8,
-        'axes.labelsize': 8,
-        'axes.titlesize': 9,
-        'xtick.labelsize': 7,
-        'ytick.labelsize': 7,
-        'legend.fontsize': 7,
-        'axes.linewidth': 0.8,
-        'axes.grid': True,
-        'grid.alpha': 0.2,
-        'grid.linewidth': 0.5,
-        'axes.spines.top': False,
-        'axes.spines.right': False,
-        'figure.facecolor': 'white',
-        'axes.facecolor': 'white',
-        'legend.frameon': False,
-    })
+# Exclude psi from convergence plots
+FIELD_NAMES = [f for f in _ALL_FIELD_NAMES if f != "psi"]
 
 
 def _try_read_sheet(xlsx: Path, sheet: str) -> pd.DataFrame | None:
@@ -285,7 +265,7 @@ def create_figure(xlsx: Path, dt_spatial: float, N_temporal: int, out: Path) -> 
 
 
 if __name__ == "__main__":
-    set_modern_style()
+    apply_style()
     
     xlsx_file = Path("analysis/convergence_analysis/convergence_data.xlsx")
     output_file = Path("manuscript/images/convergence_full_plot.png")

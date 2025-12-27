@@ -23,6 +23,7 @@ from analysis.plot_utils import (
     FIGSIZE_DOUBLE_COLUMN, PUBLICATION_DPI,
     PLOT_LINEWIDTH, PLOT_MARKERSIZE,
     setup_axis_style, save_figure, print_banner, add_subplot_legend,
+    apply_style,
 )
 
 

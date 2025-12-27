@@ -15,11 +15,12 @@ if str(project_root) not in sys.path:
 
 # --- CMAME-style Matplotlib settings ---
 
-# Use absolute font sizes (points) for consistent printed size.
-plt.rcParams.update({
+# Master style dictionary for consistent plots across all analysis scripts.
+# This is the SINGLE source of truth for plot styling.
+MASTER_STYLE = {
+    # Font settings
     'font.family': 'serif',
     'font.serif': ['Times New Roman', 'DejaVu Serif'],
-    # Base font size: matches manuscript body text (10pt)
     'font.size': 8,           # Default for all text
     'axes.labelsize': 8,      # X/Y axis labels
     'axes.titlesize': 9,      # Subplot titles (slightly larger)
@@ -29,6 +30,7 @@ plt.rcParams.update({
     'figure.titlesize': 10,   # Main figure title (if used)
     'text.usetex': False,     # Set True if LaTeX available
     'mathtext.fontset': 'dejavuserif',
+    # Line widths
     'axes.linewidth': 0.8,
     'grid.linewidth': 0.5,
     'lines.linewidth': 1.2,
@@ -37,11 +39,37 @@ plt.rcParams.update({
     'ytick.major.width': 0.8,
     'xtick.minor.width': 0.6,
     'ytick.minor.width': 0.6,
+    # Grid settings
+    'axes.grid': True,
+    'grid.alpha': 0.2,
+    # Spine visibility (modern look)
+    'axes.spines.top': False,
+    'axes.spines.right': False,
+    # Background colors
+    'figure.facecolor': 'white',
+    'axes.facecolor': 'white',
+    # Legend
+    'legend.frameon': False,
+    # DPI and save settings
     'figure.dpi': 300,
     'savefig.dpi': 300,
     'savefig.bbox': 'tight',
     'savefig.pad_inches': 0.05,
-})
+}
+
+# Apply master style on import
+plt.rcParams.update(MASTER_STYLE)
+
+
+def apply_style() -> None:
+    """Apply the unified CMAME-style Matplotlib settings.
+    
+    Call this at the start of any plotting script to ensure consistent styling.
+    The style is also applied on import, but calling this explicitly is recommended
+    for clarity and to reset any modifications made during script execution.
+    """
+    plt.rcParams.update(MASTER_STYLE)
+
 
 # Figure size presets for CMAME (A4 paper).
 FIGSIZE_SINGLE_COLUMN = (3.5, 2.8)      # Single column width
