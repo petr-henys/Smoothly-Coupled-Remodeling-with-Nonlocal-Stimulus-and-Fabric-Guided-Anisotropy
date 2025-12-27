@@ -171,7 +171,13 @@ def main() -> None:
     apply_style()
     
     n_dt = len(dt_values)
-    fig, axes = plt.subplots(1, n_dt, figsize=(min(3.5 * n_dt, FIGSIZE_DOUBLE_COLUMN[0]), 2.8), squeeze=False)
+    # Extra width for colorbar
+    fig, axes = plt.subplots(1, n_dt, figsize=(min(3.5 * n_dt, FIGSIZE_DOUBLE_COLUMN[0]) + 0.8, 2.8), squeeze=False)
+    
+    # Use viridis colormap for timestep progression
+    from matplotlib.colors import Normalize
+    from matplotlib.cm import ScalarMappable
+    cmap = plt.cm.viridis
 
     for j, dt in enumerate(dt_values):
         ax = axes[0, j]
@@ -181,22 +187,23 @@ def main() -> None:
             if key not in runs:
                 continue
             sub = runs[key]["subiters"]
-            color = ACCEL_COLORS[accel]
             ls = ACCEL_LINESTYLES[accel]
+            
+            steps = sorted(sub["step"].unique())
+            n_steps = len(steps)
+            norm = Normalize(vmin=0, vmax=n_steps - 1)
 
-            # Convergence curves: overlay all timesteps with same color per method
-            first_line = True
-            for step in sorted(sub["step"].unique()):
+            # Convergence curves: color by timestep progression
+            for i, step in enumerate(steps):
                 sd = sub[sub["step"] == step].sort_values("iter")
-                line, = ax.plot(
+                color = cmap(norm(i))
+                ax.plot(
                     sd["iter"].values, sd["proj_res"].values,
-                    alpha=PLOT_ALPHA_OVERLAY,
+                    alpha=0.7,
                     linestyle=ls,
                     linewidth=PLOT_LINEWIDTH,
                     color=color,
-                    label=ACCEL_LABELS[accel] if first_line else None,
                 )
-                first_line = False
 
         setup_axis_style(
             ax,
@@ -208,8 +215,22 @@ def main() -> None:
         ax.set_yscale("log")
         ax.set_ylim(1e-10, 1e2)
         
+        # Add linestyle legend for methods (first plot only)
         if j == 0:
-            ax.legend(loc="upper right")
+            from matplotlib.lines import Line2D
+            legend_elements = [
+                Line2D([0], [0], color="gray", linestyle="-", linewidth=PLOT_LINEWIDTH, label="Picard"),
+                Line2D([0], [0], color="gray", linestyle="--", linewidth=PLOT_LINEWIDTH, label="Anderson"),
+            ]
+            ax.legend(handles=legend_elements, loc="upper right")
+
+    # Add colorbar for timestep progression
+    sm = ScalarMappable(cmap=cmap, norm=Normalize(vmin=0, vmax=1))
+    sm.set_array([])
+    cbar = fig.colorbar(sm, ax=axes.ravel().tolist(), shrink=0.8, aspect=20, pad=0.02)
+    cbar.set_label("Simulation progress", fontsize=7)
+    cbar.set_ticks([0, 0.5, 1])
+    cbar.set_ticklabels(["Start", "", "End"])
 
     save_manuscript_figure(fig, output_file.name, dpi=PUBLICATION_DPI)
     print(f"\nSaved: {output_file}")

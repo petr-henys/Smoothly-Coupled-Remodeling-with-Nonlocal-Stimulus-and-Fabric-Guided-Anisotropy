@@ -128,7 +128,7 @@ def main() -> None:
     box = params["box"]
     
     # Fixed mesh resolution for acceleration comparison
-    FIXED_N = 32
+    FIXED_N = 24
     
     # Sweep parameters
     accel_types = ["picard", "anderson"]
