@@ -138,10 +138,15 @@ class FixedPointSolver:
         return float(self.comm.allreduce(float(np.dot(a, b)), op=MPI.SUM))
 
     def _proj_step(self, x_old: np.ndarray, x_trial: np.ndarray, x_ref: np.ndarray) -> float:
-        """Relative step: ||x_trial-x_old|| / ||x_ref|| in global L2 (all inputs scaled)."""
+        """Relative step: ||x_trial-x_old|| / ||x_ref|| in global L2 (all inputs scaled).
+        
+        NOTE: This definition must match Anderson._rel_step exactly
+        to ensure consistent convergence criteria.
+        """
         d = x_trial - x_old
         d2 = self._gdot(d, d)
         r2 = self._gdot(x_ref, x_ref)
+        # Guard: if reference norm is vanishingly small, return absolute norm.
         if r2 <= 1e-300:
             return float(np.sqrt(d2))
         return float(np.sqrt(d2 / r2))

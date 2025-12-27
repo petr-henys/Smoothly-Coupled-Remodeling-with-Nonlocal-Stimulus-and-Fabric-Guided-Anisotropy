@@ -72,15 +72,18 @@ class Anderson:
         return float(self.comm.allreduce(float(np.dot(a, b)), op=MPI.SUM))
 
     def _rel_step(self, x_old: np.ndarray, x_trial: np.ndarray, x_ref: np.ndarray) -> float:
-        """Relative step: ||x_trial-x_old|| / (||x_ref|| + eps) globally."""
+        """Relative step: ||x_trial-x_old|| / ||x_ref|| in global L2.
+        
+        NOTE: This definition must match FixedPointSolver._proj_step exactly
+        to ensure consistent convergence criteria.
+        """
         d = x_trial - x_old
         d2 = self._gdot(d, d)
         r2 = self._gdot(x_ref, x_ref)
-
-        # Guard against division by ~0 for vanishing reference fields.
-        epsilon = 1e-20
-
-        return float(np.sqrt(d2 / (r2 + epsilon)))
+        # Guard: if reference norm is vanishingly small, return absolute norm.
+        if r2 <= 1e-300:
+            return float(np.sqrt(d2))
+        return float(np.sqrt(d2 / r2))
 
     def _build_gram(self, r_list: Sequence[np.ndarray]) -> np.ndarray:
         """Build the global Gram matrix H_ij = <r_i, r_j>.
@@ -269,7 +272,7 @@ class Anderson:
                 # Backtracking: blend toward Picard until proxy is non-worsening.
                 for bt_steps in range(1, self.backtrack_max + 1):
                     theta *= 0.5
-                    r2_theta = ((1.0 - theta) ** 2) * r2_curr                         + 2.0 * theta * (1.0 - theta) * cross                         + (theta ** 2) * r2_pred
+                    r2_theta = ((1.0 - theta) ** 2) * r2_curr + 2.0 * theta * (1.0 - theta) * cross                         + (theta ** 2) * r2_pred
                     if np.isfinite(r2_theta) and (r2_theta <= thresh_bt):
                         break
 
