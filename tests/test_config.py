@@ -161,12 +161,10 @@ class TestConfigValidation:
             domain=unit_cube,
             facet_tags=facet_tags,
             material=MaterialParams(n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2),
-            solver=SolverParams(max_subiters=100, min_subiters=1, ksp_max_it=500),
+            solver=SolverParams(max_subiters=100, ksp_max_it=500),
         )
 
         assert cfg.solver.max_subiters > 0
-        assert cfg.solver.min_subiters > 0
-        assert cfg.solver.min_subiters <= cfg.solver.max_subiters
         assert cfg.solver.ksp_max_it > 0
 
     def test_config_material_transition_parameters(self, unit_cube, facet_tags):

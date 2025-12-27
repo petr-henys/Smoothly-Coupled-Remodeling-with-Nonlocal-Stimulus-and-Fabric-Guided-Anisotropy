@@ -59,7 +59,7 @@ class DensityParams:
     rho_ref: float = 1.0
 
     # Formation rate gain [g/cm³/day]
-    k_rho_form: float = 2e-02
+    k_rho_form: float = 4
 
     # Resorption rate gain [g/cm³/day]
     k_rho_resorb: float = 2e-02
@@ -208,19 +208,19 @@ class SolverParams:
     accel_type: str = "anderson"
 
     # Anderson history size
-    m: int = 5
+    m: int = 4
 
     # Mixing parameter (relaxation)
-    beta: float = 1.0
+    beta: float = 0.7
 
     # Relative Tikhonov regularization for Anderson (scaled by average Gram diagonal)
-    lam: float = 1e-2
+    lam: float = 5e-2
 
     # Safeguard tolerance (residual improvement threshold)
-    gamma: float = 0.05
+    gamma: float = 0.02
 
     # Enable safeguard with backtracking
-    safeguard: bool = False
+    safeguard: bool = True
 
     # Maximum backtrack attempts
     backtrack_max: int = 5
@@ -229,19 +229,16 @@ class SolverParams:
     coupling_tol: float = 1e-6
 
     # Restart Anderson after k consecutive rejections
-    restart_on_reject_k: int = 2
+    restart_on_reject_k: int = 5
 
     # Restart on ill-conditioning
     restart_on_cond: float = 1e12
 
     # Step size limit factor
-    step_limit_factor: float = 2.0
+    step_limit_factor: float = 1.5
 
     # Maximum sub-iterations per timestep
     max_subiters: int = 25
-
-    # Minimum sub-iterations per timestep
-    min_subiters: int = 2
 
     def validate(self) -> None:
         """Validate solver parameter constraints."""
@@ -251,8 +248,6 @@ class SolverParams:
             raise ValueError("Anderson history m must be >= 0.")
         if self.coupling_tol <= 0:
             raise ValueError("coupling_tol must be > 0.")
-        if self.max_subiters < self.min_subiters:
-            raise ValueError("max_subiters must be >= min_subiters.")
 
 
 @dataclass

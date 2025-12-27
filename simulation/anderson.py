@@ -53,7 +53,8 @@ class Anderson:
 
         # Numerical floors (internal constants; not exposed as knobs)
         self._tiny = 1e-300
-        self._eig_floor = 1e-15
+        # Relative eigen floor used only in eigen fallback, scaled by matrix magnitude.
+        self._eig_rel = 1e-12
 
     def reset(self) -> None:
         self.x_hist.clear()
@@ -119,12 +120,18 @@ class Anderson:
             y = np.linalg.solve(Hp, one)
         except np.linalg.LinAlgError:
             method = "eigh"
-            w, V = np.linalg.eigh(Hp + self._eig_floor * np.eye(p))
-            w = np.clip(w, self._eig_floor, None)
+            w, V = np.linalg.eigh(Hp)
+
+            # Scale-aware eigen floor: avoid absolute floors dominating near convergence.
+            wmax = float(np.max(np.abs(w))) if w.size else 0.0
+            scale = max(wmax, abs(lam_eff), self._tiny)
+            w_floor = max(self._eig_rel * scale, self._tiny)
+
+            w = np.clip(w, w_floor, None)
             y = V @ (V.T @ one / w)
 
         denom = float(one @ y)
-        if abs(denom) <= 1e-30:
+        if (not np.isfinite(denom)) or abs(denom) <= 1e-30:
             return np.full(p, 1.0 / p, dtype=float), "uniform"
         return y / denom, method
 
@@ -169,17 +176,32 @@ class Anderson:
             "r_proxy_norm": None,
             "r2_curr": None,
             "r2_pred": None,
+            "bt_steps": None,
+            "bt_theta": None,
         }
 
         # Build Gram matrix of residuals and a scale-aware regularization.
         H = self._build_gram(list(self.r_hist))
+
+        # If the newest residual is orders of magnitude smaller than older ones,
+        # the history becomes numerically stale and AA may degrade into harmful
+        # averaging. In that case, keep only the newest entry.
+        diag = np.diag(H)
+        r2_last = float(diag[-1]) if diag.size else 0.0
+        r2_max = float(np.max(diag)) if diag.size else 0.0
+        if r2_last > 0.0 and r2_max > 0.0 and r2_last < 1e-8 * r2_max:
+            self.x_hist = deque([self.x_hist[-1]], maxlen=self.m + 1)
+            self.r_hist = deque([self.r_hist[-1]], maxlen=self.m + 1)
+            p = 1
+            info["aa_hist"] = int(p)
+            H = self._build_gram(list(self.r_hist))
         tr = float(np.trace(H)) if p > 0 else 0.0
         avg_diag = tr / max(p, 1)
 
         # IMPORTANT: regularize *relative* to the scale of H, otherwise the
         # regularization dominates near convergence and AA degenerates into
         # history-averaging (often slower than plain Picard).
-        lam_eff = self.lam * max(avg_diag, self._eig_floor)
+        lam_eff = self.lam * max(avg_diag, self._tiny)
 
         alpha, alpha_method = self._solve_kkt(H, lam_eff)
         info["alpha_method"] = str(alpha_method)
@@ -204,23 +226,60 @@ class Anderson:
         x_pic = x_old + self.beta * r
 
         # Anderson iterate (Walker–Ni / Type-I form) using under-relaxed images.
-        x_cand = x_pic
+        x_aa = x_pic
         if p >= 2:
             y = np.zeros_like(x_old)
             for a_i, x_i, r_i in zip(alpha, self.x_hist, self.r_hist):
                 y += float(a_i) * (x_i + self.beta * r_i)
-            x_cand = y
+            x_aa = y
 
-        # Safeguard (residual-based): if AA does not predict improvement, fall back
-        # to Picard.
+        # Default candidate is AA if available, otherwise Picard.
+        x_cand = x_aa
+
+        # Safeguard (residual-based): try to ensure AA does not catastrophically
+        # worsen the fixed-point residual proxy. If strict acceptance fails, we
+        # backtrack (blend AA toward Picard) up to backtrack_max steps.
         if self.safeguard and p >= 2 and r2_curr > self._tiny:
-            thresh = ((1.0 - self.gamma) ** 2) * r2_curr
-            if (not np.isfinite(r2_pred)) or (r2_pred > thresh):
-                x_cand = x_pic
-                info["accepted"] = False
-                self.reject_streak += 1
-            else:
+            thresh_strict = ((1.0 - self.gamma) ** 2) * r2_curr
+            thresh_bt = r2_curr  # non-worsening threshold for backtracked blends
+
+            # Cross term <r_k, r_aa> where r_k is newest residual.
+            cross = float(H[-1, :] @ alpha)
+
+            theta = 1.0
+            r2_theta = r2_pred
+            bt_steps = 0
+
+            # Strict acceptance for full AA
+            if (np.isfinite(r2_theta)) and (r2_theta <= thresh_strict):
+                x_cand = x_aa
+                info["accepted"] = True
                 self.reject_streak = 0
+            else:
+                # Backtracking: blend toward Picard until proxy is non-worsening.
+                for bt_steps in range(1, self.backtrack_max + 1):
+                    theta *= 0.5
+                    r2_theta = ((1.0 - theta) ** 2) * r2_curr                         + 2.0 * theta * (1.0 - theta) * cross                         + (theta ** 2) * r2_pred
+                    if np.isfinite(r2_theta) and (r2_theta <= thresh_bt):
+                        break
+
+                if np.isfinite(r2_theta) and (r2_theta <= thresh_bt):
+                    x_cand = (1.0 - theta) * x_pic + theta * x_aa
+                    info["accepted"] = True
+                    info["bt_steps"] = int(bt_steps)
+                    info["bt_theta"] = float(theta)
+                    self.reject_streak = 0
+                else:
+                    # Fall back to Picard and count a rejection (unless we are
+                    # extremely close to equilibrium, where rejections are noise).
+                    x_cand = x_pic
+                    info["accepted"] = False
+                    info["bt_steps"] = int(self.backtrack_max)
+                    info["bt_theta"] = 0.0
+                    if r_norm <= 1e-12:
+                        self.reject_streak = 0
+                    else:
+                        self.reject_streak += 1
         else:
             # If safeguard is disabled, we do not treat any step as a "rejection".
             self.reject_streak = 0
@@ -241,6 +300,9 @@ class Anderson:
         return x_cand, info
 
     def _check_restart(self, r_norm: float, condH: float, info: Dict) -> None:
+        # Near-equilibrium: do not churn history due to numerical noise.
+        if r_norm <= 1e-12:
+            return
         if self.reject_streak >= self.restart_on_reject_k:
             self.pending_reset = True
             info["restart_reason"] = f"reject_streak>={self.restart_on_reject_k}"

@@ -209,7 +209,6 @@ class FixedPointSolver:
         """
         tol = float(self.cfg.solver.coupling_tol)
         max_subiters = int(self.cfg.solver.max_subiters)
-        min_subiters = int(self.cfg.solver.min_subiters)
 
         self.subiter_metrics = []
 
@@ -245,12 +244,17 @@ class FixedPointSolver:
             # Picard residual: ||x_raw - x_old|| / ||x_raw|| (scaled global L2)
             picard_res = self._proj_step(x_old_s, x_raw_s, x_raw_s)
 
-            if self.anderson is not None:
-                x_new_s, aa = self.anderson.mix(x_old_s, x_raw_s)
-            else:
-                beta = float(self.cfg.solver.beta)
-                x_new_s = x_old_s + beta * (x_raw_s - x_old_s)
+            # If converged, do not run Anderson (prevents end-of-step REJ/RST churn).
+            if picard_res <= tol:
+                x_new_s = x_raw_s
                 aa = {"aa_hist": 0, "accepted": True, "restart_reason": "", "condH": 1.0}
+            else:
+                if self.anderson is not None:
+                    x_new_s, aa = self.anderson.mix(x_old_s, x_raw_s)
+                else:
+                    beta = float(self.cfg.solver.beta)
+                    x_new_s = x_old_s + beta * (x_raw_s - x_old_s)
+                    aa = {"aa_hist": 0, "accepted": True, "restart_reason": "", "condH": 1.0}
 
             aa_step_res = self._proj_step(x_old_s, x_new_s, x_raw_s)
 
@@ -286,7 +290,7 @@ class FixedPointSolver:
                     info_str += " RST"
                 progress.update(task_id, advance=1, info=f"{info_str:<35}")
 
-            if itr >= min_subiters and picard_res <= tol:
+            if picard_res <= tol:
                 converged = True
                 break
 
