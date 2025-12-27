@@ -132,7 +132,7 @@ def main() -> None:
     
     # Sweep parameters
     accel_types = ["picard", "anderson"]
-    dt_values = [50.0, 25.0, 10.0]
+    dt_values = [10.0]
     
     # Define sweep
     sweep = ParameterSweep(

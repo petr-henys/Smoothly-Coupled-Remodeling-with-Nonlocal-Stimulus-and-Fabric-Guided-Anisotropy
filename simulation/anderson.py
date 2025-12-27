@@ -167,8 +167,10 @@ class Anderson:
         p = len(self.r_hist)
 
         info: Dict = {
-            "aa_hist": int(p),
+            # Report number of *previous* iterates used for mixing (not including current)
+            "aa_hist": int(p - 1),
             "accepted": True,
+            "reject_reason": "",
             "restart_reason": "",
             "alpha_method": None,
             "condH": None,
@@ -193,7 +195,7 @@ class Anderson:
             self.x_hist = deque([self.x_hist[-1]], maxlen=self.m + 1)
             self.r_hist = deque([self.r_hist[-1]], maxlen=self.m + 1)
             p = 1
-            info["aa_hist"] = int(p)
+            info["aa_hist"] = int(p - 1)  # 0 previous iterates after reset
             H = self._build_gram(list(self.r_hist))
         tr = float(np.trace(H)) if p > 0 else 0.0
         avg_diag = tr / max(p, 1)
@@ -274,6 +276,7 @@ class Anderson:
                     # extremely close to equilibrium, where rejections are noise).
                     x_cand = x_pic
                     info["accepted"] = False
+                    info["reject_reason"] = "bt_fail"  # backtrack failed to find acceptable step
                     info["bt_steps"] = int(self.backtrack_max)
                     info["bt_theta"] = 0.0
                     if r_norm <= 1e-12:

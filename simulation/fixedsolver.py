@@ -285,9 +285,19 @@ class FixedPointSolver:
             if progress is not None and task_id is not None:
                 info_str = f"res={picard_res:.1e} m={rec['aa_hist']}"
                 if not rec["aa_accepted"]:
-                    info_str += " REJ"
+                    # Show rejection reason: bt_fail -> BT (backtrack failed)
+                    rej_reason = aa.get("reject_reason", "")
+                    rej_abbrev = {"bt_fail": "BT"}.get(rej_reason, "?")
+                    info_str += f" REJ:{rej_abbrev}"
                 if rec["aa_restart"]:
-                    info_str += " RST"
+                    # Parse restart reason and abbreviate
+                    rst = rec["aa_restart"]
+                    if "reject_streak" in rst:
+                        info_str += " RST:streak"
+                    elif "illcond" in rst:
+                        info_str += " RST:cond"
+                    else:
+                        info_str += " RST"
                 progress.update(task_id, advance=1, info=f"{info_str:<35}")
 
             if picard_res <= tol:
