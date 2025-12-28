@@ -17,9 +17,14 @@ Usage in simulation:
         ckpt.write_function(S, t)
 
 Usage in analysis:
-    from simulation.checkpoint import load_checkpoint
+    from simulation.checkpoint import (
+        load_checkpoint_mesh,
+        load_checkpoint_meshtags,
+        load_checkpoint_function,
+    )
     
-    mesh, facet_tags = load_checkpoint_mesh(checkpoint_path, comm)
+    mesh = load_checkpoint_mesh(checkpoint_path, comm)
+    facet_tags = load_checkpoint_meshtags(checkpoint_path, mesh)
     V = fem.functionspace(mesh, ("Lagrange", 1))
     rho = load_checkpoint_function(checkpoint_path, "rho", V, t_final)
 
@@ -123,37 +128,40 @@ class CheckpointStorage:
 def load_checkpoint_mesh(
     checkpoint_path: Path | str,
     comm: MPI.Comm,
-    *,
-    require_meshtags: bool = False,
-) -> tuple[mesh.Mesh, mesh.MeshTags | None]:
-    """Load mesh and optional meshtags from checkpoint.
+) -> mesh.Mesh:
+    """Load mesh from checkpoint.
     
     Args:
         checkpoint_path: Path to checkpoint.bp file.
         comm: MPI communicator.
     
     Returns:
-        Tuple of (mesh, meshtags) where meshtags may be None.
+        Loaded mesh.
     """
     checkpoint_path = Path(checkpoint_path)
-    # adios4dolfinx API: read_mesh(filename, comm, ...)
-    domain = adx.read_mesh(checkpoint_path, comm)
+    return adx.read_mesh(checkpoint_path, comm)
+
+
+def load_checkpoint_meshtags(
+    checkpoint_path: Path | str,
+    domain: mesh.Mesh,
+    meshtag_name: str = "meshtags",
+) -> mesh.MeshTags:
+    """Load meshtags from checkpoint.
     
-    # Try to read meshtags (may not exist). Be explicit: either raise or return None.
-    try:
-        # adios4dolfinx API: read_meshtags(filename, mesh, meshtag_name=...)
-        facet_tags = adx.read_meshtags(checkpoint_path, domain, meshtag_name="meshtags")
-    except (KeyError, RuntimeError) as exc:
-        if require_meshtags:
-            raise RuntimeError(
-                f"Checkpoint {checkpoint_path} does not contain meshtags 'meshtags'."
-            ) from exc
-        if comm.rank == 0:
-            logger = get_logger(comm, name="CheckpointLoad")
-            logger.warning(f"No meshtags found in checkpoint {checkpoint_path}; returning facet_tags=None")
-        facet_tags = None
+    Args:
+        checkpoint_path: Path to checkpoint.bp file.
+        domain: Mesh the meshtags belong to.
+        meshtag_name: Name of the meshtag in the checkpoint.
     
-    return domain, facet_tags
+    Returns:
+        Loaded meshtags.
+        
+    Raises:
+        RuntimeError: If meshtags not found in checkpoint.
+    """
+    checkpoint_path = Path(checkpoint_path)
+    return adx.read_meshtags(checkpoint_path, domain, meshtag_name=meshtag_name)
 
 
 def load_checkpoint_function(

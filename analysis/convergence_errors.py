@@ -101,7 +101,7 @@ def load_field_from_checkpoint(
                 cfg = json.load(f)
             final_time = cfg.get("time", {}).get("total_time", 0.0)
     
-    domain, _ = load_checkpoint_mesh(checkpoint_path, comm)
+    domain = load_checkpoint_mesh(checkpoint_path, comm)
     space = create_function_space(domain, field_type)
     func = load_checkpoint_function(
         checkpoint_path, field_name, space, time=final_time
@@ -330,7 +330,7 @@ def compute_spatial_performance_data(
         finest_dir = Path(base_dir) / records_filtered[-1]["output_dir"]
         checkpoint_path = finest_dir / "checkpoint.bp"
         if checkpoint_path.exists():
-            domain, _ = load_checkpoint_mesh(checkpoint_path, comm)
+            domain = load_checkpoint_mesh(checkpoint_path, comm)
             x_local = domain.geometry.x
             x_min = domain.comm.allreduce(float(np.min(x_local[:, 0])), op=MPI.MIN)
             x_max = domain.comm.allreduce(float(np.max(x_local[:, 0])), op=MPI.MAX)

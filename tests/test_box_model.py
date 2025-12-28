@@ -117,9 +117,11 @@ class TestBoxMesh:
         
     def test_convenience_function(self):
         """Test create_box_mesh convenience function."""
+        comm = MPI.COMM_WORLD
         domain, facet_tags = create_box_mesh(
             Lx=5.0, Ly=5.0, Lz=10.0,
             nx=2, ny=2, nz=4,
+            comm=comm,
         )
         
         assert domain is not None

@@ -12,23 +12,21 @@ from mpi4py import MPI
 from simulation.anderson import Anderson
 
 
-def make_anderson(comm, m=5, beta=1.0, lam=1e-8, gamma=0.05, safeguard=True,
-                  backtrack_max=5, restart_on_reject_k=2, restart_on_stall=1.1,
-                  restart_on_cond=1e12, step_limit_factor=2.0, verbose=False):
+def make_anderson(comm, m=5, beta=1.0, lam=1e-8,
+                  restart_on_stall=1.1, restart_on_cond=1e12,
+                  step_limit_factor=2.0, restart_stall_window=3,
+                  restart_stall_patience=2):
     """Factory for Anderson accelerator with explicit parameters."""
     return Anderson(
         comm=comm,
         m=m,
         beta=beta,
         lam=lam,
-        gamma=gamma,
-        safeguard=safeguard,
-        backtrack_max=backtrack_max,
-        restart_on_reject_k=restart_on_reject_k,
         restart_on_stall=restart_on_stall,
         restart_on_cond=restart_on_cond,
         step_limit_factor=step_limit_factor,
-        verbose=verbose,
+        restart_stall_window=restart_stall_window,
+        restart_stall_patience=restart_stall_patience,
     )
 
 
@@ -62,8 +60,8 @@ class TestAndersonBasicAPI:
         
         assert len(aa.x_hist) == 0, "x_hist should be empty after reset"
         assert len(aa.r_hist) == 0, "r_hist should be empty after reset"
-        assert aa.pending_reset is False, "pending_reset should be False"
-        assert aa.reject_streak == 0, "reject_streak should reset"
+        assert aa._pending_reset is False, "_pending_reset should be False"
+        assert aa._stall_streak == 0, "_stall_streak should reset"
 
     def test_mix_returns_correct_shape(self):
         """mix() should return array of same shape as input."""
@@ -81,7 +79,7 @@ class TestAndersonBasicAPI:
 
     def test_mix_info_contains_required_keys(self):
         """mix() info dict should contain all required diagnostic keys."""
-        aa = make_anderson(MPI.COMM_SELF, m=3, safeguard=True)
+        aa = make_anderson(MPI.COMM_SELF, m=3)
         x = np.zeros(20)
         x_raw = np.ones(20)
         
@@ -94,7 +92,7 @@ class TestAndersonBasicAPI:
     def test_history_accumulates_correctly(self):
         """History should accumulate up to m+1 entries (implementation detail), then slide."""
         m = 3
-        aa = make_anderson(MPI.COMM_SELF, m=m, safeguard=False)
+        aa = make_anderson(MPI.COMM_SELF, m=m)
         
         x = np.zeros(20)
         for i in range(m + 3):

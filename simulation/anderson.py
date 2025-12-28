@@ -120,23 +120,18 @@ class Anderson:
 
         Hp = H + lam_eff * np.eye(p)
         one = np.ones(p, dtype=float)
-        method = "solve"
 
-        try:
-            y = np.linalg.solve(Hp, one)
-        except np.linalg.LinAlgError:
-            # Fallback to eigendecomposition
-            method = "eigh"
-            w, V = np.linalg.eigh(Hp)
-            wmax = float(np.max(np.abs(w))) if w.size else 0.0
-            scale = max(wmax, abs(lam_eff), self._TINY)
-            w = np.clip(w, self._EIG_REL * scale, None)
-            y = V @ (V.T @ one / w)
+        # Use eigendecomposition for robust solution
+        w, V = np.linalg.eigh(Hp)
+        wmax = float(np.max(np.abs(w))) if w.size else 0.0
+        scale = max(wmax, abs(lam_eff), self._TINY)
+        w = np.clip(w, self._EIG_REL * scale, None)
+        y = V @ (V.T @ one / w)
 
         denom = float(one @ y)
         if (not np.isfinite(denom)) or abs(denom) <= 1e-30:
             return np.full(p, 1.0 / p, dtype=float), "uniform"
-        return y / denom, method
+        return y / denom, "eigh"
 
     def _cond_number(self, H: np.ndarray, lam_eff: float) -> float:
         """Estimate condition number of regularized Gram matrix."""

@@ -58,15 +58,15 @@ class BoxMeshBuilder:
     TAG_Y_MIN = 5    # y = 0 (free)
     TAG_Y_MAX = 6    # y = Ly (free)
     
-    def __init__(self, geometry: BoxGeometry | None = None, comm: MPI.Comm | None = None):
+    def __init__(self, geometry: BoxGeometry, comm: MPI.Comm):
         """Initialize box mesh builder.
         
         Args:
-            geometry: Box geometry specification (defaults to BoxGeometry())
-            comm: MPI communicator (defaults to COMM_WORLD)
+            geometry: Box geometry specification.
+            comm: MPI communicator.
         """
-        self.geometry = geometry or BoxGeometry()
-        self.comm = comm or MPI.COMM_WORLD
+        self.geometry = geometry
+        self.comm = comm
         
         self._mesh: mesh.Mesh | None = None
         self._facet_tags: mesh.MeshTags | None = None
@@ -150,13 +150,13 @@ class BoxMeshBuilder:
 
 
 def create_box_mesh(
-    Lx: float = 10.0,
-    Ly: float = 10.0, 
-    Lz: float = 30.0,
-    nx: int = 5,
-    ny: int = 5,
-    nz: int = 15,
-    comm: MPI.Comm | None = None,
+    Lx: float,
+    Ly: float, 
+    Lz: float,
+    nx: int,
+    ny: int,
+    nz: int,
+    comm: MPI.Comm,
 ) -> Tuple[mesh.Mesh, mesh.MeshTags]:
     """Convenience function to create a box mesh with facet tags.
     

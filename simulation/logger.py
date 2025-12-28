@@ -91,7 +91,11 @@ def setup_logging(
     if format_string is None:
         format_string = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     
-    numeric_level = getattr(logging, level.upper(), logging.INFO)
+    level_upper = level.upper()
+    level_map = {"DEBUG": logging.DEBUG, "INFO": logging.INFO, "WARNING": logging.WARNING, "ERROR": logging.ERROR, "CRITICAL": logging.CRITICAL}
+    if level_upper not in level_map:
+        raise ValueError(f"Invalid log level: {level!r}. Must be one of {list(level_map.keys())}")
+    numeric_level = level_map[level_upper]
     
     root_logger = logging.getLogger()
     root_logger.setLevel(numeric_level)

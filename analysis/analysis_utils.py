@@ -45,7 +45,7 @@ ERROR_SPACE_RAISE = 2  # P1 -> P3 by default
 def load_checkpoint_mesh(
     checkpoint_path: Path,
     comm: MPI.Comm,
-) -> Tuple[mesh.Mesh, mesh.MeshTags | None]:
+) -> mesh.Mesh:
     """Load mesh from adios4dolfinx checkpoint.
     
     Args:
@@ -53,19 +53,30 @@ def load_checkpoint_mesh(
         comm: MPI communicator.
     
     Returns:
-        Tuple of (mesh, meshtags) where meshtags may be None.
+        Loaded mesh.
     """
+    return adx.read_mesh(checkpoint_path, comm)
+
+
+def load_checkpoint_meshtags(
+    checkpoint_path: Path,
+    domain: mesh.Mesh,
+    meshtag_name: str = "meshtags",
+) -> mesh.MeshTags:
+    """Load meshtags from adios4dolfinx checkpoint.
     
-    # adios4dolfinx API: read_mesh(filename, comm, ...)
-    domain = adx.read_mesh(checkpoint_path, comm)
+    Args:
+        checkpoint_path: Path to checkpoint.bp directory.
+        domain: Mesh the meshtags belong to.
+        meshtag_name: Name of the meshtag in the checkpoint.
     
-    try:
-        # adios4dolfinx API: read_meshtags(filename, mesh, meshtag_name=...)
-        facet_tags = adx.read_meshtags(checkpoint_path, domain, meshtag_name="meshtags")
-    except (KeyError, RuntimeError):
-        facet_tags = None
-    
-    return domain, facet_tags
+    Returns:
+        Loaded meshtags.
+        
+    Raises:
+        KeyError/RuntimeError: If meshtags not found in checkpoint.
+    """
+    return adx.read_meshtags(checkpoint_path, domain, meshtag_name=meshtag_name)
 
 
 def load_checkpoint_function(
