@@ -45,7 +45,7 @@ from postprocessor import SimulationLoader
 # Configuration
 # =============================================================================
 
-DEFAULT_RUN_DIR = Path(".results/")
+DEFAULT_RUN_DIR = Path(".results_box/")
 OUTPUT_FILE = Path("manuscript/images/anderson_diagnostic.png")
 
 # Colors for events

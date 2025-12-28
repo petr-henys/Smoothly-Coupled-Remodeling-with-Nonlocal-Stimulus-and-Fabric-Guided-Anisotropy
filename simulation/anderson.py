@@ -120,18 +120,23 @@ class Anderson:
 
         Hp = H + lam_eff * np.eye(p)
         one = np.ones(p, dtype=float)
+        method = "solve"
 
-        # Use eigendecomposition for robust solution
-        w, V = np.linalg.eigh(Hp)
-        wmax = float(np.max(np.abs(w))) if w.size else 0.0
-        scale = max(wmax, abs(lam_eff), self._TINY)
-        w = np.clip(w, self._EIG_REL * scale, None)
-        y = V @ (V.T @ one / w)
+        try:
+            y = np.linalg.solve(Hp, one)
+        except np.linalg.LinAlgError:
+            # Fallback to eigendecomposition
+            method = "eigh"
+            w, V = np.linalg.eigh(Hp)
+            wmax = float(np.max(np.abs(w))) if w.size else 0.0
+            scale = max(wmax, abs(lam_eff), self._TINY)
+            w = np.clip(w, self._EIG_REL * scale, None)
+            y = V @ (V.T @ one / w)
 
         denom = float(one @ y)
         if (not np.isfinite(denom)) or abs(denom) <= 1e-30:
             return np.full(p, 1.0 / p, dtype=float), "uniform"
-        return y / denom, "eigh"
+        return y / denom, method
 
     def _cond_number(self, H: np.ndarray, lam_eff: float) -> float:
         """Estimate condition number of regularized Gram matrix."""
@@ -214,23 +219,8 @@ class Anderson:
         # Check for restart conditions
         restart_reason = self._check_restart(r_norm, condH)
 
-        # If restart triggered, reject AA step *immediately* and fall back to damped Picard.
-        #
-        # Rationale: if the Gram matrix is ill-conditioned or residual is stalling, using the
-        # just-computed AA combination can be actively harmful. Resetting on the *next* call
-        # leaves one unstable step in the iterate history.
-        accepted = True
-        if restart_reason:
-            accepted = False
-            x_aa = x_old + self.beta * r
-            step_norm = self._rel_step(x_old, x_aa, x_raw)
-            limited = False
-            # Clear history and stall tracking right away.
-            self.reset()
-
         info: Dict = {
             "aa_hist": int(p - 1),
-            "accepted": accepted,
             "condH": float(condH),
             "r_norm": float(r_norm),
             "step_norm": float(step_norm),
