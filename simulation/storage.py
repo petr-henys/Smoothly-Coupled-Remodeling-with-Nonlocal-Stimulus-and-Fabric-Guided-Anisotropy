@@ -86,14 +86,14 @@ class MetricsStorage:
 
     # Column definitions (order matters for CSV)
     STEPS_COLUMNS = [
-        "step", "time_days", "dt_days", "num_subiters", "converged",
+        "step", "attempt", "time_days", "dt_days", "num_subiters", "converged", "accepted",
         "error_norm", "mech_iters", "fab_iters", "stim_iters", "dens_iters",
         "mech_time", "fab_time", "stim_time", "dens_time",
         "max_condH", "aa_rejections", "aa_restarts", "memory_mb",
     ]
 
     SUBITERS_COLUMNS = [
-        "step", "iter", "time_days", "proj_res", "aa_step_res",
+        "step", "attempt", "iter", "time_days", "proj_res", "aa_step_res",
         "mech_iters", "fab_iters", "stim_iters", "dens_iters",
         "mech_time", "fab_time", "stim_time", "dens_time",
         "restart", "restart_reason", "limited",
@@ -140,9 +140,11 @@ class MetricsStorage:
     def write_step(
         self,
         step: int,
+        attempt: int,
         time_days: float,
         dt_days: float,
         converged: bool,
+        accepted: bool,
         error_norm: float,
         subiter_metrics: List[Dict[str, Any]],
         memory_mb: float = 0.0,
@@ -151,9 +153,11 @@ class MetricsStorage:
         
         Args:
             step: Timestep index (1-based).
+            attempt: Attempt number for this step (1-based, >1 means retry after rejection).
             time_days: Simulation time after this step [days].
             dt_days: Timestep size [days].
             converged: Whether coupling converged.
+            accepted: Whether timestep was accepted by adaptive controller.
             error_norm: WRMS error norm for adaptive timestepping.
             subiter_metrics: List of per-iteration metric dicts from FixedPointSolver.
             memory_mb: Peak memory usage [MB].
@@ -186,10 +190,12 @@ class MetricsStorage:
         # Write step row
         step_row = {
             "step": step,
+            "attempt": attempt,
             "time_days": time_days,
             "dt_days": dt_days,
             "num_subiters": len(subiter_metrics),
             "converged": int(converged),
+            "accepted": int(accepted),
             "error_norm": error_norm,
             "mech_iters": block_iters.get("mech", 0),
             "fab_iters": block_iters.get("fab", 0),
@@ -226,6 +232,7 @@ class MetricsStorage:
 
             subiter_row = {
                 "step": step,
+                "attempt": attempt,
                 "iter": rec.get("iter", 0),
                 "time_days": time_days,
                 "proj_res": rec.get("proj_res", 0.0),

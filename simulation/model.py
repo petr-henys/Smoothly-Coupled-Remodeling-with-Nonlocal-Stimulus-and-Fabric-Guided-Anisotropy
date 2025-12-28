@@ -258,6 +258,7 @@ class Remodeller:
         dt = float(self.cfg.time.dt_initial)
         total_time = float(self.cfg.time.total_time)
         step_idx = 0
+        attempt = 1  # Track attempt number for current step
 
         self.comm.Barrier()
 
@@ -285,20 +286,23 @@ class Remodeller:
                     accepted = True
                     next_dt = dt
 
+                # Write metrics to CSV for ALL steps (accepted and rejected)
+                self.storage.metrics.write_step(
+                    step=step_idx + 1,  # Use next step number for this attempt
+                    attempt=attempt,
+                    time_days=t + dt,   # Would-be time if accepted
+                    dt_days=dt,
+                    converged=metrics["converged"],
+                    accepted=accepted,
+                    error_norm=error,
+                    subiter_metrics=metrics.get("subiter_metrics", []),
+                )
+
                 if accepted:
                     self.integrator.commit_step(dt, self.state_fields, self.state_fields_old)
                     t += dt
                     step_idx += 1
-
-                    # Write metrics to CSV (every step, regardless of saving_interval)
-                    self.storage.metrics.write_step(
-                        step=step_idx,
-                        time_days=t,
-                        dt_days=dt,
-                        converged=metrics["converged"],
-                        error_norm=error,
-                        subiter_metrics=metrics.get("subiter_metrics", []),
-                    )
+                    attempt = 1  # Reset attempt counter for next step
 
                     if step_idx % self.cfg.output.saving_interval == 0:
                         self._output(t)
@@ -308,6 +312,7 @@ class Remodeller:
 
                     dt = next_dt
                 else:
+                    attempt += 1  # Increment attempt for retry
                     for name in self.state_fields:
                         assign(self.state_fields[name], self.state_fields_old[name])
                     if not metrics["converged"]:

@@ -45,7 +45,7 @@ from postprocessor import SimulationLoader
 # Configuration
 # =============================================================================
 
-DEFAULT_RUN_DIR = Path(".results_box/")
+DEFAULT_RUN_DIR = Path(".results/")
 OUTPUT_FILE = Path("manuscript/images/anderson_diagnostic.png")
 
 # Colors for events
@@ -119,16 +119,31 @@ def create_global_index(subiters: pd.DataFrame) -> np.ndarray:
     return np.arange(len(subiters))
 
 
-def plot_convergence(ax: plt.Axes, subiters: pd.DataFrame, config: dict) -> None:
-    """Plot convergence curves colored by timestep."""
-    steps = sorted(subiters["step"].unique())
-    n_steps = len(steps)
+def plot_convergence(ax: plt.Axes, subiters: pd.DataFrame, config: dict, steps_df: pd.DataFrame | None = None) -> None:
+    """Plot convergence curves colored by timestep.
+    
+    Each (step, attempt) pair is treated as a unique curve.
+    """
+    # Create unique key for each step attempt
+    if "attempt" in subiters.columns:
+        subiters = subiters.copy()
+        subiters["step_attempt"] = subiters["step"].astype(str) + "_" + subiters["attempt"].astype(str)
+        unique_keys = subiters.groupby(["step", "attempt"]).ngroups
+        step_attempts = subiters.groupby(["step", "attempt"], sort=True).first().index.tolist()
+    else:
+        # Fallback for old data without attempt column
+        step_attempts = [(s, 1) for s in sorted(subiters["step"].unique())]
+        unique_keys = len(step_attempts)
 
     cmap = plt.cm.viridis
-    norm = Normalize(vmin=0, vmax=max(n_steps - 1, 1))
+    norm = Normalize(vmin=0, vmax=max(unique_keys - 1, 1))
 
-    for i, step in enumerate(steps):
-        step_data = subiters[subiters["step"] == step].sort_values("iter")
+    for i, (step, attempt) in enumerate(step_attempts):
+        if "attempt" in subiters.columns:
+            step_data = subiters[(subiters["step"] == step) & (subiters["attempt"] == attempt)].sort_values("iter")
+        else:
+            step_data = subiters[subiters["step"] == step].sort_values("iter")
+        
         if step_data.empty or "proj_res" not in step_data.columns:
             continue
 
@@ -145,6 +160,13 @@ def plot_convergence(ax: plt.Axes, subiters: pd.DataFrame, config: dict) -> None
     coupling_tol = solver_cfg.get("coupling_tol", 1e-6)
     ax.axhline(coupling_tol, color="k", linestyle="--", linewidth=0.8, alpha=0.5)
 
+    # Add colorbar for step progression
+    sm = ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+    cbar = ax.figure.colorbar(sm, ax=ax, pad=0.02, aspect=30)
+    cbar.set_label("Step", fontsize=7)
+    cbar.ax.tick_params(labelsize=6)
+
     setup_axis_style(ax, xlabel="Subiteration", ylabel="Residual", title="", loglog=False)
     ax.set_title("Convergence", fontsize=8)
 
@@ -154,6 +176,150 @@ RESTART_MARKERS = {
     "stall": ("v", COLOR_STALL),   # Red triangle down - stall
     "cond": ("d", COLOR_COND),     # Blue diamond - condition
 }
+
+# Color for rejected steps
+COLOR_REJECTED = "#c0392b"  # Dark red
+
+
+def plot_dt_evolution(ax: plt.Axes, steps_df: pd.DataFrame) -> None:
+    """Plot timestep size evolution over simulation steps."""
+    if steps_df is None or steps_df.empty or "dt_days" not in steps_df.columns:
+        ax.text(0.5, 0.5, "No dt data", ha="center", va="center", transform=ax.transAxes)
+        return
+
+    step_nums = steps_df["step"].values
+    dt_vals = steps_df["dt_days"].values
+    
+    # Identify rejected steps (accepted=0)
+    rejected_mask = np.zeros(len(steps_df), dtype=bool)
+    if "accepted" in steps_df.columns:
+        rejected_mask = steps_df["accepted"].values == 0
+    elif "converged" in steps_df.columns:
+        # Fallback for old data without 'accepted' column
+        rejected_mask = steps_df["converged"].values == 0
+
+    # Plot accepted steps
+    accepted_mask = ~rejected_mask
+    ax.semilogy(step_nums[accepted_mask], dt_vals[accepted_mask], 
+                color="#2ecc71", linewidth=PLOT_LINEWIDTH, alpha=0.8, label="accepted")
+    
+    # Highlight rejected steps
+    if rejected_mask.any():
+        ax.scatter(step_nums[rejected_mask], dt_vals[rejected_mask],
+                   c=COLOR_REJECTED, s=40, marker="x", zorder=5, 
+                   linewidths=1.5, label="rejected")
+
+    ax.set_xlim(step_nums.min() - 0.5, step_nums.max() + 0.5)
+    ax.legend(loc="upper right", fontsize=6, framealpha=0.8)
+    setup_axis_style(ax, xlabel="Step", ylabel="dt [days]", title="", loglog=False)
+    ax.set_title("Timestep evolution", fontsize=8)
+
+
+def plot_events_unified(ax: plt.Axes, subiters: pd.DataFrame, global_idx: np.ndarray, 
+                        steps_df: pd.DataFrame | None = None) -> None:
+    """Unified plot for all events: AA restarts (stall/cond), step limiting, and rejected steps.
+    
+    Shows cumulative event count with markers for different event types.
+    """
+    n_total = len(subiters)
+    
+    # Background: residual magnitude (semi-log)
+    if "proj_res" in subiters.columns:
+        res = subiters["proj_res"].values
+        res_log = np.log10(np.clip(res, 1e-12, None))
+        res_norm = (res_log - res_log.min()) / max(res_log.max() - res_log.min(), 1e-10)
+        ax.fill_between(global_idx, 0, res_norm * 0.3, alpha=0.1, color="#7f8c8d", label=None)
+    
+    # Collect all events: (global_idx, event_type, color, marker)
+    events = []
+    
+    # 1. AA Restart events (stall, cond)
+    if "restart" in subiters.columns:
+        restart_mask = subiters["restart"].astype(bool).values
+        if restart_mask.any() and "restart_reason" in subiters.columns:
+            reasons = subiters["restart_reason"].fillna("").astype(str).values
+            for prefix, (marker, color) in RESTART_MARKERS.items():
+                mask = restart_mask & np.array([str(r).startswith(prefix) for r in reasons])
+                for idx in np.where(mask)[0]:
+                    events.append((idx, prefix, color, marker))
+    
+    # 2. Step limiting events
+    if "limited" in subiters.columns:
+        limited_mask = subiters["limited"].astype(bool).values
+        for idx in np.where(limited_mask)[0]:
+            events.append((idx, "limited", COLOR_LIMITED, "o"))
+    
+    # 3. Rejected steps - distinguish between error (rej:err) and divergence (rej:div)
+    if steps_df is not None and "accepted" in steps_df.columns:
+        rejected_df = steps_df[steps_df["accepted"] == 0]
+        for _, row in rejected_df.iterrows():
+            step = row["step"]
+            step_mask = subiters["step"].values == step
+            if not step_mask.any():
+                continue
+            last_idx = np.where(step_mask)[0][-1]
+            
+            # Distinguish rejection reason
+            if "converged" in row and row["converged"] == 0:
+                # Rejected due to solver divergence
+                events.append((last_idx, "rej:div", COLOR_REJECTED, "X"))
+            else:
+                # Rejected due to error tolerance
+                events.append((last_idx, "rej:err", COLOR_LIMITED, "x"))
+    elif steps_df is not None and "converged" in steps_df.columns:
+        # Fallback for old data - only divergence info available
+        rejected_steps = set(steps_df.loc[steps_df["converged"] == 0, "step"].values)
+        for step in rejected_steps:
+            step_mask = subiters["step"].values == step
+            if step_mask.any():
+                last_idx = np.where(step_mask)[0][-1]
+                events.append((last_idx, "rej:div", COLOR_REJECTED, "X"))
+    
+    # Sort events by index
+    events.sort(key=lambda x: x[0])
+    
+    # Build cumulative count
+    cum_events = np.zeros(n_total, dtype=int)
+    for i, (idx, _, _, _) in enumerate(events):
+        cum_events[idx:] = i + 1
+    
+    # Plot cumulative line
+    if events:
+        ax.plot(global_idx, cum_events, color="#2c3e50", linewidth=PLOT_LINEWIDTH * 0.8,
+                alpha=0.6)
+    
+    # Plot markers by type
+    plotted_types = set()
+    for idx, etype, color, marker in events:
+        label = etype if etype not in plotted_types else None
+        ax.scatter([global_idx[idx]], [cum_events[idx]], c=color, s=35, 
+                   marker=marker, zorder=5, edgecolors="white", linewidths=0.5, 
+                   label=label)
+        plotted_types.add(etype)
+    
+    # Count summary
+    n_stall = sum(1 for e in events if e[1] == "stall")
+    n_cond = sum(1 for e in events if e[1] == "cond")
+    n_lim = sum(1 for e in events if e[1] == "limited")
+    n_rej_err = sum(1 for e in events if e[1] == "rej:err")
+    n_rej_div = sum(1 for e in events if e[1] == "rej:div")
+    
+    ax.set_xlim(global_idx.min(), global_idx.max())
+    ax.set_ylim(0, max(len(events) + 1, 1))
+    if events:
+        ax.legend(loc="upper left", fontsize=6, framealpha=0.8, ncol=2)
+    
+    setup_axis_style(ax, xlabel="Global iteration", ylabel="Cumulative events", title="", loglog=False)
+    
+    # Build title with counts
+    parts = []
+    if n_stall: parts.append(f"stall={n_stall}")
+    if n_cond: parts.append(f"cond={n_cond}")
+    if n_lim: parts.append(f"lim={n_lim}")
+    if n_rej_err: parts.append(f"rej:err={n_rej_err}")
+    if n_rej_div: parts.append(f"rej:div={n_rej_div}")
+    title = "Events" + (f" ({', '.join(parts)})" if parts else "")
+    ax.set_title(title, fontsize=8)
 
 
 def plot_events(ax: plt.Axes, subiters: pd.DataFrame, global_idx: np.ndarray) -> None:
@@ -418,15 +584,15 @@ def main() -> None:
     apply_style()
     fig, axes = plt.subplots(2, 3, figsize=(10, 5.5))
 
-    # Row 1: Convergence + Residual timeline (with wRMS) + Events (stall/cond/lim)
-    plot_convergence(axes[0, 0], subiters, config)
+    # Row 1: Convergence + Residual timeline + dt evolution
+    plot_convergence(axes[0, 0], subiters, config, steps)
     plot_residual_timeline(axes[0, 1], subiters, global_idx, config, steps)
-    plot_events(axes[0, 2], subiters, global_idx)
+    plot_dt_evolution(axes[0, 2], steps)
 
-    # Row 2: History size + Conditioning + Restarts
+    # Row 2: History size + Conditioning + Events (unified: restarts + limiting + rejected)
     plot_history_size(axes[1, 0], subiters, global_idx, config)
     plot_conditioning(axes[1, 1], subiters, global_idx, config)
-    plot_restarts(axes[1, 2], subiters, global_idx)
+    plot_events_unified(axes[1, 2], subiters, global_idx, steps)
 
     fig.tight_layout()
     save_manuscript_figure(fig, OUTPUT_FILE.name, dpi=PUBLICATION_DPI)
