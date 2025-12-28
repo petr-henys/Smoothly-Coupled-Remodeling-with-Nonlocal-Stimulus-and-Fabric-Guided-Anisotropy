@@ -74,7 +74,7 @@ class MetricsStorage:
     """CSV writer for solver performance telemetry (rank 0 only).
     
     Writes two CSV files:
-    - steps.csv: One row per accepted timestep (aggregated stats)
+    - steps.csv: One row per timestep attempt (accepted or rejected; aggregated stats)
     - subiterations.csv: One row per Picard/coupling iteration (detailed stats)
     """
 
@@ -96,7 +96,7 @@ class MetricsStorage:
         "step", "attempt", "iter", "time_days", "proj_res", "aa_step_res",
         "mech_iters", "fab_iters", "stim_iters", "dens_iters",
         "mech_time", "fab_time", "stim_time", "dens_time",
-        "restart", "restart_reason", "limited",
+        "aa_accepted", "restart", "restart_reason", "limited",
         "condH", "aa_hist", "memory_mb",
     ]
 
@@ -173,6 +173,7 @@ class MetricsStorage:
         max_condH = 0.0
         aa_rejections = 0
         aa_restarts = 0
+        mem_peak = float(memory_mb)
 
         for rec in subiter_metrics:
             max_condH = max(max_condH, rec.get("condH", 0.0))
@@ -180,6 +181,7 @@ class MetricsStorage:
                 aa_rejections += 1
             if rec.get("aa_restart"):
                 aa_restarts += 1
+            mem_peak = max(mem_peak, float(rec.get("mem_mb", 0.0)))
 
             # Extract block stats (list of SweepStats)
             for stats in rec.get("block_stats", []):
@@ -208,7 +210,7 @@ class MetricsStorage:
             "max_condH": max_condH,
             "aa_rejections": aa_rejections,
             "aa_restarts": aa_restarts,
-            "memory_mb": memory_mb,
+            "memory_mb": mem_peak,
         }
 
         if not self._steps_header_written:
@@ -245,6 +247,7 @@ class MetricsStorage:
                 "fab_time": iter_block_times.get("fab", 0.0),
                 "stim_time": iter_block_times.get("stim", 0.0),
                 "dens_time": iter_block_times.get("dens", 0.0),
+                "aa_accepted": 1 if rec.get("aa_accepted", True) else 0,
                 "restart": 1 if rec.get("aa_restart") else 0,
                 "restart_reason": str(rec.get("aa_restart", "")),
                 "limited": 1 if rec.get("aa_limited") else 0,

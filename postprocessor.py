@@ -174,14 +174,24 @@ class SimulationLoader:
         
         # Get corresponding subiterations
         step_num = int(step_metrics["step"])
-        step_subiters = subiters_df[subiters_df["step"] == step_num]
+        attempt = int(step_metrics.get("attempt", 1))
+        mask = subiters_df["step"] == step_num
+        if "attempt" in subiters_df.columns:
+            mask &= subiters_df["attempt"].astype(int) == attempt
+        step_subiters = subiters_df[mask]
         
         # Aggregate subiteration stats
-        # Column name compatibility:
-        # - older CSVs used `accepted` / `restart`
-        # - current fixed-point solver writes `aa_accepted` / `aa_restart`
-        acc_col = "aa_accepted" if "aa_accepted" in step_subiters.columns else "accepted"
-        rst_col = "aa_restart" if "aa_restart" in step_subiters.columns else "restart"
+        # Column name compatibility across historical telemetry formats.
+        acc_col = "aa_accepted" if "aa_accepted" in step_subiters.columns else None
+        rst_reason_col = "restart_reason" if "restart_reason" in step_subiters.columns else None
+        rst_flag_col = "restart" if "restart" in step_subiters.columns else None
+
+        if rst_reason_col is not None:
+            aa_restarts = step_subiters[rst_reason_col].astype(str).str.len().gt(0).sum()
+        elif rst_flag_col is not None:
+            aa_restarts = int(step_subiters[rst_flag_col].fillna(0).astype(int).sum())
+        else:
+            aa_restarts = 0
 
         subiters_summary = {
             "num_subiters": len(step_subiters),
@@ -190,8 +200,8 @@ class SimulationLoader:
             "total_fab_iters": step_subiters["fab_iters"].sum() if "fab_iters" in step_subiters else 0,
             "total_stim_iters": step_subiters["stim_iters"].sum() if "stim_iters" in step_subiters else 0,
             "total_dens_iters": step_subiters["dens_iters"].sum() if "dens_iters" in step_subiters else 0,
-            "aa_acceptances": step_subiters[acc_col].sum() if acc_col in step_subiters else 0,
-            "aa_restarts": step_subiters[rst_col].astype(str).ne("").sum() if rst_col in step_subiters else 0,
+            "aa_acceptances": int(step_subiters[acc_col].fillna(0).astype(int).sum()) if acc_col else 0,
+            "aa_restarts": int(aa_restarts),
         }
         
         return {**step_metrics, **subiters_summary}
@@ -207,6 +217,10 @@ class SimulationLoader:
         """
         if self._field_times is None:
             steps_df = self.get_steps_metrics()
+            # steps.csv can include rejected timestep attempts (accepted=0). Fields are
+            # written only on accepted steps, so expose accepted times by default.
+            if "accepted" in steps_df.columns:
+                steps_df = steps_df[steps_df["accepted"].fillna(0).astype(int) == 1]
             times = steps_df["time_days"].values
             
             # Expose `steps.csv` times for validation

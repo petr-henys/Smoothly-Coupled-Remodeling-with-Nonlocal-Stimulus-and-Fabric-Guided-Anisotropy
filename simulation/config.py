@@ -121,6 +121,7 @@ class Config:
         result["time"] = params_to_dict(self.time)
         result["numerics"] = params_to_dict(self.numerics)
         result["output"] = params_to_dict(self.output)
+        result["geometry"] = params_to_dict(self.geometry)
         return result
 
     @property

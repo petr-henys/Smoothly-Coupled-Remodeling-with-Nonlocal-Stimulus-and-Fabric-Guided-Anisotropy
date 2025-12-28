@@ -231,14 +231,26 @@ class FixedPointSolver:
             # If converged, do not run Anderson (prevents end-of-step REJ/RST churn).
             if picard_res <= tol:
                 x_new_s = x_raw_s
-                aa = {"aa_hist": 0, "accepted": True, "restart_reason": "", "condH": 1.0}
+                aa = {
+                    "aa_hist": 0,
+                    "accepted": True,
+                    "restart_reason": "",
+                    "condH": 1.0,
+                    "limited": False,
+                }
             else:
                 if self.anderson is not None:
                     x_new_s, aa = self.anderson.mix(x_old_s, x_raw_s)
                 else:
                     beta = float(self.cfg.solver.beta)
                     x_new_s = x_old_s + beta * (x_raw_s - x_old_s)
-                    aa = {"aa_hist": 0, "accepted": True, "restart_reason": "", "condH": 1.0}
+                    aa = {
+                        "aa_hist": 0,
+                        "accepted": True,
+                        "restart_reason": "",
+                        "condH": 1.0,
+                        "limited": False,
+                    }
 
             aa_step_res = self._proj_step(x_old_s, x_new_s, x_raw_s)
 
@@ -258,6 +270,7 @@ class FixedPointSolver:
                 "picard_res": float(picard_res),
                 "aa_step_res": float(aa_step_res),
                 "aa_hist": int(aa.get("aa_hist", 0)),
+                "aa_accepted": bool(aa.get("accepted", True)),
                 "aa_restart": str(aa.get("restart_reason", "")),
                 "aa_limited": bool(aa.get("limited", False)),
                 "condH": float(cond_val) if cond_val is not None else 0.0,

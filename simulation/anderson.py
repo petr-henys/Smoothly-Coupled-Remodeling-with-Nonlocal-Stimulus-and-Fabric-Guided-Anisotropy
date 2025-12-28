@@ -219,8 +219,23 @@ class Anderson:
         # Check for restart conditions
         restart_reason = self._check_restart(r_norm, condH)
 
+        # If restart triggered, reject AA step *immediately* and fall back to damped Picard.
+        #
+        # Rationale: if the Gram matrix is ill-conditioned or residual is stalling, using the
+        # just-computed AA combination can be actively harmful. Resetting on the *next* call
+        # leaves one unstable step in the iterate history.
+        accepted = True
+        if restart_reason:
+            accepted = False
+            x_aa = x_old + self.beta * r
+            step_norm = self._rel_step(x_old, x_aa, x_raw)
+            limited = False
+            # Clear history and stall tracking right away.
+            self.reset()
+
         info: Dict = {
             "aa_hist": int(p - 1),
+            "accepted": accepted,
             "condH": float(condH),
             "r_norm": float(r_norm),
             "step_norm": float(step_norm),

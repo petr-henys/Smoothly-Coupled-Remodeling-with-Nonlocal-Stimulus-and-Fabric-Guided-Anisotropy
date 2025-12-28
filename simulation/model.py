@@ -308,7 +308,7 @@ class Remodeller:
                         self._output(t)
 
                     if reporter is not None:
-                        reporter.update_main(t, next_dt, error)
+                        reporter.update_main(t, dt, error)
 
                     dt = next_dt
                 else:
