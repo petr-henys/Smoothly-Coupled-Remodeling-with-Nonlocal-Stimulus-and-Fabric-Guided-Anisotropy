@@ -2,13 +2,13 @@
 
 Multi-panel figure showing Anderson accelerator behavior:
 - Convergence curves (residual vs subiteration)
-- Acceptance/rejection events
-- Restart events and reasons
+- Event timeline (restarts: stall/cond, step limiting)
+- Residual timeline with step boundaries
 - Gram matrix conditioning
 - History size evolution
 
 Input:
-    results/<run_dir>/ containing subiterations.csv and config.json
+    results/<run_dir>/ containing subiterations.csv, steps.csv and config.json
 
 Output:
     manuscript/images/anderson_diagnostic.png
@@ -49,10 +49,10 @@ DEFAULT_RUN_DIR = Path(".results_box/")
 OUTPUT_FILE = Path("manuscript/images/anderson_diagnostic.png")
 
 # Colors for events
-COLOR_ACCEPT = "#2ecc71"  # Green
-COLOR_REJECT = "#e74c3c"  # Red
-COLOR_RESTART = "#9b59b6"  # Purple
-COLOR_COND = "#3498db"  # Blue
+COLOR_STALL = "#e74c3c"   # Red - stall restart
+COLOR_COND = "#3498db"    # Blue - condition restart / conditioning line
+COLOR_LIMITED = "#f39c12" # Orange - step limiting
+COLOR_RESTART = "#9b59b6" # Purple - general restart (for cumulative plot)
 
 
 # =============================================================================
@@ -81,21 +81,8 @@ def print_statistics(subiters: pd.DataFrame, config: dict, run_dir: Path) -> Non
         f"max={subiters_per_step.max()}, mean={subiters_per_step.mean():.1f}"
     )
 
-    if "accepted" in subiters.columns:
-        acc_rate = subiters["accepted"].mean() * 100
-        rej_count = (~subiters["accepted"].astype(bool)).sum()
-        print(f"AA acceptance rate: {acc_rate:.1f}% ({rej_count} rejections)")
-        
-        # Show rejection reasons if available
-        if "reject_reason" in subiters.columns and rej_count > 0:
-            rej_reasons = subiters.loc[~subiters["accepted"].astype(bool), "reject_reason"]
-            rej_reasons = rej_reasons[rej_reasons.astype(str).str.len() > 0]
-            if len(rej_reasons) > 0:
-                for reason, count in rej_reasons.value_counts().items():
-                    print(f"  - {reason}: {count}")
-
+    # Restart events
     if "restart" in subiters.columns:
-        # restart column contains 0/1 (bool)
         restart_count = subiters["restart"].astype(bool).sum()
         print(f"AA restarts: {restart_count}")
         
@@ -104,8 +91,19 @@ def print_statistics(subiters: pd.DataFrame, config: dict, run_dir: Path) -> Non
             rst_reasons = subiters.loc[subiters["restart"].astype(bool), "restart_reason"]
             rst_reasons = rst_reasons[rst_reasons.astype(str).str.len() > 0]
             if len(rst_reasons) > 0:
-                for reason, count in rst_reasons.value_counts().items():
-                    print(f"  - {reason}: {count}")
+                # Group by prefix (stall, cond)
+                stall_count = sum(1 for r in rst_reasons if str(r).startswith("stall"))
+                cond_count = sum(1 for r in rst_reasons if str(r).startswith("cond"))
+                if stall_count:
+                    print(f"  - stall: {stall_count}")
+                if cond_count:
+                    print(f"  - cond: {cond_count}")
+    
+    # Step limiting events
+    if "limited" in subiters.columns:
+        lim_count = subiters["limited"].astype(bool).sum()
+        lim_rate = 100 * lim_count / max(len(subiters), 1)
+        print(f"Step limiting events: {lim_count} ({lim_rate:.1f}%)")
 
     if "condH" in subiters.columns:
         cond_vals = subiters["condH"].replace([np.inf, -np.inf], np.nan).dropna()
@@ -151,101 +149,87 @@ def plot_convergence(ax: plt.Axes, subiters: pd.DataFrame, config: dict) -> None
     ax.set_title("Convergence", fontsize=8)
 
 
-# Markers and colors for reject reasons
-REJECT_MARKERS = {
-    "res_increase": ("^", "#e74c3c"),   # red triangle up
-    "bt_fail": ("v", "#c0392b"),         # dark red triangle down
-    "": ("x", "#e74c3c"),                 # default red x
+# Markers for restart reasons
+RESTART_MARKERS = {
+    "stall": ("v", COLOR_STALL),   # Red triangle down - stall
+    "cond": ("d", COLOR_COND),     # Blue diamond - condition
 }
 
-# Window size for running acceptance rate
-ACCEPTANCE_WINDOW = 20
 
-
-def plot_acceptance(ax: plt.Axes, subiters: pd.DataFrame, global_idx: np.ndarray) -> None:
-    """Plot cumulative accept/reject counts with running acceptance rate.
+def plot_events(ax: plt.Axes, subiters: pd.DataFrame, global_idx: np.ndarray) -> None:
+    """Plot AA events timeline: restarts (stall/cond) and step limiting.
     
     Shows:
-    - Left axis: Cumulative accept (green) and reject (red) counts as lines
-    - Right axis: Running acceptance rate (%) as gray dashed line
-    - Markers on reject curve showing reason types
+    - Background: residual magnitude as gray fill
+    - Markers: restart events (stall=red, cond=blue) and limiting (orange)
+    - Right axis: cumulative event count
     """
-    if "accepted" not in subiters.columns:
-        ax.text(0.5, 0.5, "No acceptance data", ha="center", va="center", transform=ax.transAxes)
-        return
-
-    accepted = subiters["accepted"].astype(bool).values
-    rejected = ~accepted
+    n_total = len(subiters)
     
-    n_acc = accepted.sum()
-    n_rej = rejected.sum()
+    # Background: residual magnitude (semi-log)
+    if "proj_res" in subiters.columns:
+        res = subiters["proj_res"].values
+        res_log = np.log10(np.clip(res, 1e-12, None))
+        res_norm = (res_log - res_log.min()) / max(res_log.max() - res_log.min(), 1e-10)
+        ax.fill_between(global_idx, 0, res_norm, alpha=0.15, color="#7f8c8d", label=None)
     
-    # Cumulative counts
-    cum_accept = np.cumsum(accepted.astype(int))
-    cum_reject = np.cumsum(rejected.astype(int))
+    # Collect events
+    events = []  # (idx, event_type, color, marker)
     
-    # Plot cumulative accept (green area)
-    ax.fill_between(global_idx, 0, cum_accept, alpha=0.3, color=COLOR_ACCEPT)
-    ax.plot(global_idx, cum_accept, color=COLOR_ACCEPT, linewidth=PLOT_LINEWIDTH,
-            label=f"Accept: {n_acc}")
+    # Restart events
+    if "restart" in subiters.columns:
+        restart_mask = subiters["restart"].astype(bool).values
+        if restart_mask.any() and "restart_reason" in subiters.columns:
+            reasons = subiters["restart_reason"].fillna("").astype(str).values
+            for prefix, (marker, color) in RESTART_MARKERS.items():
+                mask = restart_mask & np.array([str(r).startswith(prefix) for r in reasons])
+                for idx in np.where(mask)[0]:
+                    events.append((idx, f"RST:{prefix}", color, marker))
     
-    # Plot cumulative reject (red area, stacked on top if any)
-    if n_rej > 0:
-        ax.fill_between(global_idx, 0, cum_reject, alpha=0.3, color=COLOR_REJECT)
-        ax.plot(global_idx, cum_reject, color=COLOR_REJECT, linewidth=PLOT_LINEWIDTH,
-                label=f"Reject: {n_rej}")
+    # Step limiting events
+    if "limited" in subiters.columns:
+        limited_mask = subiters["limited"].astype(bool).values
+        for idx in np.where(limited_mask)[0]:
+            events.append((idx, "LIM", COLOR_LIMITED, "o"))
+    
+    # Sort events by index
+    events.sort(key=lambda x: x[0])
+    
+    # Plot cumulative event counts and markers
+    if events:
+        event_indices = [e[0] for e in events]
+        event_colors = [e[2] for e in events]
+        event_markers = [e[3] for e in events]
         
-        # Mark reject events with reason-specific markers
-        if "reject_reason" in subiters.columns:
-            reasons = subiters["reject_reason"].fillna("").astype(str).values
-            plotted_reasons = set()
-            for reason, (marker, color) in REJECT_MARKERS.items():
-                mask = rejected & (reasons == reason)
-                if mask.any():
-                    label = reason if reason and reason not in plotted_reasons else None
-                    ax.scatter(global_idx[mask], cum_reject[mask],
-                               c=color, s=20, marker=marker, zorder=5,
-                               edgecolors="white", linewidths=0.5, label=label)
-                    plotted_reasons.add(reason)
-        else:
-            # Just mark reject points
-            ax.scatter(global_idx[rejected], cum_reject[rejected],
-                       c=COLOR_REJECT, s=15, marker="x", zorder=5)
+        # Cumulative count line
+        cum_events = np.zeros(n_total, dtype=int)
+        for i, idx in enumerate(event_indices):
+            cum_events[idx:] = i + 1
+        
+        ax.plot(global_idx, cum_events, color="#2c3e50", linewidth=PLOT_LINEWIDTH * 0.8,
+                alpha=0.6)
+        
+        # Mark individual events with type-specific markers
+        plotted_types = set()
+        for idx, etype, color, marker in events:
+            label = etype if etype not in plotted_types else None
+            ax.scatter([global_idx[idx]], [cum_events[idx]], c=color, s=30, 
+                       marker=marker, zorder=5, edgecolors="white", linewidths=0.5, 
+                       label=label)
+            plotted_types.add(etype)
     
-    # Secondary axis: Running acceptance rate
-    ax2 = ax.twinx()
-    window = min(ACCEPTANCE_WINDOW, len(accepted))
-    if window > 0:
-        # Use pandas rolling for efficiency
-        acc_series = pd.Series(accepted.astype(float))
-        running_rate = acc_series.rolling(window=window, min_periods=1).mean() * 100
-        ax2.plot(global_idx, running_rate, color="#7f8c8d", linewidth=0.8,
-                 linestyle="--", alpha=0.7, label=f"Rate (w={window})")
-        ax2.set_ylim(0, 105)
-        ax2.set_ylabel("Acc. rate %", fontsize=7, color="#7f8c8d")
-        ax2.tick_params(axis='y', labelsize=6, colors="#7f8c8d")
-        ax2.axhline(100, color="#7f8c8d", linestyle=":", linewidth=0.5, alpha=0.5)
-    
-    # Final acceptance rate annotation
-    final_rate = 100 * n_acc / max(n_acc + n_rej, 1)
-    ax.annotate(f"{final_rate:.0f}%", xy=(0.98, 0.02), xycoords="axes fraction",
-                ha="right", va="bottom", fontsize=7, color="#7f8c8d",
-                bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#7f8c8d", alpha=0.8))
+    # Count summary
+    n_stall = sum(1 for e in events if e[1] == "RST:stall")
+    n_cond = sum(1 for e in events if e[1] == "RST:cond")
+    n_lim = sum(1 for e in events if e[1] == "LIM")
     
     ax.set_xlim(global_idx.min(), global_idx.max())
-    ax.set_ylim(0, max(cum_accept.max(), cum_reject.max() if n_rej > 0 else 1) * 1.1)
-    ax.legend(loc="upper left", fontsize=6, framealpha=0.8)
-    setup_axis_style(ax, xlabel="Global iteration", ylabel="Cumulative count", title="", loglog=False)
-    ax.set_title("Accept/Reject", fontsize=8)
-
-
-# Markers and colors for restart reasons
-RESTART_MARKERS = {
-    "reject_streak": ("o", "#9b59b6"),    # purple circle
-    "stall": ("s", "#8e44ad"),             # dark purple square  
-    "cond": ("d", "#6c3483"),              # diamond
-    "": ("o", "#9b59b6"),                   # default
-}
+    ax.set_ylim(0, max(len(events) + 1, 1))
+    if events:
+        ax.legend(loc="upper left", fontsize=6, framealpha=0.8)
+    
+    setup_axis_style(ax, xlabel="Global iteration", ylabel="Cumulative events", title="", loglog=False)
+    ax.set_title(f"Events (stall={n_stall}, cond={n_cond}, lim={n_lim})", fontsize=8)
 
 
 def plot_restarts(ax: plt.Axes, subiters: pd.DataFrame, global_idx: np.ndarray) -> None:
@@ -344,27 +328,62 @@ def plot_history_size(ax: plt.Axes, subiters: pd.DataFrame, global_idx: np.ndarr
     ax.set_title("AA history size", fontsize=8)
 
 
-def plot_residual_timeline(ax: plt.Axes, subiters: pd.DataFrame, global_idx: np.ndarray, config: dict) -> None:
-    """Plot residual evolution as a timeline."""
+def plot_residual_timeline(
+    ax: plt.Axes, 
+    subiters: pd.DataFrame, 
+    global_idx: np.ndarray, 
+    config: dict,
+    steps: pd.DataFrame | None = None,
+) -> None:
+    """Plot residual evolution with step boundaries and wRMS error.
+    
+    Shows:
+    - Primary: Picard residual per iteration (semi-log)
+    - Background: wRMS time-integration error at step boundaries (shaded)
+    - Vertical lines at timestep boundaries
+    """
     if "proj_res" not in subiters.columns:
         return
 
     res = subiters["proj_res"].values
 
-    ax.semilogy(global_idx, res, color="#34495e", linewidth=PLOT_LINEWIDTH * 0.8, alpha=0.7)
+    ax.semilogy(global_idx, res, color="#34495e", linewidth=PLOT_LINEWIDTH * 0.8, 
+                alpha=0.8, label="Picard res")
 
-    # Mark step boundaries
-    step_changes = np.where(np.diff(subiters["step"].values) != 0)[0] + 1
-    for sc in step_changes:
-        ax.axvline(global_idx[sc], color="gray", linestyle=":", linewidth=0.5, alpha=0.3)
+    # Mark step boundaries and optionally show wRMS
+    step_arr = subiters["step"].values
+    step_changes = np.where(np.diff(step_arr) != 0)[0] + 1
+    step_changes = np.concatenate([[0], step_changes])  # Include first
+    
+    # Plot wRMS error from steps data as background bars
+    if steps is not None and "error_norm" in steps.columns and len(step_changes) > 0:
+        # Map step number to global_idx range and error_norm
+        for i, sc_start in enumerate(step_changes):
+            sc_end = step_changes[i + 1] if i + 1 < len(step_changes) else len(global_idx)
+            step_num = step_arr[sc_start]
+            
+            # Find matching step in steps DataFrame
+            step_row = steps[steps["step"] == step_num]
+            if len(step_row) > 0:
+                err = step_row["error_norm"].values[0]
+                if err > 0 and np.isfinite(err):
+                    # Draw horizontal bar at error level
+                    ax.axhspan(err * 0.8, err * 1.2, 
+                               xmin=(global_idx[sc_start] - global_idx[0]) / max(global_idx[-1] - global_idx[0], 1),
+                               xmax=(global_idx[sc_end - 1] - global_idx[0]) / max(global_idx[-1] - global_idx[0], 1),
+                               alpha=0.15, color="#e67e22", zorder=0)
+    
+    # Vertical lines at step boundaries (skip first)
+    for sc in step_changes[1:]:
+        ax.axvline(global_idx[sc], color="gray", linestyle=":", linewidth=0.5, alpha=0.4)
 
     # Convergence threshold from config
     solver_cfg = config.get("solver", {})
     coupling_tol = solver_cfg.get("coupling_tol", 1e-6)
     ax.axhline(coupling_tol, color="g", linestyle="--", linewidth=1.0, alpha=0.7,
                label=f"tol={coupling_tol:.0e}")
+    
     ax.legend(loc="upper right", fontsize=6, framealpha=0.8)
-
     setup_axis_style(ax, xlabel="Global iteration", ylabel="Residual", title="", loglog=False)
     ax.set_title("Residual timeline", fontsize=8)
 
@@ -385,6 +404,7 @@ def main() -> None:
     loader = SimulationLoader(run_dir, MPI.COMM_SELF)
     config = loader.get_config()
     subiters = loader.get_subiterations_metrics()
+    steps = loader.get_steps_metrics()
 
     if subiters.empty:
         raise RuntimeError("No subiterations data found.")
@@ -398,10 +418,10 @@ def main() -> None:
     apply_style()
     fig, axes = plt.subplots(2, 3, figsize=(10, 5.5))
 
-    # Row 1: Convergence + Residual timeline + Accept/Reject
+    # Row 1: Convergence + Residual timeline (with wRMS) + Events (stall/cond/lim)
     plot_convergence(axes[0, 0], subiters, config)
-    plot_residual_timeline(axes[0, 1], subiters, global_idx, config)
-    plot_acceptance(axes[0, 2], subiters, global_idx)
+    plot_residual_timeline(axes[0, 1], subiters, global_idx, config, steps)
+    plot_events(axes[0, 2], subiters, global_idx)
 
     # Row 2: History size + Conditioning + Restarts
     plot_history_size(axes[1, 0], subiters, global_idx, config)

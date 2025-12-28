@@ -96,7 +96,7 @@ class MetricsStorage:
         "step", "iter", "time_days", "proj_res", "aa_step_res",
         "mech_iters", "fab_iters", "stim_iters", "dens_iters",
         "mech_time", "fab_time", "stim_time", "dens_time",
-        "accepted", "reject_reason", "restart", "restart_reason",
+        "restart", "restart_reason", "limited",
         "condH", "aa_hist", "memory_mb",
     ]
 
@@ -238,10 +238,9 @@ class MetricsStorage:
                 "fab_time": iter_block_times.get("fab", 0.0),
                 "stim_time": iter_block_times.get("stim", 0.0),
                 "dens_time": iter_block_times.get("dens", 0.0),
-                "accepted": int(rec.get("aa_accepted", True)),
-                "reject_reason": str(rec.get("aa_reject_reason", "")),
                 "restart": 1 if rec.get("aa_restart") else 0,
                 "restart_reason": str(rec.get("aa_restart", "")),
+                "limited": 1 if rec.get("aa_limited") else 0,
                 "condH": rec.get("condH", 0.0),
                 "aa_hist": rec.get("aa_hist", 0),
                 "memory_mb": rec.get("mem_mb", 0.0),
