@@ -216,29 +216,23 @@ class SolverParams:
     # Relative Tikhonov regularization for Anderson (scaled by average Gram diagonal)
     lam: float = 5e-2
 
-    # Safeguard tolerance (residual improvement threshold)
-    gamma: float = 0.02
-
-    # Enable safeguard with backtracking
-    safeguard: bool = True
-
-    # Maximum backtrack attempts
-    backtrack_max: int = 5
-
     # Fixed-point convergence tolerance
     coupling_tol: float = 1e-6
-
-    # Restart Anderson after k consecutive rejections
-    restart_on_reject_k: int = 5
 
     # Restart on ill-conditioning
     restart_on_cond: float = 1e12
 
-    # Restart on stall (ratio of current residual to best residual)
+    # Restart on stall (ratio of current residual to recent-best residual)
     restart_on_stall: float = 1.1
 
-    # Step size limit factor
+    # Step size limit factor (max step relative to Picard residual)
     step_limit_factor: float = 1.5
+
+    # Window size for recent-best residual tracking
+    restart_stall_window: int = 8
+
+    # Consecutive stall iterations before restart
+    restart_stall_patience: int = 2
 
     # Maximum sub-iterations per timestep
     max_subiters: int = 25
@@ -251,6 +245,14 @@ class SolverParams:
             raise ValueError("Anderson history m must be >= 0.")
         if self.coupling_tol <= 0:
             raise ValueError("coupling_tol must be > 0.")
+        if self.beta <= 0:
+            raise ValueError("beta must be > 0.")
+        if self.step_limit_factor <= 0:
+            raise ValueError("step_limit_factor must be > 0.")
+        if self.restart_stall_window < 2:
+            raise ValueError("restart_stall_window must be >= 2.")
+        if self.restart_stall_patience < 1:
+            raise ValueError("restart_stall_patience must be >= 1.")
 
 
 @dataclass

@@ -1,4 +1,4 @@
-"""MPI-aware Anderson acceleration with safeguard and restart."""
+"""MPI-aware Anderson acceleration with restart and step limiting."""
 
 from __future__ import annotations
 
@@ -12,7 +12,17 @@ from simulation.logger import get_logger
 
 
 class Anderson:
-    """Anderson mixing with backtracking safeguard and history restart."""
+    """Anderson mixing with history restart and step limiting.
+    
+    Implements Type-I Anderson acceleration (Walker-Ni formulation) with:
+    - Tikhonov regularization scaled to residual magnitude
+    - Step limiting to prevent overshooting
+    - History restart on ill-conditioning or stall detection
+    """
+
+    # Numerical constants (internal, not configurable)
+    _TINY: float = 1e-300
+    _EIG_REL: float = 1e-12  # Relative eigen floor for fallback solver
 
     def __init__(
         self,
@@ -20,100 +30,89 @@ class Anderson:
         m: int,
         beta: float,
         lam: float,
-        gamma: float,
-        safeguard: bool,
-        backtrack_max: int,
-        restart_on_reject_k: int,
         restart_on_stall: float,
         restart_on_cond: float,
         step_limit_factor: float,
-        verbose: bool,
+        restart_stall_window: int,
+        restart_stall_patience: int,
     ):
+        """Initialize Anderson accelerator.
+        
+        Args:
+            comm: MPI communicator.
+            m: History depth (number of previous iterates to use).
+            beta: Mixing parameter (relaxation factor).
+            lam: Relative Tikhonov regularization (scaled by Gram diagonal).
+            restart_on_stall: Restart threshold (ratio to recent-best residual).
+            restart_on_cond: Restart threshold for Gram matrix condition number.
+            step_limit_factor: Maximum step size relative to Picard residual.
+            restart_stall_window: Window size for recent-best residual tracking.
+            restart_stall_patience: Consecutive stall iterations before restart.
+        """
         self.comm = comm
         self.m = int(m)
         self.beta = float(beta)
         self.lam = float(lam)
-
-        self.gamma = float(gamma)
-        self.safeguard = bool(safeguard)
-        self.backtrack_max = int(backtrack_max)
-
-        self.restart_on_reject_k = int(restart_on_reject_k)
         self.restart_on_stall = float(restart_on_stall)
         self.restart_on_cond = float(restart_on_cond)
-
         self.step_limit_factor = float(step_limit_factor)
-        self.verbose = bool(verbose)
+        self.restart_stall_window = int(restart_stall_window)
+        self.restart_stall_patience = int(restart_stall_patience)
 
         self.logger = get_logger(self.comm, name="Anderson")
 
+        # History buffers
         self.x_hist: Deque[np.ndarray] = deque(maxlen=self.m + 1)
         self.r_hist: Deque[np.ndarray] = deque(maxlen=self.m + 1)
 
-        self.reject_streak = 0
-        self.best_picard_res = float("inf")
-        self.pending_reset = False
-
-        # Numerical floors (internal constants; not exposed as knobs)
-        self._tiny = 1e-300
-        # Relative eigen floor used only in eigen fallback, scaled by matrix magnitude.
-        self._eig_rel = 1e-12
+        # Restart state
+        self._stall_streak = 0
+        self._recent_res: Deque[float] = deque(maxlen=max(self.restart_stall_window, 2))
+        self._pending_reset = False
 
     def reset(self) -> None:
+        """Clear history and restart state."""
         self.x_hist.clear()
         self.r_hist.clear()
-        self.reject_streak = 0
-        self.best_picard_res = float("inf")
-        self.pending_reset = False
+        self._stall_streak = 0
+        self._recent_res.clear()
+        self._pending_reset = False
 
-    # ------------------------- linear algebra helpers -------------------------
+    # ----------------------------- Linear algebra -----------------------------
 
     def _gdot(self, a: np.ndarray, b: np.ndarray) -> float:
+        """Global dot product across MPI ranks."""
         return float(self.comm.allreduce(float(np.dot(a, b)), op=MPI.SUM))
 
-    def _rel_step(self, x_old: np.ndarray, x_trial: np.ndarray, x_ref: np.ndarray) -> float:
-        """Relative step: ||x_trial-x_old|| / ||x_ref|| in global L2.
-        
-        NOTE: This definition must match FixedPointSolver._proj_step exactly
-        to ensure consistent convergence criteria.
-        """
-        d = x_trial - x_old
+    def _rel_step(self, x_old: np.ndarray, x_new: np.ndarray, x_ref: np.ndarray) -> float:
+        """Relative step: ||x_new - x_old|| / ||x_ref|| in global L2."""
+        d = x_new - x_old
         d2 = self._gdot(d, d)
         r2 = self._gdot(x_ref, x_ref)
-        # Guard: if reference norm is vanishingly small, return absolute norm.
-        if r2 <= 1e-300:
+        if r2 <= self._TINY:
             return float(np.sqrt(d2))
         return float(np.sqrt(d2 / r2))
 
     def _build_gram(self, r_list: Sequence[np.ndarray]) -> np.ndarray:
-        """Build the global Gram matrix H_ij = <r_i, r_j>.
-
-        This avoids stacking residuals into a (m × n) dense matrix (which can
-        double peak memory for large state vectors). We compute the local Gram
-        entries directly and perform a single MPI allreduce on the (m × m) matrix.
-        """
+        """Build global Gram matrix H_ij = <r_i, r_j> via MPI allreduce."""
         p = len(r_list)
         if p == 0:
             return np.zeros((0, 0), dtype=float)
 
         H_loc = np.empty((p, p), dtype=float)
         for i in range(p):
-            ri = r_list[i]
-            # symmetry
             for j in range(i, p):
-                val = float(np.dot(ri, r_list[j]))
+                val = float(np.dot(r_list[i], r_list[j]))
                 H_loc[i, j] = val
                 H_loc[j, i] = val
 
         return self.comm.allreduce(H_loc, op=MPI.SUM)
 
-    def _solve_kkt(self, H: np.ndarray, lam_eff: float) -> tuple[np.ndarray, str]:
-        """Solve min ||alpha||_H s.t. 1^T alpha = 1.
-
-        Returns (alpha, method) where method is one of:
-        - "solve": direct solve succeeded
-        - "eigh": eigen-based fallback used (regularized)
-        - "uniform": degenerate constraint normalization -> uniform weights
+    def _solve_weights(self, H: np.ndarray, lam_eff: float) -> Tuple[np.ndarray, str]:
+        """Solve for optimal mixing weights: min ||alpha||_H s.t. sum(alpha) = 1.
+        
+        Returns:
+            (alpha, method) where method is 'solve', 'eigh', or 'uniform'.
         """
         p = int(H.shape[0])
         if p == 0:
@@ -121,20 +120,17 @@ class Anderson:
 
         Hp = H + lam_eff * np.eye(p)
         one = np.ones(p, dtype=float)
-
         method = "solve"
+
         try:
             y = np.linalg.solve(Hp, one)
         except np.linalg.LinAlgError:
+            # Fallback to eigendecomposition
             method = "eigh"
             w, V = np.linalg.eigh(Hp)
-
-            # Scale-aware eigen floor: avoid absolute floors dominating near convergence.
             wmax = float(np.max(np.abs(w))) if w.size else 0.0
-            scale = max(wmax, abs(lam_eff), self._tiny)
-            w_floor = max(self._eig_rel * scale, self._tiny)
-
-            w = np.clip(w, w_floor, None)
+            scale = max(wmax, abs(lam_eff), self._TINY)
+            w = np.clip(w, self._EIG_REL * scale, None)
             y = V @ (V.T @ one / w)
 
         denom = float(one @ y)
@@ -143,6 +139,7 @@ class Anderson:
         return y / denom, method
 
     def _cond_number(self, H: np.ndarray, lam_eff: float) -> float:
+        """Estimate condition number of regularized Gram matrix."""
         p = int(H.shape[0])
         if p == 0:
             return 1.0
@@ -150,51 +147,33 @@ class Anderson:
         w = np.clip(w, 0.0, None)
         return float(np.max(w) / max(float(np.min(w)), 1e-30))
 
-    # ------------------------------ main update ------------------------------
+    # ----------------------------- Main update --------------------------------
 
     def mix(self, x_old: np.ndarray, x_raw: np.ndarray) -> Tuple[np.ndarray, Dict]:
-        """Return accelerated iterate based on stored history.
-
+        """Compute accelerated iterate from current state and Picard image.
+        
         Args:
-            x_old: Current iterate (scaled global vector).
-            x_raw: Picard image g(x_old) from one block sweep (scaled global vector).
-
+            x_old: Current iterate (scaled, owned DOFs).
+            x_raw: Picard image g(x_old) after one block sweep (scaled, owned DOFs).
+            
         Returns:
             (x_new, info) where x_new is the mixed iterate and info holds diagnostics.
         """
-        if self.pending_reset:
+        if self._pending_reset:
             self.reset()
 
-        # Picard residual at the *current* iterate: r_k = g(x_k) - x_k
+        # Picard residual
         r = x_raw - x_old
 
-        # Store current iterate/residual pair in history (bounded by maxlen)
+        # Update history
         self.x_hist.append(x_old.copy())
         self.r_hist.append(r.copy())
         p = len(self.r_hist)
 
-        info: Dict = {
-            # Report number of *previous* iterates used for mixing (not including current)
-            "aa_hist": int(p - 1),
-            "accepted": True,
-            "reject_reason": "",
-            "restart_reason": "",
-            "alpha_method": None,
-            "condH": None,
-            "r_norm": None,
-            "r_proxy_norm": None,
-            "r2_curr": None,
-            "r2_pred": None,
-            "bt_steps": None,
-            "bt_theta": None,
-        }
-
-        # Build Gram matrix of residuals and a scale-aware regularization.
+        # Build Gram matrix with scale-aware regularization
         H = self._build_gram(list(self.r_hist))
-
-        # If the newest residual is orders of magnitude smaller than older ones,
-        # the history becomes numerically stale and AA may degrade into harmful
-        # averaging. In that case, keep only the newest entry.
+        
+        # Prune stale history if newest residual is orders of magnitude smaller
         diag = np.diag(H)
         r2_last = float(diag[-1]) if diag.size else 0.0
         r2_max = float(np.max(diag)) if diag.size else 0.0
@@ -202,128 +181,83 @@ class Anderson:
             self.x_hist = deque([self.x_hist[-1]], maxlen=self.m + 1)
             self.r_hist = deque([self.r_hist[-1]], maxlen=self.m + 1)
             p = 1
-            info["aa_hist"] = int(p - 1)  # 0 previous iterates after reset
             H = self._build_gram(list(self.r_hist))
-        tr = float(np.trace(H)) if p > 0 else 0.0
-        avg_diag = tr / max(p, 1)
 
-        # IMPORTANT: regularize *relative* to the scale of H, otherwise the
-        # regularization dominates near convergence and AA degenerates into
-        # history-averaging (often slower than plain Picard).
-        lam_eff = self.lam * max(avg_diag, self._tiny)
+        # Scale regularization to Gram matrix magnitude
+        avg_diag = float(np.trace(H)) / max(p, 1)
+        lam_eff = self.lam * max(avg_diag, self._TINY)
 
-        alpha, alpha_method = self._solve_kkt(H, lam_eff)
-        info["alpha_method"] = str(alpha_method)
+        # Solve for mixing weights
+        alpha, alpha_method = self._solve_weights(H, lam_eff)
+        condH = self._cond_number(H, lam_eff)
 
-        # Diagnostics: current residual norm and predicted residual proxy.
+        # Compute residual norm for diagnostics and restart logic
         r_norm = self._rel_step(x_old, x_raw, x_raw)
+        self._recent_res.append(r_norm)
 
-        # Update best residual for stall detection.
-        self.best_picard_res = min(self.best_picard_res, r_norm)
-
-        r2_curr = float(H[-1, -1]) if p > 0 else 0.0
-        r2_curr = max(r2_curr, 0.0)
-
-        r2_pred = float(alpha @ H @ alpha) if p > 0 else 0.0
-        if not np.isfinite(r2_pred):
-            r2_pred = float("inf")
-        else:
-            r2_pred = max(r2_pred, 0.0)
-
-        info["r_norm"] = float(r_norm)
-        info["condH"] = float(self._cond_number(H, lam_eff))
-        info["r2_curr"] = float(r2_curr)
-        info["r2_pred"] = float(r2_pred)
-
-        # Baseline: (possibly damped) Picard iterate.
-        x_pic = x_old + self.beta * r
-
-        # Anderson iterate (Walker–Ni / Type-I form) using under-relaxed images.
-        x_aa = x_pic
+        # Compute accelerated iterate (Walker-Ni Type-I form)
         if p >= 2:
-            y = np.zeros_like(x_old)
+            x_aa = np.zeros_like(x_old)
             for a_i, x_i, r_i in zip(alpha, self.x_hist, self.r_hist):
-                y += float(a_i) * (x_i + self.beta * r_i)
-            x_aa = y
-
-        # Default candidate is AA if available, otherwise Picard.
-        x_cand = x_aa
-
-        # Safeguard (residual-based): try to ensure AA does not catastrophically
-        # worsen the fixed-point residual proxy. If strict acceptance fails, we
-        # backtrack (blend AA toward Picard) up to backtrack_max steps.
-        if self.safeguard and p >= 2 and r2_curr > self._tiny:
-            thresh_strict = ((1.0 - self.gamma) ** 2) * r2_curr
-            thresh_bt = r2_curr  # non-worsening threshold for backtracked blends
-
-            # Cross term <r_k, r_aa> where r_k is newest residual.
-            cross = float(H[-1, :] @ alpha)
-
-            theta = 1.0
-            r2_theta = r2_pred
-            bt_steps = 0
-
-            # Strict acceptance for full AA
-            if (np.isfinite(r2_theta)) and (r2_theta <= thresh_strict):
-                x_cand = x_aa
-                info["accepted"] = True
-                self.reject_streak = 0
-            else:
-                # Backtracking: blend toward Picard until proxy is non-worsening.
-                for bt_steps in range(1, self.backtrack_max + 1):
-                    theta *= 0.5
-                    r2_theta = ((1.0 - theta) ** 2) * r2_curr + 2.0 * theta * (1.0 - theta) * cross                         + (theta ** 2) * r2_pred
-                    if np.isfinite(r2_theta) and (r2_theta <= thresh_bt):
-                        break
-
-                if np.isfinite(r2_theta) and (r2_theta <= thresh_bt):
-                    x_cand = (1.0 - theta) * x_pic + theta * x_aa
-                    info["accepted"] = True
-                    info["bt_steps"] = int(bt_steps)
-                    info["bt_theta"] = float(theta)
-                    self.reject_streak = 0
-                else:
-                    # Fall back to Picard and count a rejection (unless we are
-                    # extremely close to equilibrium, where rejections are noise).
-                    x_cand = x_pic
-                    info["accepted"] = False
-                    info["reject_reason"] = "bt_fail"  # backtrack failed to find acceptable step
-                    info["bt_steps"] = int(self.backtrack_max)
-                    info["bt_theta"] = 0.0
-                    if r_norm <= 1e-12:
-                        self.reject_streak = 0
-                    else:
-                        self.reject_streak += 1
+                x_aa += float(a_i) * (x_i + self.beta * r_i)
         else:
-            # If safeguard is disabled, we do not treat any step as a "rejection".
-            self.reject_streak = 0
+            # Fall back to damped Picard
+            x_aa = x_old + self.beta * r
 
-        # Step limiting relative to the Picard step length (robustness).
-        s = x_cand - x_old
-        s_norm = self._rel_step(x_old, x_old + s, x_raw)
-        info["r_proxy_norm"] = float(s_norm)
+        # Step limiting
+        step = x_aa - x_old
+        step_norm = self._rel_step(x_old, x_aa, x_raw)
+        limited = False
 
-        if s_norm > self.step_limit_factor * max(r_norm, self._tiny):
-            s *= (self.step_limit_factor * max(r_norm, self._tiny)) / max(s_norm, self._tiny)
-            x_cand = x_old + s
-            info["r_proxy_norm"] = float(self._rel_step(x_old, x_cand, x_raw))
+        if step_norm > self.step_limit_factor * max(r_norm, self._TINY):
+            limited = True
+            scale = (self.step_limit_factor * max(r_norm, self._TINY)) / max(step_norm, self._TINY)
+            step *= scale
+            x_aa = x_old + step
+            step_norm = self._rel_step(x_old, x_aa, x_raw)
 
-        # History restart logic (cheap, improves robustness in practice).
-        self._check_restart(float(r_norm), float(info["condH"]), info)
+        # Check for restart conditions
+        restart_reason = self._check_restart(r_norm, condH)
 
-        return x_cand, info
+        info: Dict = {
+            "aa_hist": int(p - 1),
+            "condH": float(condH),
+            "r_norm": float(r_norm),
+            "step_norm": float(step_norm),
+            "alpha_method": str(alpha_method),
+            "limited": limited,
+            "restart_reason": restart_reason,
+        }
 
-    def _check_restart(self, r_norm: float, condH: float, info: Dict) -> None:
-        # Near-equilibrium: do not churn history due to numerical noise.
+        return x_aa, info
+
+    def _check_restart(self, r_norm: float, condH: float) -> str:
+        """Check restart conditions and update internal state.
+        
+        Returns:
+            Restart reason string (empty if no restart triggered).
+        """
+        # Skip restart near convergence
         if r_norm <= 1e-12:
-            return
-        if self.reject_streak >= self.restart_on_reject_k:
-            self.pending_reset = True
-            info["restart_reason"] = f"reject_streak>={self.restart_on_reject_k}"
-        elif r_norm > self.restart_on_stall * self.best_picard_res:
-            # Stall detection: residual exceeded best by the stall factor.
-            self.pending_reset = True
-            info["restart_reason"] = f"stall>(x{self.restart_on_stall:.2f})"
-        elif condH > self.restart_on_cond:
-            self.pending_reset = True
-            info["restart_reason"] = f"illcond~{condH:.1e}"
+            self._stall_streak = 0
+            return ""
+
+        # Restart on ill-conditioning
+        if condH > self.restart_on_cond:
+            self._pending_reset = True
+            self._stall_streak = 0
+            return f"cond={condH:.1e}"
+
+        # Restart on stall (residual not improving relative to recent best)
+        best_recent = min(self._recent_res) if self._recent_res else r_norm
+        if best_recent > 0.0 and r_norm > self.restart_on_stall * best_recent:
+            self._stall_streak += 1
+        else:
+            self._stall_streak = 0
+
+        if self._stall_streak >= self.restart_stall_patience:
+            self._pending_reset = True
+            self._stall_streak = 0
+            return f"stall>{self.restart_on_stall:.2f}x"
+
+        return ""

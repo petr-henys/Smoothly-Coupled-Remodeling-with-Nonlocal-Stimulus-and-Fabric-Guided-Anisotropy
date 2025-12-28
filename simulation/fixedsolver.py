@@ -80,14 +80,11 @@ class FixedPointSolver:
                 m=int(self.cfg.solver.m),
                 beta=float(self.cfg.solver.beta),
                 lam=float(self.cfg.solver.lam),
-                gamma=float(self.cfg.solver.gamma),
-                safeguard=bool(self.cfg.solver.safeguard),
-                backtrack_max=int(self.cfg.solver.backtrack_max),
-                restart_on_reject_k=int(self.cfg.solver.restart_on_reject_k),
                 restart_on_stall=float(self.cfg.solver.restart_on_stall),
                 restart_on_cond=float(self.cfg.solver.restart_on_cond),
                 step_limit_factor=float(self.cfg.solver.step_limit_factor),
-                verbose=False,
+                restart_stall_window=int(self.cfg.solver.restart_stall_window),
+                restart_stall_patience=int(self.cfg.solver.restart_stall_patience),
             )
 
     # ------------------------------- packing --------------------------------
@@ -159,41 +156,22 @@ class FixedPointSolver:
         picard_res: float,
         aa_step_res: float,
         aa_info: Dict[str, Any],
-        mem_mb: float,
         block_stats: List[SweepStats],
     ) -> str:
-        """Format one Picard iteration as multi-line hierarchical output.
-
-        Option D format:
-            Picard 5: res=5.63e-02 | step=2.85e-02 (cond=2.1e+03, m=5, ACC)
-                mech  81it  0.572s │ fab  6it  0.272s │ stim  6it  0.002s │ dens  4it  0.003s
-                └─ aniso: a=[0.56, 1.82]  p2=[0.01, 0.09]
-        """
+        """Format one Picard iteration as two-line output."""
         cond_val = aa_info.get("condH")
         cond_str = f"{cond_val:.1e}" if cond_val is not None else "N/A"
-        acc_str = "ACC" if aa_info.get("accepted", True) else "REJ"
-        rst_str = f", RST:{aa_info['restart_reason']}" if aa_info.get("restart_reason") else ""
+        rst_str = f" RST" if aa_info.get("restart_reason") else ""
+        lim_str = " LIM" if aa_info.get('limited') else ""
 
         # Line 1: Picard header
-        line1 = f"Picard {itr:>2}: res={picard_res:.2e} | step={aa_step_res:.2e} (cond={cond_str}, m={aa_info.get('aa_hist', 0)}, {acc_str}{rst_str})"
+        line1 = f"Picard {itr:>2}: res={picard_res:.2e} | step={aa_step_res:.2e} (cond={cond_str}, m={aa_info.get('aa_hist', 0)}{rst_str}{lim_str})"
 
-        # Line 2: Block performance (compact, aligned)
+        # Line 2: Block performance (compact)
         block_parts = [s.format_short(width=4) for s in block_stats]
         line2 = "    " + " │ ".join(block_parts)
 
-        # Line 3: Physics-specific extras (if any block has them)
-        extras = []
-        for s in block_stats:
-            extra_str = s.format_extra()
-            if extra_str:
-                extras.append(f"{s.label}: {extra_str}")
-        
-        lines = [line1, line2]
-        if extras:
-            line3 = "    └─ " + "  |  ".join(extras)
-            lines.append(line3)
-
-        return "\n".join(lines)
+        return f"{line1}\n{line2}"
 
     def run(
         self,
@@ -271,7 +249,7 @@ class FixedPointSolver:
 
             # Log per-Picard step info (file only via DEBUG level)
             cond_val = aa.get("condH")
-            log_line = self._format_iteration_log(itr, picard_res, aa_step_res, aa, mem_mb, sweep_stats)
+            log_line = self._format_iteration_log(itr, picard_res, aa_step_res, aa, sweep_stats)
             self.logger.debug(log_line)
 
             rec = {
@@ -281,7 +259,6 @@ class FixedPointSolver:
                 "aa_step_res": float(aa_step_res),
                 "aa_hist": int(aa.get("aa_hist", 0)),
                 "aa_accepted": bool(aa.get("accepted", True)),
-                "aa_reject_reason": str(aa.get("reject_reason", "")),
                 "aa_restart": str(aa.get("restart_reason", "")),
                 "condH": float(cond_val) if cond_val is not None else 0.0,
                 "mem_mb": float(mem_mb),
@@ -291,21 +268,11 @@ class FixedPointSolver:
 
             if progress is not None and task_id is not None:
                 info_str = f"res={picard_res:.1e} m={rec['aa_hist']}"
-                if not rec["aa_accepted"]:
-                    # Show rejection reason: bt_fail -> BT (backtrack failed)
-                    rej_reason = aa.get("reject_reason", "")
-                    rej_abbrev = {"bt_fail": "BT"}.get(rej_reason, "?")
-                    info_str += f" REJ:{rej_abbrev}"
+                if aa.get('limited'):
+                    info_str += " LIM"
                 if rec["aa_restart"]:
-                    # Parse restart reason and abbreviate
-                    rst = rec["aa_restart"]
-                    if "reject_streak" in rst:
-                        info_str += " RST:streak"
-                    elif "illcond" in rst:
-                        info_str += " RST:cond"
-                    else:
-                        info_str += " RST"
-                progress.update(task_id, advance=1, info=f"{info_str:<35}")
+                    info_str += " RST"
+                progress.update(task_id, advance=1, info=f"{info_str:<25}")
 
             if picard_res <= tol:
                 converged = True
