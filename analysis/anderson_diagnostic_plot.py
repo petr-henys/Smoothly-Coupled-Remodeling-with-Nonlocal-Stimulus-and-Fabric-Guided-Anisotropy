@@ -19,6 +19,7 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -33,13 +34,13 @@ from matplotlib.cm import ScalarMappable
 from matplotlib.colors import Normalize
 
 from analysis.plot_utils import (
+    FIGSIZE_DOUBLE_COLUMN,
     PLOT_LINEWIDTH,
     PUBLICATION_DPI,
     apply_style,
     save_manuscript_figure,
     setup_axis_style,
 )
-from postprocessor import SimulationLoader
 
 # =============================================================================
 # Configuration
@@ -54,13 +55,30 @@ COLOR_COND = "#3498db"    # Blue - condition restart / conditioning line
 COLOR_LIMITED = "#f39c12" # Orange - step limiting
 COLOR_RESTART = "#9b59b6" # Purple - general restart (for cumulative plot)
 
+# Color for rejected steps
+COLOR_REJECTED = "#c0392b"  # Dark red
+
+# Rejection reason styling (from steps.csv `reject_reason`)
+REJECT_REASON_STYLES: dict[str, tuple[str, str, str]] = {
+    "reject:time_error": ("rej:time", COLOR_LIMITED, "x"),
+    "reject:coupling_max_subiters": ("rej:maxit", COLOR_REJECTED, "X"),
+    "reject:coupling_no_progress": ("rej:stall", COLOR_REJECTED, "P"),
+    "reject:coupling_nonconverged": ("rej:coupling", COLOR_REJECTED, "D"),
+}
+REJECT_FALLBACK = ("rej:unknown", COLOR_REJECTED, "X")
+
 
 # =============================================================================
 # Analysis functions
 # =============================================================================
 
 
-def print_statistics(subiters: pd.DataFrame, config: dict, run_dir: Path) -> None:
+def print_statistics(
+    subiters: pd.DataFrame,
+    config: dict,
+    run_dir: Path,
+    steps_df: pd.DataFrame | None = None,
+) -> None:
     """Print summary statistics to console."""
     solver_cfg = config.get("solver", {})
     m = solver_cfg.get("m", "?")
@@ -113,6 +131,38 @@ def print_statistics(subiters: pd.DataFrame, config: dict, run_dir: Path) -> Non
                 f"max={cond_vals.max():.1e}, median={cond_vals.median():.1e}"
             )
 
+    if steps_df is not None and not steps_df.empty:
+        steps_df = steps_df.copy()
+        if "attempt" not in steps_df.columns:
+            steps_df["attempt"] = 1
+
+        if "accepted" in steps_df.columns:
+            rejected = steps_df[steps_df["accepted"].astype(int) == 0]
+        elif "reject_reason" in steps_df.columns:
+            rr = steps_df["reject_reason"].fillna("").astype(str)
+            rejected = steps_df[rr.str.startswith("reject:")]
+        elif "converged" in steps_df.columns:
+            rejected = steps_df[steps_df["converged"].astype(int) == 0]
+        else:
+            rejected = steps_df.iloc[0:0]
+
+        if not rejected.empty:
+            if "reject_reason" in rejected.columns:
+                counts = (
+                    rejected["reject_reason"]
+                    .fillna("")
+                    .astype(str)
+                    .value_counts()
+                    .to_dict()
+                )
+            else:
+                counts = {"reject:coupling_nonconverged": int(len(rejected))}
+
+            print("Rejected timestep attempts:")
+            for reason, n in sorted(counts.items()):
+                if reason:
+                    print(f"  - {reason}: {n}")
+
 
 def create_global_index(subiters: pd.DataFrame) -> np.ndarray:
     """Create a global iteration index for plotting across all timesteps."""
@@ -164,11 +214,10 @@ def plot_convergence(ax: plt.Axes, subiters: pd.DataFrame, config: dict, steps_d
     sm = ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
     cbar = ax.figure.colorbar(sm, ax=ax, pad=0.02, aspect=30)
-    cbar.set_label("Step", fontsize=7)
-    cbar.ax.tick_params(labelsize=6)
+    cbar.set_label("Step attempt", fontsize=7)
+    cbar.ax.tick_params(labelsize=7)
 
-    setup_axis_style(ax, xlabel="Subiteration", ylabel="Residual", title="", loglog=False)
-    ax.set_title("Convergence", fontsize=8)
+    setup_axis_style(ax, xlabel="Subiteration", ylabel="Residual", title="(a) Convergence", loglog=False)
 
 
 # Markers for restart reasons
@@ -176,9 +225,6 @@ RESTART_MARKERS = {
     "stall": ("v", COLOR_STALL),   # Red triangle down - stall
     "cond": ("d", COLOR_COND),     # Blue diamond - condition
 }
-
-# Color for rejected steps
-COLOR_REJECTED = "#c0392b"  # Dark red
 
 
 def plot_dt_evolution(ax: plt.Axes, steps_df: pd.DataFrame) -> None:
@@ -195,24 +241,35 @@ def plot_dt_evolution(ax: plt.Axes, steps_df: pd.DataFrame) -> None:
     if "accepted" in steps_df.columns:
         rejected_mask = steps_df["accepted"].values == 0
     elif "converged" in steps_df.columns:
-        # Fallback for old data without 'accepted' column
         rejected_mask = steps_df["converged"].values == 0
 
     # Plot accepted steps
     accepted_mask = ~rejected_mask
-    ax.semilogy(step_nums[accepted_mask], dt_vals[accepted_mask], 
-                color="#2ecc71", linewidth=PLOT_LINEWIDTH, alpha=0.8, label="accepted")
+    ax.semilogy(
+        step_nums[accepted_mask],
+        dt_vals[accepted_mask],
+        color="#2ecc71",
+        linewidth=PLOT_LINEWIDTH,
+        alpha=0.8,
+        label="accepted",
+    )
     
     # Highlight rejected steps
     if rejected_mask.any():
-        ax.scatter(step_nums[rejected_mask], dt_vals[rejected_mask],
-                   c=COLOR_REJECTED, s=40, marker="x", zorder=5, 
-                   linewidths=1.5, label="rejected")
+        ax.scatter(
+            step_nums[rejected_mask],
+            dt_vals[rejected_mask],
+            c=COLOR_REJECTED,
+            s=40,
+            marker="x",
+            zorder=5,
+            linewidths=1.5,
+            label="rejected",
+        )
 
     ax.set_xlim(step_nums.min() - 0.5, step_nums.max() + 0.5)
-    ax.legend(loc="upper right", fontsize=6, framealpha=0.8)
-    setup_axis_style(ax, xlabel="Step", ylabel="dt [days]", title="", loglog=False)
-    ax.set_title("Timestep evolution", fontsize=8)
+    ax.legend(loc="upper right", fontsize=6, framealpha=0.8, frameon=False)
+    setup_axis_style(ax, xlabel="Step", ylabel="dt [days]", title="(c) Timestep evolution", loglog=False)
 
 
 def plot_events_unified(ax: plt.Axes, subiters: pd.DataFrame, global_idx: np.ndarray, 
@@ -249,31 +306,42 @@ def plot_events_unified(ax: plt.Axes, subiters: pd.DataFrame, global_idx: np.nda
         for idx in np.where(limited_mask)[0]:
             events.append((idx, "limited", COLOR_LIMITED, "o"))
     
-    # 3. Rejected steps - distinguish between error (rej:err) and divergence (rej:div)
-    if steps_df is not None and "accepted" in steps_df.columns:
-        rejected_df = steps_df[steps_df["accepted"] == 0]
+    # 3. Rejected attempts (all reasons, from steps.csv `reject_reason`)
+    if steps_df is not None and not steps_df.empty:
+        steps_df = steps_df.copy()
+        if "attempt" not in steps_df.columns:
+            steps_df["attempt"] = 1
+
+        if "accepted" in steps_df.columns:
+            rejected_df = steps_df[steps_df["accepted"].astype(int) == 0]
+        elif "reject_reason" in steps_df.columns:
+            rr = steps_df["reject_reason"].fillna("").astype(str)
+            rejected_df = steps_df[rr.str.startswith("reject:")]
+        elif "converged" in steps_df.columns:
+            rejected_df = steps_df[steps_df["converged"].astype(int) == 0]
+        else:
+            rejected_df = steps_df.iloc[0:0]
+
         for _, row in rejected_df.iterrows():
-            step = row["step"]
-            step_mask = subiters["step"].values == step
+            step = int(row.get("step", 0))
+            attempt = int(row.get("attempt", 1))
+            if "attempt" in subiters.columns:
+                step_mask = (subiters["step"].values == step) & (subiters["attempt"].values == attempt)
+            else:
+                step_mask = subiters["step"].values == step
             if not step_mask.any():
                 continue
             last_idx = np.where(step_mask)[0][-1]
-            
-            # Distinguish rejection reason
-            if "converged" in row and row["converged"] == 0:
-                # Rejected due to solver divergence
-                events.append((last_idx, "rej:div", COLOR_REJECTED, "X"))
-            else:
-                # Rejected due to error tolerance
-                events.append((last_idx, "rej:err", COLOR_LIMITED, "x"))
-    elif steps_df is not None and "converged" in steps_df.columns:
-        # Fallback for old data - only divergence info available
-        rejected_steps = set(steps_df.loc[steps_df["converged"] == 0, "step"].values)
-        for step in rejected_steps:
-            step_mask = subiters["step"].values == step
-            if step_mask.any():
-                last_idx = np.where(step_mask)[0][-1]
-                events.append((last_idx, "rej:div", COLOR_REJECTED, "X"))
+
+            code = str(row.get("reject_reason", "")).strip()
+            if not code.startswith("reject:"):
+                if int(row.get("converged", 1)) == 0:
+                    code = "reject:coupling_nonconverged"
+                else:
+                    code = "reject:time_error"
+
+            label, color, marker = REJECT_REASON_STYLES.get(code, REJECT_FALLBACK)
+            events.append((last_idx, label, color, marker))
     
     # Sort events by index
     events.sort(key=lambda x: x[0])
@@ -292,22 +360,32 @@ def plot_events_unified(ax: plt.Axes, subiters: pd.DataFrame, global_idx: np.nda
     plotted_types = set()
     for idx, etype, color, marker in events:
         label = etype if etype not in plotted_types else None
-        ax.scatter([global_idx[idx]], [cum_events[idx]], c=color, s=35, 
-                   marker=marker, zorder=5, edgecolors="white", linewidths=0.5, 
-                   label=label)
+        scatter_kwargs = {
+            "c": color,
+            "s": 35,
+            "marker": marker,
+            "zorder": 5,
+            "linewidths": 0.5,
+            "label": label,
+        }
+        if marker not in {"x", "+", "|", "_"}:
+            scatter_kwargs["edgecolors"] = "white"
+        ax.scatter([global_idx[idx]], [cum_events[idx]], **scatter_kwargs)
         plotted_types.add(etype)
     
     # Count summary
     n_stall = sum(1 for e in events if e[1] == "stall")
     n_cond = sum(1 for e in events if e[1] == "cond")
     n_lim = sum(1 for e in events if e[1] == "limited")
-    n_rej_err = sum(1 for e in events if e[1] == "rej:err")
-    n_rej_div = sum(1 for e in events if e[1] == "rej:div")
+    rej_counts = {}
+    for _, etype, _, _ in events:
+        if etype.startswith("rej:"):
+            rej_counts[etype] = rej_counts.get(etype, 0) + 1
     
     ax.set_xlim(global_idx.min(), global_idx.max())
     ax.set_ylim(0, max(len(events) + 1, 1))
     if events:
-        ax.legend(loc="upper left", fontsize=6, framealpha=0.8, ncol=2)
+        ax.legend(loc="upper left", fontsize=6, framealpha=0.8, ncol=2, frameon=False)
     
     setup_axis_style(ax, xlabel="Global iteration", ylabel="Cumulative events", title="", loglog=False)
     
@@ -316,10 +394,9 @@ def plot_events_unified(ax: plt.Axes, subiters: pd.DataFrame, global_idx: np.nda
     if n_stall: parts.append(f"stall={n_stall}")
     if n_cond: parts.append(f"cond={n_cond}")
     if n_lim: parts.append(f"lim={n_lim}")
-    if n_rej_err: parts.append(f"rej:err={n_rej_err}")
-    if n_rej_div: parts.append(f"rej:div={n_rej_div}")
-    title = "Events" + (f" ({', '.join(parts)})" if parts else "")
-    ax.set_title(title, fontsize=8)
+    for k in sorted(rej_counts.keys()):
+        parts.append(f"{k}={rej_counts[k]}")
+    ax.set_title("(f) Cumulative Events", fontweight="bold")
 
 
 def plot_events(ax: plt.Axes, subiters: pd.DataFrame, global_idx: np.ndarray) -> None:
@@ -392,10 +469,15 @@ def plot_events(ax: plt.Axes, subiters: pd.DataFrame, global_idx: np.ndarray) ->
     ax.set_xlim(global_idx.min(), global_idx.max())
     ax.set_ylim(0, max(len(events) + 1, 1))
     if events:
-        ax.legend(loc="upper left", fontsize=6, framealpha=0.8)
+        ax.legend(loc="upper left", fontsize=6, framealpha=0.8, frameon=False)
     
-    setup_axis_style(ax, xlabel="Global iteration", ylabel="Cumulative events", title="", loglog=False)
-    ax.set_title(f"Events (stall={n_stall}, cond={n_cond}, lim={n_lim})", fontsize=8)
+    setup_axis_style(
+        ax,
+        xlabel="Global iteration",
+        ylabel="Cumulative events",
+        title=f"Events (stall={n_stall}, cond={n_cond}, lim={n_lim})",
+        loglog=False,
+    )
 
 
 def plot_restarts(ax: plt.Axes, subiters: pd.DataFrame, global_idx: np.ndarray) -> None:
@@ -436,17 +518,22 @@ def plot_restarts(ax: plt.Axes, subiters: pd.DataFrame, global_idx: np.ndarray) 
         unmatched = restart_mask & ~matched
         if unmatched.any():
             ax.scatter(global_idx[unmatched], cumulative[unmatched],
-                       c="#9b59b6", s=20, marker="o", zorder=5, 
+                       c=COLOR_RESTART, s=20, marker="o", zorder=5, 
                        edgecolors="white", linewidths=0.5, label="other")
-        ax.legend(loc="upper left", fontsize=6, framealpha=0.8)
+        ax.legend(loc="upper left", fontsize=6, framealpha=0.8, frameon=False)
     elif restart_mask.any():
         ax.scatter(global_idx[restart_mask], cumulative[restart_mask],
                    c=COLOR_RESTART, s=20, zorder=5, edgecolors="white", linewidths=0.5)
 
     ax.set_xlim(global_idx.min(), global_idx.max())
     ax.set_ylim(0, max(total + 1, 1))
-    setup_axis_style(ax, xlabel="Global iteration", ylabel="Cumulative", title="", loglog=False)
-    ax.set_title(f"Restarts (total={total})", fontsize=8)
+    setup_axis_style(
+        ax,
+        xlabel="Global iteration",
+        ylabel="Cumulative",
+        title=f"Restarts (total={total})",
+        loglog=False,
+    )
 
 
 def plot_conditioning(ax: plt.Axes, subiters: pd.DataFrame, global_idx: np.ndarray, config: dict) -> None:
@@ -466,9 +553,8 @@ def plot_conditioning(ax: plt.Axes, subiters: pd.DataFrame, global_idx: np.ndarr
     ax.axhline(cond_threshold, color="r", linestyle="--", linewidth=1.0, alpha=0.7, 
                label=f"restart κ={cond_threshold:.0e}")
 
-    ax.legend(loc="upper right", fontsize=6, framealpha=0.8)
-    setup_axis_style(ax, xlabel="Global iteration", ylabel="cond(H)", title="", loglog=False)
-    ax.set_title("Gram conditioning", fontsize=8)
+    setup_axis_style(ax, xlabel="Global iteration", ylabel="cond(H)", title="(e) Gram conditioning", loglog=False)
+    ax.legend(loc="upper right", fontsize=6, framealpha=0.8, frameon=False)
 
 
 def plot_history_size(ax: plt.Axes, subiters: pd.DataFrame, global_idx: np.ndarray, config: dict) -> None:
@@ -487,11 +573,10 @@ def plot_history_size(ax: plt.Axes, subiters: pd.DataFrame, global_idx: np.ndarr
     m = solver_cfg.get("m", None)
     if m is not None:
         ax.axhline(m, color="k", linestyle="--", linewidth=0.8, alpha=0.5, label=f"m={m}")
-        ax.legend(loc="upper right", fontsize=6, framealpha=0.8)
+        ax.legend(loc="upper right", fontsize=6, framealpha=0.8, frameon=False)
 
     ax.set_ylim(0, max(aa_hist.max() + 1, (m or 0) + 1))
-    setup_axis_style(ax, xlabel="Global iteration", ylabel="History", title="", loglog=False)
-    ax.set_title("AA history size", fontsize=8)
+    setup_axis_style(ax, xlabel="Global iteration", ylabel="History", title="(d) AA history size", loglog=False)
 
 
 def plot_residual_timeline(
@@ -518,8 +603,14 @@ def plot_residual_timeline(
 
     # Mark step boundaries and optionally show wRMS
     step_arr = subiters["step"].values
-    step_changes = np.where(np.diff(step_arr) != 0)[0] + 1
-    step_changes = np.concatenate([[0], step_changes])  # Include first
+    if "attempt" in subiters.columns:
+        attempt_arr = subiters["attempt"].values
+        changes = (np.diff(step_arr) != 0) | (np.diff(attempt_arr) != 0)
+    else:
+        attempt_arr = None
+        changes = np.diff(step_arr) != 0
+    step_changes = np.where(changes)[0] + 1
+    step_changes = np.concatenate([[0], step_changes])
     
     # Plot wRMS error from steps data as background bars
     if steps is not None and "error_norm" in steps.columns and len(step_changes) > 0:
@@ -529,7 +620,11 @@ def plot_residual_timeline(
             step_num = step_arr[sc_start]
             
             # Find matching step in steps DataFrame
-            step_row = steps[steps["step"] == step_num]
+            if attempt_arr is not None and "attempt" in steps.columns:
+                attempt_num = int(attempt_arr[sc_start])
+                step_row = steps[(steps["step"] == step_num) & (steps["attempt"] == attempt_num)]
+            else:
+                step_row = steps[steps["step"] == step_num]
             if len(step_row) > 0:
                 err = step_row["error_norm"].values[0]
                 if err > 0 and np.isfinite(err):
@@ -549,9 +644,8 @@ def plot_residual_timeline(
     ax.axhline(coupling_tol, color="g", linestyle="--", linewidth=1.0, alpha=0.7,
                label=f"tol={coupling_tol:.0e}")
     
-    ax.legend(loc="upper right", fontsize=6, framealpha=0.8)
-    setup_axis_style(ax, xlabel="Global iteration", ylabel="Residual", title="", loglog=False)
-    ax.set_title("Residual timeline", fontsize=8)
+    setup_axis_style(ax, xlabel="Global iteration", ylabel="Residual", title="(b) Residual timeline", loglog=False)
+    ax.legend(loc="upper right", fontsize=6, framealpha=0.8, frameon=False)
 
 
 # =============================================================================
@@ -565,24 +659,33 @@ def main() -> None:
     if not run_dir.exists():
         raise FileNotFoundError(f"Run directory not found: {run_dir}")
 
-    from mpi4py import MPI
+    config_path = run_dir / "config.json"
+    if not config_path.exists():
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+    with open(config_path, "r", encoding="utf-8") as f:
+        config = json.load(f)
 
-    loader = SimulationLoader(run_dir, MPI.COMM_SELF)
-    config = loader.get_config()
-    subiters = loader.get_subiterations_metrics()
-    steps = loader.get_steps_metrics()
+    subiters_path = run_dir / "subiterations.csv"
+    if not subiters_path.exists():
+        raise FileNotFoundError(f"Subiterations metrics not found: {subiters_path}")
+    subiters = pd.read_csv(subiters_path)
+
+    steps_path = run_dir / "steps.csv"
+    if not steps_path.exists():
+        raise FileNotFoundError(f"Steps metrics not found: {steps_path}")
+    steps = pd.read_csv(steps_path)
 
     if subiters.empty:
         raise RuntimeError("No subiterations data found.")
 
-    print_statistics(subiters, config, run_dir)
+    print_statistics(subiters, config, run_dir, steps_df=steps)
 
     # Create global iteration index
     global_idx = create_global_index(subiters)
 
     # Create figure with 6 subplots (2x3 grid)
     apply_style()
-    fig, axes = plt.subplots(2, 3, figsize=(10, 5.5))
+    fig, axes = plt.subplots(2, 3, figsize=FIGSIZE_DOUBLE_COLUMN)
 
     # Row 1: Convergence + Residual timeline + dt evolution
     plot_convergence(axes[0, 0], subiters, config, steps)

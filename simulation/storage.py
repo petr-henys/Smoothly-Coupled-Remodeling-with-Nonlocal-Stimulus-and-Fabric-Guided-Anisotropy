@@ -87,6 +87,7 @@ class MetricsStorage:
     # Column definitions (order matters for CSV)
     STEPS_COLUMNS = [
         "step", "attempt", "time_days", "dt_days", "num_subiters", "converged", "accepted",
+        "reject_reason",
         "error_norm", "mech_iters", "fab_iters", "stim_iters", "dens_iters",
         "mech_time", "fab_time", "stim_time", "dens_time",
         "max_condH", "aa_rejections", "aa_restarts", "memory_mb",
@@ -145,6 +146,7 @@ class MetricsStorage:
         dt_days: float,
         converged: bool,
         accepted: bool,
+        reject_reason: str,
         error_norm: float,
         subiter_metrics: List[Dict[str, Any]],
         memory_mb: float = 0.0,
@@ -198,6 +200,7 @@ class MetricsStorage:
             "num_subiters": len(subiter_metrics),
             "converged": int(converged),
             "accepted": int(accepted),
+            "reject_reason": str(reject_reason),
             "error_norm": error_norm,
             "mech_iters": block_iters.get("mech", 0),
             "fab_iters": block_iters.get("fab", 0),

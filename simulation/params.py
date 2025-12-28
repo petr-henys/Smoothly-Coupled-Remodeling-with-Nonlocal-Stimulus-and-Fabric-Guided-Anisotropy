@@ -237,6 +237,14 @@ class SolverParams:
     # Maximum sub-iterations per timestep
     max_subiters: int = 25
 
+    # --- Optional early-abort on stalled coupling (useful with adaptive dt) ---
+    # Abort fixed-point iterations early if the Picard residual shows insufficient
+    # improvement over a sliding window, while still far above coupling_tol.
+    outer_stall_window: int = 8
+    outer_stall_min_rel_drop: float = 0.05
+    outer_stall_patience: int = 2
+
+
     def validate(self) -> None:
         """Validate solver parameter constraints."""
         if self.accel_type not in ("anderson", "picard"):
@@ -253,6 +261,12 @@ class SolverParams:
             raise ValueError("restart_stall_window must be >= 2.")
         if self.restart_stall_patience < 1:
             raise ValueError("restart_stall_patience must be >= 1.")
+        if self.outer_stall_window < 2:
+            raise ValueError("outer_stall_window must be >= 2.")
+        if self.outer_stall_min_rel_drop < 0 or self.outer_stall_min_rel_drop >= 1.0:
+            raise ValueError("outer_stall_min_rel_drop must be in [0, 1).")
+        if self.outer_stall_patience < 1:
+            raise ValueError("outer_stall_patience must be >= 1.")
 
 
 @dataclass

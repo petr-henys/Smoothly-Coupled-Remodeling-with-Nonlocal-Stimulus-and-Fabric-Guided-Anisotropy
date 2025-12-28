@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 from typing import Any, Dict, List, Sequence, Tuple
 import resource
@@ -39,6 +40,7 @@ class FixedPointSolver:
         self.logger = get_logger(self.comm, name="FixedPoint", log_file=self.cfg.log_file)
 
         self.subiter_metrics: List[Dict[str, Any]] = []
+        self.stop_reason: str = ""
 
         # Collect coupled state fields (deduplicate by object identity, preserve order)
         fields: List[fem.Function] = []
@@ -194,7 +196,15 @@ class FixedPointSolver:
         tol = float(self.cfg.solver.coupling_tol)
         max_subiters = int(self.cfg.solver.max_subiters)
 
+        outer_stall_window = int(self.cfg.solver.outer_stall_window)
+        outer_stall_min_rel_drop = float(self.cfg.solver.outer_stall_min_rel_drop)
+        outer_stall_patience = int(self.cfg.solver.outer_stall_patience)
+        res_hist = deque(maxlen=outer_stall_window)
+        stall_windows = 0
+        stop_reason = ""
+
         self.subiter_metrics = []
+        self.stop_reason = ""
 
         self._scales = None
         if self.anderson is not None:
@@ -227,6 +237,7 @@ class FixedPointSolver:
 
             # Picard residual: ||x_raw - x_old|| / ||x_raw|| (scaled global L2)
             picard_res = self._proj_step(x_old_s, x_raw_s, x_raw_s)
+            res_hist.append(float(picard_res))
 
             # If converged, do not run Anderson (prevents end-of-step REJ/RST churn).
             if picard_res <= tol:
@@ -290,6 +301,40 @@ class FixedPointSolver:
             if picard_res <= tol:
                 converged = True
                 break
+            if stop_reason == "" and len(res_hist) == outer_stall_window:
+                r0 = float(res_hist[0])
+                r_best = float(min(res_hist))
+                if (
+                    np.isfinite(r0)
+                    and np.isfinite(r_best)
+                    and r0 > 0.0
+                ):
+                    rel_drop = (r0 - r_best) / r0
+                    if rel_drop < outer_stall_min_rel_drop:
+                        stall_windows += 1
+                    else:
+                        stall_windows = 0
+
+                    if stall_windows >= outer_stall_patience:
+                        stop_reason = "no_progress"
+                        self.subiter_metrics[-1]["fp_stop_reason"] = stop_reason
+                        self.logger.warning(
+                            f"Early abort fixed-point at itr={itr}: no progress "
+                            f"(rel_drop={rel_drop:.2%} < {outer_stall_min_rel_drop:.2%} "
+                            f"for {outer_stall_patience} windows of {outer_stall_window} iters)."
+                        )
+                        break
+                else:
+                    stall_windows = 0
+
+        if converged:
+            stop_reason = "converged"
+        elif stop_reason == "" and max_subiters > 0:
+            stop_reason = "max_subiters"
+
+        self.stop_reason = stop_reason
+        if self.subiter_metrics:
+            self.subiter_metrics[-1].setdefault("fp_stop_reason", stop_reason)
 
         # Summary stats for the time step using StepSummary
         summary = StepSummary.from_iteration_records(self.subiter_metrics)

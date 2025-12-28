@@ -283,7 +283,7 @@ class TestTimeIntegrator:
         accepted, dt_new, reason = ti.suggest_dt(1.0, converged=False, error_norm=0.0)
         assert not accepted
         assert dt_new < 1.0
-        assert reason == "diverged"
+        assert reason.startswith("reject:coupling")
 
     def test_suggest_dt_large_error(self, ti_setup):
         """Test DT reduction on large error."""
@@ -698,7 +698,7 @@ class TestRobustness:
         assert not accepted
         assert dt_new < dt
         assert dt_new >= ti.dt_min
-        assert "diverged" in reason
+        assert reason.startswith("reject:coupling")
 
     def test_reset_history_clears_state(self, adaptive_integrator):
         """reset_history should clear all predictor state."""
@@ -1018,4 +1018,3 @@ class TestAdaptiveStepEfficiency:
         # At least 3 out of 4 scenarios should favor adaptive
         wins = sum(1 for r in results if r[4] > 1.0)
         assert wins >= 2, f"Adaptive should win at least 2/4 scenarios, got {wins}"
-

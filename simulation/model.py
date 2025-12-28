@@ -241,6 +241,7 @@ class Remodeller:
             step_index=step_index,
             sim_time=sim_time,
         )
+        fp_stop_reason = str(getattr(self.fixedsolver, "stop_reason", "") or "")
 
         error_norm = self.integrator.compute_wrms_error(x_pred)
         subiter_metrics = list(self.fixedsolver.subiter_metrics)
@@ -249,6 +250,7 @@ class Remodeller:
         return error_norm, {
             "converged": converged,
             "iters": used_subiters,
+            "fp_stop_reason": fp_stop_reason,
             "subiter_metrics": subiter_metrics,
         }
 
@@ -280,11 +282,15 @@ class Remodeller:
 
                 if self.cfg.time.adaptive_dt:
                     accepted, next_dt, reason = self.integrator.suggest_dt(
-                        dt, metrics["converged"], error
+                        dt,
+                        metrics["converged"],
+                        error,
+                        coupling_reason=str(metrics.get("fp_stop_reason", "") or ""),
                     )
                 else:
                     accepted = True
                     next_dt = dt
+                    reason = "accepted"
 
                 # Write metrics to CSV for ALL steps (accepted and rejected)
                 self.storage.metrics.write_step(
@@ -294,6 +300,7 @@ class Remodeller:
                     dt_days=dt,
                     converged=metrics["converged"],
                     accepted=accepted,
+                    reject_reason=str(reason),
                     error_norm=error,
                     subiter_metrics=metrics.get("subiter_metrics", []),
                 )

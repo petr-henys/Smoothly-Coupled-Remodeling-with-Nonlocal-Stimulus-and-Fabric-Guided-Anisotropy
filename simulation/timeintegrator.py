@@ -170,7 +170,13 @@ class TimeIntegrator:
         return float(max(self.dt_min, min(self.dt_max, dt)))
 
 
-    def suggest_dt(self, dt: float, converged: bool, error_norm: float) -> Tuple[bool, float, str]:
+    def suggest_dt(
+        self,
+        dt: float,
+        converged: bool,
+        error_norm: float,
+        coupling_reason: str = "",
+    ) -> Tuple[bool, float, str]:
         """PI controller: returns (accepted, next_dt, reason).
 
         Notes:
@@ -182,14 +188,21 @@ class TimeIntegrator:
 
         # If the coupled solve did not converge, reject and cut quickly.
         if not converged:
+            cr = str(coupling_reason or "").strip()
+            if cr == "max_subiters":
+                reason = "reject:coupling_max_subiters"
+            elif cr == "no_progress":
+                reason = "reject:coupling_no_progress"
+            else:
+                reason = "reject:coupling_nonconverged"
             # Use the configured minimum shrink factor (often 0.1) rather than a fixed 0.5.
             next_dt = self._clamp_dt(dt * float(self.shrink_factor))
             # Reset PI memory to a neutral value; caller may also reset AB history.
             self.error_prev = 1.0
             self.logger.debug(
-                f"dt={dt:.3e} -> {next_dt:.3e} | REJECT (diverged) | err={error_norm:.2e}"
+                f"dt={dt:.3e} -> {next_dt:.3e} | REJECT ({reason}) | err={error_norm:.2e}"
             )
-            return False, next_dt, "diverged"
+            return False, next_dt, reason
 
         # First ever accepted step: do not roll back state, but we can already size the *next* dt.
         if self.step_count == 0:
@@ -226,7 +239,7 @@ class TimeIntegrator:
             self.logger.info(
                 f"dt={dt:.3e} -> {next_dt:.3e} | REJECT | err={safe_error:.2e} > 1.0 | factor={factor:.3f}"
             )
-            return False, next_dt, f"error {safe_error:.2f} > 1.0"
+            return False, next_dt, "reject:time_error"
 
         # Acceptance (Error OK)
         safe_error = max(1e-10, float(error_norm))
