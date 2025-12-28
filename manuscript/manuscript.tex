@@ -61,7 +61,7 @@
     country={Czechia}}
 %% Abstract
 \begin{abstract}
-We propose a four-field bone-remodeling formulation that co-evolves displacement $\mathbf{u}$, apparent density $\rho$, log-fabric $\mathbf{L} = \ln \mathbf{A}$, and a nonlocal mechanotransductive stimulus $S$. The elastic response follows a fabric-guided orthotropic law, where stiffness tensors are constructed from the spectral decomposition of $\mathbf{L}$. A cycle-weighted strain-energy driver is filtered by a diffusion--reaction stimulus with a smooth saturating (lazy-zone) mechanostat; density evolves via bounded formation/resorption kinetics with diffusive regularization; and log-fabric relaxes toward a trace-free logarithmic target constructed from cycle-weighted \emph{deviatoric} stress outer-products, with spatial diffusion and activity gating. Time integration is fully implicit Backward--Euler; space is discretized by conforming $H^1$ finite elements in a unified weak-form notation. Nonlinear coupling is solved by a partitioned block Gauss--Seidel sweep (mechanics $\rightarrow$ fabric $\rightarrow$ stimulus $\rightarrow$ density) wrapped in Type-II Anderson acceleration with Tikhonov regularization and residual safeguards. A single smoothing policy used across clamping and normalizations ensures differentiability and preserves coercivity, while the solver architecture yields stable, mesh-robust convergence without monolithic Jacobians.
+We propose a four-field bone-remodeling formulation that co-evolves displacement $\mathbf{u}$, apparent density $\rho$, log-fabric $\mathbf{L} = \ln \mathbf{A}$, and a nonlocal mechanotransductive stimulus $S$. The elastic response follows a fabric-guided orthotropic law, where stiffness tensors are constructed from the spectral decomposition of $\mathbf{L}$. A cycle-weighted strain-energy driver is filtered by a diffusion--reaction stimulus with a smooth saturating (lazy-zone) mechanostat; density evolves via bounded formation/resorption kinetics with diffusive regularization; and log-fabric relaxes toward a trace-free logarithmic target constructed from cycle-weighted \emph{deviatoric} stress outer-products, with spatial diffusion and activity gating. Time integration is fully implicit Backward--Euler; space is discretized by conforming $H^1$ finite elements in a unified weak-form notation. Nonlinear coupling is solved by a partitioned block Gauss--Seidel sweep (mechanics $\rightarrow$ fabric $\rightarrow$ stimulus $\rightarrow$ density) wrapped in a Walker--Ni (Type-I) Anderson accelerator with Tikhonov regularization, step limiting, and adaptive history restarts. A single smoothing policy used across clamping and normalizations ensures differentiability and preserves coercivity, while the solver architecture yields stable, mesh-robust convergence without monolithic Jacobians.
 \end{abstract}
 
 %% Graphical abstract
@@ -88,7 +88,7 @@ Second, accurate mechanics--morphology feedback requires density $\rho$ and anis
 
 Third, the remodeling stimulus that drives BMU-scale biology is not localized to a voxel or finite element. Experiments and theory both indicate spatial nonlocality through osteocytic/vascular networks; modern formulations therefore promote the stimulus to a \emph{field} obeying a diffusion--reaction equation, which systematically removes unphysical checkerboarding and captures healing or damage--remodeling interactions \cite{Giorgio2019_MechanicallyDrivenBiological, Addessi2024_BoneRemodelingApproach, Kobler2024_GradientEnhancedBone}. Recent work also explores multi-stimulus energetics (e.g., shear vs.\ normal components) in continuum settings, reinforcing the need to track multiple evolving material parameters beyond a single density variable \cite{Branecka2024_BoneRemodelingModel}.
 
-From a numerical standpoint, loosely coupled or explicit updates are in general more fragile than monolithic schemes: density-only algorithms are prone to mesh-dependent checkerboards and near-field oscillations near load singularities \cite{Jacobs1995_NumericalInstabilitiesBone, Kobler2024_GradientEnhancedBone}. We therefore retain a partitioned block Gauss--Seidel fixed point and wrap it in Anderson acceleration with Tikhonov regularization and safeguards; see the solver description in \S\ref{sec:fp-aa}. This combination substantially mitigates splitting artifacts and yields robust, quasi mesh-independent convergence in our experiments \cite{Both2019_AndersonAcceleratedFixed, Walker2011_AndersonAcceleration, Fang2009_TwoClassesMultisecant} while remaining minimally invasive on top of standard FE components.
+From a numerical standpoint, loosely coupled or explicit updates are in general more fragile than monolithic schemes: density-only algorithms are prone to mesh-dependent checkerboards and near-field oscillations near load singularities \cite{Jacobs1995_NumericalInstabilitiesBone, Kobler2024_GradientEnhancedBone}. We therefore retain a partitioned block Gauss--Seidel fixed point and wrap it in Anderson acceleration with scaled Tikhonov regularization, step limiting, and adaptive history restarts; see the solver description in \S\ref{sec:fp-aa}. This combination substantially mitigates splitting artifacts and yields robust, quasi mesh-independent convergence in our experiments \cite{Both2019_AndersonAcceleratedFixed, Walker2011_AndersonAcceleration, Fang2009_TwoClassesMultisecant} while remaining minimally invasive on top of standard FE components.
 
 \section*{Comparison with related models and novelty}
 \label{sec:related-novelty}
@@ -466,12 +466,11 @@ We describe the nonlinear solver used to obtain $(\mathbf{u}^n,S^n,\rho^n,\mathb
 \mathcal{X} \;:=\; T\times Q\times Q,\qquad
 \mathbf{x} \;=\; (\mathbf{L},S,\rho) \in \mathcal{X},
 \end{equation*}
-with the product inner product
-\begin{equation}\label{eq:product-norm}
-\langle \mathbf{x},\mathbf{y}\rangle_{\mathcal{X}} \;=\;
-\alpha_L\,(\mathbf{L},\mathbf{Q}) \;+\; \alpha_S\,(S,q) \;+\; \alpha_\rho\,(\rho,p),
+where the mechanics field $\mathbf{u}$ is treated as a dependent variable $\mathbf{u}(\rho,\mathbf{L})$ determined by the equilibrium equations. Convergence is monitored in a discrete RMS-per-DOF norm of a \emph{scaled} concatenation of $(\mathbf{L},S,\rho)$. Writing the global coefficient vector of each field as $x_i\in\mathbb{R}^{N_i}$ (including tensor components) and denoting $\mathrm{RMS}(x_i):=\|x_i\|_2/\sqrt{N_i}$, we set per-field scales once per timestep from the first Gauss--Seidel sweep,
+\begin{equation}\label{eq:fp-scales}
+s_i \;:=\; \max\!\big(\mathrm{RMS}(x^{(0)}_i),\ \mathrm{RMS}(x_{\mathrm{raw},i}^{(1)}),\ \varepsilon_{\mathrm{tiny}}\big),
 \end{equation}
-for $\mathbf{y}=(\mathbf{Q},q,p)$ and positive weights $\alpha_\bullet$. The mechanics field $\mathbf{u}$ is treated as a dependent variable $\mathbf{u}(\rho,\mathbf{L})$ determined by the equilibrium equations. We monitor an RMS-per-DOF global $L^2$ norm on a scaled concatenation of $(\mathbf{L},S,\rho)$ (per-field scaling set from the first sweep); scalar/tensor blocks have no Dirichlet-constrained DOFs, so the “projection” is trivial.
+and work with the scaled vector $\widetilde{x}_i := x_i/(s_i\sqrt{N_i})$. All norms below are Euclidean norms of the stacked scaled vector $\widetilde{\mathbf{x}}=(\widetilde{\mathbf L},\widetilde S,\widetilde\rho)$, computed as global dot products reduced across MPI ranks. (The blocks $S$, $\rho$, $\mathbf L$ have no Dirichlet constraints, so no additional projection is required.)
 
 \paragraph{Block map.}
 We define the fixed-point iteration in terms of the mechanical drivers $\psi_{\mathrm{day}}$ (scalar stimulus driver) and $\bar{\mathbf{Q}}$ (cycle-averaged deviatoric-stress outer-product). Given the state $(\rho, \mathbf{L})$, the mechanics driver $\mathsf{U}$ determines equilibrium displacements for each loading case and generates
@@ -497,79 +496,68 @@ The fixed point at $t^n$ solves
 \end{equation}
 
 \paragraph{Block Gauss--Seidel iteration.}
-Given the state $\mathbf{x}^{(m)}=(\mathbf{L}^{(m)},S^{(m)},\rho^{(m)})$, we first run the mechanics driver to evaluate the drivers $\psi=\psi_{\mathrm{day}}(\rho^{(m)},\mathbf{L}^{(m)})$ and $\bar{\mathbf{Q}}=\bar{\mathbf{Q}}(\rho^{(m)},\mathbf{L}^{(m)})$. Then we perform the updates:
+Given the state $\mathbf{x}^{(k)}=(\mathbf{L}^{(k)},S^{(k)},\rho^{(k)})$, we first run the mechanics driver to evaluate the drivers $\psi=\psi_{\mathrm{day}}(\rho^{(k)},\mathbf{L}^{(k)})$ and $\bar{\mathbf{Q}}=\bar{\mathbf{Q}}(\rho^{(k)},\mathbf{L}^{(k)})$. Then we perform the updates:
 \begin{equation}\label{eq:gs-sweep}
 \begin{aligned}
-\mathbf{L}^{(m+1)} &:= \mathsf{L}\big(\bar{\mathbf{Q}}\big),\\
-S^{(m+1)} &:= \mathsf{S}\big(\psi,\rho^{(m)}\big),\\
-\rho^{(m+1)} &:= \mathsf{R}\big(S^{(m+1)}\big).
+\mathbf{L}^{(k+1)} &:= \mathsf{L}\big(\bar{\mathbf{Q}}\big),\\
+S^{(k+1)} &:= \mathsf{S}\big(\psi,\rho^{(k)}\big),\\
+\rho^{(k+1)} &:= \mathsf{R}\big(S^{(k+1)}\big).
 \end{aligned}
 \end{equation}
-The sweep \eqref{eq:gs-sweep} defines the raw update $x_{\mathrm{raw}}^{(m+1)}:=\mathcal{G}(\mathbf{x}^{(m)})$. No external scalar damping $\omega_m$ is used; instead, damping/backtracking are handled inside the accelerator (see below).
+The sweep \eqref{eq:gs-sweep} defines the raw update $x_{\mathrm{raw}}^{(k+1)}:=\mathcal{G}(\mathbf{x}^{(k)})$ and the Picard step $r^{(k+1)}:=x_{\mathrm{raw}}^{(k+1)}-\mathbf{x}^{(k)}$. We monitor the scaled relative Picard residual
+\begin{equation}\label{eq:fp-picard-res}
+r_{\mathrm{Pic}}^{(k+1)} \;:=\; \frac{\|r^{(k+1)}\|}{\|x_{\mathrm{raw}}^{(k+1)}\|},
+\end{equation}
+with the convention that the denominator is clipped to avoid division by~$0$.
 
-\paragraph{Anderson acceleration (Type~II with $\sum\alpha=1$).}
-We use a global, MPI-aware Type~II Anderson (Pulay) accelerator built on \emph{residual} snapshots
-\(
-r^{(j)}:=x_{\mathrm{raw}}^{(j)}-\mathbf{x}^{(j-1)}
-\)
-and corresponding states $\mathbf{x}^{(j-1)}$. With window length $p$ (capped by $m+1$), form the residual stack $R=[r^{(m-p+2)},\dots,r^{(m+1)}]^\top$ and the \emph{global} Gram matrix
+\paragraph{Anderson acceleration (Walker--Ni / Type~I).}
+If $r_{\mathrm{Pic}}^{(k+1)}$ is above the stopping tolerance, we apply an MPI-aware Anderson accelerator based on residual snapshots $r^{(j)}$ and past iterates $\mathbf{x}^{(j-1)}$. With memory depth $m$ we keep at most $m+1$ residual snapshots; let $p=\min(m+1,\text{available history})$ be the active window length. Form the Gram matrix
 \begin{equation}\label{eq:aa-gram}
-H \;:=\; R\,R^\top \quad(\text{reduced across MPI ranks}),
+H_{ij} \;:=\; \langle r^{(i)}, r^{(j)}\rangle \quad (\text{global dot product over MPI ranks}),
 \end{equation}
-then solve the equality--constrained, Tikhonov-regularized system for the weights $\boldsymbol{\alpha}\in\mathbb{R}^p$
-\begin{equation}\label{eq:kkt}
-\begin{bmatrix} H + \lambda_{\mathrm{AA}} I & \mathbf{1} \\ \mathbf{1}^\top & 0 \end{bmatrix}
-\begin{bmatrix} \boldsymbol{\alpha} \\ \eta \end{bmatrix}
-=
-\begin{bmatrix} \mathbf{0} \\ 1 \end{bmatrix},\qquad
-\lambda_{\mathrm{AA}} \;=\; \lambda\,\max\!\left(\frac{\mathrm{tr}(H)}{p},\,1\right).
+and define the scaled Tikhonov regularization
+\begin{equation}\label{eq:aa-reg}
+\lambda_{\mathrm{eff}} \;=\; \lambda\,\max\!\left(\frac{\mathrm{tr}(H)}{p},\,\varepsilon_{\mathrm{tiny}}\right).
 \end{equation}
-If $p\ge 2$, we apply a cheap residual-energy safeguard using the Gram matrix: with $r^2_{\mathrm{curr}}:=H_{p,p}$ and $r^2_{\mathrm{pred}}:=\boldsymbol{\alpha}^\top H\,\boldsymbol{\alpha}$, we reject the accelerated combination if $r^2_{\mathrm{pred}}>(1-\gamma)^2\,r^2_{\mathrm{curr}}$ (or if $r^2_{\mathrm{pred}}$ is non-finite) and instead take the (possibly damped) Picard step $\mathbf{x}^{(m)}+\beta\,r^{(m+1)}$. Otherwise (or if $p<2$), the accelerated candidate is assembled as
+The mixing weights $\boldsymbol{\alpha}\in\mathbb{R}^p$ solve the constrained quadratic minimization
+\begin{equation}\label{eq:aa-weights}
+\boldsymbol{\alpha} \;\in\; \arg\min_{\boldsymbol{\alpha}\in\mathbb{R}^p}\ \boldsymbol{\alpha}^\top (H+\lambda_{\mathrm{eff}}I)\,\boldsymbol{\alpha}
+\quad\text{s.t.}\quad \mathbf{1}^\top\boldsymbol{\alpha}=1,
+\end{equation}
+implemented by solving $(H+\lambda_{\mathrm{eff}}I)\,y=\mathbf{1}$ and normalizing $\boldsymbol{\alpha}=y/(\mathbf{1}^\top y)$ (with robust fallbacks if the solve or normalization fails). The accelerated candidate is then assembled as
 \begin{equation}\label{eq:aa-update}
-\mathbf{y} \;=\; \sum_{j=1}^{p} \alpha_j\Big(\mathbf{x}^{(m-p+j)} + \beta\,r^{(m-p+j+1)}\Big),\qquad
-\mathbf{s}:=\mathbf{y}-\mathbf{x}^{(m)},\qquad \mathbf{x}_{\mathrm{cand}}:=\mathbf{x}^{(m)}+\mathbf{s},
+\mathbf{x}_{\mathrm{AA}}^{(k+1)} \;=\; \sum_{j=1}^{p} \alpha_j\Big(\mathbf{x}^{(k-p+j)} + \beta\,r^{(k-p+j+1)}\Big),
 \end{equation}
-with a \emph{step limiter} enforcing $\|\mathbf{x}_{\mathrm{cand}} - \mathbf{x}^{(m)}\|_{\mathrm{proj}} \le c_{\mathrm{step}}\,\|x_{\mathrm{raw}}^{(m+1)} - \mathbf{x}^{(m)}\|_{\mathrm{proj}}$ (implemented by scaling $\mathbf{s}$ if needed).
+which reduces to the damped Picard update $\mathbf{x}^{(k)}+\beta\,r^{(k+1)}$ when $p<2$.
 
-\paragraph{Projected-residual merit, safeguard, and backtracking.}
-The acceptance test uses an \emph{RMS-per-DOF} 2--norm on the scaled flattened state $(\mathbf{L},S,\rho)$ (blockwise scaled by the first-sweep RMS and by $1/\sqrt{N_i}$). For these blocks there are no Dirichlet constraints, so the projection is the identity. With
-\(
-r_{\mathrm{Pic}}^{(m+1)} := \frac{\|x_{\mathrm{raw}}^{(m+1)}-\mathbf{x}^{(m)}\|_{\mathrm{proj}}}{\|x_{\mathrm{raw}}^{(m+1)}\|_{\mathrm{proj}}}
-\)
-and the \emph{proxy} for a candidate $\mathbf{x}_{\mathrm{cand}}$ given by
-\(
-r_{\mathrm{proxy}}^{(m+1)} := \frac{\|\mathbf{x}_{\mathrm{cand}}-\mathbf{x}^{(m)}\|_{\mathrm{proj}}}{\|x_{\mathrm{raw}}^{(m+1)}\|_{\mathrm{proj}}},
-\)
-we accept the Anderson step iff
-\begin{equation}\label{eq:safeguard}
-r_{\mathrm{proxy}}^{(m+1)} \;\le\; (1-\gamma)\,r_{\mathrm{Pic}}^{(m+1)}.
+\paragraph{Step limiting and restarts.}
+To prevent overshooting, we enforce a step limiter based on the same scaled norm:
+\begin{equation}\label{eq:aa-step-limit}
+\frac{\|\mathbf{x}_{\mathrm{AA}}^{(k+1)}-\mathbf{x}^{(k)}\|}{\|x_{\mathrm{raw}}^{(k+1)}\|}
+\;\le\; c_{\mathrm{step}}\,\max\!\big(r_{\mathrm{Pic}}^{(k+1)},\varepsilon_{\mathrm{tiny}}\big),
 \end{equation}
-Otherwise we backtrack along $\mathbf{s}$ by halving (up to $N_{\mathrm{bt}}$ attempts) until \eqref{eq:safeguard} holds; if backtracking fails, we \emph{fall back} to the (possibly damped) Picard step $\mathbf{x}^{(m)}+\beta\,(x_{\mathrm{raw}}^{(m+1)}-\mathbf{x}^{(m)})$. This safeguard is \emph{cheap}: it requires no extra GS sweep because the proxy only uses differences of already known states.
+implemented by scaling the increment if the bound is violated. The history is scheduled to restart (on the \emph{next} call) if (i) the condition number $\kappa(H+\lambda_{\mathrm{eff}}I)$ exceeds a threshold $\kappa_{\max}$, or (ii) the Picard residual stalls relative to the best residual in a recent window: with a window of length $w$ and stall ratio $\chi_{\mathrm{stall}}>1$, we increment a stall counter when $r_{\mathrm{Pic}}^{(k+1)}>\chi_{\mathrm{stall}}\,\min_{j\in\text{window}} r_{\mathrm{Pic}}^{(j)}$, and restart once this occurs for $k_{\mathrm{stall}}$ consecutive iterations. Additionally, if the newest residual becomes orders of magnitude smaller than older ones, the stored history is pruned to the most recent snapshot to avoid ill-conditioned mixes.
 
-\paragraph{Automatic restarts and conditioning.}
-The accelerator maintains the best Picard merit seen so far and schedules a history reset (on the \emph{next} call) if any of the following triggers fire: (i) a streak of $\ge k_{\mathrm{rej}}$ consecutive AA rejections; (ii) Picard merit stalls, i.e., $r_{\mathrm{Pic}}^{(m+1)}>\chi_{\mathrm{stall}}\,r_{\mathrm{best}}$ with $r_{\mathrm{best}}$ the best Picard merit so far; (iii) the estimated condition number of $H+\lambda_{\mathrm{AA}}I$ exceeds $\kappa_{\max}$. In case of linear-algebra failure in \eqref{eq:kkt}, uniform weights are used as a safe fallback. No preconditioner-driven resets are used; preconditioner maintenance (if any) is decoupled from Anderson.
-
-\paragraph{Stopping and logging.}
-We monitor the projected Picard residual $r_{\mathrm{Pic}}^{(m+1)}$ itself and stop once $r_{\mathrm{Pic}}^{(m+1)}<\mathrm{tol}$ and at least a user-specified minimum number of subiterations has been taken. The Gram-matrix prediction check, safeguard/backtracking \eqref{eq:safeguard}, and step limiting ensure that any accepted Anderson update has a proxy step no worse than the contemporaneous Picard update in this metric. A separate \emph{blockwise relative iterate change} and Anderson diagnostics (history depth, conditioning, restarts) are recorded for analysis but are not used for stopping.
+\paragraph{Stopping, early abort, and logging.}
+We stop as soon as $r_{\mathrm{Pic}}^{(k+1)}\le \mathrm{tol}$, or after a maximum number of fixed-point subiterations $N_{\max}$. Optionally (useful with adaptive time stepping), we detect outer stagnation of the coupling loop: over a window of $W$ residuals we require a relative drop of at least $\delta$; after $P$ consecutive windows failing this test we abort the coupling loop early and report the stop reason \texttt{no\_progress}. For postprocessing we record per-subiteration telemetry (Picard residual, Anderson step size, history depth, conditioning, restarts, step limiting) and per-timestep outcomes (converged/accepted and the rejection reason if not accepted).
 
 \paragraph{Well-posedness of subsolves.}
 At each evaluation of $\mathcal{G}$ the four subproblems are uniformly elliptic (for fixed arguments) and admit unique solutions in the chosen finite-dimensional spaces: (i) mechanics has a coercive bilinear form by the density floor and $\nu\in(-1,\tfrac12)$, (ii) stimulus is SPD by $(\tau_S/\Delta t^n+1)$ with $D_S\ge0$, (iii) density is SPD by $(1/\Delta t^n)+A_{\mathrm{surf}}(\rho^{n-1})\big(k_{\mathrm{form}}S_+/\rho_{\max}+k_{\mathrm{res}}S_-/\rho_{\min}\big)\ge 1/\Delta t^n$ together with $\mathbf{D}_\rho=D_\rho\mathbf{I}$, and (iv) fabric is SPD by $(c_A/\Delta t^n)+c_A a(\bar{\mathbf{Q}})/\tau_A>0$ with $D_A\ge 0$. Thus each application of $\mathcal{G}$ is well-defined.
 
 \paragraph{Convergence discussion.}
-On bounded sets where the smooth gates/clamps are Lipschitz, $\mathcal{G}$ is locally Lipschitz. If the induced modulus $L<1$, the undamped Gauss--Seidel iteration is linearly convergent. The safeguard \eqref{eq:safeguard} enforces a strict improvement of the accepted AA proxy step relative to the contemporaneous Picard step (by factor $1-\gamma$); combined with step limiting and automatic restarts, this yields robust global behavior of the AA-wrapped method even when the least-squares system \eqref{eq:kkt} is poorly conditioned.
+On bounded sets where the smooth gates/clamps are Lipschitz, $\mathcal{G}$ is locally Lipschitz. If the induced modulus $L<1$, the Gauss--Seidel iteration is linearly convergent in the Picard metric \eqref{eq:fp-picard-res}. The Anderson update \eqref{eq:aa-update} acts as a multisecant extrapolation and can reduce the number of subiterations in practice. Robustness is promoted by the step limiter \eqref{eq:aa-step-limit} and by adaptive history restarts triggered by stall or ill-conditioning of the regularized Gram system.
 
 \paragraph{Algorithm (per time level $t^n$).}
 \begin{enumerate}
 \item Initialize $\mathbf{x}^{(0)}$ (from $t^{n-1}$ or a warm start) and the AA history; set counters/timers to zero.
-\item Perform one GS sweep to obtain $x_{\mathrm{raw}}^{(1)}$ and set $\mathbf{x}^{(1)}\!\leftarrow\!x_{\mathrm{raw}}^{(1)}$.
-\item For $m=1,2,\dots$ until the stopping test holds:
+\item For $k=0,1,2,\dots$ until the stopping test holds:
   \begin{enumerate}
-  \item Perform one GS sweep to get $x_{\mathrm{raw}}^{(m+1)}$.
-  \item If AA is enabled, form $H$ from residual histories, solve \eqref{eq:kkt}, assemble $\mathbf{y}$, apply step limiting, and build $\mathbf{x}_{\mathrm{cand}}$.
-  \item Evaluate the projected-residual merit and apply the safeguard/backtracking \eqref{eq:safeguard}; fall back to Picard if needed.
-  \item Accept the step, update histories (and schedule a restart if a trigger fires), and log diagnostics.
+  \item Perform one GS sweep to get $x_{\mathrm{raw}}^{(k+1)}$ and $r^{(k+1)}$; compute $r_{\mathrm{Pic}}^{(k+1)}$.
+  \item If $r_{\mathrm{Pic}}^{(k+1)}\le\mathrm{tol}$, set $\mathbf{x}^{(k+1)}\leftarrow x_{\mathrm{raw}}^{(k+1)}$ and stop.
+  \item Otherwise, apply Anderson mixing \eqref{eq:aa-weights}--\eqref{eq:aa-update} (or damped Picard if $p<2$), apply the step limiter \eqref{eq:aa-step-limit}, and update histories (with scheduled restarts if a trigger fires).
+  \item Check the outer-stall criterion and abort early if triggered.
   \end{enumerate}
-\item Output $\mathbf{x}^{n}:=\mathbf{x}^{(m_\star)}$ for the first index $m_\star$ meeting the stopping criterion.
+\item Output $\mathbf{x}^{n}:=\mathbf{x}^{(k_\star)}$ for the first index $k_\star$ meeting the stopping criterion.
 \end{enumerate}
 
 \section*{Physical Parameter Analysis and Model Calibration}
@@ -589,7 +577,7 @@ The density bounds and initialization are $\rho_{\min}=0.1\,\mathrm{g/cm^3}$, $\
 The log-fabric equation \eqref{eq:L-strong-nd} uses $\tau_A=50\,\mathrm{day}$, $D_A=1.0\,\mathrm{mm^2/day}$, and capacity $c_A=1.0$ (dimensionless). The target construction \eqref{eq:M-hat-nd} uses exponent $\gamma_F=1.0$, diagonal regularization $\varepsilon_Q=10^{-12}\,\mathrm{MPa^2}$ (added to $\bar{\mathbf Q}$), and eigenvalue-ratio bounds $m_{\min}=0.2$ and $m_{\max}=5.0$. The activity gate uses $\varepsilon_a=10^{-4}$.
 
 \paragraph{Linear and coupling solver parameters.}
-Each linear subproblem is solved by a Krylov method with GAMG preconditioning and tolerances $\mathrm{rtol}=10^{-6}$, $\mathrm{atol}=10^{-7}$, and $\mathrm{it}_{\max}=100$. For the elasticity operator we use CG; for the diffusion--reaction operators we use MINRES. Nonlinear coupling at a fixed time level uses block Gauss--Seidel with Anderson acceleration (enabled in all results below): history length $m=5$, mixing $\beta=1.0$, regularization $\lambda=10^{-9}$, safeguard threshold $\gamma=0.05$, backtracking cap $N_{\mathrm{bt}}=5$, and step-limit factor $c_{\mathrm{step}}=2.0$. Restarts trigger for $k_{\mathrm{rej}}=2$ consecutive rejections, stall ratio $\chi_{\mathrm{stall}}=1.10$, and conditioning threshold $\kappa_{\max}=10^{12}$. The stopping criterion uses $\mathrm{tol}=10^{-4}$ with $N_{\min}=2$ and $N_{\max}=25$ subiterations.
+Each linear subproblem is solved by a Krylov method with GAMG preconditioning and tolerances $\mathrm{rtol}=10^{-7}$, $\mathrm{atol}=10^{-8}$, and $\mathrm{it}_{\max}=200$. The mechanics block uses GMRES with GAMG and Chebyshev smoothing; the transport-type blocks (stimulus, density, and fabric) use the configured Krylov type (default MINRES) with GAMG. Nonlinear coupling at a fixed time level uses block Gauss--Seidel with Anderson acceleration (enabled in all results below): history length $m=4$, mixing $\beta=1.0$, and scaled Tikhonov regularization $\lambda=10^{-2}$; the step limiter uses $c_{\mathrm{step}}=1.5$. History restarts use stall ratio $\chi_{\mathrm{stall}}=1.10$ with window $w=2$ and patience $k_{\mathrm{stall}}=2$, and a conditioning threshold $\kappa_{\max}=10^{5}$. The fixed-point stopping criterion is $r_{\mathrm{Pic}}\le \mathrm{tol}$ with $\mathrm{tol}=10^{-6}$ and a cap of $N_{\max}=25$ subiterations; optional outer-stall early abort uses $(W,\delta,P)=(8,0.05,2)$.
 
 \paragraph{Time stepping and numerics.}
 We simulate up to $T=500\,\mathrm{day}$ with constant timestep $\Delta t=25\,\mathrm{day}$. Optional adaptive stepping (AB2 predictor with a Gustafsson PI controller; disabled in the results below) is parametrized by tolerances $\mathrm{rtol}_t=10^{-2}$ and $\mathrm{atol}_t=10^{-3}$, bounds $\Delta t_{\min}=10^{-4}\,\mathrm{day}$ and $\Delta t_{\max}=100\,\mathrm{day}$, and PI parameters $s=0.9$, $g_{\max}=5.0$, $g_{\min}=0.1$, $k_{\mathrm{exp}}=1.5$, $k_P=0.20$, and $k_I=0.40$. Smooth clamps/splits use a global smoothing width $\varepsilon=10^{-6}$ (interpreted in the units of the smoothed quantity), and numerical integration uses quadrature degree $q=4$.
