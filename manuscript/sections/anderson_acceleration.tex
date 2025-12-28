@@ -2,7 +2,7 @@
 \subsection*{Anderson acceleration: convergence and diagnostics}
 \label{subsec:anderson}
 \paragraph{Motivation and scope}
-To reduce the number of block fixed-point (block Picard/Gauss--Seidel) sub-iterations, we employ Anderson acceleration (AA) with finite memory $m$ in the Walker--Ni (Type-I) form described in \S\ref{sec:fp-aa}. We compare (i) a block Picard baseline (constant relaxation) and (ii) AA with step limiting and adaptive history restarts across representative couplings and time-step sizes $\Delta t$. We also report diagnostics that help choose~$m$ and monitor robustness.
+To reduce the number of block fixed-point (block Picard/Gauss--Seidel) sub-iterations, we employ Anderson acceleration (AA) with finite memory $m$ in the Walker--Ni formulation described in \S\ref{sec:fp-aa}. We compare (i) a block Picard baseline (constant relaxation) and (ii) AA with step limiting and adaptive history restarts across representative couplings and time-step sizes $\Delta t$. We also report diagnostics that help choose~$m$ and monitor robustness.
 
 \subsection*{Projected residual and stopping}\label{subsec:proj_merit}
 We use the \emph{RMS-per-DOF} Picard residual $r_{\mathrm{Pic}}$ in \eqref{eq:fp-picard-res} on the flattened state $(\mathbf L,S,\rho)$ with the per-block scaling \eqref{eq:fp-scales}. The coupled solve stops when $r_{\mathrm{Pic}}\le \mathrm{tol}$ or when the maximum number of subiterations is reached. There is no per-iteration AA rejection/backtracking; robustness is provided by the step limiter \eqref{eq:aa-step-limit} and by history restarts based on conditioning and stall. Candidate formation follows \eqref{eq:aa-weights}--\eqref{eq:aa-update}.
@@ -11,7 +11,7 @@ We use the \emph{RMS-per-DOF} Picard residual $r_{\mathrm{Pic}}$ in \eqref{eq:fp
 The accelerated stacked state follows $(\mathbf L,S,\rho)$, while a single GS sweep updates blocks in the physical order \emph{mechanics driver} $\to$ fabric $\to$ stimulus $\to$ density (mechanics is recomputed inside the driver and is not part of the Anderson state).
 
 \subsection*{Anderson acceleration details}\label{subsec:aa_details}
-We employ the Walker--Ni (Type-I) Anderson scheme described in \S\ref{sec:fp-aa}. Specific settings for the results below include the step limit factor $c_{\mathrm{step}}$ and history depths $m$ as indicated in the figures. We restart the AA history upon (i) stagnation of $r_{\mathrm{Pic}}$ relative to the best value in a recent window, or (ii) poor conditioning of the regularized Gram system.
+We employ the Walker--Ni Anderson scheme described in \S\ref{sec:fp-aa}. Specific settings for the results below include the step limit factor $c_{\mathrm{step}}$ and history depths $m$ as indicated in the figures. We restart the AA history upon (i) stagnation of $r_{\mathrm{Pic}}$ relative to the best value in a recent window, or (ii) poor conditioning of the regularized Gram system.
 
 \paragraph{Performance diagnostics}
 To assess stability and tuning, we monitor Anderson metrics over time and their sensitivity to $(\Delta t, m, \beta)$ (\cref{fig:aa-metrics}). At fixed $\Delta t=25$ days, a sliding-window view of the condition number $\kappa(H+\lambda_{\mathrm{eff}}I)$ remains well behaved across tested histories $m$ and mixing factors $\beta$. Aggregated over late-time windows, the timestep rejection rate stays moderate, the average history depth scales with $m$, and the median $\kappa(H+\lambda_{\mathrm{eff}}I)$ shows only mild growth with larger $m$ or $\beta$.

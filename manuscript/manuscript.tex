@@ -61,7 +61,7 @@
     country={Czechia}}
 %% Abstract
 \begin{abstract}
-We propose a four-field bone-remodeling formulation that co-evolves displacement $\mathbf{u}$, apparent density $\rho$, log-fabric $\mathbf{L} = \ln \mathbf{A}$, and a nonlocal mechanotransductive stimulus $S$. The elastic response follows a fabric-guided orthotropic law, where stiffness tensors are constructed from the spectral decomposition of $\mathbf{L}$. A cycle-weighted strain-energy driver is filtered by a diffusion--reaction stimulus with a smooth saturating (lazy-zone) mechanostat; density evolves via bounded formation/resorption kinetics with diffusive regularization; and log-fabric relaxes toward a trace-free logarithmic target constructed from cycle-weighted \emph{deviatoric} stress outer-products, with spatial diffusion and activity gating. Time integration is fully implicit Backward--Euler; space is discretized by conforming $H^1$ finite elements in a unified weak-form notation. Nonlinear coupling is solved by a partitioned block Gauss--Seidel sweep (mechanics $\rightarrow$ fabric $\rightarrow$ stimulus $\rightarrow$ density) wrapped in a Walker--Ni (Type-I) Anderson accelerator with Tikhonov regularization, step limiting, and adaptive history restarts. A single smoothing policy used across clamping and normalizations ensures differentiability and preserves coercivity, while the solver architecture yields stable, mesh-robust convergence without monolithic Jacobians.
+We propose a four-field bone-remodeling formulation that co-evolves displacement $\mathbf{u}$, apparent density $\rho$, log-fabric $\mathbf{L} = \ln \mathbf{A}$, and a nonlocal mechanotransductive stimulus $S$. The elastic response follows a fabric-guided orthotropic law, where stiffness tensors are constructed from the spectral decomposition of $\mathbf{L}$. A cycle-weighted strain-energy driver is filtered by a diffusion--reaction stimulus with a smooth saturating (lazy-zone) mechanostat; density evolves via bounded formation/resorption kinetics with diffusive regularization; and log-fabric relaxes toward a trace-free logarithmic target constructed from cycle-weighted \emph{deviatoric} stress outer-products, with spatial diffusion and activity gating. Time integration is fully implicit Backward--Euler; space is discretized by conforming $H^1$ finite elements in a unified weak-form notation. Nonlinear coupling is solved by a partitioned block Gauss--Seidel sweep (mechanics $\rightarrow$ fabric $\rightarrow$ stimulus $\rightarrow$ density) wrapped in Anderson acceleration in the Walker--Ni formulation with scaled Tikhonov regularization, step limiting, and adaptive history restarts. A single smoothing policy used across clamping and normalizations ensures differentiability and preserves coercivity, while the solver architecture yields stable, mesh-robust convergence without monolithic Jacobians.
 \end{abstract}
 
 %% Graphical abstract
@@ -510,7 +510,7 @@ r_{\mathrm{Pic}}^{(k+1)} \;:=\; \frac{\|r^{(k+1)}\|}{\|x_{\mathrm{raw}}^{(k+1)}\
 \end{equation}
 with the convention that the denominator is clipped to avoid division by~$0$.
 
-\paragraph{Anderson acceleration (Walker--Ni / Type~I).}
+\paragraph{Anderson acceleration (Walker--Ni formulation).}
 If $r_{\mathrm{Pic}}^{(k+1)}$ is above the stopping tolerance, we apply an MPI-aware Anderson accelerator based on residual snapshots $r^{(j)}$ and past iterates $\mathbf{x}^{(j-1)}$. With memory depth $m$ we keep at most $m+1$ residual snapshots; let $p=\min(m+1,\text{available history})$ be the active window length. Form the Gram matrix
 \begin{equation}\label{eq:aa-gram}
 H_{ij} \;:=\; \langle r^{(i)}, r^{(j)}\rangle \quad (\text{global dot product over MPI ranks}),
@@ -580,7 +580,26 @@ The log-fabric equation \eqref{eq:L-strong-nd} uses $\tau_A=50\,\mathrm{day}$, $
 Each linear subproblem is solved by a Krylov method with GAMG preconditioning and tolerances $\mathrm{rtol}=10^{-7}$, $\mathrm{atol}=10^{-8}$, and $\mathrm{it}_{\max}=200$. The mechanics block uses GMRES with GAMG and Chebyshev smoothing; the transport-type blocks (stimulus, density, and fabric) use the configured Krylov type (default MINRES) with GAMG. Nonlinear coupling at a fixed time level uses block Gauss--Seidel with Anderson acceleration (enabled in all results below): history length $m=4$, mixing $\beta=1.0$, and scaled Tikhonov regularization $\lambda=10^{-2}$; the step limiter uses $c_{\mathrm{step}}=1.5$. History restarts use stall ratio $\chi_{\mathrm{stall}}=1.10$ with window $w=2$ and patience $k_{\mathrm{stall}}=2$, and a conditioning threshold $\kappa_{\max}=10^{5}$. The fixed-point stopping criterion is $r_{\mathrm{Pic}}\le \mathrm{tol}$ with $\mathrm{tol}=10^{-6}$ and a cap of $N_{\max}=25$ subiterations; optional outer-stall early abort uses $(W,\delta,P)=(8,0.05,2)$.
 
 \paragraph{Time stepping and numerics.}
-We simulate up to $T=500\,\mathrm{day}$ with constant timestep $\Delta t=25\,\mathrm{day}$. Optional adaptive stepping (AB2 predictor with a Gustafsson PI controller; disabled in the results below) is parametrized by tolerances $\mathrm{rtol}_t=10^{-2}$ and $\mathrm{atol}_t=10^{-3}$, bounds $\Delta t_{\min}=10^{-4}\,\mathrm{day}$ and $\Delta t_{\max}=100\,\mathrm{day}$, and PI parameters $s=0.9$, $g_{\max}=5.0$, $g_{\min}=0.1$, $k_{\mathrm{exp}}=1.5$, $k_P=0.20$, and $k_I=0.40$. Smooth clamps/splits use a global smoothing width $\varepsilon=10^{-6}$ (interpreted in the units of the smoothed quantity), and numerical integration uses quadrature degree $q=4$.
+We advance from $t^0=0$ to $T$ using Backward--Euler with step sizes $\Delta t^n=t^{n+1}-t^n$ (constant $\Delta t^n\equiv \Delta t^0$ when adaptive control is disabled, except for the final truncation to hit $T$). When adaptive control is enabled, each \emph{attempted} step uses an explicit Adams--Bashforth predictor as an initial guess for the coupled implicit solve on $\mathbf{x}=(\mathbf L,S,\rho)$. Let $\mathbf{x}^n$ denote the last accepted state and let $\dot{\mathbf x}^{n}\approx (\mathbf{x}^n-\mathbf{x}^{n-1})/\Delta t^{n-1}$ be the stored discrete rate (updated only after accepted steps). With step ratio $r_n=\Delta t^n/\Delta t^{n-1}$, the AB2 predictor reads
+\begin{equation}\label{eq:ab2-predict}
+\mathbf{x}_{\mathrm{pred}}^{n+1}
+=\mathbf{x}^n+\Delta t^n\left(\left(1+\tfrac12 r_n\right)\dot{\mathbf x}^{n}-\tfrac12 r_n\,\dot{\mathbf x}^{n-1}\right),
+\end{equation}
+and falls back to AB1 (or constant prediction on the very first step) when insufficient history is available. Starting from $\mathbf{x}_{\mathrm{pred}}^{n+1}$ we solve the coupled Backward--Euler problem at $t^{n+1}$ by the fixed-point scheme in \S\ref{sec:fp-aa}, yielding the corrected state $\mathbf{x}^{n+1}$. We estimate the time-discretization error by a global weighted RMS norm of the predictor--corrector difference,
+\begin{equation}\label{eq:wrms-error}
+e^{n+1}
+=\left(\frac{1}{N_{\mathrm{tot}}}\sum_{i=1}^{N_{\mathrm{tot}}}
+\left(\frac{x_i^{n+1}-x_{\mathrm{pred},i}^{n+1}}{\mathrm{rtol}_t\max(|x_i^{n+1}|,|x_{\mathrm{pred},i}^{n+1}|)+\mathrm{atol}_t}\right)^{\!2}\right)^{\!1/2},
+\end{equation}
+where the sum runs over all DOFs of $(\mathbf L,S,\rho)$ (global across MPI ranks) and $N_{\mathrm{tot}}$ is the total number of those DOFs. The adaptive controller is parametrized by $(\mathrm{rtol}_t,\mathrm{atol}_t)$, timestep bounds $(\Delta t_{\min},\Delta t_{\max})$, a safety factor $\eta$, shrink/growth limits $(g_{\min},g_{\max})$, and gains $(k_{\mathrm{exp}},k_P,k_I)$. A step is rejected if the coupled solve does not converge, or if $e^{n+1}>1$ (except that the first step is always accepted and, if $e^{1}>1$, only the \emph{next} timestep is reduced using the same shrink formula). On rejection we roll back to $\mathbf{x}^n$ and retry with a smaller timestep. For time-error rejections we use the shrink formula
+\[
+\Delta t^n \leftarrow \Delta t^n\cdot \min\!\left(0.9,\ \max\!\left(g_{\min},\ \eta\,(1/e^{n+1})^{1/k_{\mathrm{exp}}}\right)\right),
+\]
+whereas coupling failures trigger an immediate cut $\Delta t^n\leftarrow g_{\min}\Delta t^n$ and reset the AB history. For accepted steps with $n\ge1$ and $e^{n+1}\le 1$ we update the \emph{next} timestep by a Gustafsson PI controller:
+\[
+\Delta t^{n+1} \leftarrow \Delta t^n\cdot \min\!\left(g_{\max},\ \max\!\left(g_{\min},\ \eta\,(e^{n+1})^{-k_I}\left(\frac{e^{n}}{e^{n+1}}\right)^{k_P}\right)\right),
+\]
+with an I-only variant on the second accepted step; if $e^{n+1}<0.5$ we additionally prevent accidental shrink by enforcing the factor to be at least $1$. Finally, $\Delta t^n$ is clamped to $[\Delta t_{\min},\Delta t_{\max}]$ after each update. Smooth clamps/splits use a global smoothing width $\varepsilon=10^{-6}$ (interpreted in the units of the smoothed quantity), and numerical integration uses quadrature degree $q=4$.
 
 \paragraph{Output and mesh tags.}
 We write field snapshots every $N_{\mathrm{save}}=1$ accepted timesteps and record per-step and per-subiteration solver telemetry. The Dirichlet and Neumann boundary parts $(\Gamma_D,\Gamma_N)$ are defined by mesh facet tags with IDs $(i_D,i_N)=(1,2)$.

@@ -14,7 +14,7 @@ from simulation.logger import get_logger
 class Anderson:
     """Anderson mixing with history restart and step limiting.
     
-    Implements Type-I Anderson acceleration (Walker-Ni formulation) with:
+    Implements Anderson acceleration in the Walker--Ni residual-minimization formulation with:
     - Tikhonov regularization scaled to residual magnitude
     - Step limiting to prevent overshooting
     - History restart on ill-conditioning or stall detection
@@ -195,7 +195,7 @@ class Anderson:
         r_norm = self._rel_step(x_old, x_raw, x_raw)
         self._recent_res.append(r_norm)
 
-        # Compute accelerated iterate (Walker-Ni Type-I form)
+        # Compute accelerated iterate (Walker-Ni form)
         if p >= 2:
             x_aa = np.zeros_like(x_old)
             for a_i, x_i, r_i in zip(alpha, self.x_hist, self.r_hist):
