@@ -281,6 +281,7 @@ class FixedPointSolver:
                 "aa_step_res": float(aa_step_res),
                 "aa_hist": int(aa.get("aa_hist", 0)),
                 "aa_accepted": bool(aa.get("accepted", True)),
+                "aa_reject_reason": str(aa.get("reject_reason", "")),
                 "aa_restart": str(aa.get("restart_reason", "")),
                 "condH": float(cond_val) if cond_val is not None else 0.0,
                 "mem_mb": float(mem_mb),
