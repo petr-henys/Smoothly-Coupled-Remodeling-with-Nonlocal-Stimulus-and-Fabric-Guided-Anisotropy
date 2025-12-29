@@ -132,8 +132,7 @@ def idw(image, mesh, threshold=0., power=2, k_neighbors=8, method='nodes', verbo
 
 if __name__ == "__main__":
 
-    from simulation.febio_parser import FEBio2Dolfinx
-    from simulation.paths import FemurPaths
+    from femur import FEBio2Dolfinx, FemurPaths
 
     mesh = FEBio2Dolfinx(FemurPaths.FEMUR_MESH_FEB).mesh_dolfinx
     image = ants.image_read('anatomy/raw/proximal_femur/template_new3.nii.gz')

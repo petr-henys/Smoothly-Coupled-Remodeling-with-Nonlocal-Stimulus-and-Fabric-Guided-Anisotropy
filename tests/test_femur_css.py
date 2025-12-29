@@ -12,7 +12,7 @@ import pyvista as pv
 import pytest
 from numpy.testing import assert_almost_equal, assert_array_almost_equal
 
-from simulation.femur_css import FemurCSS, load_json_points, _fit_femoral_head, _unit
+from femur import FemurCSS, load_json_points, _fit_femoral_head, _unit
 
 
 @pytest.fixture

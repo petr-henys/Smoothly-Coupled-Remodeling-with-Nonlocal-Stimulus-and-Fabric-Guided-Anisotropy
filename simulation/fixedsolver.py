@@ -2,155 +2,163 @@
 
 from __future__ import annotations
 
+import resource
 from collections import deque
 from dataclasses import dataclass
 from typing import Any, Dict, List, Sequence, Tuple
-import resource
 
 import numpy as np
-from mpi4py import MPI
 from dolfinx import fem
+from mpi4py import MPI
 
-from simulation.config import Config
-from simulation.protocols import CouplingBlock
-from simulation.stats import SweepStats, StepSummary
-from simulation.utils import get_owned_size
-from simulation.logger import get_logger
 from simulation.anderson import Anderson
+from simulation.config import Config
+from simulation.logger import get_logger
+from simulation.protocols import CouplingBlock
+from simulation.stats import StepSummary, SweepStats
+from simulation.utils import get_owned_size
 
 
 @dataclass(frozen=True)
 class _FieldSpec:
-    f: fem.Function
+    """Metadata for one field: sizes, offset in packed vector, scaling factor."""
+    field: fem.Function
     n_owned: int
-    N_global: int
-    inv_sqrt_N: float
+    n_global: int
+    inv_sqrt_n: float
     offset: int
     name: str
 
 
 class FixedPointSolver:
-    """Block Gauss-Seidel iteration with optional Anderson acceleration."""
+    """Block Gauss-Seidel solver with optional Anderson acceleration."""
+
+    _TINY: float = 1e-300  # Guard against division by zero
 
     def __init__(self, comm: MPI.Comm, cfg: Config, blocks: Sequence[CouplingBlock]):
         self.comm = comm
         self.cfg = cfg
         self.blocks: Tuple[CouplingBlock, ...] = tuple(blocks)
-
         self.logger = get_logger(self.comm, name="FixedPoint", log_file=self.cfg.log_file)
 
         self.subiter_metrics: List[Dict[str, Any]] = []
         self.stop_reason: str = ""
 
-        # Collect coupled state fields (deduplicate by object identity, preserve order)
+        self._specs = self._build_field_specs()
+        self._n_state = sum(sp.n_owned for sp in self._specs)
+
+        self._scales: np.ndarray | None = None  # Per-field RMS for normalization
+        self.anderson = self._create_anderson() if cfg.solver.accel_type == "anderson" else None
+
+    def _build_field_specs(self) -> List[_FieldSpec]:
+        """Collect state fields from blocks (deduplicated, order-preserving)."""
         fields: List[fem.Function] = []
-        seen = set()
+        seen_ids = set()
+        
         for blk in self.blocks:
-            # Protocol check at runtime (optional, for debugging)
-            if not isinstance(blk, CouplingBlock):
-                raise TypeError(
-                    f"Block {type(blk).__name__} does not implement CouplingBlock protocol."
-                )
-            for f in tuple(blk.state_fields):
-                if id(f) not in seen:
-                    seen.add(id(f))
+            for f in blk.state_fields:
+                if id(f) not in seen_ids:
+                    seen_ids.add(id(f))
                     fields.append(f)
 
-        if len(fields) == 0:
-            raise ValueError("No coupled state fields provided by blocks (empty state_fields).")
+        if not fields:
+            raise ValueError("No coupled state fields provided by blocks.")
 
-        self._specs: List[_FieldSpec] = []
-        off = 0
+        specs: List[_FieldSpec] = []
+        offset = 0
         for f in fields:
-            n_owned = int(get_owned_size(f))
-            N_global = int(self.comm.allreduce(n_owned, op=MPI.SUM))
-            inv_sqrt_N = 1.0 / max(np.sqrt(float(N_global)), 1e-30)
-            name = f.name
-            self._specs.append(_FieldSpec(f=f, n_owned=n_owned, N_global=N_global, inv_sqrt_N=inv_sqrt_N, offset=off, name=name))
-            off += n_owned
+            n_owned = get_owned_size(f)
+            n_global = self.comm.allreduce(n_owned, op=MPI.SUM)
+            inv_sqrt_n = 1.0 / max(np.sqrt(n_global), self._TINY)
+            specs.append(_FieldSpec(
+                field=f,
+                n_owned=n_owned,
+                n_global=n_global,
+                inv_sqrt_n=inv_sqrt_n,
+                offset=offset,
+                name=f.name,
+            ))
+            offset += n_owned
+        return specs
 
-        self._n_state = int(off)
+    def _create_anderson(self) -> Anderson:
+        """Create Anderson accelerator from config."""
+        s = self.cfg.solver
+        return Anderson(
+            comm=self.comm,
+            m=s.m,
+            beta=s.beta,
+            lam=s.lam,
+            restart_on_stall=s.restart_on_stall,
+            restart_on_cond=s.restart_on_cond,
+            step_limit_factor=s.step_limit_factor,
+            restart_stall_window=s.restart_stall_window,
+            restart_stall_patience=s.restart_stall_patience,
+        )
 
-        # Per-field normalization scales (set on the first sweep each timestep)
-        self._scales: np.ndarray | None = None
-
-        # Anderson accelerator (optional)
-        self.anderson: Anderson | None = None
-        if self.cfg.solver.accel_type == "anderson":
-            self.anderson = Anderson(
-                comm=self.comm,
-                m=int(self.cfg.solver.m),
-                beta=float(self.cfg.solver.beta),
-                lam=float(self.cfg.solver.lam),
-                restart_on_stall=float(self.cfg.solver.restart_on_stall),
-                restart_on_cond=float(self.cfg.solver.restart_on_cond),
-                step_limit_factor=float(self.cfg.solver.step_limit_factor),
-                restart_stall_window=int(self.cfg.solver.restart_stall_window),
-                restart_stall_patience=int(self.cfg.solver.restart_stall_patience),
-            )
-
-    # ------------------------------- packing --------------------------------
+    # ------------------------------- Packing --------------------------------
 
     def _pack_unscaled(self) -> np.ndarray:
+        """Pack owned DOFs from all fields into flat array."""
         x = np.empty(self._n_state, dtype=float)
         for sp in self._specs:
-            x[sp.offset : sp.offset + sp.n_owned] = sp.f.x.array[: sp.n_owned]
+            x[sp.offset:sp.offset + sp.n_owned] = sp.field.x.array[:sp.n_owned]
         return x
 
-    def _compute_field_rms(self, values_owned: np.ndarray, N_global: int) -> float:
-        loc = float(np.dot(values_owned, values_owned))
-        glob = float(self.comm.allreduce(loc, op=MPI.SUM))
-        if N_global <= 0:
+    def _compute_field_rms(self, values: np.ndarray, n_global: int) -> float:
+        """Global RMS of local values."""
+        local_sum_sq = np.dot(values, values)
+        global_sum_sq = self.comm.allreduce(local_sum_sq, op=MPI.SUM)
+        if n_global <= 0:
             return 0.0
-        return float(np.sqrt(glob / float(N_global)))
+        return np.sqrt(global_sum_sq / n_global)
 
     def _init_scales(self, x_old: np.ndarray, x_raw: np.ndarray) -> None:
+        """Set per-field scales from max(RMS_old, RMS_raw) for normalization."""
         scales = np.empty(len(self._specs), dtype=float)
-        tiny = 1e-30
         for i, sp in enumerate(self._specs):
             sl = slice(sp.offset, sp.offset + sp.n_owned)
-            rms_old = self._compute_field_rms(x_old[sl], sp.N_global)
-            rms_raw = self._compute_field_rms(x_raw[sl], sp.N_global)
-            scales[i] = max(rms_old, rms_raw, tiny)
+            rms_old = self._compute_field_rms(x_old[sl], sp.n_global)
+            rms_raw = self._compute_field_rms(x_raw[sl], sp.n_global)
+            scales[i] = max(rms_old, rms_raw, self._TINY)
         self._scales = scales
 
     def _pack_scaled(self, x_unscaled: np.ndarray) -> np.ndarray:
+        """Scale and normalize: y = (x / scale) * inv_sqrt_n per field."""
         if self._scales is None:
-            raise RuntimeError("Internal error: scales are not initialized.")
+            raise RuntimeError("Scales not initialized.")
         y = np.empty_like(x_unscaled)
         for i, sp in enumerate(self._specs):
             sl = slice(sp.offset, sp.offset + sp.n_owned)
-            y[sl] = (x_unscaled[sl] / self._scales[i]) * sp.inv_sqrt_N
+            y[sl] = (x_unscaled[sl] / self._scales[i]) * sp.inv_sqrt_n
         return y
 
-    def _unpack_scaled_into_fields(self, x_scaled: np.ndarray) -> None:
+    def _unpack_scaled_to_fields(self, x_scaled: np.ndarray) -> None:
+        """Inverse of _pack_scaled: write back to field DOFs and scatter."""
         if self._scales is None:
-            raise RuntimeError("Internal error: scales are not initialized.")
+            raise RuntimeError("Scales not initialized.")
         for i, sp in enumerate(self._specs):
             sl = slice(sp.offset, sp.offset + sp.n_owned)
-            sp.f.x.array[: sp.n_owned] = (x_scaled[sl] / sp.inv_sqrt_N) * self._scales[i]
-            sp.f.x.scatter_forward()
+            sp.field.x.array[:sp.n_owned] = (x_scaled[sl] / sp.inv_sqrt_n) * self._scales[i]
+            sp.field.x.scatter_forward()
 
-    # ----------------------------- norms/metrics ----------------------------
+    # ----------------------------- Norms ------------------------------------
 
     def _gdot(self, a: np.ndarray, b: np.ndarray) -> float:
-        return float(self.comm.allreduce(float(np.dot(a, b)), op=MPI.SUM))
+        """Global dot product via MPI allreduce."""
+        local_dot = np.dot(a, b)
+        return self.comm.allreduce(local_dot, op=MPI.SUM)
 
-    def _proj_step(self, x_old: np.ndarray, x_trial: np.ndarray, x_ref: np.ndarray) -> float:
-        """Relative step: ||x_trial-x_old|| / ||x_ref|| in global L2 (all inputs scaled).
-        
-        NOTE: This definition must match Anderson._rel_step exactly
-        to ensure consistent convergence criteria.
-        """
-        d = x_trial - x_old
-        d2 = self._gdot(d, d)
-        r2 = self._gdot(x_ref, x_ref)
-        # Guard: if reference norm is vanishingly small, return absolute norm.
-        if r2 <= 1e-300:
-            return float(np.sqrt(d2))
-        return float(np.sqrt(d2 / r2))
+    def _relative_step(self, x_old: np.ndarray, x_new: np.ndarray, x_ref: np.ndarray) -> float:
+        """Compute ||x_new - x_old|| / ||x_ref|| globally. Must match Anderson._rel_step."""
+        diff = x_new - x_old
+        diff_norm_sq = self._gdot(diff, diff)
+        ref_norm_sq = self._gdot(x_ref, x_ref)
+        if ref_norm_sq <= self._TINY:
+            return np.sqrt(diff_norm_sq)
+        return np.sqrt(diff_norm_sq / ref_norm_sq)
 
-    # ------------------------------- main loop ------------------------------
+    # ------------------------------- Logging --------------------------------
 
     def _format_iteration_log(
         self,
@@ -160,20 +168,25 @@ class FixedPointSolver:
         aa_info: Dict[str, Any],
         block_stats: List[SweepStats],
     ) -> str:
-        """Format one Picard iteration as two-line output."""
+        """Format iteration as two-line log: residuals + per-block stats."""
         cond_val = aa_info.get("condH")
         cond_str = f"{cond_val:.1e}" if cond_val is not None else "N/A"
-        rst_str = f" RST" if aa_info.get("restart_reason") else ""
-        lim_str = " LIM" if aa_info.get('limited') else ""
+        flags = ""
+        if aa_info.get("restart_reason"):
+            flags += " RST"
+        if aa_info.get("limited"):
+            flags += " LIM"
 
-        # Line 1: Picard header
-        line1 = f"Picard {itr:>2}: res={picard_res:.2e} | step={aa_step_res:.2e} (cond={cond_str}, m={aa_info.get('aa_hist', 0)}{rst_str}{lim_str})"
-
-        # Line 2: Block performance (compact)
+        line1 = (
+            f"Picard {itr:>2}: res={picard_res:.2e} | "
+            f"step={aa_step_res:.2e} (cond={cond_str}, m={aa_info.get('aa_hist', 0)}{flags})"
+        )
         block_parts = [s.format_short(width=4) for s in block_stats]
         line2 = "    " + " │ ".join(block_parts)
 
         return f"{line1}\n{line2}"
+
+    # ------------------------------- Main loop ------------------------------
 
     def run(
         self,
@@ -182,30 +195,29 @@ class FixedPointSolver:
         step_index: int = 0,
         sim_time: float = 0.0,
     ) -> bool:
-        """Run fixed-point iteration until convergence.
+        """Run fixed-point iteration until convergence or max iterations.
 
         Args:
             progress: Progress reporter (or None).
             task_id: Task ID for progress updates (or None).
-            step_index: Current timestep index (1-based), for logging.
-            sim_time: Current simulation time [days], for logging.
+            step_index: Timestep index for logging.
+            sim_time: Simulation time [days] for logging.
 
         Returns:
             True if converged within tolerance.
         """
-        tol = float(self.cfg.solver.coupling_tol)
-        max_subiters = int(self.cfg.solver.max_subiters)
+        tol = self.cfg.solver.coupling_tol
+        max_subiters = self.cfg.solver.max_subiters
 
-        outer_stall_window = int(self.cfg.solver.outer_stall_window)
-        outer_stall_min_rel_drop = float(self.cfg.solver.outer_stall_min_rel_drop)
-        outer_stall_patience = int(self.cfg.solver.outer_stall_patience)
-        res_hist = deque(maxlen=outer_stall_window)
-        stall_windows = 0
+        stall_window = self.cfg.solver.outer_stall_window
+        stall_min_drop = self.cfg.solver.outer_stall_min_rel_drop
+        stall_patience = self.cfg.solver.outer_stall_patience
+        res_history: deque = deque(maxlen=stall_window)
+        stall_count = 0
         stop_reason = ""
 
         self.subiter_metrics = []
         self.stop_reason = ""
-
         self._scales = None
         if self.anderson is not None:
             self.anderson.reset()
@@ -217,16 +229,13 @@ class FixedPointSolver:
         converged = False
 
         for itr in range(1, max_subiters + 1):
-            # Snapshot old iterate (unscaled, owned DOFs)
             x_old = self._pack_unscaled()
 
-            # One Gauss-Seidel sweep of all blocks (each returns SweepStats)
             sweep_stats: List[SweepStats] = []
             for blk in self.blocks:
                 stats = blk.sweep()
                 sweep_stats.append(stats)
 
-            # Raw iterate after the sweep
             x_raw = self._pack_unscaled()
 
             if self._scales is None:
@@ -234,12 +243,10 @@ class FixedPointSolver:
 
             x_old_s = self._pack_scaled(x_old)
             x_raw_s = self._pack_scaled(x_raw)
+            picard_res = self._relative_step(x_old_s, x_raw_s, x_raw_s)
+            res_history.append(picard_res)
 
-            # Picard residual: ||x_raw - x_old|| / ||x_raw|| (scaled global L2)
-            picard_res = self._proj_step(x_old_s, x_raw_s, x_raw_s)
-            res_hist.append(float(picard_res))
-
-            # If converged, do not run Anderson (prevents end-of-step REJ/RST churn).
+            # Skip Anderson if already converged
             if picard_res <= tol:
                 x_new_s = x_raw_s
                 aa = {
@@ -253,7 +260,7 @@ class FixedPointSolver:
                 if self.anderson is not None:
                     x_new_s, aa = self.anderson.mix(x_old_s, x_raw_s)
                 else:
-                    beta = float(self.cfg.solver.beta)
+                    beta = self.cfg.solver.beta
                     x_new_s = x_old_s + beta * (x_raw_s - x_old_s)
                     aa = {
                         "aa_hist": 0,
@@ -263,29 +270,25 @@ class FixedPointSolver:
                         "limited": False,
                     }
 
-            aa_step_res = self._proj_step(x_old_s, x_new_s, x_raw_s)
+            aa_step_res = self._relative_step(x_old_s, x_new_s, x_raw_s)
 
-            self._unpack_scaled_into_fields(x_new_s)
+            self._unpack_scaled_to_fields(x_new_s)
 
-            # Memory usage (Max RSS in KB on Linux -> MB)
             mem_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
-
-            # Log per-Picard step info (file only via DEBUG level)
-            cond_val = aa.get("condH")
             log_line = self._format_iteration_log(itr, picard_res, aa_step_res, aa, sweep_stats)
             self.logger.debug(log_line)
 
             rec = {
-                "iter": int(itr),
-                "proj_res": float(picard_res),
-                "picard_res": float(picard_res),
-                "aa_step_res": float(aa_step_res),
-                "aa_hist": int(aa.get("aa_hist", 0)),
-                "aa_accepted": bool(aa.get("accepted", True)),
-                "aa_restart": str(aa.get("restart_reason", "")),
-                "aa_limited": bool(aa.get("limited", False)),
-                "condH": float(cond_val) if cond_val is not None else 0.0,
-                "mem_mb": float(mem_mb),
+                "iter": itr,
+                "proj_res": picard_res,
+                "picard_res": picard_res,
+                "aa_step_res": aa_step_res,
+                "aa_hist": aa.get("aa_hist", 0),
+                "aa_accepted": aa.get("accepted", True),
+                "aa_restart": aa.get("restart_reason", ""),
+                "aa_limited": aa.get("limited", False),
+                "condH": aa.get("condH", 0.0),
+                "mem_mb": mem_mb,
                 "block_stats": sweep_stats,
             }
             self.subiter_metrics.append(rec)
@@ -301,31 +304,28 @@ class FixedPointSolver:
             if picard_res <= tol:
                 converged = True
                 break
-            if stop_reason == "" and len(res_hist) == outer_stall_window:
-                r0 = float(res_hist[0])
-                r_best = float(min(res_hist))
-                if (
-                    np.isfinite(r0)
-                    and np.isfinite(r_best)
-                    and r0 > 0.0
-                ):
-                    rel_drop = (r0 - r_best) / r0
-                    if rel_drop < outer_stall_min_rel_drop:
-                        stall_windows += 1
-                    else:
-                        stall_windows = 0
 
-                    if stall_windows >= outer_stall_patience:
+            if stop_reason == "" and len(res_history) == stall_window:
+                r_first = res_history[0]
+                r_best = min(res_history)
+                if np.isfinite(r_first) and np.isfinite(r_best) and r_first > 0.0:
+                    rel_drop = (r_first - r_best) / r_first
+                    if rel_drop < stall_min_drop:
+                        stall_count += 1
+                    else:
+                        stall_count = 0
+
+                    if stall_count >= stall_patience:
                         stop_reason = "no_progress"
                         self.subiter_metrics[-1]["fp_stop_reason"] = stop_reason
                         self.logger.warning(
                             f"Early abort fixed-point at itr={itr}: no progress "
-                            f"(rel_drop={rel_drop:.2%} < {outer_stall_min_rel_drop:.2%} "
-                            f"for {outer_stall_patience} windows of {outer_stall_window} iters)."
+                            f"(rel_drop={rel_drop:.2%} < {stall_min_drop:.2%} "
+                            f"for {stall_patience} windows of {stall_window} iters)."
                         )
                         break
                 else:
-                    stall_windows = 0
+                    stall_count = 0
 
         if converged:
             stop_reason = "converged"
@@ -336,7 +336,6 @@ class FixedPointSolver:
         if self.subiter_metrics:
             self.subiter_metrics[-1].setdefault("fp_stop_reason", stop_reason)
 
-        # Summary stats for the time step using StepSummary
         summary = StepSummary.from_iteration_records(self.subiter_metrics)
         self.logger.info(summary.format_summary(step_index=step_index, sim_time=sim_time))
 

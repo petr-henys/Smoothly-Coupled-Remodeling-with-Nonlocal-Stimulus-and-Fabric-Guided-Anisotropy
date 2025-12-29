@@ -13,7 +13,7 @@ from simulation.stats import SweepStats
 from simulation.utils import assign, get_owned_size, symm
 
 if TYPE_CHECKING:
-    from simulation.loader import LoadingCase, Loader
+    from femur.loader import LoadingCase, Loader
 
 
 class StimulusCalculator:

@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 from pathlib import Path
-from simulation.febio_parser import FEBio2Dolfinx
+from femur import FEBio2Dolfinx
 
 
 @pytest.fixture

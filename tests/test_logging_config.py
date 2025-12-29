@@ -13,6 +13,7 @@ Tests cover:
 
 import logging
 import sys
+import pytest
 from simulation.logger import setup_logging, get_std_logger, get_class_logger
 
 
@@ -74,12 +75,10 @@ class TestSetupLogging:
         setup_logging(level="WaRnInG")
         assert logging.getLogger().level == logging.WARNING
     
-    def test_invalid_level_defaults_to_info(self):
-        """Test that invalid log level defaults to INFO."""
-        setup_logging(level="INVALID_LEVEL")
-        
-        root_logger = logging.getLogger()
-        assert root_logger.level == logging.INFO
+    def test_invalid_level_raises_error(self):
+        """Test that invalid log level raises ValueError."""
+        with pytest.raises(ValueError, match="Invalid log level"):
+            setup_logging(level="INVALID_LEVEL")
     
     def test_file_output(self, tmp_path):
         """Test logging to file."""

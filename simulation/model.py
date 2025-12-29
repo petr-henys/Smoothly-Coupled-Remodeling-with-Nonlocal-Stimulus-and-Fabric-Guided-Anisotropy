@@ -11,7 +11,7 @@ from dolfinx.fem import Function, functionspace
 
 from simulation.config import Config
 from simulation.fixedsolver import FixedPointSolver
-from simulation.loader import Loader, LoadingCase
+from femur.loader import Loader, LoadingCase
 from simulation.logger import get_logger
 from simulation.progress import ProgressReporter, SweepProgressReporter
 from simulation.registry import BlockRegistry

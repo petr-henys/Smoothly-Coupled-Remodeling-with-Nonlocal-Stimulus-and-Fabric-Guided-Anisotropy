@@ -6,6 +6,8 @@
 !/tests/
 !/manuscript/
 !/analysis/
+!/box/
+
 
 # Allow root-level files
 !/.gitignore

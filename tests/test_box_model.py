@@ -15,16 +15,21 @@ from mpi4py import MPI
 from dolfinx import fem, mesh
 import basix.ufl
 
-from simulation.box_mesh import BoxGeometry, BoxMeshBuilder, create_box_mesh
-from simulation.box_loader import BoxLoader, BoxLoadingCase, GradientType, PressureLoadSpec
-from simulation.box_scenarios import (
+from box import (
+    BoxGeometry,
+    BoxMeshBuilder,
+    create_box_mesh,
+    BoxLoader,
+    BoxLoadingCase,
+    GradientType,
+    PressureLoadSpec,
     get_single_pressure_case,
     get_physiological_compression_cases,
     get_cyclic_loading_cases,
     get_parabolic_pressure_case,
     get_bending_like_case,
+    BoxSolverFactory,
 )
-from simulation.box_factory import BoxSolverFactory
 from simulation.config import Config
 from simulation.params import GeometryParams, SolverParams, TimeParams, OutputParams
 

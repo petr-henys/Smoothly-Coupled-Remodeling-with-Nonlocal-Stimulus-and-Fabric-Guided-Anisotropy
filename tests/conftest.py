@@ -349,8 +349,7 @@ def cfg_factory(unit_cube, facet_tags):
 @pytest.fixture(scope="module")
 def femur_setup():
     """Create femur mesh and function spaces (mm geometry, MPa stresses)."""
-    from simulation.paths import FemurPaths
-    from simulation.febio_parser import FEBio2Dolfinx
+    from femur import FemurPaths, FEBio2Dolfinx
     from simulation.config import Config
     from simulation.params import MaterialParams
     import basix
@@ -399,7 +398,7 @@ def dummy_load(spaces, cfg):
     """Create dummy Loader and LoadingCase for unit tests."""
     from dolfinx import fem
     import numpy as np
-    from simulation.loader import LoadingCase
+    from femur.loader import LoadingCase
     
     class MockLoader:
         """Mock Loader for testing without femur-specific dependencies."""

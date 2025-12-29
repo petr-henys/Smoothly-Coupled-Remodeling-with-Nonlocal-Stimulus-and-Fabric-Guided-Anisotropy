@@ -9,15 +9,12 @@ This is a thin entry point that:
 
 from mpi4py import MPI
 
+from femur import FEBio2Dolfinx, FemurPaths, get_standard_gait_cases, Loader
 from simulation.factory import DefaultSolverFactory
-from simulation.febio_parser import FEBio2Dolfinx
-from simulation.loader import Loader
 from simulation.logger import get_logger
 from simulation.model import Remodeller
 from simulation.params import create_config, load_default_params
-from simulation.paths import FemurPaths
 from simulation.progress import ProgressReporter
-from simulation.scenarios import get_standard_gait_cases
 
 
 def main() -> None:

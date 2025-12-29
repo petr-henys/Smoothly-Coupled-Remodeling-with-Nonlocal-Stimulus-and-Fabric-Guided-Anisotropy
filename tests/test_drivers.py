@@ -8,7 +8,7 @@ from dolfinx import fem
 from simulation.config import Config
 from simulation.solvers import MechanicsSolver
 from simulation.drivers import GaitDriver
-from simulation.loader import LoadingCase
+from femur.loader import LoadingCase
 
 
 class MockLoader:

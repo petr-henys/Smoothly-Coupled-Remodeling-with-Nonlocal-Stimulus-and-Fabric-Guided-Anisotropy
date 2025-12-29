@@ -21,7 +21,7 @@ from simulation.utils import build_facetag, build_dirichlet_bcs
 from simulation.solvers import MechanicsSolver, DensitySolver
 from simulation.fixedsolver import FixedPointSolver
 from simulation.model import Remodeller
-from simulation.loader import LoadingCase
+from femur.loader import LoadingCase
 comm = MPI.COMM_WORLD
 
 
@@ -332,13 +332,11 @@ class TestMemoryUsage:
             m=m,
             beta=1.0,
             lam=1e-6,
-            gamma=1.0,
-            safeguard=False,
-            backtrack_max=3,
-            restart_on_reject_k=3,
+            restart_on_stall=1.1,
             restart_on_cond=1e10,
             step_limit_factor=2.0,
-            verbose=False,
+            restart_stall_window=3,
+            restart_stall_patience=2,
         )
         
         # Add more than m updates

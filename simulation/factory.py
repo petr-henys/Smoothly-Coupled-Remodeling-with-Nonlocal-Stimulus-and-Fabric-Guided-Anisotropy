@@ -11,7 +11,7 @@ from simulation.utils import build_dirichlet_bcs
 
 if TYPE_CHECKING:
     from simulation.config import Config
-    from simulation.loader import Loader, LoadingCase
+    from femur.loader import Loader, LoadingCase
 
 
 class SolverFactory(Protocol):

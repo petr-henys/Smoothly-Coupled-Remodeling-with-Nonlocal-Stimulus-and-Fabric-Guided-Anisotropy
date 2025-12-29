@@ -17,7 +17,7 @@ from simulation.params import (
     OutputParams,
 )
 from simulation.progress import ProgressReporter
-from simulation.scenarios import get_standard_gait_cases, load_scenarios_from_yaml
+from femur.scenarios import get_standard_gait_cases, load_scenarios_from_yaml
 
 __all__ = [
     # Config and parameters

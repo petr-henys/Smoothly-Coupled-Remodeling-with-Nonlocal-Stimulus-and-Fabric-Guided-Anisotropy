@@ -1,5 +1,5 @@
 """
-Tests for paths.py module.
+Tests for femur/paths.py module.
 
 Tests cover:
 - Path constants (FemurPaths, GaitPaths)
@@ -15,7 +15,7 @@ import shutil
 from pathlib import Path
 
 # Import after sys.path manipulation in conftest
-from simulation.paths import (
+from femur.paths import (
     PROJECT_ROOT,
     ANATOMY_DIR,
     ANATOMY_RAW_DIR,

@@ -302,7 +302,7 @@ class TestUnifiedStorage:
             P1_vec = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(domain.geometry.dim,))
             V = fem.functionspace(domain, P1_vec)
             
-            from simulation.loader import LoadingCase
+            from femur.loader import LoadingCase
             
             class MockLoader:
                 def __init__(self):

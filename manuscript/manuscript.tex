@@ -599,7 +599,16 @@ whereas coupling failures trigger an immediate cut $\Delta t^n\leftarrow g_{\min
 \[
 \Delta t^{n+1} \leftarrow \Delta t^n\cdot \min\!\left(g_{\max},\ \max\!\left(g_{\min},\ \eta\,(e^{n+1})^{-k_I}\left(\frac{e^{n}}{e^{n+1}}\right)^{k_P}\right)\right),
 \]
-with an I-only variant on the second accepted step; if $e^{n+1}<0.5$ we additionally prevent accidental shrink by enforcing the factor to be at least $1$. Finally, $\Delta t^n$ is clamped to $[\Delta t_{\min},\Delta t_{\max}]$ after each update. Smooth clamps/splits use a global smoothing width $\varepsilon=10^{-6}$ (interpreted in the units of the smoothed quantity), and numerical integration uses quadrature degree $q=4$.
+with an I-only variant on the second accepted step; if $e^{n+1}<0.5$ we additionally prevent accidental shrink by enforcing the factor to be at least $1$. Finally, $\Delta t^n$ is clamped to $[\Delta t_{\min},\Delta t_{\max}]$ after each update; \cref{fig:time-adaptivity-controller} shows a diagnostic summary of the resulting controller behavior. Smooth clamps/splits use a global smoothing width $\varepsilon=10^{-6}$ (interpreted in the units of the smoothed quantity), and numerical integration uses quadrature degree $q=4$.
+
+\begin{figure}[htbp]
+  \centering
+  \IfFileExists{images/time_adaptivity_demo.png}{%
+    \includegraphics[width=1\linewidth]{images/time_adaptivity_demo.png}%
+  }{\fbox{\parbox{0.9\linewidth}{\centering Missing image: \texttt{images/time_adaptivity_demo.png}}}}
+  \caption{Analytic demonstration of the predictor--corrector error estimate and Gustafsson PI timestep controller (synthetic scalar ODE with a smooth transient forcing ``burst'' to trigger rejections). (a) One representative step: AB predictor $x_{\mathrm{pred}}^{n+1}$ and BE-corrected state $x^{n+1}$ define the WRMS error $e^{n+1}$. (b) Error indicator $e(\Delta t)$ for the same local history, with the selected timestep marked. (c) Controller action $f(e)=\Delta t_{\mathrm{next}}/\Delta t$ for accepted steps (I-only and PI) and for time-error rejections; markers overlay the actual $(e,f)$ pairs from the synthetic run. (d) Timestep evolution $\Delta t(t)$ and (e) the corresponding error history $e(t)$, with the acceptance threshold $e=1$. (f) Sensitivity of the total number of attempts to reach $T$ with respect to PI gains $(k_P,k_I)$.}
+  \label{fig:time-adaptivity-controller}
+\end{figure}
 
 \paragraph{Output and mesh tags.}
 We write field snapshots every $N_{\mathrm{save}}=1$ accepted timesteps and record per-step and per-subiteration solver telemetry. The Dirichlet and Neumann boundary parts $(\Gamma_D,\Gamma_N)$ are defined by mesh facet tags with IDs $(i_D,i_N)=(1,2)$.

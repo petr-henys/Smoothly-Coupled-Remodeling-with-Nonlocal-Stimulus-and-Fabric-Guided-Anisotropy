@@ -20,10 +20,13 @@ from pathlib import Path
 
 from mpi4py import MPI
 
-from simulation.box_factory import BoxSolverFactory
-from simulation.box_loader import BoxLoader
-from simulation.box_mesh import BoxGeometry, BoxMeshBuilder
-from simulation.box_scenarios import get_parabolic_pressure_case
+from box import (
+    BoxSolverFactory,
+    BoxLoader,
+    BoxGeometry,
+    BoxMeshBuilder,
+    get_parabolic_pressure_case,
+)
 from simulation.logger import get_logger
 from simulation.model import Remodeller
 from simulation.params import create_config, load_default_params

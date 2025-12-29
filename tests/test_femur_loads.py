@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from simulation.femur_loads import HIPJointLoad
+from femur import HIPJointLoad
 
 
 class _DummyMesh:
