@@ -20,6 +20,7 @@ Outputs:
 from __future__ import annotations
 
 import copy
+import shutil
 from pathlib import Path
 
 from mpi4py import MPI
@@ -131,19 +132,28 @@ def main() -> None:
     box = params["box"]
     
     # Fixed mesh resolution for acceleration comparison
-    FIXED_N = 24
+    FIXED_N = 16
     
     # Sweep parameters
     accel_types = ["picard", "anderson"]
-    dt_values = [10.0]
+    dt_values = [50., 25, 10.]
     
     # Define sweep
+    output_dir = Path("results/anderson_sweep")
+    
+    # Clear output directory (rank 0 only)
+    if comm.rank == 0:
+        if output_dir.exists():
+            shutil.rmtree(output_dir)
+            logger.info(f"Cleared existing output directory: {output_dir}")
+    comm.Barrier()
+    
     sweep = ParameterSweep(
         params={
             "accel_type": accel_types,
             "dt_days": dt_values,
         },
-        base_output_dir=Path("results/anderson_sweep"),
+        base_output_dir=output_dir,
         metadata={
             "description": "Anderson vs Picard acceleration comparison",
             "fixed_N": FIXED_N,

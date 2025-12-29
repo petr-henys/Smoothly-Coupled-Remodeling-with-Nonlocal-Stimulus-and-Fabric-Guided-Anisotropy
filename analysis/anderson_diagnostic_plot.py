@@ -32,6 +32,7 @@ import numpy as np
 import pandas as pd
 from matplotlib.cm import ScalarMappable
 from matplotlib.colors import Normalize
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 from analysis.plot_utils import (
     FIGSIZE_DOUBLE_COLUMN,
@@ -210,12 +211,13 @@ def plot_convergence(ax: plt.Axes, subiters: pd.DataFrame, config: dict, steps_d
     coupling_tol = solver_cfg.get("coupling_tol", 1e-6)
     ax.axhline(coupling_tol, color="k", linestyle="--", linewidth=0.8, alpha=0.5)
 
-    # Add colorbar for step progression
+    # Add horizontal colorbar inside plot for step progression
     sm = ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
-    cbar = ax.figure.colorbar(sm, ax=ax, pad=0.02, aspect=30)
-    cbar.set_label("Step attempt", fontsize=7)
-    cbar.ax.tick_params(labelsize=7)
+    cax = inset_axes(ax, width="30%", height="4%", loc="upper right", borderpad=1.0)
+    cbar = ax.figure.colorbar(sm, cax=cax, orientation="horizontal")
+    cbar.set_label("Step", fontsize=6, labelpad=1)
+    cbar.ax.tick_params(labelsize=5)
 
     setup_axis_style(ax, xlabel="Subiteration", ylabel="Residual", title="(a) Convergence", loglog=False)
 
@@ -243,9 +245,9 @@ def plot_dt_evolution(ax: plt.Axes, steps_df: pd.DataFrame) -> None:
     elif "converged" in steps_df.columns:
         rejected_mask = steps_df["converged"].values == 0
 
-    # Plot accepted steps
+    # Plot accepted steps (linear scale for even ticks)
     accepted_mask = ~rejected_mask
-    ax.semilogy(
+    ax.plot(
         step_nums[accepted_mask],
         dt_vals[accepted_mask],
         color="#2ecc71",
@@ -268,7 +270,7 @@ def plot_dt_evolution(ax: plt.Axes, steps_df: pd.DataFrame) -> None:
         )
 
     ax.set_xlim(step_nums.min() - 0.5, step_nums.max() + 0.5)
-    ax.legend(loc="upper right", fontsize=6, framealpha=0.8, frameon=False)
+    ax.legend(loc="upper left", fontsize=6, framealpha=0.8, frameon=False)
     setup_axis_style(ax, xlabel="Step", ylabel="dt [days]", title="(c) Timestep evolution", loglog=False)
 
 
@@ -279,13 +281,6 @@ def plot_events_unified(ax: plt.Axes, subiters: pd.DataFrame, global_idx: np.nda
     Shows cumulative event count with markers for different event types.
     """
     n_total = len(subiters)
-    
-    # Background: residual magnitude (semi-log)
-    if "proj_res" in subiters.columns:
-        res = subiters["proj_res"].values
-        res_log = np.log10(np.clip(res, 1e-12, None))
-        res_norm = (res_log - res_log.min()) / max(res_log.max() - res_log.min(), 1e-10)
-        ax.fill_between(global_idx, 0, res_norm * 0.3, alpha=0.1, color="#7f8c8d", label=None)
     
     # Collect all events: (global_idx, event_type, color, marker)
     events = []
@@ -554,7 +549,7 @@ def plot_conditioning(ax: plt.Axes, subiters: pd.DataFrame, global_idx: np.ndarr
                label=f"restart κ={cond_threshold:.0e}")
 
     setup_axis_style(ax, xlabel="Global iteration", ylabel="cond(H)", title="(e) Gram conditioning", loglog=False)
-    ax.legend(loc="upper right", fontsize=6, framealpha=0.8, frameon=False)
+    ax.legend(loc="upper left", fontsize=6, framealpha=0.8, frameon=False)
 
 
 def plot_history_size(ax: plt.Axes, subiters: pd.DataFrame, global_idx: np.ndarray, config: dict) -> None:
@@ -628,11 +623,12 @@ def plot_residual_timeline(
             if len(step_row) > 0:
                 err = step_row["error_norm"].values[0]
                 if err > 0 and np.isfinite(err):
-                    # Draw horizontal bar at error level
+                    # Draw horizontal bar at error level (label only first one for legend)
+                    lbl = "wRMS err" if i == 0 else None
                     ax.axhspan(err * 0.8, err * 1.2, 
                                xmin=(global_idx[sc_start] - global_idx[0]) / max(global_idx[-1] - global_idx[0], 1),
                                xmax=(global_idx[sc_end - 1] - global_idx[0]) / max(global_idx[-1] - global_idx[0], 1),
-                               alpha=0.15, color="#e67e22", zorder=0)
+                               alpha=0.15, color="#e67e22", zorder=0, label=lbl)
     
     # Vertical lines at step boundaries (skip first)
     for sc in step_changes[1:]:
@@ -684,8 +680,9 @@ def main() -> None:
     global_idx = create_global_index(subiters)
 
     # Create figure with 6 subplots (2x3 grid)
+    # Use 3:2 aspect ratio for equal-sized square subplots
     apply_style()
-    fig, axes = plt.subplots(2, 3, figsize=FIGSIZE_DOUBLE_COLUMN)
+    fig, axes = plt.subplots(2, 3, figsize=(9.0, 5.5))
 
     # Row 1: Convergence + Residual timeline + dt evolution
     plot_convergence(axes[0, 0], subiters, config, steps)

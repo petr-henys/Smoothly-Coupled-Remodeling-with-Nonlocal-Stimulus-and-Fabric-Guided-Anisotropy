@@ -320,7 +320,7 @@ if __name__ == "__main__":
     apply_style()
     
     xlsx_file = Path("analysis/convergence_analysis/convergence_data.xlsx")
-    output_file = Path("manuscript/images/convergence_full_plot.png")
+    output_file = Path("manuscript/images/convergence_plot.png")
 
     if not xlsx_file.exists():
         print(f"ERROR: {xlsx_file} not found!")
