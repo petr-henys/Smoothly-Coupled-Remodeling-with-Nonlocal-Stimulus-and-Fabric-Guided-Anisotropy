@@ -167,6 +167,7 @@ class FixedPointSolver:
         aa_step_res: float,
         aa_info: Dict[str, Any],
         block_stats: List[SweepStats],
+        contraction: float | None = None,
     ) -> str:
         """Format iteration as two-line log: residuals + per-block stats."""
         cond_val = aa_info.get("condH")
@@ -176,9 +177,13 @@ class FixedPointSolver:
             flags += " RST"
         if aa_info.get("limited"):
             flags += " LIM"
+        if aa_info.get("aa_off"):
+            flags += " [Picard]"
+
+        contraction_str = f"ρ={contraction:.2f}" if contraction is not None else "ρ=N/A"
 
         line1 = (
-            f"Picard {itr:>2}: res={picard_res:.2e} | "
+            f"Picard {itr:>2}: res={picard_res:.2e} {contraction_str} | "
             f"step={aa_step_res:.2e} (cond={cond_str}, m={aa_info.get('aa_hist', 0)}{flags})"
         )
         block_parts = [s.format_short(width=4) for s in block_stats]
@@ -246,7 +251,20 @@ class FixedPointSolver:
             picard_res = self._relative_step(x_old_s, x_raw_s, x_raw_s)
             res_history.append(picard_res)
 
-            # Skip Anderson if already converged
+            # Contraction ratio ρ = r_k / r_{k-1} from history
+            contraction: float | None = None
+            if len(res_history) >= 2:
+                prev_res = res_history[-2]
+                if prev_res > self._TINY:
+                    contraction = picard_res / prev_res
+
+            # Use Picard when strongly contractive (ρ < threshold), else Anderson
+            use_anderson = (
+                self.anderson is not None
+                and (contraction is None or contraction >= self.cfg.solver.rho_anderson_off)
+            )
+
+            # Skip acceleration if already converged
             if picard_res <= tol:
                 x_new_s = x_raw_s
                 aa = {
@@ -255,27 +273,32 @@ class FixedPointSolver:
                     "restart_reason": "",
                     "condH": 1.0,
                     "limited": False,
+                    "aa_off": False,
                 }
+            elif use_anderson:
+                x_new_s, aa = self.anderson.mix(x_old_s, x_raw_s)
+                aa["aa_off"] = False
             else:
-                if self.anderson is not None:
-                    x_new_s, aa = self.anderson.mix(x_old_s, x_raw_s)
-                else:
-                    beta = self.cfg.solver.beta
-                    x_new_s = x_old_s + beta * (x_raw_s - x_old_s)
-                    aa = {
-                        "aa_hist": 0,
-                        "accepted": True,
-                        "restart_reason": "",
-                        "condH": 1.0,
-                        "limited": False,
-                    }
+                # Pure damped Picard
+                beta = self.cfg.solver.beta
+                x_new_s = x_old_s + beta * (x_raw_s - x_old_s)
+                aa = {
+                    "aa_hist": 0,
+                    "accepted": True,
+                    "restart_reason": "",
+                    "condH": 1.0,
+                    "limited": False,
+                    "aa_off": True,
+                }
 
             aa_step_res = self._relative_step(x_old_s, x_new_s, x_raw_s)
 
             self._unpack_scaled_to_fields(x_new_s)
 
             mem_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
-            log_line = self._format_iteration_log(itr, picard_res, aa_step_res, aa, sweep_stats)
+            log_line = self._format_iteration_log(
+                itr, picard_res, aa_step_res, aa, sweep_stats, contraction
+            )
             self.logger.debug(log_line)
 
             rec = {
@@ -287,19 +310,23 @@ class FixedPointSolver:
                 "aa_accepted": aa.get("accepted", True),
                 "aa_restart": aa.get("restart_reason", ""),
                 "aa_limited": aa.get("limited", False),
+                "aa_off": aa.get("aa_off", False),
                 "condH": aa.get("condH", 0.0),
+                "contraction": contraction,  # ρ_k = r_k / r_{k-1}
                 "mem_mb": mem_mb,
                 "block_stats": sweep_stats,
             }
             self.subiter_metrics.append(rec)
 
             if progress is not None and task_id is not None:
-                info_str = f"res={picard_res:.1e} m={rec['aa_hist']}"
+                rho_str = f"ρ={contraction:.2f}" if contraction is not None else ""
+                mode_str = "P" if aa.get("aa_off") else f"m={rec['aa_hist']}"
+                info_str = f"res={picard_res:.1e} {rho_str} {mode_str}"
                 if aa.get('limited'):
                     info_str += " LIM"
                 if rec["aa_restart"]:
                     info_str += " RST"
-                progress.update(task_id, advance=1, info=f"{info_str:<25}")
+                progress.update(task_id, advance=1, info=f"{info_str:<30}")
 
             if picard_res <= tol:
                 converged = True

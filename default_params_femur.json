@@ -67,7 +67,8 @@
         "max_subiters": 25,
         "outer_stall_window": 8,
         "outer_stall_min_rel_drop": 0.05,
-        "outer_stall_patience": 2
+        "outer_stall_patience": 2,
+        "rho_anderson_off": 0.5
     },
     
     "time": {

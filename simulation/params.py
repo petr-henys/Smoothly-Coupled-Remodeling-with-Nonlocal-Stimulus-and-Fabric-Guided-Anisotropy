@@ -244,6 +244,11 @@ class SolverParams:
     outer_stall_min_rel_drop: float = 0.05
     outer_stall_patience: int = 2
 
+    # --- Adaptive Anderson: use Picard when strongly contractive ---
+    # Contraction ratio ρ = r_k / r_{k-1} below which to use pure Picard
+    # (Anderson is unnecessary when Picard converges fast)
+    rho_anderson_off: float = 0.5
+
 
     def validate(self) -> None:
         """Validate solver parameter constraints."""
@@ -267,6 +272,8 @@ class SolverParams:
             raise ValueError("outer_stall_min_rel_drop must be in [0, 1).")
         if self.outer_stall_patience < 1:
             raise ValueError("outer_stall_patience must be >= 1.")
+        if not (0.0 < self.rho_anderson_off < 1.0):
+            raise ValueError("rho_anderson_off must be in (0, 1).")
 
 
 @dataclass

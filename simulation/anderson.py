@@ -19,7 +19,7 @@ class Anderson:
     """
 
     # Numerical constants
-    _TINY: float = 1e-300
+    _TINY: float = 1e-8
     _EIG_REL: float = 1e-12  # Relative eigenvalue floor for fallback solver
 
     def __init__(
