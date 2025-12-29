@@ -1,0 +1,55 @@
+\section*{Finite element spatial discretization and weak forms}
+\label{sec:fe-space}
+We discretize space by conforming $H^1$ finite elements, written in a unified weak-form notation for all subproblems at a fixed time level.
+
+\paragraph{Finite element spaces.}
+For displacements we use the conforming space
+\[
+V_h:=\{\,\mathbf{v}_h\in [H^1(\Omega)]^d:\ \mathbf{v}_h=\mathbf{0}\text{ on }\Gamma_D\,\},
+\]
+for scalar fields $Q_h\subset H^1(\Omega)$, and for second-order tensors
+\[
+T_h:=\{\,\mathbf{Q}_h\in [H^1(\Omega)]^{d\times d}\,\}.
+\]
+We represent the tensor unknown $\mathbf{L}$ componentwise and symmetrize it after each fabric solve; the fabric tensor is recovered as $\mathbf{A}=\exp(\mathbf{L})$.
+
+\paragraph{Mechanics at $t^n$ (weak form).}
+Find $\mathbf{u}_h^{n}\in V_h$ such that for all $\mathbf{v}_h\in V_h$,
+\begin{equation}\label{eq:fe-mech-unified}
+a_u(\mathbf{u}_h^{n},\mathbf{v}_h;\rho^{n},\mathbf{L}^{n}) \;=\; \ell_u(\mathbf{v}_h),
+\end{equation}
+with the bilinear and linear forms
+\begin{align*}
+a_u(\mathbf{w},\mathbf{v};\rho,\mathbf{L})
+&:= \int_\Omega \boldsymbol{\sigma}(\mathbf{w}, \rho, \mathbf{L}) : \boldsymbol{\varepsilon}(\mathbf{v}) \, \mathrm{d}x, \\[2mm]
+\ell_u(\mathbf{v}) &:= \langle \mathbf{t},\mathbf{v} \rangle_{\Gamma_N},
+\end{align*}
+where $\boldsymbol{\sigma}$ is the Zysset-Curnier stress tensor defined in \eqref{eq:zysset-curnier}.
+
+\paragraph{Stimulus (weak form at $t^n$).}
+Given $\psi_{\mathrm{day}}^{n}$ from \eqref{eq:stim-psi-nd}, find $S_h^{n}\in Q_h$ such that for all $q_h\in Q_h$,
+\begin{equation}\label{eq:fe-stim-unified}
+\left(\left(\frac{\tau_S}{\Delta t^n}+1\right) S_h^{n}, q_h\right) \;+\; \tau_S D_S\,(\nabla S_h^{n}, \nabla q_h)
+\;=\; \left(\frac{\tau_S}{\Delta t^n} S_h^{n-1}, q_h\right) \;+\; \Big(S_{\max}\tanh\!\big(\delta_{\mathrm{eff}}(\psi_{\mathrm{day}}^{n},\rho^{n})/\kappa_S\big), q_h\Big).
+\end{equation}
+
+\paragraph{Density (weak form at $t^n$).}
+With $\mathbf{D}_\rho$ from \eqref{eq:Drho-nd}, find $\rho_h^{n}\in Q_h$ such that for all $p_h\in Q_h$,
+\begin{equation}\label{eq:fe-rho-unified}
+\begin{aligned}
+\left(\frac{1}{\Delta t^n}\rho_h^{n}, p_h\right) \;+\; \big(\mathbf{D}_\rho\,\nabla \rho_h^{n}, \nabla p_h\big)
+\;+\; \Big(A_{\mathrm{surf}}(\rho_h^{n-1})\,\big(\tfrac{k_{\mathrm{form}}}{\rho_{\max}} S_+^n + \tfrac{k_{\mathrm{res}}}{\rho_{\min}} S_-^n\big)\,\rho_h^{n},\, p_h\Big) \\
+\;=\; \left(\frac{1}{\Delta t^n}\rho_h^{n-1}, p_h\right) \;+\; \Big(A_{\mathrm{surf}}(\rho_h^{n-1})\,(k_{\mathrm{form}} S_+^n + k_{\mathrm{res}} S_-^n),\, p_h\Big),
+\end{aligned}
+\end{equation}
+where $S_+^n = S_+(S^n)$ and $S_-^n = S_-(S^n)$ with $S_\pm$ defined in \eqref{eq:smooth-splits-nd}.
+
+\paragraph{Direction/fabric (weak form at $t^n$).}
+With $\mathbf{L}_M(\bar{\mathbf{Q}}^{n})$ given by \eqref{eq:M-hat-nd}, find $\mathbf{L}_h^{n}\in T_h$ such that for all $\mathbf{Q}_h\in T_h$,
+\begin{equation}\label{eq:fe-A-unified}
+\left(\left(\frac{c_A}{\Delta t^n} + \frac{c_A\,a(\bar{\mathbf{Q}}^{n})}{\tau_A}\right)\mathbf{L}_h^{n}, \mathbf{Q}_h\right) \;+\; c_A D_A\,(\nabla \mathbf{L}_h^{n}, \nabla \mathbf{Q}_h)
+\;=\; \left(\frac{c_A}{\Delta t^n}\mathbf{L}_h^{n-1}, \mathbf{Q}_h\right) \;+\; \frac{c_A\,a(\bar{\mathbf{Q}}^{n})}{\tau_A}\,(\mathbf{L}_M(\bar{\mathbf{Q}}^{n}), \mathbf{Q}_h).
+\end{equation}
+
+\paragraph{Remarks.}
+(i) Dirichlet conditions for mechanics are imposed strongly in $V_h$; natural boundary conditions enter via $\langle\cdot,\cdot\rangle_{\Gamma_N}$. (ii) The tensor unknown $\mathbf{L}_h^{n}$ is represented componentwise; symmetry is preserved at the continuous level and is respected numerically. The fabric tensor is recovered as $\mathbf{A}^n = \exp(\mathbf{L}_h^n)$.

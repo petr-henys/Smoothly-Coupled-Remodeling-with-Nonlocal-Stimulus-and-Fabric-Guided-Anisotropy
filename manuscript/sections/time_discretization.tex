@@ -1,0 +1,41 @@
+\section*{Backward--Euler time discretization}
+\label{sec:be-time}
+Let $0=t^0<t^1<\dots<t^N=T$ be a partition with $\Delta t^n:=t^n-t^{n-1}>0$. For any time-dependent field $X$, write $X^n\approx X(\cdot,t^n)$. Mechanics is quasi-static (no time derivative); $S$, $\rho$, and $\mathbf{L}$ are advanced by fully implicit Backward--Euler steps. Boundary and initial conditions are enforced at each time level exactly as in \eqref{eq:stim-bc-ic-nd}, \eqref{eq:density-bc-ic-nd}, and \eqref{eq:L-bc-ic-nd}.
+
+\paragraph{Mechanics at $t^n$.}
+Find $\mathbf{u}^{n}$ such that
+\begin{equation}\label{eq:be-mech}
+-\nabla\!\cdot\!\boldsymbol{\sigma}\!\left(\mathbf{u}^{n},\rho^{n},\mathbf{L}^{n}\right)=\mathbf{0}\ \text{in }\Omega,\qquad
+\mathbf{u}^{n}=\mathbf{0}\ \text{on }\Gamma_D,\qquad
+\boldsymbol{\sigma}\!\left(\mathbf{u}^{n},\rho^{n},\mathbf{L}^{n}\right)\mathbf{n}=\mathbf{t}\ \text{on }\Gamma_N,
+\end{equation}
+with $\boldsymbol{\sigma}$ given by the Zysset-Curnier model \eqref{eq:zysset-curnier}.
+
+\paragraph{Stimulus.}
+Given $\psi_{\mathrm{day}}^{n}$ from \eqref{eq:stim-psi-nd}, find $S^{n}$ such that
+\begin{equation}\label{eq:be-stim}
+\frac{\tau_S}{\Delta t^n}\big(S^{n}-S^{n-1}\big)\;-\;\tau_S D_S\,\Delta S^{n}\;+\;S^{n}
+\;=\; S_{\max}\,\tanh\!\Big(\delta_{\mathrm{eff}}(\psi_{\mathrm{day}}^{n},\rho^{n})/\kappa_S\Big)\quad\text{in }\Omega,
+\end{equation}
+with the Neumann condition from \eqref{eq:stim-bc-ic-nd} and $S^{0}=S_0$.
+
+\paragraph{Density.}
+Let $\mathbf{D}_\rho$ be as in \eqref{eq:Drho-nd}. Find $\rho^{n}$ such that
+\begin{equation}\label{eq:be-rho}
+\frac{1}{\Delta t^n}\big(\rho^{n}-\rho^{n-1}\big)\;-\;\nabla\!\cdot\!\big(\mathbf{D}_\rho\,\nabla \rho^{n}\big)
+\;=\; A_{\mathrm{surf}}(\rho^{n-1})\left[
+k_{\mathrm{form}}\,S_+^n\!\left(1-\frac{\rho^n}{\rho_{\max}}\right)
+\;+\;k_{\mathrm{res}}\,S_-^n\!\left(1-\frac{\rho^n}{\rho_{\min}}\right)
+\right]\quad\text{in }\Omega,
+\end{equation}
+Here $S_+^n:=S_+(S^n)$ and $S_-^n:=S_-(S^n)$ are the smooth positive/negative parts from \eqref{eq:smooth-splits-nd}. We evaluate $A_{\mathrm{surf}}$ explicitly on $\rho^{n-1}$.
+
+with the no--flux condition from \eqref{eq:density-bc-ic-nd} and $\rho^{0}=\rho_0$.
+
+\paragraph{Direction/fabric.}
+With $\mathbf{L}_M(\bar{\mathbf{Q}}^{n})$ given by \eqref{eq:M-hat-nd}, find $\mathbf{L}^{n}$ such that
+\begin{equation}\label{eq:be-A}
+\frac{c_A}{\Delta t^n}\big(\mathbf{L}^{n}-\mathbf{L}^{n-1}\big)\;-\;c_A D_A\,\Delta \mathbf{L}^{n}\;+\;\frac{c_A\,a(\bar{\mathbf{Q}}^{n})}{\tau_A}\,\mathbf{L}^{n}
+\;=\; \frac{c_A\,a(\bar{\mathbf{Q}}^{n})}{\tau_A}\,\mathbf{L}_M(\bar{\mathbf{Q}}^{n})\quad\text{in }\Omega,
+\end{equation}
+with the componentwise no--flux condition from \eqref{eq:L-bc-ic-nd} and $\mathbf{L}^{0}=\ln(\mathbf{A}_0)$.

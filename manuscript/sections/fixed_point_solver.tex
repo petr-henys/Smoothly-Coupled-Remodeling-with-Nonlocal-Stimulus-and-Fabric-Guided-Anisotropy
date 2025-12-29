@@ -1,0 +1,101 @@
+\section*{Fixed-point solver at a given time level: block Gauss--Seidel with Anderson acceleration}
+\label{sec:fp-aa}
+We describe the nonlinear solver used to obtain $(\mathbf{u}^n,S^n,\rho^n,\mathbf{L}^n)$ at a fixed time level $t^n$ from the Backward--Euler subproblems \eqref{eq:be-mech}--\eqref{eq:be-A}. Let the remodeling state be
+\begin{equation*}
+\mathcal{X} \;:=\; T\times Q\times Q,\qquad
+\mathbf{x} \;=\; (\mathbf{L},S,\rho) \in \mathcal{X},
+\end{equation*}
+where the mechanics field $\mathbf{u}$ is treated as a dependent variable $\mathbf{u}(\rho,\mathbf{L})$ determined by the equilibrium equations. Convergence is monitored in a discrete RMS-per-DOF norm of a \emph{scaled} concatenation of $(\mathbf{L},S,\rho)$. Writing the global coefficient vector of each field as $x_i\in\mathbb{R}^{N_i}$ (including tensor components) and denoting $\mathrm{RMS}(x_i):=\|x_i\|_2/\sqrt{N_i}$, we set per-field scales once per timestep from the first Gauss--Seidel sweep,
+\begin{equation}\label{eq:fp-scales}
+s_i \;:=\; \max\!\big(\mathrm{RMS}(x^{(0)}_i),\ \mathrm{RMS}(x_{\mathrm{raw},i}^{(1)}),\ \varepsilon_{\mathrm{tiny}}\big),
+\end{equation}
+and work with the scaled vector $\widetilde{x}_i := x_i/(s_i\sqrt{N_i})$. All norms below are Euclidean norms of the stacked scaled vector $\widetilde{\mathbf{x}}=(\widetilde{\mathbf L},\widetilde S,\widetilde\rho)$, computed as global dot products reduced across MPI ranks. (The blocks $S$, $\rho$, $\mathbf L$ have no Dirichlet constraints, so no additional projection is required.)
+
+\paragraph{Block map.}
+We define the fixed-point iteration in terms of the mechanical drivers $\psi_{\mathrm{day}}$ (scalar stimulus driver) and $\bar{\mathbf{Q}}$ (cycle-averaged deviatoric-stress outer-product). Given the state $(\rho, \mathbf{L})$, the mechanics driver $\mathsf{U}$ determines equilibrium displacements for each loading case and generates
+\[
+\psi_{\mathrm{new}} = \psi_{\mathrm{day}}(\rho,\mathbf{L}), \qquad \bar{\mathbf{Q}}_{\mathrm{new}} = \bar{\mathbf{Q}}(\rho,\mathbf{L}).
+\]
+The block Gauss--Seidel map $\mathcal{G}:\mathcal{X}\to\mathcal{X}$ is then defined by
+\begin{equation}\label{eq:block-map}
+\mathcal{G}(\mathbf{L},S,\rho)
+:=
+\Big(\ \underbrace{\mathsf{L}(\bar{\mathbf{Q}}_{\mathrm{new}})}_{\text{fabric}},\ \underbrace{\mathsf{S}(\psi_{\mathrm{new}},\rho)}_{\text{stim}},\ \underbrace{\mathsf{R}(S_{\mathrm{new}})}_{\text{density}}\ \Big),
+\end{equation}
+where $S_{\mathrm{new}}=\mathsf{S}(\psi_{\mathrm{new}},\rho)$ is the updated stimulus. This structure highlights that $\mathsf{S}$ and $\mathsf{L}$ depend on mechanics only through intermediate drivers. We take the daily driver as a cycle-weighted power mean of local strain energy density across loading cases,
+\[
+\psi_{\mathrm{day}}(x)=\left(\frac{\sum_i c_i\,\psi_i(x)^p}{\sum_i c_i}\right)^{1/p},\qquad
+\psi_i(x):=\max\!\Big(0,\tfrac12\,\boldsymbol{\sigma}_i(x):\boldsymbol{\varepsilon}_i(x)\Big),
+\]
+with exponent $p\ge 1$ and cycle weights $c_i$ (cycles/day); the fabric driver is $\bar{\mathbf{Q}}=\sum_i c_i\,\mathrm{sym}(\boldsymbol{\sigma}_{i,\mathrm{dev}}\boldsymbol{\sigma}_{i,\mathrm{dev}}^{\!\top})/\sum_i c_i$ with $\boldsymbol{\sigma}_{i,\mathrm{dev}}:=\boldsymbol{\sigma}_i-\tfrac13(\mathrm{tr}\,\boldsymbol{\sigma}_i)\mathbf{I}$.
+
+The fixed point at $t^n$ solves
+\begin{equation}\label{eq:fp-residual}
+\mathbf{F}(\mathbf{x}^n)\;:=\;\mathcal{G}(\mathbf{x}^n)-\mathbf{x}^n \;=\; \mathbf{0}\quad\text{in }\mathcal{X}.
+\end{equation}
+
+\paragraph{Block Gauss--Seidel iteration.}
+Given the state $\mathbf{x}^{(k)}=(\mathbf{L}^{(k)},S^{(k)},\rho^{(k)})$, we first run the mechanics driver to evaluate the drivers $\psi=\psi_{\mathrm{day}}(\rho^{(k)},\mathbf{L}^{(k)})$ and $\bar{\mathbf{Q}}=\bar{\mathbf{Q}}(\rho^{(k)},\mathbf{L}^{(k)})$. Then we perform the updates:
+\begin{equation}\label{eq:gs-sweep}
+\begin{aligned}
+\mathbf{L}^{(k+1)} &:= \mathsf{L}\big(\bar{\mathbf{Q}}\big),\\
+S^{(k+1)} &:= \mathsf{S}\big(\psi,\rho^{(k)}\big),\\
+\rho^{(k+1)} &:= \mathsf{R}\big(S^{(k+1)}\big).
+\end{aligned}
+\end{equation}
+The sweep \eqref{eq:gs-sweep} defines the raw update $x_{\mathrm{raw}}^{(k+1)}:=\mathcal{G}(\mathbf{x}^{(k)})$ and the Picard step $r^{(k+1)}:=x_{\mathrm{raw}}^{(k+1)}-\mathbf{x}^{(k)}$. We monitor the scaled relative Picard residual
+\begin{equation}\label{eq:fp-picard-res}
+r_{\mathrm{Pic}}^{(k+1)} \;:=\; \frac{\|r^{(k+1)}\|}{\|x_{\mathrm{raw}}^{(k+1)}\|},
+\end{equation}
+with the convention that the denominator is clipped to avoid division by~$0$.
+
+\paragraph{Anderson acceleration (Walker--Ni formulation).}
+If $r_{\mathrm{Pic}}^{(k+1)}$ is above the stopping tolerance, we apply an MPI-aware Anderson accelerator based on residual snapshots $r^{(j)}$ and past iterates $\mathbf{x}^{(j-1)}$. With memory depth $m$ we keep at most $m+1$ residual snapshots; let $p=\min(m+1,\text{available history})$ be the active window length. Form the Gram matrix
+\begin{equation}\label{eq:aa-gram}
+H_{ij} \;:=\; \langle r^{(i)}, r^{(j)}\rangle \quad (\text{global dot product over MPI ranks}),
+\end{equation}
+and define the scaled Tikhonov regularization
+\begin{equation}\label{eq:aa-reg}
+\lambda_{\mathrm{eff}} \;=\; \lambda\,\max\!\left(\frac{\mathrm{tr}(H)}{p},\,\varepsilon_{\mathrm{tiny}}\right).
+\end{equation}
+The mixing weights $\boldsymbol{\alpha}\in\mathbb{R}^p$ solve the constrained quadratic minimization
+\begin{equation}\label{eq:aa-weights}
+\boldsymbol{\alpha} \;\in\; \arg\min_{\boldsymbol{\alpha}\in\mathbb{R}^p}\ \boldsymbol{\alpha}^\top (H+\lambda_{\mathrm{eff}}I)\,\boldsymbol{\alpha}
+\quad\text{s.t.}\quad \mathbf{1}^\top\boldsymbol{\alpha}=1,
+\end{equation}
+implemented by solving $(H+\lambda_{\mathrm{eff}}I)\,y=\mathbf{1}$ and normalizing $\boldsymbol{\alpha}=y/(\mathbf{1}^\top y)$ (with robust fallbacks if the solve or normalization fails). The accelerated candidate is then assembled as
+\begin{equation}\label{eq:aa-update}
+\mathbf{x}_{\mathrm{AA}}^{(k+1)} \;=\; \sum_{j=1}^{p} \alpha_j\Big(\mathbf{x}^{(k-p+j)} + \beta\,r^{(k-p+j+1)}\Big),
+\end{equation}
+which reduces to the damped Picard update $\mathbf{x}^{(k)}+\beta\,r^{(k+1)}$ when $p<2$.
+
+\paragraph{Step limiting and restarts.}
+To prevent overshooting, we enforce a step limiter based on the same scaled norm:
+\begin{equation}\label{eq:aa-step-limit}
+\frac{\|\mathbf{x}_{\mathrm{AA}}^{(k+1)}-\mathbf{x}^{(k)}\|}{\|x_{\mathrm{raw}}^{(k+1)}\|}
+\;\le\; c_{\mathrm{step}}\,\max\!\big(r_{\mathrm{Pic}}^{(k+1)},\varepsilon_{\mathrm{tiny}}\big),
+\end{equation}
+implemented by scaling the increment if the bound is violated. The history is scheduled to restart (on the \emph{next} call) if (i) the condition number $\kappa(H+\lambda_{\mathrm{eff}}I)$ exceeds a threshold $\kappa_{\max}$, or (ii) the Picard residual stalls relative to the best residual in a recent window: with a window of length $w$ and stall ratio $\chi_{\mathrm{stall}}>1$, we increment a stall counter when $r_{\mathrm{Pic}}^{(k+1)}>\chi_{\mathrm{stall}}\,\min_{j\in\text{window}} r_{\mathrm{Pic}}^{(j)}$, and restart once this occurs for $k_{\mathrm{stall}}$ consecutive iterations. Additionally, if the newest residual becomes orders of magnitude smaller than older ones, the stored history is pruned to the most recent snapshot to avoid ill-conditioned mixes.
+
+\paragraph{Stopping, early abort, and logging.}
+We stop as soon as $r_{\mathrm{Pic}}^{(k+1)}\le \mathrm{tol}$, or after a maximum number of fixed-point subiterations $N_{\max}$. Optionally (useful with adaptive time stepping), we detect outer stagnation of the coupling loop: over a window of $W$ residuals we require a relative drop of at least $\delta$; after $P$ consecutive windows failing this test we abort the coupling loop early and report the stop reason \texttt{no\_progress}. For postprocessing we record per-subiteration telemetry (Picard residual, Anderson step size, history depth, conditioning, restarts, step limiting) and per-timestep outcomes (converged/accepted and the rejection reason if not accepted).
+
+\paragraph{Well-posedness of subsolves.}
+At each evaluation of $\mathcal{G}$ the four subproblems are uniformly elliptic (for fixed arguments) and admit unique solutions in the chosen finite-dimensional spaces: (i) mechanics has a coercive bilinear form by the density floor and $\nu\in(-1,\tfrac12)$, (ii) stimulus is SPD by $(\tau_S/\Delta t^n+1)$ with $D_S\ge0$, (iii) density is SPD by $(1/\Delta t^n)+A_{\mathrm{surf}}(\rho^{n-1})\big(k_{\mathrm{form}}S_+/\rho_{\max}+k_{\mathrm{res}}S_-/\rho_{\min}\big)\ge 1/\Delta t^n$ together with $\mathbf{D}_\rho=D_\rho\mathbf{I}$, and (iv) fabric is SPD by $(c_A/\Delta t^n)+c_A a(\bar{\mathbf{Q}})/\tau_A>0$ with $D_A\ge 0$. Thus each application of $\mathcal{G}$ is well-defined.
+
+\paragraph{Convergence discussion.}
+On bounded sets where the smooth gates/clamps are Lipschitz, $\mathcal{G}$ is locally Lipschitz. If the induced modulus $L<1$, the Gauss--Seidel iteration is linearly convergent in the Picard metric \eqref{eq:fp-picard-res}. The Anderson update \eqref{eq:aa-update} acts as a multisecant extrapolation and can reduce the number of subiterations in practice. Robustness is promoted by the step limiter \eqref{eq:aa-step-limit} and by adaptive history restarts triggered by stall or ill-conditioning of the regularized Gram system.
+
+\paragraph{Algorithm (per time level $t^n$).}
+\begin{enumerate}
+\item Initialize $\mathbf{x}^{(0)}$ (from $t^{n-1}$ or a warm start) and the AA history; set counters/timers to zero.
+\item For $k=0,1,2,\dots$ until the stopping test holds:
+  \begin{enumerate}
+  \item Perform one GS sweep to get $x_{\mathrm{raw}}^{(k+1)}$ and $r^{(k+1)}$; compute $r_{\mathrm{Pic}}^{(k+1)}$.
+  \item If $r_{\mathrm{Pic}}^{(k+1)}\le\mathrm{tol}$, set $\mathbf{x}^{(k+1)}\leftarrow x_{\mathrm{raw}}^{(k+1)}$ and stop.
+  \item Otherwise, apply Anderson mixing \eqref{eq:aa-weights}--\eqref{eq:aa-update} (or damped Picard if $p<2$), apply the step limiter \eqref{eq:aa-step-limit}, and update histories (with scheduled restarts if a trigger fires).
+  \item Check the outer-stall criterion and abort early if triggered.
+  \end{enumerate}
+\item Output $\mathbf{x}^{n}:=\mathbf{x}^{(k_\star)}$ for the first index $k_\star$ meeting the stopping criterion.
+\end{enumerate}
+
