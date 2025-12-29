@@ -70,6 +70,13 @@ class Logger:
     def error(self, msg: Union[str, Callable[[], str]], *args: Any) -> None:
         self.log(Level.ERROR, msg, *args)
 
+    def file_only(self, msg: Union[str, Callable[[], str]], *args: Any, lvl: Level = Level.WARNING) -> None:
+        """Log a message to file only (no console output), rank 0 only."""
+        if self.comm.rank == 0 and self.log_file and lvl >= self.file_level:
+            formatted = self._format(msg, args)
+            with open(self.log_file, "a", encoding="utf-8") as f:
+                f.write(formatted + "\n")
+
 
 def get_logger(comm: MPI.Comm, name: str = "", log_file: str | None = None) -> Logger:
     """Create an MPI-safe logger with default levels (console: WARNING, file: DEBUG)."""

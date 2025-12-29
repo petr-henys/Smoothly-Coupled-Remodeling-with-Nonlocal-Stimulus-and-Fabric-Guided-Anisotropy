@@ -227,6 +227,9 @@ class FixedPointSolver:
         if self.anderson is not None:
             self.anderson.reset()
 
+        # Counter for consecutive contractive iterations (ρ < threshold)
+        contractive_streak = 0
+
         if progress is not None and task_id is not None:
             progress.reset(task_id, total=max_subiters)
             progress.start_task(task_id)
@@ -258,10 +261,16 @@ class FixedPointSolver:
                 if prev_res > self._TINY:
                     contraction = picard_res / prev_res
 
-            # Use Picard when strongly contractive (ρ < threshold), else Anderson
+            # Track consecutive contractive iterations
+            if contraction is not None and contraction < self.cfg.solver.rho_anderson_off:
+                contractive_streak += 1
+            else:
+                contractive_streak = 0
+
+            # Use Picard only after N consecutive contractive iterations
             use_anderson = (
                 self.anderson is not None
-                and (contraction is None or contraction >= self.cfg.solver.rho_anderson_off)
+                and contractive_streak < self.cfg.solver.rho_anderson_patience
             )
 
             # Skip acceleration if already converged
@@ -345,7 +354,7 @@ class FixedPointSolver:
                     if stall_count >= stall_patience:
                         stop_reason = "no_progress"
                         self.subiter_metrics[-1]["fp_stop_reason"] = stop_reason
-                        self.logger.warning(
+                        self.logger.file_only(
                             f"Early abort fixed-point at itr={itr}: no progress "
                             f"(rel_drop={rel_drop:.2%} < {stall_min_drop:.2%} "
                             f"for {stall_patience} windows of {stall_window} iters)."

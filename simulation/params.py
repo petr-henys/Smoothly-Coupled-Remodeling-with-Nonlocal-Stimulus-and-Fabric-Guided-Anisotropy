@@ -249,6 +249,9 @@ class SolverParams:
     # (Anderson is unnecessary when Picard converges fast)
     rho_anderson_off: float = 0.5
 
+    # Number of consecutive contractive iterations before switching to Picard
+    rho_anderson_patience: int = 2
+
 
     def validate(self) -> None:
         """Validate solver parameter constraints."""
@@ -274,6 +277,8 @@ class SolverParams:
             raise ValueError("outer_stall_patience must be >= 1.")
         if not (0.0 < self.rho_anderson_off < 1.0):
             raise ValueError("rho_anderson_off must be in (0, 1).")
+        if self.rho_anderson_patience < 1:
+            raise ValueError("rho_anderson_patience must be >= 1.")
 
 
 @dataclass
