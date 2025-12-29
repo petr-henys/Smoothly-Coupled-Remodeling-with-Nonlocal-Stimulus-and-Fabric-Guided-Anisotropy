@@ -15,8 +15,8 @@
     "rho_min": 0.2,
     "rho_max": 2.0,
     "rho_ref": 1.0,
-    "k_rho_form": 0.05,
-    "k_rho_resorb": 0.05,
+    "k_rho_form": 0.01,
+    "k_rho_resorb": 0.0025,
     "D_rho": 0.005,
     "rho_tissue": 2.0,
     "surface_use": true,
@@ -64,7 +64,8 @@
     "outer_stall_min_rel_drop": 0.05,
     "outer_stall_patience": 2,
     "rho_anderson_off": 0.5,
-    "rho_anderson_patience": 4
+    "rho_anderson_on": 0.7,
+    "rho_anderson_patience": 2
   },
   "time": {
     "total_time": 500,

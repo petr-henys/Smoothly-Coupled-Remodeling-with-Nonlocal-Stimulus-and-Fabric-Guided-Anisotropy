@@ -229,6 +229,8 @@ class FixedPointSolver:
 
         # Counter for consecutive contractive iterations (ρ < threshold)
         contractive_streak = 0
+        # Track current mode: True = using Anderson, False = using Picard
+        was_using_anderson = True
 
         if progress is not None and task_id is not None:
             progress.reset(task_id, total=max_subiters)
@@ -261,17 +263,32 @@ class FixedPointSolver:
                 if prev_res > self._TINY:
                     contraction = picard_res / prev_res
 
-            # Track consecutive contractive iterations
+            # Track consecutive contractive iterations for Picard switch
             if contraction is not None and contraction < self.cfg.solver.rho_anderson_off:
                 contractive_streak += 1
             else:
                 contractive_streak = 0
 
-            # Use Picard only after N consecutive contractive iterations
-            use_anderson = (
-                self.anderson is not None
-                and contractive_streak < self.cfg.solver.rho_anderson_patience
-            )
+            # Hysteresis logic for mode switching:
+            # - Switch to Picard: need rho_anderson_patience consecutive ρ < rho_anderson_off
+            # - Switch back to Anderson: need ρ >= rho_anderson_on (higher threshold)
+            if self.anderson is not None:
+                if was_using_anderson:
+                    # Currently in Anderson mode: switch to Picard if strongly contractive
+                    use_anderson = contractive_streak < self.cfg.solver.rho_anderson_patience
+                else:
+                    # Currently in Picard mode: switch back to Anderson only if ρ >= rho_on
+                    if contraction is not None and contraction >= self.cfg.solver.rho_anderson_on:
+                        use_anderson = True
+                        # Reset Anderson history when switching back from Picard
+                        self.anderson.reset()
+                    else:
+                        use_anderson = False
+            else:
+                use_anderson = False
+            
+            # Update mode tracking for next iteration
+            was_using_anderson = use_anderson
 
             # Skip acceleration if already converged
             if picard_res <= tol:

@@ -47,7 +47,7 @@ from analysis.plot_utils import (
 # Configuration
 # =============================================================================
 
-DEFAULT_RUN_DIR = Path(".results_box/")
+DEFAULT_RUN_DIR = Path(".results/")
 OUTPUT_FILE = Path("manuscript/images/anderson_diagnostic.png")
 
 # Colors for events
@@ -174,6 +174,7 @@ def plot_convergence(ax: plt.Axes, subiters: pd.DataFrame, config: dict, steps_d
     """Plot convergence curves colored by timestep.
     
     Each (step, attempt) pair is treated as a unique curve.
+    Picard iterations (aa_off=1) are shown with dotted lines.
     """
     # Create unique key for each step attempt
     if "attempt" in subiters.columns:
@@ -188,6 +189,9 @@ def plot_convergence(ax: plt.Axes, subiters: pd.DataFrame, config: dict, steps_d
 
     cmap = plt.cm.viridis
     norm = Normalize(vmin=0, vmax=max(unique_keys - 1, 1))
+    
+    # Check if aa_off column exists for Picard/Anderson distinction
+    has_aa_off = "aa_off" in subiters.columns
 
     for i, (step, attempt) in enumerate(step_attempts):
         if "attempt" in subiters.columns:
@@ -197,15 +201,45 @@ def plot_convergence(ax: plt.Axes, subiters: pd.DataFrame, config: dict, steps_d
         
         if step_data.empty or "proj_res" not in step_data.columns:
             continue
-
-        ax.semilogy(
-            step_data["iter"].values,
-            step_data["proj_res"].values,
-            color=cmap(norm(i)),
-            linestyle="-",
-            linewidth=PLOT_LINEWIDTH,
-            alpha=0.7,
-        )
+        
+        color = cmap(norm(i))
+        iters = step_data["iter"].values
+        res = step_data["proj_res"].values
+        
+        if has_aa_off:
+            # Plot segments with different line styles for Picard vs Anderson
+            aa_off = step_data["aa_off"].astype(bool).values
+            
+            # Find contiguous segments of same mode
+            j = 0
+            while j < len(iters):
+                is_picard = aa_off[j]
+                seg_start = j
+                while j < len(iters) and aa_off[j] == is_picard:
+                    j += 1
+                seg_end = j
+                
+                # Include overlap point for continuity
+                end_idx = min(seg_end + 1, len(iters))
+                
+                ax.semilogy(
+                    iters[seg_start:end_idx],
+                    res[seg_start:end_idx],
+                    color=color,
+                    linestyle=":" if is_picard else "-",
+                    linewidth=PLOT_LINEWIDTH,
+                    alpha=0.7,
+                )
+        else:
+            # No aa_off info, plot as solid line
+            ax.semilogy(
+                iters,
+                res,
+                color=color,
+                linestyle="-",
+                linewidth=PLOT_LINEWIDTH,
+                alpha=0.7,
+            )
 
     solver_cfg = config.get("solver", {})
     coupling_tol = solver_cfg.get("coupling_tol", 1e-6)
@@ -229,8 +263,8 @@ RESTART_MARKERS = {
 }
 
 
-def plot_dt_evolution(ax: plt.Axes, steps_df: pd.DataFrame) -> None:
-    """Plot timestep size evolution over simulation steps."""
+def plot_dt_evolution(ax: plt.Axes, steps_df: pd.DataFrame, subiters_df: pd.DataFrame = None) -> None:
+    """Plot timestep size evolution over simulation steps with subiteration count on secondary axis."""
     if steps_df is None or steps_df.empty or "dt_days" not in steps_df.columns:
         ax.text(0.5, 0.5, "No dt data", ha="center", va="center", transform=ax.transAxes)
         return
@@ -247,13 +281,13 @@ def plot_dt_evolution(ax: plt.Axes, steps_df: pd.DataFrame) -> None:
 
     # Plot accepted steps (linear scale for even ticks)
     accepted_mask = ~rejected_mask
-    ax.plot(
+    line_dt, = ax.plot(
         step_nums[accepted_mask],
         dt_vals[accepted_mask],
         color="#2ecc71",
         linewidth=PLOT_LINEWIDTH,
         alpha=0.8,
-        label="accepted",
+        label=r"$\Delta t$",
     )
     
     # Highlight rejected steps
@@ -270,8 +304,59 @@ def plot_dt_evolution(ax: plt.Axes, steps_df: pd.DataFrame) -> None:
         )
 
     ax.set_xlim(step_nums.min() - 0.5, step_nums.max() + 0.5)
-    ax.legend(loc="upper left", fontsize=6, framealpha=0.8, frameon=False)
-    setup_axis_style(ax, xlabel="Step", ylabel="dt [days]", title="(c) Timestep evolution", loglog=False)
+    ax.set_ylabel(r"$\Delta t$ [days]", color="#2ecc71")
+    ax.tick_params(axis="y", labelcolor="#2ecc71")
+    
+    # Secondary axis: subiteration count per step
+    if subiters_df is not None and not subiters_df.empty:
+        ax2 = ax.twinx()
+        # Count subiterations per (step, attempt)
+        if "attempt" in subiters_df.columns:
+            grouped = subiters_df.groupby(["step", "attempt"]).size().reset_index(name="n_iters")
+            # For accepted steps, take last attempt
+            accepted_steps = steps_df[accepted_mask]["step"].values
+            iters_per_step = []
+            step_nums_for_iters = []
+            for step in accepted_steps:
+                step_data = grouped[grouped["step"] == step]
+                if len(step_data) > 0:
+                    # Take last attempt's iteration count
+                    iters_per_step.append(step_data["n_iters"].iloc[-1])
+                    step_nums_for_iters.append(step)
+        else:
+            grouped = subiters_df.groupby("step").size()
+            iters_per_step = [grouped.get(s, 0) for s in step_nums[accepted_mask]]
+            step_nums_for_iters = step_nums[accepted_mask]
+        
+        if len(iters_per_step) > 0:
+            line_iters, = ax2.plot(
+                step_nums_for_iters,
+                iters_per_step,
+                color="#9b59b6",  # Purple
+                linewidth=PLOT_LINEWIDTH * 0.8,
+                alpha=0.7,
+                linestyle="--",
+                label="subiters",
+            )
+            ax2.set_ylabel("Subiterations", color="#9b59b6")
+            ax2.tick_params(axis="y", labelcolor="#9b59b6")
+            ax2.set_ylim(0, max(iters_per_step) * 1.1)
+            
+            # Combined legend
+            lines = [line_dt, line_iters]
+            labels = [r"$\Delta t$", "subiters"]
+            if rejected_mask.any():
+                # Add rejected marker to legend
+                from matplotlib.lines import Line2D
+                rej_handle = Line2D([0], [0], marker="x", color=COLOR_REJECTED, linestyle="None",
+                                    markersize=6, label="rejected")
+                lines.append(rej_handle)
+                labels.append("rejected")
+            ax.legend(lines, labels, loc="upper left", fontsize=6, framealpha=0.8, frameon=False)
+    else:
+        ax.legend(loc="upper left", fontsize=6, framealpha=0.8, frameon=False)
+    
+    setup_axis_style(ax, xlabel="Step", ylabel="", title="(c) Timestep evolution", loglog=False)
 
 
 def plot_events_unified(ax: plt.Axes, subiters: pd.DataFrame, global_idx: np.ndarray, 
@@ -640,6 +725,46 @@ def plot_residual_timeline(
     ax.axhline(coupling_tol, color="g", linestyle="--", linewidth=1.0, alpha=0.7,
                label=f"tol={coupling_tol:.0e}")
     
+    # Secondary axis: contraction ratio rho = r_k / r_{k-1} (per-step average)
+    if "contraction" in subiters.columns:
+        ax2 = ax.twinx()
+        
+        # Compute per-step average contraction
+        step_arr = subiters["step"].values
+        rho_arr = subiters["contraction"].values
+        
+        # Group by step and compute mean contraction
+        step_rho_avg = []
+        step_centers = []  # global_idx center of each step
+        
+        for sc_idx, sc_start in enumerate(step_changes):
+            sc_end = step_changes[sc_idx + 1] if sc_idx + 1 < len(step_changes) else len(global_idx)
+            step_rho = rho_arr[sc_start:sc_end]
+            valid_rho = step_rho[np.isfinite(step_rho)]
+            if len(valid_rho) > 0:
+                step_rho_avg.append(np.mean(valid_rho))
+                step_centers.append((global_idx[sc_start] + global_idx[sc_end - 1]) / 2)
+        
+        if len(step_rho_avg) > 0:
+            ax2.plot(
+                step_centers,
+                step_rho_avg,
+                color="#e74c3c",  # Red
+                linewidth=PLOT_LINEWIDTH * 0.8,
+                alpha=0.7,
+                linestyle="-",
+                marker="o",
+                markersize=3,
+                label=r"$\bar{\rho}$",
+            )
+            # Reference line at rho=1 (contraction threshold)
+            ax2.axhline(1.0, color="#e74c3c", linestyle=":", linewidth=0.8, alpha=0.4)
+            ax2.set_ylabel(r"Avg contraction $\bar{\rho}$", color="#e74c3c")
+            ax2.tick_params(axis="y", labelcolor="#e74c3c")
+            # Limit y-axis to reasonable range
+            rho_max = min(np.percentile(step_rho_avg, 95) * 1.2, 2.0)
+            ax2.set_ylim(0, max(rho_max, 1.1))
+    
     setup_axis_style(ax, xlabel="Global iteration", ylabel="Residual", title="(b) Residual timeline", loglog=False)
     ax.legend(loc="upper right", fontsize=6, framealpha=0.8, frameon=False)
 
@@ -687,7 +812,7 @@ def main() -> None:
     # Row 1: Convergence + Residual timeline + dt evolution
     plot_convergence(axes[0, 0], subiters, config, steps)
     plot_residual_timeline(axes[0, 1], subiters, global_idx, config, steps)
-    plot_dt_evolution(axes[0, 2], steps)
+    plot_dt_evolution(axes[0, 2], steps, subiters)
 
     # Row 2: History size + Conditioning + Events (unified: restarts + limiting + rejected)
     plot_history_size(axes[1, 0], subiters, global_idx, config)

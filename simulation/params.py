@@ -249,6 +249,10 @@ class SolverParams:
     # (Anderson is unnecessary when Picard converges fast)
     rho_anderson_off: float = 0.5
 
+    # Contraction ratio ρ above which to switch back to Anderson (hysteresis)
+    # Must be >= rho_anderson_off to avoid mode oscillation
+    rho_anderson_on: float = 0.7
+
     # Number of consecutive contractive iterations before switching to Picard
     rho_anderson_patience: int = 2
 
@@ -277,6 +281,10 @@ class SolverParams:
             raise ValueError("outer_stall_patience must be >= 1.")
         if not (0.0 < self.rho_anderson_off < 1.0):
             raise ValueError("rho_anderson_off must be in (0, 1).")
+        if not (0.0 < self.rho_anderson_on <= 1.0):
+            raise ValueError("rho_anderson_on must be in (0, 1].")
+        if self.rho_anderson_on < self.rho_anderson_off:
+            raise ValueError("rho_anderson_on must be >= rho_anderson_off (hysteresis).")
         if self.rho_anderson_patience < 1:
             raise ValueError("rho_anderson_patience must be >= 1.")
 
