@@ -25,6 +25,8 @@ import matplotlib.pyplot as plt
 
 from analysis.plot_utils import (
     FIELD_NAMES as _ALL_FIELD_NAMES, FIELD_LABELS, FIELD_COLORS, FIELD_MARKERS, COLORS,
+    SUBSOLVER_COLORS, SUBSOLVER_MARKERS, SUBSOLVER_LABELS,
+    REFERENCE_COLOR, REFERENCE_ALPHA, REFERENCE_LINESTYLE, REFERENCE_LINEWIDTH,
     FIGSIZE_DOUBLE_COLUMN, PUBLICATION_DPI,
     PLOT_LINEWIDTH, PLOT_MARKERSIZE,
     estimate_convergence_order, add_reference_line, setup_axis_style,
@@ -84,14 +86,24 @@ def plot_spatial_errors(ax: plt.Axes, spatial_data: dict[str, pd.DataFrame], err
         if h.size == 0:
             continue
         order = estimate_convergence_order(h, err)
-        label = f"{FIELD_LABELS.get(field, field)} (p={order:.2f})"
-        ax.loglog(
+        label = FIELD_LABELS.get(field, field)
+        line, = ax.loglog(
             h, err,
             marker=FIELD_MARKERS.get(field, "o"),
             color=FIELD_COLORS.get(field, "C0"),
             label=label,
             linewidth=PLOT_LINEWIDTH,
             markersize=PLOT_MARKERSIZE,
+        )
+        # Add order annotation near the line (at rightmost point)
+        ax.annotate(
+            f"p={order:.2f}",
+            xy=(h[-1], err[-1]),
+            xytext=(5, 0),
+            textcoords="offset points",
+            fontsize=6,
+            color=line.get_color(),
+            va="center",
         )
 
     if spatial_data:
@@ -128,14 +140,24 @@ def plot_temporal_errors(ax: plt.Axes, temporal_data: dict[str, pd.DataFrame], e
         if dt.size == 0:
             continue
         order = estimate_convergence_order(dt, err, from_start=True)
-        label = f"{FIELD_LABELS.get(field, field)} (p={order:.2f})"
-        ax.loglog(
+        label = FIELD_LABELS.get(field, field)
+        line, = ax.loglog(
             dt, err,
             marker=FIELD_MARKERS.get(field, "o"),
             color=FIELD_COLORS.get(field, "C0"),
             label=label,
             linewidth=PLOT_LINEWIDTH,
             markersize=PLOT_MARKERSIZE,
+        )
+        # Add order annotation near the line (at rightmost point)
+        ax.annotate(
+            f"p={order:.2f}",
+            xy=(dt[-1], err[-1]),
+            xytext=(5, 0),
+            textcoords="offset points",
+            fontsize=6,
+            color=line.get_color(),
+            va="center",
         )
 
     if temporal_data:
@@ -168,11 +190,17 @@ def plot_performance(ax: plt.Axes, df: pd.DataFrame, x_col: str, title: str) -> 
         ("dens_time", "dens"),
     ]
 
-    for col, label in lines:
+    for col, subsolver in lines:
         if col not in df:
             continue
         y = df[col].to_numpy(dtype=float)
-        ax.loglog(x, y, label=f"{label} time", linewidth=PLOT_LINEWIDTH)
+        ax.loglog(
+            x, y,
+            color=SUBSOLVER_COLORS.get(subsolver, "C0"),
+            marker=SUBSOLVER_MARKERS.get(subsolver, "o"),
+            linewidth=PLOT_LINEWIDTH,
+            markersize=PLOT_MARKERSIZE,
+        )
 
     # KSP iterations (secondary y)
     ax2 = ax.twinx()
@@ -182,7 +210,7 @@ def plot_performance(ax: plt.Axes, df: pd.DataFrame, x_col: str, title: str) -> 
         ("stim_iters", "stim"),
         ("dens_iters", "dens"),
     ]
-    for col, label in iters:
+    for col, subsolver in iters:
         if col not in df:
             continue
         y = df[col].to_numpy(dtype=float)
@@ -190,8 +218,8 @@ def plot_performance(ax: plt.Axes, df: pd.DataFrame, x_col: str, title: str) -> 
             x,
             y,
             linestyle=":",
+            color=SUBSOLVER_COLORS.get(subsolver, "C0"),
             linewidth=PLOT_LINEWIDTH,
-            label=f"{label} iters",
         )
 
     ax2.set_ylabel("KSP iterations")
@@ -217,9 +245,9 @@ def create_figure(xlsx: Path, dt_spatial: float, N_temporal: int, out: Path) -> 
     df_sp_perf = load_spatial_perf(xlsx, dt_spatial)
     df_tm_perf = load_temporal_perf(xlsx, N_temporal)
 
-    # Layout: 4 rows (2 plot rows + 2 legend rows) using GridSpec
-    fig = plt.figure(figsize=(FIGSIZE_DOUBLE_COLUMN[0], FIGSIZE_DOUBLE_COLUMN[1] * 1.2))
-    gs = fig.add_gridspec(4, 2, height_ratios=[1, 0.08, 1, 0.08], hspace=0.4, wspace=0.3)
+    # Layout: 3 rows (2 plot rows + 1 legend row) using GridSpec
+    fig = plt.figure(figsize=(FIGSIZE_DOUBLE_COLUMN[0], FIGSIZE_DOUBLE_COLUMN[1] * 1.18))
+    gs = fig.add_gridspec(3, 2, height_ratios=[1, 1, 0.18], hspace=0.35, wspace=0.3)
 
     # Row 0: L2 errors (spatial, temporal)
     ax_err_sp = fig.add_subplot(gs[0, 0])
@@ -227,15 +255,9 @@ def create_figure(xlsx: Path, dt_spatial: float, N_temporal: int, out: Path) -> 
     plot_spatial_errors(ax_err_sp, spatial_data, "L2_error", dt_spatial)
     plot_temporal_errors(ax_err_tm, temporal_data, "L2_error", N_temporal)
 
-    # Row 1: Legend for error plots
-    ax_leg1 = fig.add_subplot(gs[1, :])
-    ax_leg1.axis('off')
-    err_handles, err_labels = ax_err_sp.get_legend_handles_labels()
-    ax_leg1.legend(err_handles, err_labels, loc="center", ncol=len(err_handles), fontsize=7, frameon=False)
-
-    # Row 2: Performance (spatial, temporal)
-    ax_perf_sp = fig.add_subplot(gs[2, 0])
-    ax_perf_tm = fig.add_subplot(gs[2, 1])
+    # Row 1: Performance (spatial, temporal)
+    ax_perf_sp = fig.add_subplot(gs[1, 0])
+    ax_perf_tm = fig.add_subplot(gs[1, 1])
     
     if df_sp_perf is not None and not df_sp_perf.empty:
         plot_performance(ax_perf_sp, df_sp_perf, "h", r"(c) Spatial performance")
@@ -249,17 +271,47 @@ def create_figure(xlsx: Path, dt_spatial: float, N_temporal: int, out: Path) -> 
         setup_axis_style(ax_perf_tm, "", "", r"(d) Temporal performance", loglog=False)
         ax_perf_tm.text(0.5, 0.5, "No performance data", ha="center", va="center", transform=ax_perf_tm.transAxes)
 
-    # Row 3: Legend for performance plots
-    ax_leg2 = fig.add_subplot(gs[3, :])
-    ax_leg2.axis('off')
-    perf_handles, perf_labels = [], []
-    if hasattr(ax_perf_sp, '_perf_ax2'):
-        h1, l1 = ax_perf_sp.get_legend_handles_labels()
-        h2, l2 = ax_perf_sp._perf_ax2.get_legend_handles_labels()
-        perf_handles = h1 + h2
-        perf_labels = l1 + l2
-    if perf_handles:
-        ax_leg2.legend(perf_handles, perf_labels, loc="center", ncol=4, fontsize=6, frameon=False)
+    # Row 2: Unified legend for all plots
+    ax_leg = fig.add_subplot(gs[2, :])
+    ax_leg.axis('off')
+    
+    # Build unified legend: field symbols + line style indicators
+    from matplotlib.lines import Line2D
+    legend_handles = []
+    legend_labels = []
+    
+    # Add field/subsolver entries (shared across all plots)
+    all_fields = list(spatial_data.keys()) if spatial_data else []
+    # Add psi if present in performance data (not in error data)
+    if df_sp_perf is not None and "mech_time" in df_sp_perf.columns:
+        if "psi" not in all_fields:
+            all_fields = ["psi"] + all_fields
+    
+    for field in all_fields:
+        legend_handles.append(Line2D(
+            [0], [0],
+            marker=FIELD_MARKERS.get(field, "o"),
+            color=FIELD_COLORS.get(field, "C0"),
+            linewidth=PLOT_LINEWIDTH,
+            markersize=PLOT_MARKERSIZE,
+        ))
+        legend_labels.append(FIELD_LABELS.get(field, field))
+    
+    # Add line style indicators (solid = wall time / error, dashed = KSP iters)
+    legend_handles.append(Line2D([0], [0], color="gray", linewidth=PLOT_LINEWIDTH, linestyle="-"))
+    legend_labels.append("error / wall time")
+    legend_handles.append(Line2D([0], [0], color="gray", linewidth=PLOT_LINEWIDTH, linestyle=":"))
+    legend_labels.append("KSP iterations")
+    
+    # Add reference line indicators
+    legend_handles.append(Line2D([0], [0], color=REFERENCE_COLOR, linewidth=REFERENCE_LINEWIDTH, 
+                                  linestyle=REFERENCE_LINESTYLE, alpha=REFERENCE_ALPHA))
+    legend_labels.append(r"$O(h)$, $O(\Delta t)$")
+    legend_handles.append(Line2D([0], [0], color=REFERENCE_COLOR, linewidth=REFERENCE_LINEWIDTH, 
+                                  linestyle=":", alpha=REFERENCE_ALPHA))
+    legend_labels.append(r"$O(h^2)$")
+    
+    ax_leg.legend(legend_handles, legend_labels, loc="center", ncol=4, fontsize=7, frameon=False)
 
     save_manuscript_figure(fig, out.name, dpi=PUBLICATION_DPI)
 
