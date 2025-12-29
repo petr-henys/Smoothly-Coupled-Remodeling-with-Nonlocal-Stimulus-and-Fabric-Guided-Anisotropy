@@ -7,6 +7,7 @@
 !/manuscript/
 !/analysis/
 !/box/
+!/femur/
 
 
 # Allow root-level files
@@ -20,6 +21,8 @@
 !/run_anderson_sweep.py
 !/run_model.py
 !/intensity_mapper.py
+!/default_params_box.json
+!/default_params_femur.json
 
 # Python cache
 __pycache__/

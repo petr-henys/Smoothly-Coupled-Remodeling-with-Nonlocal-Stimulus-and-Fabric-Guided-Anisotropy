@@ -21,6 +21,7 @@ Outputs:
 from __future__ import annotations
 
 import copy
+import shutil
 from pathlib import Path
 
 from mpi4py import MPI
@@ -148,7 +149,7 @@ def main() -> None:
     box = params["box"]
     
     # Modify for convergence study
-    params["time"].total_time = 100.0  # Shorter for convergence study
+    params["time"].total_time = 60.0  # Shorter for convergence study
     
     # Define sweep parameters
     N_values = [12, 16, 24, 32]  # Mesh resolutions
@@ -167,6 +168,13 @@ def main() -> None:
             "dt_values": dt_values,
         },
     )
+    
+    # Clean output directory before new computation
+    if comm.rank == 0:
+        if sweep.base_output_dir.exists():
+            logger.info(f"Cleaning output directory: {sweep.base_output_dir}")
+            shutil.rmtree(sweep.base_output_dir)
+    comm.Barrier()
     
     # Create runner
     runner = create_convergence_runner(params, box)
