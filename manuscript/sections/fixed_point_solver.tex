@@ -1,4 +1,4 @@
-\section*{Fixed-point solver at a given time level: block Gauss--Seidel with Anderson acceleration}
+\section*{Fixed-point solver at a given time level: block Gauss--Seidel with Pulay (type-II) mixing}
 \label{sec:fp-aa}
 We describe the nonlinear solver used to obtain $(\mathbf{u}^n,S^n,\rho^n,\mathbf{L}^n)$ at a fixed time level $t^n$ from the Backward--Euler subproblems \eqref{eq:be-mech}--\eqref{eq:be-A}. Let the remodeling state be
 \begin{equation*}
@@ -9,7 +9,7 @@ where the mechanics field $\mathbf{u}$ is treated as a dependent variable $\math
 \begin{equation}\label{eq:fp-scales}
 s_i \;:=\; \max\!\big(\mathrm{RMS}(x^{(0)}_i),\ \mathrm{RMS}(x_{\mathrm{raw},i}^{(1)}),\ \varepsilon_{\mathrm{tiny}}\big),
 \end{equation}
-and work with the scaled vector $\widetilde{x}_i := x_i/(s_i\sqrt{N_i})$. All norms below are Euclidean norms of the stacked scaled vector $\widetilde{\mathbf{x}}=(\widetilde{\mathbf L},\widetilde S,\widetilde\rho)$, computed as global dot products reduced across MPI ranks. (The blocks $S$, $\rho$, $\mathbf L$ have no Dirichlet constraints, so no additional projection is required.)
+and work with the scaled vector $\widetilde{x}_i := x_i/(s_i\sqrt{N_i})$. In implementation we pack only locally owned degrees of freedom (no ghost entries) and use MPI reductions to evaluate global dot products; thus $\|\cdot\|$ below denotes the Euclidean norm of the stacked scaled vector $\widetilde{\mathbf{x}}=(\widetilde{\mathbf L},\widetilde S,\widetilde\rho)$ with a global (across-ranks) inner product. (The blocks $S$, $\rho$, $\mathbf L$ have no Dirichlet constraints, so no additional projection is required.)
 
 \paragraph{Block map.}
 We define the fixed-point iteration in terms of the mechanical drivers $\psi_{\mathrm{day}}$ (scalar stimulus driver) and $\bar{\mathbf{Q}}$ (cycle-averaged deviatoric-stress outer-product). Given the state $(\rho, \mathbf{L})$, the mechanics driver $\mathsf{U}$ determines equilibrium displacements for each loading case and generates
@@ -49,8 +49,19 @@ r_{\mathrm{Pic}}^{(k+1)} \;:=\; \frac{\|r^{(k+1)}\|}{\|x_{\mathrm{raw}}^{(k+1)}\
 \end{equation}
 with the convention that the denominator is clipped to avoid division by~$0$.
 
-\paragraph{Anderson acceleration (Walker--Ni formulation).}
-If $r_{\mathrm{Pic}}^{(k+1)}$ is above the stopping tolerance, we apply an MPI-aware Anderson accelerator based on residual snapshots $r^{(j)}$ and past iterates $\mathbf{x}^{(j-1)}$. With memory depth $m$ we keep at most $m+1$ residual snapshots; let $p=\min(m+1,\text{available history})$ be the active window length. Form the Gram matrix
+\paragraph{Adaptive acceleration (Pulay--Picard switching).}
+In addition to the user-selected mode (\texttt{accel\_type} \texttt{anderson} or \texttt{picard}), the implementation supports an adaptive switch that turns Pulay mixing off when the raw Picard map is strongly contractive and turns it back on when contraction weakens. Define the (raw) contraction indicator
+\begin{equation}\label{eq:fp-contraction}
+\rho^{(k+1)} \;:=\; \frac{r_{\mathrm{Pic}}^{(k+1)}}{r_{\mathrm{Pic}}^{(k)}} \qquad (k\ge 1),
+\end{equation}
+computed from successive Picard residuals \eqref{eq:fp-picard-res} prior to any mixing. We maintain a counter of consecutive iterations for which $\rho^{(k+1)}<\rho_{\mathrm{off}}$; once this count reaches a patience parameter $p_{\mathrm{off}}$ we switch to the pure damped Picard update
+\begin{equation}\label{eq:picard-damped}
+\mathbf{x}^{(k+1)} \;=\; \mathbf{x}^{(k)} + \beta\,r^{(k+1)} \;=\; (1-\beta)\,\mathbf{x}^{(k)} + \beta\,x_{\mathrm{raw}}^{(k+1)}.
+\end{equation}
+While in Picard mode, we switch back to Pulay only if $\rho^{(k+1)}\ge \rho_{\mathrm{on}}$ with $\rho_{\mathrm{on}}\ge \rho_{\mathrm{off}}$ (hysteresis). When switching back from Picard to Pulay, the mixing history is reset before building the next accelerated update.
+
+\paragraph{Pulay mixing (type II; DIIS form).}
+When Pulay mixing is active (and $r_{\mathrm{Pic}}^{(k+1)}>\mathrm{tol}$), we apply a residual-minimization accelerator in the sense of Pulay's DIIS \cite{Pulay1980_ConvergenceAcceleration}. In our implementation the extrapolation is applied to the \emph{relaxed fixed-point images} $\mathbf{x}^{(j)}+\beta r^{(j+1)}=(1-\beta)\mathbf{x}^{(j)}+\beta\,\mathcal{G}(\mathbf{x}^{(j)})$, which corresponds to a type-II Pulay update (mixing of the post-relaxation iterates). We store pairs $\big(\mathbf{x}^{(j-1)},r^{(j)}\big)$ with $r^{(j)}=\mathcal{G}(\mathbf{x}^{(j-1)})-\mathbf{x}^{(j-1)}$. With memory depth $m$ we keep at most $m+1$ residual snapshots; let $p=\min(m+1,\text{available history})$ be the active window length, and note that the associated history depth is $p-1\le m$. At each call we first append the current pair $\big(\mathbf{x}^{(k)},r^{(k+1)}\big)$ to the buffers and then form the Gram matrix
 \begin{equation}\label{eq:aa-gram}
 H_{ij} \;:=\; \langle r^{(i)}, r^{(j)}\rangle \quad (\text{global dot product over MPI ranks}),
 \end{equation}
@@ -75,16 +86,27 @@ To prevent overshooting, we enforce a step limiter based on the same scaled norm
 \frac{\|\mathbf{x}_{\mathrm{AA}}^{(k+1)}-\mathbf{x}^{(k)}\|}{\|x_{\mathrm{raw}}^{(k+1)}\|}
 \;\le\; c_{\mathrm{step}}\,\max\!\big(r_{\mathrm{Pic}}^{(k+1)},\varepsilon_{\mathrm{tiny}}\big),
 \end{equation}
-implemented by scaling the increment if the bound is violated. The history is scheduled to restart (on the \emph{next} call) if (i) the condition number $\kappa(H+\lambda_{\mathrm{eff}}I)$ exceeds a threshold $\kappa_{\max}$, or (ii) the Picard residual stalls relative to the best residual in a recent window: with a window of length $w$ and stall ratio $\chi_{\mathrm{stall}}>1$, we increment a stall counter when $r_{\mathrm{Pic}}^{(k+1)}>\chi_{\mathrm{stall}}\,\min_{j\in\text{window}} r_{\mathrm{Pic}}^{(j)}$, and restart once this occurs for $k_{\mathrm{stall}}$ consecutive iterations. Additionally, if the newest residual becomes orders of magnitude smaller than older ones, the stored history is pruned to the most recent snapshot to avoid ill-conditioned mixes.
+implemented by scaling the increment if the bound is violated. The implementation also protects the weight computation and history management:
+\begin{itemize}
+\item \emph{Robust weight solve.} The linear system $(H+\lambda_{\mathrm{eff}}I)y=\mathbf{1}$ is attempted by a direct solve. If this fails (singular or nearly singular), we fall back to an eigen-decomposition $H+\lambda_{\mathrm{eff}}I = V\mathrm{diag}(\mu)V^\top$ and compute
+\[
+y \;=\; V\,\mathrm{diag}(\mu_{\mathrm{safe}}^{-1})\,V^\top\mathbf{1},\qquad
+\mu_{\mathrm{safe}}:=\max(\mu,\,\mu_{\mathrm{floor}}),\qquad
+\mu_{\mathrm{floor}}:=\varepsilon_{\mathrm{eig}}\max\!\big(\mu_{\max},\lambda_{\mathrm{eff}},\varepsilon_{\mathrm{tiny}}\big),
+\]
+where $\varepsilon_{\mathrm{eig}}=10^{-12}$ is a relative eigenvalue floor and $\mu_{\max}:=\max_j|\mu_j|$; if the normalization $\mathbf{1}^\top y$ is non-finite or too small, we use uniform weights $\alpha_j=1/p$.
+\item \emph{History pruning on scale separation.} Let $r_j^2:=\|r^{(j)}\|^2$ denote the Gram diagonal. If the newest residual satisfies $r_{\mathrm{new}}^2 < 10^{-8}\,\max_j r_j^2$, the stored buffers are immediately pruned to the newest entry and the Gram matrix is rebuilt (so that $p=1$ and the current update reduces to damped Picard).
+\item \emph{Adaptive restarts (scheduled).} The history is scheduled to restart (on the \emph{next} call) if (i) the condition number $\kappa(H+\lambda_{\mathrm{eff}}I)$ exceeds a threshold $\kappa_{\max}$ (computed from the eigenvalues of $H+\lambda_{\mathrm{eff}}I$, which is inexpensive since $p\le m+1$), or (ii) the Picard residual stalls relative to the best residual in a recent window: with a window of length $w\ge 2$ and stall ratio $\chi_{\mathrm{stall}}>1$, we increment a stall counter when $r_{\mathrm{Pic}}^{(k+1)}>\chi_{\mathrm{stall}}\,\min_{j\in\text{window}} r_{\mathrm{Pic}}^{(j)}$, and restart once this occurs for $k_{\mathrm{stall}}$ consecutive iterations. To avoid spurious restarts at convergence, the stall counter is cleared whenever the raw residual is below a small absolute threshold.
+\end{itemize}
 
 \paragraph{Stopping, early abort, and logging.}
-We stop as soon as $r_{\mathrm{Pic}}^{(k+1)}\le \mathrm{tol}$, or after a maximum number of fixed-point subiterations $N_{\max}$. Optionally (useful with adaptive time stepping), we detect outer stagnation of the coupling loop: over a window of $W$ residuals we require a relative drop of at least $\delta$; after $P$ consecutive windows failing this test we abort the coupling loop early and report the stop reason \texttt{no\_progress}. For postprocessing we record per-subiteration telemetry (Picard residual, Anderson step size, history depth, conditioning, restarts, step limiting) and per-timestep outcomes (converged/accepted and the rejection reason if not accepted).
+We stop as soon as $r_{\mathrm{Pic}}^{(k+1)}\le \mathrm{tol}$, or after a maximum number of fixed-point subiterations $N_{\max}$. Optionally (useful with adaptive time stepping), we detect outer stagnation of the coupling loop: over a window of $W$ residuals we require a relative drop of at least $\delta$; after $P$ consecutive windows failing this test we abort the coupling loop early and report the stop reason \texttt{no\_progress}. For postprocessing we record per-subiteration telemetry (Picard residual, accelerated step size, history depth, conditioning, restarts, step limiting) and per-timestep outcomes (converged/accepted and the rejection reason if not accepted).
 
 \paragraph{Well-posedness of subsolves.}
 At each evaluation of $\mathcal{G}$ the four subproblems are uniformly elliptic (for fixed arguments) and admit unique solutions in the chosen finite-dimensional spaces: (i) mechanics has a coercive bilinear form by the density floor and $\nu\in(-1,\tfrac12)$, (ii) stimulus is SPD by $(\tau_S/\Delta t^n+1)$ with $D_S\ge0$, (iii) density is SPD by $(1/\Delta t^n)+A_{\mathrm{surf}}(\rho^{n-1})\big(k_{\mathrm{form}}S_+/\rho_{\max}+k_{\mathrm{res}}S_-/\rho_{\min}\big)\ge 1/\Delta t^n$ together with $\mathbf{D}_\rho=D_\rho\mathbf{I}$, and (iv) fabric is SPD by $(c_A/\Delta t^n)+c_A a(\bar{\mathbf{Q}})/\tau_A>0$ with $D_A\ge 0$. Thus each application of $\mathcal{G}$ is well-defined.
 
 \paragraph{Convergence discussion.}
-On bounded sets where the smooth gates/clamps are Lipschitz, $\mathcal{G}$ is locally Lipschitz. If the induced modulus $L<1$, the Gauss--Seidel iteration is linearly convergent in the Picard metric \eqref{eq:fp-picard-res}. The Anderson update \eqref{eq:aa-update} acts as a multisecant extrapolation and can reduce the number of subiterations in practice. Robustness is promoted by the step limiter \eqref{eq:aa-step-limit} and by adaptive history restarts triggered by stall or ill-conditioning of the regularized Gram system.
+On bounded sets where the smooth gates/clamps are Lipschitz, $\mathcal{G}$ is locally Lipschitz. If the induced modulus $L<1$, the Gauss--Seidel iteration is linearly convergent in the Picard metric \eqref{eq:fp-picard-res}. The Pulay/DIIS update \eqref{eq:aa-update} acts as a multisecant extrapolation and can reduce the number of subiterations in practice. Robustness is promoted by the step limiter \eqref{eq:aa-step-limit} and by adaptive history restarts triggered by stall or ill-conditioning of the regularized Gram system.
 
 \paragraph{Algorithm (per time level $t^n$).}
 \begin{enumerate}
@@ -93,9 +115,8 @@ On bounded sets where the smooth gates/clamps are Lipschitz, $\mathcal{G}$ is lo
   \begin{enumerate}
   \item Perform one GS sweep to get $x_{\mathrm{raw}}^{(k+1)}$ and $r^{(k+1)}$; compute $r_{\mathrm{Pic}}^{(k+1)}$.
   \item If $r_{\mathrm{Pic}}^{(k+1)}\le\mathrm{tol}$, set $\mathbf{x}^{(k+1)}\leftarrow x_{\mathrm{raw}}^{(k+1)}$ and stop.
-  \item Otherwise, apply Anderson mixing \eqref{eq:aa-weights}--\eqref{eq:aa-update} (or damped Picard if $p<2$), apply the step limiter \eqref{eq:aa-step-limit}, and update histories (with scheduled restarts if a trigger fires).
+  \item Otherwise, determine whether Pulay mixing is active using the hysteresis logic \eqref{eq:fp-contraction} (or use Picard if acceleration is disabled). If Pulay is inactive, take the damped Picard step \eqref{eq:picard-damped}. If Pulay is active, append the current snapshot $(\mathbf{x}^{(k)},r^{(k+1)})$ to the Pulay buffers, solve \eqref{eq:aa-weights}, form \eqref{eq:aa-update}, apply the step limiter \eqref{eq:aa-step-limit}, and schedule any restarts (stall/conditioning) for the next call.
   \item Check the outer-stall criterion and abort early if triggered.
   \end{enumerate}
 \item Output $\mathbf{x}^{n}:=\mathbf{x}^{(k_\star)}$ for the first index $k_\star$ meeting the stopping criterion.
 \end{enumerate}
-

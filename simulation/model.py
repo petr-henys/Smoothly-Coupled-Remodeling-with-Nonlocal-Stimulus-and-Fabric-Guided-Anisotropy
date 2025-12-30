@@ -34,7 +34,7 @@ class Remodeller:
         loading_cases: List[LoadingCase],
         factory: SolverFactory | None = None,
     ):
-        """Initialize solvers and precompute loading cases."""
+        """Initialize simulation environment, storage, and solvers."""
         self.cfg = cfg
         self.domain = cfg.domain
         self.comm: MPI.Comm = self.domain.comm
@@ -76,7 +76,7 @@ class Remodeller:
         gdim = self.domain.geometry.dim
         cell = self.domain.basix_cell()
 
-        # P1 spaces: vector (u), scalar (rho, S), tensor (L)
+        # Create P1 function spaces for displacement (vector), density/stimulus (scalar), and fabric (tensor)
         P1_vec = basix.ufl.element("Lagrange", cell, 1, shape=(gdim,))
         P1 = basix.ufl.element("Lagrange", cell, 1)
         P1_ten = basix.ufl.element("Lagrange", cell, 1, shape=(gdim, gdim))
@@ -109,48 +109,48 @@ class Remodeller:
         assign(self.S_old, 0.0)
 
     def _build_solvers(self) -> None:
-        """Wire up the solver graph: mechanics → fabric → stimulus → density."""
+        """Initialize and register solver blocks (Mechanics, Fabric, Stimulus, Density)."""
         # =====================================================================
         # Block registration - add/remove blocks here
         # =====================================================================
         self.registry = BlockRegistry(self.comm, self.cfg)
 
-        # 1. Mechanics solver (wrapped by GaitDriver)
+        # 1. Create mechanics solver (used by GaitDriver)
         mechsolver = self.factory.create_mechanics_solver(
             self.u, self.rho, self.L, self.loader
         )
 
-        # 2. GaitDriver: mechanics + multi-load SED averaging
+        # 2. Create GaitDriver (handles mechanics and SED averaging)
         self.driver = self.factory.create_driver(
             mechsolver, self.loader, self.loading_cases
         )
         self.registry.register(self.driver)
 
-        # 3. Fabric solver: log-fabric evolution L -> L_target(Qbar)
+        # 3. Create FabricSolver (evolves log-fabric tensor)
         self.fabricsolver = self.factory.create_fabric_solver(
             self.L, self.L_old, self.driver.Qbar_field()
         )
         self.registry.register(self.fabricsolver)
 
-        # 4. Stimulus solver: S(psi, rho)
+        # 4. Create StimulusSolver (computes stimulus field)
         self.stimsolver = self.factory.create_stimulus_solver(
             self.S, self.S_old, self.driver.stimulus_field(), self.rho
         )
         self.registry.register(self.stimsolver)
 
-        # 5. Density solver: rho(S)
+        # 5. Create DensitySolver (evolves density)
         self.densolver = self.factory.create_density_solver(
             self.rho, self.rho_old, self.S
         )
         self.registry.register(self.densolver)
 
         # =====================================================================
-        # Auto-discover fields from blocks
+        # Retrieve state fields from registered blocks
         # =====================================================================
         self.state_fields = self.registry.state_fields
         self.state_fields_old = self.registry.state_fields_old
 
-        # Register output fields for VTX storage (auto-collected from blocks)
+        # Register output fields for VTX storage
         # Note: registry.output_fields is already sorted (CG first, then DG)
         # to ensure VTXWriter initializes with correct topology.
         output_fields = self.registry.output_fields
@@ -178,7 +178,7 @@ class Remodeller:
         self.registry.assemble_lhs_all()
 
     def _ensure_solvers_initialized(self, dt: float) -> None:
-        """Initialize solver objects and (re)assemble dt-dependent operators."""
+        """Initialize solvers or reassemble LHS if time step changed."""
         dt = float(dt)
         if dt <= 0.0:
             raise ValueError(f"dt must be positive, got dt={dt}.")
@@ -224,7 +224,7 @@ class Remodeller:
         step_index: int = 0,
         sim_time: float = 0.0,
     ) -> Tuple[float, Dict]:
-        """Execute one timestep; returns (error_norm, metrics_dict)."""
+        """Execute one time step using fixed-point iteration."""
         for name, f in self.state_fields.items():
             assign(self.state_fields_old[name], f, scatter=True)
 
@@ -255,7 +255,7 @@ class Remodeller:
         }
 
     def simulate(self, reporter: ProgressReporter | SweepProgressReporter | None = None) -> None:
-        """Run remodeling loop using dt_initial and total_time from Config."""
+        """Run main simulation loop with time adaptivity."""
         t = 0.0
         dt = float(self.cfg.time.dt_initial)
         total_time = float(self.cfg.time.total_time)

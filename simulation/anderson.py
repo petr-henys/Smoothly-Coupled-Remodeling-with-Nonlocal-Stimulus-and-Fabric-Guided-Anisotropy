@@ -14,7 +14,7 @@ from simulation.logger import get_logger
 class Anderson:
     """Anderson acceleration with adaptive restart and step limiting.
     
-    Walker-Ni residual-minimization form with Tikhonov regularization.
+    Pulay (type-II/DIIS) residual-minimization form with Tikhonov regularization.
     Restarts on ill-conditioning or stall. Limits step size to prevent divergence.
     """
 
@@ -196,7 +196,7 @@ class Anderson:
         r_norm = self._rel_step(x_old, x_raw, x_raw)
         self._recent_res.append(r_norm)
 
-        # Compute accelerated iterate (Walker-Ni form)
+        # Compute accelerated iterate (Pulay/DIIS form)
         x_aa = self._compute_accelerated_iterate(x_old, residual, alpha, p)
 
         # Step limiting
