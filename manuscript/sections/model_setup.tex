@@ -1,4 +1,69 @@
 \section*{Models and datasets}
+\subsection*{Box Model}
+To validate the remodeling algorithms and study fundamental adaptive responses in a controlled environment, we employ an idealized geometric model representing a trabecular bone specimen.
+
+\subsubsection{Geometry and Mesh}
+The domain $\Omega$ is defined as a rectangular parallelepiped with dimensions $L_x \times L_y \times L_z$.
+Unless stated otherwise, the default dimensions are set to $L_x = L_y = 10$\,mm and $L_z = 30$\,mm, mimicking a typical bone core biopsy or a cortical strut.
+The domain is discretized using a tetrahedral mesh.
+We define the boundaries $\partial\Omega$ as follows:
+\begin{itemize}
+    \item $\Gamma_{\mathrm{bottom}}$: The bottom surface at $z=0$.
+    \item $\Gamma_{\mathrm{top}}$: The top surface at $z=L_z$.
+    \item $\Gamma_{\mathrm{side}}$: The remaining lateral surfaces ($x\in\{0, L_x\}, y\in\{0, L_y\}$).
+\end{itemize}
+
+\subsubsection{Boundary Conditions}
+The mechanical boundary conditions simulate a uniaxial compression test or a fixed cantilever beam setup.
+\paragraph{Support.}
+The bottom surface is fully constrained (Dirichlet boundary condition) to prevent rigid body motion and provide a reaction base:
+\begin{equation}
+\mathbf{u}(\mathbf{x}) = \mathbf{0}, \qquad \forall \mathbf{x} \in \Gamma_{\mathrm{bottom}}.
+\end{equation}
+
+\paragraph{Loading.}
+Loads are applied exclusively as Neumann boundary conditions on the top surface $\Gamma_{\mathrm{top}}$. The lateral sides $\Gamma_{\mathrm{side}}$ remain traction-free.
+The traction vector $\mathbf{t}(\mathbf{x})$ on $\Gamma_{\mathrm{top}}$ is defined by a pressure field $p(\mathbf{x})$ acting in the negative $z$-direction (compression):
+\begin{equation}
+\mathbf{t}(\mathbf{x}) = -p(\mathbf{x})\,\mathbf{e}_z, \qquad \forall \mathbf{x} \in \Gamma_{\mathrm{top}}.
+\end{equation}
+The pressure magnitude $p(\mathbf{x})$ is defined in MPa ($\mathrm{N/mm^2}$) and varies according to the specific loading scenario.
+
+\subsubsection{Loading Scenarios}
+We define a set of scenarios designed to drive density adaptation towards specific patterns, such as densification, resorption, or gradient formation.
+The spatial variation of pressure is parameterised by a normalized coordinate $\xi \in [0, 1]$ along the gradient axis (typically the $x$-axis, where $\xi = x/L_x$).
+
+\paragraph{Uniform Compression.}
+Represents a standard mechanical test or uniform physiological loading. The pressure is constant over the surface:
+\begin{equation}
+p(\mathbf{x}) = P_{\mathrm{ref}}.
+\end{equation}
+Typical values for $P_{\mathrm{ref}}$ range from $0.1$\,MPa (disuse) to $8.0$\,MPa (overload), with standard physiological loads in the range of $0.5$--$5.0$\,MPa.
+
+\paragraph{Gradient and Bending Loads.}
+To induce non-uniform remodeling, the pressure varies linearly across the surface. This simulates eccentric loading or bending moments.
+Given a base pressure $P_{\mathrm{ref}}$ and a gradient range factor $k \in [k_{\min}, k_{\max}]$, the pressure distribution is:
+\begin{equation}
+p(\xi) = P_{\mathrm{ref}} \left[ k_{\min} + \xi\,(k_{\max} - k_{\min}) \right].
+\end{equation}
+For a ``bending-like'' scenario, we select factors such that one side is under high compression (e.g., $k_{\max}=1.8$) and the other is unloaded or under reduced tension (e.g., $k_{\min}=0.2$).
+
+\paragraph{Parabolic Loading.}
+Simulates a localized contact patch (e.g., condylar contact). The pressure follows a bell-shaped curve with the peak at the center ($\xi=0.5$) and minima at the edges:
+\begin{equation}
+p(\xi) = P_{\mathrm{ref}} \left[ k_{\mathrm{edge}} + (k_{\mathrm{center}} - k_{\mathrm{edge}})\, 4\xi(1-\xi) \right].
+\end{equation}
+This distribution drives bone formation in the central core while promoting resorption at the periphery.
+
+\paragraph{Physiological Loading Sets.}
+Similar to the femur model, time-dependent loading is approximated by discrete weighted load cases $\{c_i\}$.
+The standard physiological set consists of three intensity levels representing daily activity:
+\begin{itemize}
+    \item \textbf{Low load:} $0.5$\,MPa (weight $w_{\mathrm{low}}=0.3$), representing rest/light activity.
+    \item \textbf{Medium load:} $2.0$\,MPa (weight $w_{\mathrm{med}}=0.5$), representing normal walking.
+    \item \textbf{High load:} $5.0$\,MPa (weight $w_{\mathrm{high}}=0.2$), representing impact activities.
+\end{itemize}
+
 \subsection*{Femur}
 \subsubsection{Dataset and normalization}
 We used the \emph{HFValid collection} \cite{Aldieri2025_HFValidCollection} (Hip-Fracture validation collection; \url{https://amsacta.unibo.it/id/eprint/8431/}), which provides $N=101$ anonymized whole-femur CT scans, corresponding segmentations, and anatomical landmarks. The scans were acquired at IRCCS Istituto Ortopedico Rizzoli (Bologna) between 1999 and 2016 for surgical planning of hip arthroplasty at the contralateral femur. Besides the volumetric images, the dataset provides (i) surface segmentations and (ii) landmark coordinates (including the femoral head centre and distal landmarks), which we use for defining local reference systems and for quality control.
