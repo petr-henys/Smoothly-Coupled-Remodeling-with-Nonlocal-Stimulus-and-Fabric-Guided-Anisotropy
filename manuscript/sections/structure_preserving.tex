@@ -1,0 +1,14 @@
+\section*{SPD structure preserving parametrization}
+We represent the physical fabric tensor $M\in\mathrm{SPD}(3)$ via its matrix logarithm
+$L=\log M\in\mathrm{Sym}(3)$ and evolve $L$ in time, while reconstructing $M$ by the
+matrix exponential $M=\exp(L)$. For any symmetric $L$, there exists an orthogonal
+eigendecomposition $L=Q\,\mathrm{diag}(\ell_1,\ell_2,\ell_3)\,Q^{\mathsf T}$, hence
+\[
+\exp(L)=Q\,\mathrm{diag}\!\big(e^{\ell_1},e^{\ell_2},e^{\ell_3}\big)\,Q^{\mathsf T}.
+\]
+Since $e^{\ell_i}>0$ for all $\ell_i\in\mathbb{R}$, the reconstructed tensor satisfies
+$x^{\mathsf T}\exp(L)\,x=\sum_{i=1}^3 e^{\ell_i} y_i^2>0$ for all $x\neq 0$ (with $y=Q^{\mathsf T}x$),
+i.e., $\exp(L)\in\mathrm{SPD}(3)$ by construction. Therefore, as long as $L$ is kept symmetric
+(e.g., by the standard symmetrization $L\leftarrow \tfrac12(L+L^{\mathsf T})$ to remove
+round-off-induced skew components), the SPD property of $M$ cannot be lost during the simulation,
+independently of the time step size or the specific discretization of the evolution equation for $L$.

@@ -38,8 +38,8 @@ With $\mathbf{D}_\rho$ from \eqref{eq:Drho-nd}, find $\rho_h^{n}\in Q_h$ such th
 \begin{equation}\label{eq:fe-rho-unified}
 \begin{aligned}
 \left(\frac{1}{\Delta t^n}\rho_h^{n}, p_h\right) \;+\; \big(\mathbf{D}_\rho\,\nabla \rho_h^{n}, \nabla p_h\big)
-\;+\; \Big(A_{\mathrm{surf}}(\rho_h^{n-1})\,\big(\tfrac{k_{\mathrm{form}}}{\rho_{\max}} S_+^n + \tfrac{k_{\mathrm{res}}}{\rho_{\min}} S_-^n\big)\,\rho_h^{n},\, p_h\Big) \\
-\;=\; \left(\frac{1}{\Delta t^n}\rho_h^{n-1}, p_h\right) \;+\; \Big(A_{\mathrm{surf}}(\rho_h^{n-1})\,(k_{\mathrm{form}} S_+^n + k_{\mathrm{res}} S_-^n),\, p_h\Big),
+\;+\; \Big(\alpha_{\mathrm{surf}}(\rho_h^{n-1})\,\big(\tfrac{k_{\mathrm{form}}}{\rho_{\max}} S_+^n + \tfrac{k_{\mathrm{res}}}{\rho_{\min}} S_-^n\big)\,\rho_h^{n},\, p_h\Big) \\
+\;=\; \left(\frac{1}{\Delta t^n}\rho_h^{n-1}, p_h\right) \;+\; \Big(\alpha_{\mathrm{surf}}(\rho_h^{n-1})\,(k_{\mathrm{form}} S_+^n + k_{\mathrm{res}} S_-^n),\, p_h\Big),
 \end{aligned}
 \end{equation}
 where $S_+^n = S_+(S^n)$ and $S_-^n = S_-(S^n)$ with $S_\pm$ defined in \eqref{eq:smooth-splits-nd}.

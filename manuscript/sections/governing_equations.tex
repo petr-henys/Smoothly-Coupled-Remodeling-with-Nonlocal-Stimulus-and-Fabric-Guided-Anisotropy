@@ -35,7 +35,7 @@ The stiffness operator entering $\boldsymbol{\sigma}=\mathbb{C}:\boldsymbol{\var
 \(
 \widehat{\mathbf{A}}=\sum_{i=1}^3 m_i\,\mathbf{P}_i
 \)
-with $\mathbf{P}_i:=\mathbf{a}_i\otimes\mathbf{a}_i$ in the fully anisotropic case. Conceptually, one may assemble $\mathbb{C}$ by forming the orthotropic compliance matrix $\mathbf{S}$ from $\{E_i,G_{ij},\nu_{ij}\}$ (Voigt notation), enforcing reciprocity ($\nu_{ji}E_i=\nu_{ij}E_j$), inverting $\mathbf{S}$, and rotating to the spatial frame.
+with $\mathbf{P}_i:=\mathbf{a}_i\otimes\mathbf{a}_i$ in the fully anisotropic case. Conceptually, one may assemble $\mathbb{C}$ by forming the orthotropic compliance matrix $\mathbb{S}$ from $\{E_i,G_{ij},\nu_{ij}\}$ (Voigt notation), enforcing reciprocity ($\nu_{ji}E_i=\nu_{ij}E_j$), inverting $\mathbb{S}$, and rotating to the spatial frame.
 This construction ensures that the resulting constitutive operator is \emph{conservative} (minor and major symmetries) and admits a standard strain energy density $U=\tfrac12\boldsymbol{\sigma}:\boldsymbol{\varepsilon}$.
 In addition to the lower-density clamp \eqref{eq:smooth-max-nd} (which guarantees strictly positive moduli in \eqref{eq:zysset-curnier}), we ensure \emph{strong ellipticity} through admissible parameter ranges and bounded anisotropy (via eigenvalue-ratio bounds), and the law reduces smoothly to the isotropic baseline as $\widehat{\mathbf{A}}\to\mathbf{I}$.
 
@@ -99,9 +99,9 @@ S(\cdot,0)=S_0\ \ \text{in }\Omega.
 \end{equation}
 Here $\tau_S\ge 0$ is the stimulus time constant, $D_S\ge 0$ the stimulus diffusivity, $S_{\max}>0$ a cap on $|S|$, and $\kappa_S>0$ controls the saturation width in the $\tanh$ response. The drive is built from a normalized deviation in density-normalized strain energy,
 \[
-m(x):=\frac{\psi_{\mathrm{day}}(x)}{\widetilde\rho(x)},\qquad
-m_{\mathrm{ref}}:=\frac{\psi_{\mathrm{ref}}}{\rho_{\mathrm{ref}}},\qquad
-\delta:=\frac{m-m_{\mathrm{ref}}}{m_{\mathrm{ref}}}\,,
+\hat{\psi}(x):=\frac{\psi_{\mathrm{day}}(x)}{\widetilde\rho(x)},\qquad
+\hat{\psi}_{\mathrm{ref}}:=\frac{\psi_{\mathrm{ref}}}{\rho_{\mathrm{ref}}},\qquad
+\delta(x):=\frac{\hat{\psi}(x)-\hat{\psi}_{\mathrm{ref}}}{\hat{\psi}_{\mathrm{ref}}}\,,
 \]
 where $\widetilde\rho$ is the smooth lower clamp \eqref{eq:smooth-max-nd}. To suppress spurious response to very small deviations we apply a smooth lazy-zone gate with half-width $\delta_0\ge 0$ (dimensionless):
 \[
@@ -115,13 +115,13 @@ Here $\delta_{\mathrm{abs}}:=\sqrt{\delta^2+\varepsilon^2}$ is a smooth absolute
 The mechanical drive $\psi_{\mathrm{day}}$ is constructed as a cycle-weighted power mean of the local strain energy density (SED) across a discrete set of loading cases:
 \begin{equation}\label{eq:stim-psi-nd}
 \psi_{\mathrm{day}}(x) \;=\;
-\left(\frac{\sum_i c_i\,\psi_i(x)^p}{\sum_i c_i}\right)^{1/p},\qquad
+\left(\frac{\sum_i w_i\,\psi_i(x)^p}{\sum_i w_i}\right)^{1/p},\qquad
 \psi_i(x):=\max\!\Big(0,\tfrac12\,\boldsymbol{\sigma}_i(x):\boldsymbol{\varepsilon}_i(x)\Big),
 \end{equation}
-where case weights $c_i$ are proportional to cycles-per-day (or relative daily frequency), and $p\ge 1$ biases the average toward peaks ($p=1$ gives a weighted mean, $p\to\infty$ approaches a max). The specific SED $\psi_{\mathrm{day}}/\widetilde\rho$ reflects sensing of strain energy per unit bone mass.
+where case weights $w_i$ are proportional to cycles-per-day (or relative daily frequency), and $p\ge 1$ biases the average toward peaks ($p=1$ gives a weighted mean, $p\to\infty$ approaches a max). The specific SED $\psi_{\mathrm{day}}/\widetilde\rho$ reflects sensing of strain energy per unit bone mass.
 
 \paragraph{Quantitative analysis and biological interpretation.}
-Equation \eqref{eq:stim-strong-nd} acts as a spatio-temporal low-pass filter of the mechanostat drive. Regions of sustained overload ($m>m_{\mathrm{ref}}$, i.e.\ $\delta>0$) accumulate positive stimulus, while underloaded regions ($\delta<0$) accumulate negative stimulus. Diffusion broadens and smooths these regions over the characteristic length
+Equation \eqref{eq:stim-strong-nd} acts as a spatio-temporal low-pass filter of the mechanostat drive. Regions of sustained overload ($\hat{\psi}>\hat{\psi}_{\mathrm{ref}}$, i.e.\ $\delta>0$) accumulate positive stimulus, while underloaded regions ($\delta<0$) accumulate negative stimulus. Diffusion broadens and smooths these regions over the characteristic length
 \(
 \ell_S=\sqrt{\tau_S D_S}
 \), while the reaction term damps transient fluctuations with a characteristic time
@@ -154,12 +154,38 @@ S_-(S):=\operatorname{smoothmax}(-S,0;\varepsilon).
 The total evolution equation is:
 \begin{equation}\label{eq:density-strong-nd}
 \partial_t \rho - \nabla \cdot (\mathbf{D}_\rho \nabla \rho) =
-A_{\mathrm{surf}}(\rho)\Big(
+\alpha_{\mathrm{surf}}(\rho)\Big(
 k_{\mathrm{form}}\,S_+(S)\Big(1-\frac{\rho}{\rho_{\max}}\Big)
 \;+\;k_{\mathrm{res}}\,S_-(S)\Big(1-\frac{\rho}{\rho_{\min}}\Big)
 \Big).
 \end{equation}
-Here $k_{\mathrm{form}},k_{\mathrm{res}}\ge 0$ are formation/resorption gains. The bracketed terms are soft bounds: as $\rho\to\rho_{\max}$ (formation) or $\rho\to\rho_{\min}$ (resorption) the corresponding rate vanishes, so $\rho$ remains naturally attracted to $[\rho_{\min},\rho_{\max}]$ without hard constraints. The optional surface-availability factor $A_{\mathrm{surf}}\in[A_{\min},1]$ scales activity based on a porosity/specific-surface proxy, which we evaluate explicitly at the previous time level.
+Here $k_{\mathrm{form}},k_{\mathrm{res}}\ge 0$ are formation/resorption gains. The bracketed terms are soft bounds: as $\rho\to\rho_{\max}$ (formation) or $\rho\to\rho_{\min}$ (resorption) the corresponding rate vanishes, so $\rho$ remains naturally attracted to $[\rho_{\min},\rho_{\max}]$ without hard constraints. The optional surface-availability factor $\alpha_{\mathrm{surf}}\in[\alpha_{\min},1]$ scales activity based on a porosity/specific-surface proxy.
+
+\paragraph{Surface-availability factor.}
+To mimic reduced active remodeling surface in dense bone, we use a smooth factor $\alpha_{\mathrm{surf}}(\rho)\in[\alpha_{\min},1]$ based on a porosity proxy. Let $\rho_t>0$ be the tissue density and define the (dimensionless) porosity-like variable
+\begin{align*}
+f_{\mathrm{raw}}(\rho) &:= 1-\frac{\rho}{\rho_t},\\
+\operatorname{smoothmin}(a,b;\varepsilon) &:= a+b-\operatorname{smoothmax}(a,b;\varepsilon),\\
+f(\rho) &:= \operatorname{smoothmin}\!\Big(\operatorname{smoothmax}(f_{\mathrm{raw}}(\rho),0;\varepsilon),1;\varepsilon\Big).
+\end{align*}
+We estimate a specific-surface proxy by blending a Martin-type trabecular polynomial
+\[
+a_{\mathrm{trab}}(f):=32.3 f-93.9 f^2+134.0 f^3-101.0 f^4+28.8 f^5
+\]
+with a cortical proxy $a_{\mathrm{cort}}(f):=c_{\mathrm{cort}}\sqrt{f+\varepsilon}$, where
+\[
+f_{\mathrm{tr}}:=\max\!\Big(1-\frac{\rho_{\mathrm{trab}}^{\max}}{\rho_t},f_{\min}\Big),\qquad
+c_{\mathrm{cort}}:=\frac{a_{\mathrm{trab}}(f_{\mathrm{tr}})}{\sqrt{f_{\mathrm{tr}}}},
+\]
+and $f_{\min}>0$ is a small fixed lower bound. Using the same smooth transition weight $w(\widetilde{\rho})$ as in \eqref{eq:variable-exponent}, define
+\[
+a_v(\rho):=\operatorname{smoothmax}\!\Big((1-w(\widetilde{\rho}))\,a_{\mathrm{trab}}(f(\rho))+w(\widetilde{\rho})\,a_{\mathrm{cort}}(f(\rho)),\,0;\varepsilon\Big),
+\]
+and set
+\begin{equation}\label{eq:Asurf-nd}
+\alpha_{\mathrm{surf}}(\rho):=\alpha_{\min}+(1-\alpha_{\min})\frac{a_v(\rho)}{a_v(\rho)+a_{v,0}},
+\end{equation}
+with $\alpha_{\min}\in[0,1]$ and $a_{v,0}>0$.
 
 \paragraph{Quantitative analysis and biological interpretation.}
 Equation \eqref{eq:density-strong-nd} uses differentiable kinetics and soft bounds to provide a stable density update driven by the nonlocal stimulus field. The diffusion term $\nabla\!\cdot(\mathbf{D}_\rho\nabla\rho)$ introduces a spatial regularization length scale, preventing checkerboard patterns and promoting mesh-independent solutions. Here $\mathbf{D}_\rho$ is isotropic; fabric effects enter through the mechanics and the fabric evolution, and can be extended to anisotropic transport if desired.
@@ -196,9 +222,9 @@ For each loading case $i$, the mechanics solve provides $\boldsymbol{\sigma}_i$ 
 \end{equation}
 and compute a cycle-weighted average
 \(
-\bar{\mathbf{Q}}:=\sum_i c_i \mathbf{Q}_i\big/\sum_i c_i
+\bar{\mathbf{Q}}:=\sum_i w_i \mathbf{Q}_i\big/\sum_i w_i
 \),
-where $c_i$ are the same daily weights as in \eqref{eq:stim-psi-nd}. To construct a bounded, trace-free logarithmic target we use the eigen-decomposition of a regularized tensor $\mathbf{Q}:=\mathrm{sym}(\bar{\mathbf{Q}})+\varepsilon_Q\mathbf{I}$, $\mathbf{Q}=\sum_i \lambda_i\mathbf{P}_i$, and define
+where $w_i$ are the same daily weights as in \eqref{eq:stim-psi-nd}. To construct a bounded, trace-free logarithmic target we use the eigen-decomposition of a regularized tensor $\mathbf{Q}:=\mathrm{sym}(\bar{\mathbf{Q}})+\varepsilon_Q\mathbf{I}$, $\mathbf{Q}=\sum_i \lambda_i\mathbf{P}_i$, and define
 \begin{equation}\label{eq:M-hat-nd}
 \tilde m_i \;:=\; \operatorname{clamp}\!\big((\lambda_i/g)^{\gamma_F},\,m_{\min},\,m_{\max}\big),\qquad
 g:=(\lambda_1\lambda_2\lambda_3)^{1/3},\qquad
@@ -225,4 +251,3 @@ Figure \ref{fig:anisotropy_law} visualizes how the log-fabric state biases direc
 
 \paragraph{Regularization parameters and defaults.}
 We use a single global smoothing width $\varepsilon$ for the soft clamps in \eqref{eq:smooth-max-nd} and \eqref{eq:smooth-splits-nd}. The stimulus mechanostat uses a dimensionless lazy-zone half-width $\delta_0$ and saturation width $\kappa_S$ in \eqref{eq:stim-strong-nd}. The fabric target uses $\varepsilon_Q$ and eigenvalue-ratio bounds $[m_{\min},m_{\max}]$ in \eqref{eq:M-hat-nd}, and the activity factor uses $\varepsilon_a$ to smoothly gate near-isotropic loading. These choices avoid hard projections while keeping the subproblems well-conditioned in practice.
-

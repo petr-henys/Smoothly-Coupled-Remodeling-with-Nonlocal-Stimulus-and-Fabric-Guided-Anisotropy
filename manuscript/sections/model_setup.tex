@@ -56,12 +56,12 @@ p(\xi) = P_{\mathrm{ref}} \left[ k_{\mathrm{edge}} + (k_{\mathrm{center}} - k_{\
 This distribution drives bone formation in the central core while promoting resorption at the periphery.
 
 \paragraph{Physiological Loading Sets.}
-Similar to the femur model, time-dependent loading is approximated by discrete weighted load cases $\{c_i\}$.
+Similar to the femur model, time-dependent loading is approximated by a finite set of load cases with weights $\{w_i\}$.
 The standard physiological set consists of three intensity levels representing daily activity:
 \begin{itemize}
-    \item \textbf{Low load:} $0.5$\,MPa (weight $w_{\mathrm{low}}=0.3$), representing rest/light activity.
-    \item \textbf{Medium load:} $2.0$\,MPa (weight $w_{\mathrm{med}}=0.5$), representing normal walking.
-    \item \textbf{High load:} $5.0$\,MPa (weight $w_{\mathrm{high}}=0.2$), representing impact activities.
+    \item \textbf{Low load (case $i=1$):} $0.5$\,MPa (weight $w_1=0.3$), representing rest/light activity.
+    \item \textbf{Medium load (case $i=2$):} $2.0$\,MPa (weight $w_2=0.5$), representing normal walking.
+    \item \textbf{High load (case $i=3$):} $5.0$\,MPa (weight $w_3=0.2$), representing impact activities.
 \end{itemize}
 
 \subsection*{Femur}
@@ -170,7 +170,7 @@ A point $\mathbf{x}^w$ and a vector $\mathbf{v}^w$ transform as
 \subsubsection{Boundary conditions and loading}
 The proximal femur is loaded through surface tractions that represent the hip joint reaction and major muscle forces. Distally, the cut section of the femur is constrained (Dirichlet boundary condition) to eliminate rigid-body motion. All remaining external loads are applied as Neumann boundary conditions on a proximal surface subset $\Gamma_{\mathrm{load}}\subset\partial\Omega$ (Fig.~\ref{fig:femur_loads}). Geometry is expressed in millimetres and forces in Newtons, therefore the resulting traction values are in $\mathrm{N/mm^2}=\mathrm{MPa}$.
 
-Each loading case $c$ consists of (i) a hip joint resultant force $\mathbf{F}_{h,c}$ and (ii) a set of muscle resultants $\{\mathbf{F}_{m,c}\}_{m\in\mathcal{M}_c}$. In the FE model, these resultants are converted to distributed tractions such that the surface integral of each traction field reproduces the corresponding resultant force.
+Each loading case $i$ consists of (i) a hip joint resultant force $\mathbf{F}_{h,i}$ and (ii) a set of muscle resultants $\{\mathbf{F}_{k,i}\}_{k\in\mathcal{M}_i}$. In the FE model, these resultants are converted to distributed tractions such that the surface integral of each traction field reproduces the corresponding resultant force.
 
 
 \paragraph{Choice of loading cases and parameter values.}
@@ -187,7 +187,7 @@ Note that reported angle signs depend on the chosen anatomical coordinate system
 
 Because muscle forces strongly influence femoral deformation, we include a reduced set of major muscles per case; prior work shows that reduced muscle sets built from major contributors can recover physiological strain distributions with only modest error compared with fully balanced load regimes \cite{Duda1998_MuscleForcesFemoralStrain,Bergmann2016_StandardizedLoadsHipImplants}.
 
-Finally, the case weights $w_c$ (``day cycles'') are set to reflect relative activity frequencies, i.e., walking dominates daily cycles (order $10^3$) while stair climbing is an order of magnitude less frequent (order $10^2$), but remains mechanically more demanding \cite{Bergmann2016_StandardizedLoadsHipImplants}.
+Finally, the case weights $w_i$ (``day cycles'') are set to reflect relative activity frequencies, i.e., walking dominates daily cycles (order $10^3$) while stair climbing is an order of magnitude less frequent (order $10^2$), but remains mechanically more demanding \cite{Bergmann2016_StandardizedLoadsHipImplants}.
 The values used in the simulations are summarised in Table~\ref{tab:loading_cases}.
 
 
@@ -196,11 +196,11 @@ The values used in the simulations are summarised in Table~\ref{tab:loading_case
 \footnotesize
 \setlength{\tabcolsep}{4pt}
 \renewcommand{\arraystretch}{1.2}
-\caption{Discrete loading cases used in the FE simulations. Hip resultant forces are parameterised in the femur coordinate system (FCS) by their magnitude $F_h$ and direction angles $(\alpha_{\mathrm{sag}},\alpha_{\mathrm{front}})$ as defined in Eq.~\eqref{eq:force_from_angles}. Muscle entries list magnitude [N] and direction angles [deg] in the same convention. The weight $w_c$ denotes the relative day-cycle frequency used when aggregating multi-case results.}
+\caption{Discrete loading cases used in the FE simulations. Hip resultant forces are parameterised in the femur coordinate system (FCS) by their magnitude $F_h$ and direction angles $(\alpha_{\mathrm{sag}},\alpha_{\mathrm{front}})$ as defined in Eq.~\eqref{eq:force_from_angles}. Muscle entries list magnitude [N] and direction angles [deg] in the same convention. The weight $w_i$ denotes the relative day-cycle frequency used when aggregating multi-case results.}
 \label{tab:loading_cases}
 \begin{tabularx}{\textwidth}{@{} l l >{\raggedright\arraybackslash}X r r r >{\raggedright\arraybackslash}X r l @{}}
 \toprule
-Case & Activity & Why selected & $F_h$ [N] & $\alpha_{\mathrm{sag}}$ [deg] & $\alpha_{\mathrm{front}}$ [deg] & Major muscle forces & $w_c$ & Sources \\
+Case & Activity & Why selected & $F_h$ [N] & $\alpha_{\mathrm{sag}}$ [deg] & $\alpha_{\mathrm{front}}$ [deg] & Major muscle forces & $w_i$ & Sources \\
 \midrule
 Heel strike & Walking & Early stance / weight acceptance; captures the first walking peak load and extensor-driven stabilisation. & 1900 & -10 & -5 &
 glmax 900 @ (-50,20)\newline
@@ -263,33 +263,33 @@ where $\sigma_h = R_h\,(\sigma_{\deg}\pi/180)$ converts the prescribed angular w
 \label{eq:hip_resultant_condition}
 \end{equation}
 
-In the discrete implementation on the triangulated surface, Eq.~\eqref{eq:hip_resultant_condition} is enforced via area-weighted normalisation. For surface elements (cells) $i$ with areas $A_i$ and centres $\mathbf{x}_i$, we compute weights
+In the discrete implementation on the triangulated surface, Eq.~\eqref{eq:hip_resultant_condition} is enforced via area-weighted normalisation. For surface elements (cells) $e$ with areas $\mathrm{Area}_e$ and centres $\mathbf{x}_e$, we compute weights
 \begin{equation}
-w_i=\exp\!\left(-\frac{\lVert \mathbf{x}_i^{\mathrm{FCS}}-\mathbf{x}_{c,h}^{\mathrm{FCS}}\rVert^2}{2\sigma_h^2}\right),
+\omega_e=\exp\!\left(-\frac{\lVert \mathbf{x}_e^{\mathrm{FCS}}-\mathbf{x}_{c,h}^{\mathrm{FCS}}\rVert^2}{2\sigma_h^2}\right),
 \end{equation}
 and set the (cell-wise) traction vectors to
 \begin{equation}
-\mathbf{t}_{h,i} = s_h\,\frac{F_h\,w_i}{\sum_j w_j A_j}\,\hat{\mathbf{f}}_h^w,
+\mathbf{t}_{h,e} = s_h\,\frac{F_h\,\omega_e}{\sum_{e'} \omega_{e'}\,\mathrm{Area}_{e'}}\,\hat{\mathbf{f}}_h^w,
 \label{eq:hip_discrete_traction}
 \end{equation}
-where $s_h\in\{-1,+1\}$ encodes the \texttt{flip} convention. By construction, $\sum_i \mathbf{t}_{h,i}A_i=s_h\,\mathbf{F}_h^w$.
+where $s_h\in\{-1,+1\}$ encodes the \texttt{flip} convention. By construction, $\sum_e \mathbf{t}_{h,e}\,\mathrm{Area}_e=s_h\,\mathbf{F}_h^w$.
 
 \paragraph{Muscle tractions around attachment curves.}
-Each muscle $m$ is represented by an attachment curve $\mathcal{C}_m$ on the proximal femur, reconstructed from user-defined points and smoothed by a B-spline curve fit. The muscle resultant direction $\hat{\mathbf{f}}_m^w$ is defined from Eq.~\eqref{eq:force_from_angles}. The distance of a surface point to the attachment curve is
+Each muscle $k$ is represented by an attachment curve $\mathcal{C}_k$ on the proximal femur, reconstructed from user-defined points and smoothed by a B-spline curve fit. The muscle resultant direction $\hat{\mathbf{f}}_k^w$ is defined from Eq.~\eqref{eq:force_from_angles}. The distance of a surface point to the attachment curve is
 \begin{equation}
-d_m(\mathbf{x})=\min_{\mathbf{y}\in\mathcal{C}_m}\lVert \mathbf{x}^w-\mathbf{y}\rVert.
+d_k(\mathbf{x})=\min_{\mathbf{y}\in\mathcal{C}_k}\lVert \mathbf{x}^w-\mathbf{y}\rVert.
 \end{equation}
 The corresponding (continuous) traction field is
 \begin{equation}
-\mathbf{t}_m(\mathbf{x})=\lambda_m\,\exp\!\left(-\frac{d_m(\mathbf{x})^2}{2\sigma_m^2}\right)\,\hat{\mathbf{f}}_m^w,
+\mathbf{t}_k(\mathbf{x})=\lambda_k\,\exp\!\left(-\frac{d_k(\mathbf{x})^2}{2\sigma_k^2}\right)\,\hat{\mathbf{f}}_k^w,
 \label{eq:muscle_traction_continuous}
 \end{equation}
-with prescribed width $\sigma_m$ (mm) and normalisation $\lambda_m$ such that $\int_{\Gamma_{\mathrm{load}}}\mathbf{t}_m\,\mathrm{d}A=\mathbf{F}_m^w$ (up to the \texttt{flip} sign). Numerically, $d_m$ is evaluated by nearest-neighbour queries to a dense sampling of the B-spline curve; weights are additionally scaled by local curve segment lengths to avoid sensitivity to the sampling density.
+with prescribed width $\sigma_k$ (mm) and normalisation $\lambda_k$ such that $\int_{\Gamma_{\mathrm{load}}}\mathbf{t}_k\,\mathrm{d}A=\mathbf{F}_k^w$ (up to the \texttt{flip} sign). Numerically, $d_k$ is evaluated by nearest-neighbour queries to a dense sampling of the B-spline curve; weights are additionally scaled by local curve segment lengths to avoid sensitivity to the sampling density.
 
 \paragraph{Superposition and mapping to the FE boundary.}
 For a given loading case, the total applied traction is the linear superposition
 \begin{equation}
-\mathbf{t}(\mathbf{x})=\mathbf{t}_h(\mathbf{x}) + \sum_{m\in\mathcal{M}_c}\mathbf{t}_m(\mathbf{x})
+\mathbf{t}(\mathbf{x})=\mathbf{t}_h(\mathbf{x}) + \sum_{k\in\mathcal{M}_i}\mathbf{t}_k(\mathbf{x})
 \quad \text{on } \Gamma_{\mathrm{load}},
 \label{eq:traction_superposition}
 \end{equation}

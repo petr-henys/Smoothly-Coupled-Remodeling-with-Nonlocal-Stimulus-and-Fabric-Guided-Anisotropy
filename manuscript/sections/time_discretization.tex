@@ -1,72 +1,133 @@
-\section*{Backward--Euler time discretization}
+\section*{Time discretization}
 \label{sec:be-time}
-Let $0=t^0<t^1<\dots<t^N=T$ be a partition with $\Delta t^n:=t^n-t^{n-1}>0$. For any time-dependent field $X$, write $X^n\approx X(\cdot,t^n)$. Mechanics is quasi-static (no time derivative); $S$, $\rho$, and $\mathbf{L}$ are advanced by fully implicit Backward--Euler steps. Boundary and initial conditions are enforced at each time level exactly as in \eqref{eq:stim-bc-ic-nd}, \eqref{eq:density-bc-ic-nd}, and \eqref{eq:L-bc-ic-nd}.
 
-\paragraph{Mechanics at $t^n$.}
-Find $\mathbf{u}^{n}$ such that
-\begin{equation}\label{eq:be-mech}
--\nabla\!\cdot\!\boldsymbol{\sigma}\!\left(\mathbf{u}^{n},\rho^{n},\mathbf{L}^{n}\right)=\mathbf{0}\ \text{in }\Omega,\qquad
-\mathbf{u}^{n}=\mathbf{0}\ \text{on }\Gamma_D,\qquad
-\boldsymbol{\sigma}\!\left(\mathbf{u}^{n},\rho^{n},\mathbf{L}^{n}\right)\mathbf{n}=\mathbf{t}\ \text{on }\Gamma_N,
-\end{equation}
-with $\boldsymbol{\sigma}$ given by the Zysset-Curnier model \eqref{eq:zysset-curnier}.
+Let $0=t^0<t^1<\dots<t^N=T$ be a (possibly non-uniform) partition of the time interval, and define the step sizes
+\[
+\Delta t^n := t^{n}-t^{n-1}>0,\qquad n=1,\dots,N.
+\]
+For any time-dependent field $X$ we write $X^n \approx X(\cdot,t^n)$.
+At each time level we seek the coupled remodeling state $\mathbf{x}^n:=(\mathbf{L}^n,S^n,\rho^n)$.
+Mechanics is quasi-static (no time derivative); the evolution equations for $S$, $\rho$, and $\mathbf{L}$ are advanced by Backward--Euler steps of size $\Delta t^n$.
 
-\paragraph{Stimulus.}
-Given $\psi_{\mathrm{day}}^{n}$ from \eqref{eq:stim-psi-nd}, find $S^{n}$ such that
+\paragraph{Mechanics (quasi-static).}
+Given $(\rho^n,\mathbf{L}^n)$ we solve the equilibrium problem \eqref{eq:mech-strong-nd} to obtain the displacement field $\mathbf{u}^n$ and the mechanical drivers $\psi_{\mathrm{day}}^n$ and $\bar{\mathbf{Q}}^n$ defined in \eqref{eq:stim-psi-nd} and \eqref{eq:M-def-nd}.
+
+\paragraph{Stimulus (Backward--Euler).}
+Discretizing \eqref{eq:stim-strong-nd} by Backward--Euler gives the linear update: find $S^n$ such that
 \begin{equation}\label{eq:be-stim}
-\frac{\tau_S}{\Delta t^n}\big(S^{n}-S^{n-1}\big)\;-\;\tau_S D_S\,\Delta S^{n}\;+\;S^{n}
+\tau_S\frac{S^{n}-S^{n-1}}{\Delta t^n}\;-\;\tau_S D_S\,\Delta S^{n}\;+\;S^{n}
 \;=\; S_{\max}\,\tanh\!\Big(\delta_{\mathrm{eff}}(\psi_{\mathrm{day}}^{n},\rho^{n})/\kappa_S\Big)\quad\text{in }\Omega,
 \end{equation}
-with the Neumann condition from \eqref{eq:stim-bc-ic-nd} and $S^{0}=S_0$.
+with boundary and initial conditions from \eqref{eq:stim-bc-ic-nd}. For $D_S=0$ the Laplacian term is absent.
 
-\paragraph{Density.}
-Let $\mathbf{D}_\rho$ be as in \eqref{eq:Drho-nd}. Find $\rho^{n}$ such that
+\paragraph{Density (Backward--Euler).}
+Let $S_+^n:=S_+(S^n)$ and $S_-^n:=S_-(S^n)$, where $S_\pm$ are defined in \eqref{eq:smooth-splits-nd}. Discretizing \eqref{eq:density-strong-nd} by Backward--Euler and evaluating the surface-availability factor $\alpha_{\mathrm{surf}}$ from \eqref{eq:Asurf-nd} explicitly as $\alpha_{\mathrm{surf}}(\rho)\approx \alpha_{\mathrm{surf}}(\rho^{n-1})$ yields
 \begin{equation}\label{eq:be-rho}
-\frac{1}{\Delta t^n}\big(\rho^{n}-\rho^{n-1}\big)\;-\;\nabla\!\cdot\!\big(\mathbf{D}_\rho\,\nabla \rho^{n}\big)
-\;=\; A_{\mathrm{surf}}(\rho^{n-1})\left[
-k_{\mathrm{form}}\,S_+^n\!\left(1-\frac{\rho^n}{\rho_{\max}}\right)
-\;+\;k_{\mathrm{res}}\,S_-^n\!\left(1-\frac{\rho^n}{\rho_{\min}}\right)
-\right]\quad\text{in }\Omega,
+\frac{\rho^{n}-\rho^{n-1}}{\Delta t^n}\;-\;\nabla\!\cdot\!\big(\mathbf{D}_\rho\nabla\rho^{n}\big)
+=\;\alpha_{\mathrm{surf}}(\rho^{n-1})\Big(
+k_{\mathrm{form}}\,S_+^{n}\Big(1-\frac{\rho^{n}}{\rho_{\max}}\Big)
++k_{\mathrm{res}}\,S_-^{n}\Big(1-\frac{\rho^{n}}{\rho_{\min}}\Big)
+\Big)\quad\text{in }\Omega,
 \end{equation}
-Here $S_+^n:=S_+(S^n)$ and $S_-^n:=S_-(S^n)$ are the smooth positive/negative parts from \eqref{eq:smooth-splits-nd}. We evaluate $A_{\mathrm{surf}}$ explicitly on $\rho^{n-1}$.
+with boundary and initial conditions from \eqref{eq:density-bc-ic-nd}.
 
-with the no--flux condition from \eqref{eq:density-bc-ic-nd} and $\rho^{0}=\rho_0$.
-
-\paragraph{Direction/fabric.}
-With $\mathbf{L}_M(\bar{\mathbf{Q}}^{n})$ given by \eqref{eq:M-hat-nd}, find $\mathbf{L}^{n}$ such that
+\paragraph{Direction/fabric (Backward--Euler).}
+Discretizing \eqref{eq:L-strong-nd} by Backward--Euler yields the linear relaxation--diffusion update: find $\mathbf{L}^n$ such that
 \begin{equation}\label{eq:be-A}
-\frac{c_A}{\Delta t^n}\big(\mathbf{L}^{n}-\mathbf{L}^{n-1}\big)\;-\;c_A D_A\,\Delta \mathbf{L}^{n}\;+\;\frac{c_A\,a(\bar{\mathbf{Q}}^{n})}{\tau_A}\,\mathbf{L}^{n}
-\;=\; \frac{c_A\,a(\bar{\mathbf{Q}}^{n})}{\tau_A}\,\mathbf{L}_M(\bar{\mathbf{Q}}^{n})\quad\text{in }\Omega,
+c_A\frac{\mathbf{L}^{n}-\mathbf{L}^{n-1}}{\Delta t^n}\;-\;c_A D_A\,\Delta \mathbf{L}^{n}\;+\;\frac{c_A\,a(\bar{\mathbf{Q}}^{n})}{\tau_A}\,\mathbf{L}^{n}
+\;=\;\frac{c_A\,a(\bar{\mathbf{Q}}^{n})}{\tau_A}\,\mathbf{L}_M(\bar{\mathbf{Q}}^{n})\quad\text{in }\Omega,
 \end{equation}
-with the componentwise no--flux condition from \eqref{eq:L-bc-ic-nd} and $\mathbf{L}^{0}=\ln(\mathbf{A}_0)$.
+with boundary and initial conditions from \eqref{eq:L-bc-ic-nd}. The Laplacian acts componentwise on $\mathbf{L}$, and for $D_A=0$ the diffusion term is absent.
 
-\paragraph{Time stepping and numerics.}
-We advance from $t^0=0$ to $T$ using Backward--Euler with step sizes $\Delta t^n=t^{n+1}-t^n$ (constant $\Delta t^n\equiv \Delta t^0$ when adaptive control is disabled, except for the final truncation to hit $T$). When adaptive control is enabled, each \emph{attempted} step uses an explicit Adams--Bashforth predictor as an initial guess for the coupled implicit solve on $\mathbf{x}=(\mathbf L,S,\rho)$. Let $\mathbf{x}^n$ denote the last accepted state and let $\dot{\mathbf x}^{n}\approx (\mathbf{x}^n-\mathbf{x}^{n-1})/\Delta t^{n-1}$ be the stored discrete rate (updated only after accepted steps). With step ratio $r_n=\Delta t^n/\Delta t^{n-1}$, the AB2 predictor reads
+\paragraph{Coupled solve at time level $t^n$.}
+The submodels are coupled through the mechanics drivers $(\psi_{\mathrm{day}}^n,\bar{\mathbf{Q}}^n)$ and through the density dependence in the stimulus. We obtain $\mathbf{x}^n$ by the block Gauss--Seidel fixed-point scheme described in \S\ref{sec:fp-aa}.
+
+\paragraph{Adaptive time stepping and error control.}
+When adaptive control is enabled, each \emph{attempted} step of size $\Delta t^n$ uses an explicit Adams--Bashforth predictor
+as an initial guess for the coupled implicit Backward--Euler solve on the state vector $\mathbf x:=(\mathbf{L},S,\rho)$.
+The predictor and controller operate on the global DOF vector obtained by concatenating the DOFs of the integrated fields.
+
+\emph{Discrete rates and AB predictor.}
+After an accepted step, the stored discrete rate for each field is updated by the backward difference quotient
+\[
+\dot{\mathbf x}^{n}\approx \frac{\mathbf x^{n}-\mathbf x^{n-1}}{\Delta t^n},
+\]
+and the previous rate is stored for multi-step prediction. For an attempted step from $t^{n-1}$ to $t^{n}=t^{n-1}+\Delta t^n$, set
+$r_n:=\Delta t^n/\Delta t^{n-1}$. If at least two previous accepted steps are available, the variable-step AB2 predictor is
 \begin{equation}\label{eq:ab2-predict}
-\mathbf{x}_{\mathrm{pred}}^{n+1}
-=\mathbf{x}^n+\Delta t^n\left(\left(1+\tfrac12 r_n\right)\dot{\mathbf x}^{n}-\tfrac12 r_n\,\dot{\mathbf x}^{n-1}\right),
+\mathbf{x}_{\mathrm{pred}}^{n}
+=\mathbf{x}^{n-1}+\Delta t^n\left(\left(1+\tfrac12 r_n\right)\dot{\mathbf x}^{n-1}-\tfrac12 r_n\,\dot{\mathbf x}^{n-2}\right).
 \end{equation}
-and falls back to AB1 (or constant prediction on the very first step) when insufficient history is available. Starting from $\mathbf{x}_{\mathrm{pred}}^{n+1}$ we solve the coupled Backward--Euler problem at $t^{n+1}$ by the fixed-point scheme in \S\ref{sec:fp-aa}, yielding the corrected state $\mathbf{x}^{n+1}$. We estimate the time-discretization error by a global weighted RMS norm of the predictor--corrector difference,
+Otherwise, we fall back to AB1,
+$\mathbf x_{\mathrm{pred}}^{n}=\mathbf x^{n-1}+\Delta t^n\dot{\mathbf x}^{n-1}$; on the very first step the history is zero,
+so the predictor is constant $\mathbf x_{\mathrm{pred}}^{1}=\mathbf x^{0}$.
+
+\emph{WRMS predictor--corrector error.}
+After the coupled Backward--Euler solve yields the corrected state $\mathbf{x}^{n}$ (by the fixed-point scheme in \S\ref{sec:fp-aa}),
+the time-stepper computes the weighted RMS error norm
 \begin{equation}\label{eq:wrms-error}
-e^{n+1}
+e^{n}
 =\left(\frac{1}{N_{\mathrm{tot}}}\sum_{i=1}^{N_{\mathrm{tot}}}
-\left(\frac{x_i^{n+1}-x_{\mathrm{pred},i}^{n+1}}{\mathrm{rtol}_t\max(|x_i^{n+1}|,|x_{\mathrm{pred},i}^{n+1}|)+\mathrm{atol}_t}\right)^{\!2}\right)^{\!1/2},
+\left(\frac{x_i^{n}-x_{\mathrm{pred},i}^{n}}{\mathrm{rtol}_t\,\max(|x_i^{n}|,|x_{\mathrm{pred},i}^{n}|)+\mathrm{atol}_t}\right)^{\!2}\right)^{\!1/2},
 \end{equation}
-where the sum runs over all DOFs of $(\mathbf L,S,\rho)$ (global across MPI ranks) and $N_{\mathrm{tot}}$ is the total number of those DOFs. The adaptive controller is parametrized by $(\mathrm{rtol}_t,\mathrm{atol}_t)$, timestep bounds $(\Delta t_{\min},\Delta t_{\max})$, a safety factor $\eta$, shrink/growth limits $(g_{\min},g_{\max})$, and gains $(k_{\mathrm{exp}},k_P,k_I)$. A step is rejected if the coupled solve does not converge, or if $e^{n+1}>1$ (except that the first step is always accepted and, if $e^{1}>1$, only the \emph{next} timestep is reduced using the same shrink formula). On rejection we roll back to $\mathbf{x}^n$ and retry with a smaller timestep. For time-error rejections we use the shrink formula
+where $N_{\mathrm{tot}}$ is the total number of DOFs across the integrated fields.
+For numerical robustness we use $e_{\mathrm{safe}}:=\max(e_{\min},e^{n})$ with a small $e_{\min}>0$ when the error enters a division or a power.
+
+\emph{Acceptance, rejection, and timestep update.}
+Let $\eta\in(0,1)$ be a safety factor, $g_{\min}\in(0,1)$ and $g_{\max}>1$ the shrink/growth caps, and let $k_{\mathrm{exp}},k_P,k_I>0$ be controller gains.
+Also let $\Delta t_{\min},\Delta t_{\max}$ be hard bounds and define the clamp
 \[
-\Delta t^n \leftarrow \Delta t^n\cdot \min\!\left(0.9,\ \max\!\left(g_{\min},\ \eta\,(1/e^{n+1})^{1/k_{\mathrm{exp}}}\right)\right),
+\operatorname{clamp}_{[\Delta t_{\min},\Delta t_{\max}]}(h):=\min(\Delta t_{\max},\max(\Delta t_{\min},h)).
 \]
-whereas coupling failures trigger an immediate cut $\Delta t^n\leftarrow g_{\min}\Delta t^n$ and reset the AB history. For accepted steps with $n\ge1$ and $e^{n+1}\le 1$ we update the \emph{next} timestep by a Gustafsson PI controller:
+
+\begin{itemize}
+\item \textbf{Solver failure.} If the coupled nonlinear solve does not converge, the step is rejected and
 \[
-\Delta t^{n+1} \leftarrow \Delta t^n\cdot \min\!\left(g_{\max},\ \max\!\left(g_{\min},\ \eta\,(e^{n+1})^{-k_I}\left(\frac{e^{n}}{e^{n+1}}\right)^{k_P}\right)\right),
+\Delta t_{\mathrm{next}} := \operatorname{clamp}_{[\Delta t_{\min},\Delta t_{\max}]}\!\big(\Delta t^n\,g_{\min}\big),
 \]
-with an I-only variant on the second accepted step; if $e^{n+1}<0.5$ we additionally prevent accidental shrink by enforcing the factor to be at least $1$. Finally, $\Delta t^n$ is clamped to $[\Delta t_{\min},\Delta t_{\max}]$ after each update; \cref{fig:time-adaptivity-controller} shows a diagnostic summary of the resulting controller behavior. Smooth clamps/splits use a global smoothing width $\varepsilon=10^{-6}$ (interpreted in the units of the smoothed quantity), and numerical integration uses quadrature degree $q=4$.
+and the PI memory is reset to $e_{\mathrm{prev}}:=1$.
+
+\item \textbf{First accepted step.} The first step is accepted and $e_{\mathrm{prev}}\leftarrow e^{1}$.
+If $e^{1}>1$, the next step size is reduced \emph{without redoing the first solve}:
+\[
+\Delta t_{\mathrm{next}} := \operatorname{clamp}_{[\Delta t_{\min},\Delta t_{\max}]}\!\left(\Delta t^1\,
+\max\!\big(g_{\min},\min(0.9,\eta(1/e^{1})^{1/k_{\mathrm{exp}}})\big)\right).
+\]
+If $e^{1}\le 1$, then $\Delta t_{\mathrm{next}}:=\operatorname{clamp}_{[\Delta t_{\min},\Delta t_{\max}]}(\Delta t^1)$.
+
+\item \textbf{Time-error rejection.} For subsequent steps, if $e^{n}>1$ the step is rejected and
+\[
+\Delta t_{\mathrm{next}} := \operatorname{clamp}_{[\Delta t_{\min},\Delta t_{\max}]}\!\left(\Delta t^n\,
+\max\!\big(g_{\min},\min(0.9,\eta(1/e^{n})^{1/k_{\mathrm{exp}}})\big)\right),
+\]
+and $e_{\mathrm{prev}}$ is \emph{not} updated (it always stores the last accepted-step error).
+
+\item \textbf{Acceptance and Gustafsson PI update.} If $e^{n}\le 1$, the step is accepted and the next step size is computed by
+\[
+\Delta t_{\mathrm{next}} := \operatorname{clamp}_{[\Delta t_{\min},\Delta t_{\max}]}\!\left(\Delta t^n\,
+\min\!\Big(g_{\max},\max\!\big(g_{\min},\,\eta\,(e^{n})^{-k_I}(e_{\mathrm{prev}}/e^{n})^{k_P}\big)\Big)\right),
+\]
+with the I-only variant on the second accepted step:
+\[
+\Delta t_{\mathrm{next}} := \operatorname{clamp}_{[\Delta t_{\min},\Delta t_{\max}]}\!\left(\Delta t^n\,
+\min\!\Big(g_{\max},\max\!\big(g_{\min},\,\eta\,(e^{n})^{-k_I}\big)\Big)\right).
+\]
+If $e^{n}<0.5$ we additionally prevent accidental shrink by enforcing the multiplicative factor to be at least $1$.
+Finally, on acceptance the PI memory is updated as $e_{\mathrm{prev}}\leftarrow e^{n}$.
+\end{itemize}
 
 \begin{figure}[htbp]
   \centering
   \IfFileExists{images/time_adaptivity_demo.png}{%
     \includegraphics[width=1\linewidth]{images/time_adaptivity_demo.png}%
   }{\fbox{\parbox{0.9\linewidth}{\centering Missing image: \texttt{images/time_adaptivity_demo.png}}}}
-  \caption{Analytic demonstration of the predictor--corrector error estimate and Gustafsson PI timestep controller (synthetic scalar ODE with a smooth transient forcing ``burst'' to trigger rejections). (a) One representative step: AB predictor $x_{\mathrm{pred}}^{n+1}$ and BE-corrected state $x^{n+1}$ define the WRMS error $e^{n+1}$. (b) Error indicator $e(\Delta t)$ for the same local history, with the selected timestep marked. (c) Controller action $f(e)=\Delta t_{\mathrm{next}}/\Delta t$ for accepted steps (I-only and PI) and for time-error rejections; markers overlay the actual $(e,f)$ pairs from the synthetic run. (d) Timestep evolution $\Delta t(t)$ and (e) the corresponding error history $e(t)$, with the acceptance threshold $e=1$. (f) Sensitivity of the total number of attempts to reach $T$ with respect to PI gains $(k_P,k_I)$.}
+  \caption{Analytic demonstration of the predictor--corrector error estimate and Gustafsson PI timestep controller
+  (synthetic scalar ODE with a smooth transient forcing ``burst'' to trigger rejections). (a) One representative step: AB
+  predictor $x_{\mathrm{pred}}^{n}$ and BE-corrected state $x^{n}$ define the WRMS error $e^{n}$. (b) Error indicator
+  $e(\Delta t)$ for the same local history, with the selected timestep marked. (c) Controller action
+  $f(e)=\Delta t_{\mathrm{next}}/\Delta t$ for accepted steps (I-only and PI) and for time-error rejections; markers
+  overlay the actual $(e,f)$ pairs from the synthetic run. (d) Timestep evolution $\Delta t(t)$ and (e) the corresponding
+  error history $e(t)$, with the acceptance threshold $e=1$. (f) Sensitivity of the total number of attempts to reach $T$
+  with respect to PI gains $(k_P,k_I)$.}
   \label{fig:time-adaptivity-controller}
 \end{figure}

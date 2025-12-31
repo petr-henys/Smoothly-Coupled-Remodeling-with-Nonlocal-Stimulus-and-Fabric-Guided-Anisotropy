@@ -2,7 +2,7 @@
 \label{sec:fp-aa}
 
 We describe the nonlinear solver used to obtain the coupled remodeling state at a given time level $t^n$, denoted
-$\mathbf{x}^n=(\mathbf{L}^n,S^n,\rho^n)$, where $\mathbf{L}$ is the load-state vector, $S$ is the remodeling stimulus, and $\rho$ is the density field.
+$\mathbf{x}^n=(\mathbf{L}^n,S^n,\rho^n)$, where $\mathbf{L}$ is the logarithmic fabric tensor, $S$ is the remodeling stimulus, and $\rho$ is the apparent density.
 The mechanics unknown(s) (e.g.\ displacements) are treated as dependent variables inside the block subsolves and are not part of the fixed-point state unless explicitly included among the coupling state fields.
 
 The implementation operates on the coefficient vectors of the coupling state fields as provided by the ordered list of coupling blocks. Let $\{x_i\}_{i=1}^{M}$ denote the (global) coefficient vectors of the distinct state fields (duplicates across blocks are removed by identity), with global owned sizes $N_i$ (sum of owned DOFs across MPI ranks). On each rank we work with the concatenation of the owned pieces, but all inner products and norms are \emph{global}:
@@ -72,29 +72,29 @@ r_{\mathrm{Pic}}^{(k+1)} \;:=\;
 \end{equation}
 
 \paragraph{Adaptive acceleration (Pulay--Picard switching).}
-In addition to a fixed choice of mixing (\texttt{anderson} or \texttt{picard}), the implementation supports an adaptive switching strategy driven by the observed Picard contraction ratio.
+We consider two update modes: a damped Picard step \eqref{eq:picard-damped} and an Anderson-accelerated update (Pulay/DIIS, described below). We optionally switch between them adaptively based on the observed Picard contraction ratio.
 Let the contraction ratio be defined (only when numerically meaningful) as
 \begin{equation}\label{eq:fp-contraction}
-\rho^{(k+1)} \;:=\; \frac{r_{\mathrm{Pic}}^{(k+1)}}{r_{\mathrm{Pic}}^{(k)}},
+r_{\mathrm{contr}}^{(k+1)} \;:=\; \frac{r_{\mathrm{Pic}}^{(k+1)}}{r_{\mathrm{Pic}}^{(k)}},
 \end{equation}
-provided that a previous residual exists and $r_{\mathrm{Pic}}^{(k)}>\varepsilon_{\mathrm{FP}}$; otherwise $\rho^{(k+1)}$ is treated as undefined and any ``contraction streak'' counter is reset.
+provided that a previous residual exists and $r_{\mathrm{Pic}}^{(k)}>\varepsilon_{\mathrm{FP}}$; otherwise $r_{\mathrm{contr}}^{(k+1)}$ is treated as undefined and any ``contraction streak'' counter is reset.
 
-Let $\rho_{\mathrm{off}}$ (\texttt{rho\_anderson\_off}), $\rho_{\mathrm{on}}$ (\texttt{rho\_anderson\_on}), and $p_{\mathrm{off}}$ (\texttt{rho\_anderson\_patience}) be user parameters. Define the streak counter $c^{(k+1)}$ by
+Let $r_{\mathrm{contr,off}}$, $r_{\mathrm{contr,on}}$, and $p_{\mathrm{off}}\in\mathbb{N}$ be user-chosen parameters. Define the streak counter $c^{(k+1)}$ by
 \[
 c^{(k+1)} :=
 \begin{cases}
-c^{(k)}+1, & \rho^{(k+1)}\ \text{defined and}\ \rho^{(k+1)}<\rho_{\mathrm{off}},\\
+c^{(k)}+1, & r_{\mathrm{contr}}^{(k+1)}\ \text{defined and}\ r_{\mathrm{contr}}^{(k+1)}<r_{\mathrm{contr,off}},\\
 0, & \text{otherwise}.
 \end{cases}
 \]
 If Anderson is currently active, it remains active as long as $c^{(k+1)}<p_{\mathrm{off}}$; it is switched off (to damped Picard) when $c^{(k+1)}\ge p_{\mathrm{off}}$.
-If Anderson is currently inactive (Picard mode), it is switched on only when $\rho^{(k+1)}$ is defined and $\rho^{(k+1)}\ge \rho_{\mathrm{on}}$; when switching on, the Anderson history is reset \emph{immediately} before forming the new iterate.
+If Anderson is currently inactive (Picard mode), it is switched on only when $r_{\mathrm{contr}}^{(k+1)}$ is defined and $r_{\mathrm{contr}}^{(k+1)}\ge r_{\mathrm{contr,on}}$; when switching on, the Anderson history is reset \emph{immediately} before forming the new iterate.
 
 Whenever Anderson is inactive, the update is the damped Picard step in scaled coordinates,
 \begin{equation}\label{eq:picard-damped}
 \widetilde{\mathbf{x}}^{(k+1)} \;:=\; \widetilde{\mathbf{x}}^{(k)} + \beta\big(\widetilde{\mathbf{x}}_{\mathrm{raw}}^{(k+1)}-\widetilde{\mathbf{x}}^{(k)}\big),
 \end{equation}
-with damping $\beta$ (\texttt{beta}).
+with damping $\beta\in(0,1]$.
 
 \paragraph{Pulay mixing (type II; DIIS form).}
 When Pulay mixing is active, the implementation uses a residual-minimization accelerator in the sense of Pulay's DIIS \cite{Pulay1980_ConvergenceAcceleration}, in the ``type II'' (update-form) presentation common in the Anderson-acceleration literature \cite{Walker2011_AndersonAcceleration}.
@@ -125,7 +125,7 @@ Let $\varepsilon_{\mathrm{AA}}:=10^{-8}$. The Tikhonov regularization magnitude 
 \begin{equation}\label{eq:aa-reg}
 \lambda_{\mathrm{eff}} \;:=\; \lambda\,\max\!\Big(\frac{1}{p}\mathrm{tr}(H),\ \varepsilon_{\mathrm{AA}}\Big),
 \end{equation}
-with $\lambda$ the configured parameter (\texttt{lam}). We compute affine weights $\alpha\in\mathbb{R}^p$ (not constrained to be nonnegative) by the regularized DIIS minimization
+with $\lambda\ge 0$ a (dimensionless) regularization parameter. We compute affine weights $\alpha\in\mathbb{R}^p$ (not constrained to be nonnegative) by the regularized DIIS minimization
 \begin{equation}\label{eq:aa-weights}
 \alpha \;=\; \arg\min_{\alpha\in\mathbb{R}^p}\ \alpha^{\mathsf{T}}\!\big(H+\lambda_{\mathrm{eff}}I\big)\alpha
 \quad\text{s.t.}\quad \sum_{j=1}^p \alpha_j = 1.
@@ -183,7 +183,7 @@ where the guarded relative-step operator is
 \displaystyle \|b-a\|, & \|z\|^2\le \varepsilon.
 \end{cases}
 \]
-With $c_{\mathrm{step}}$ (\texttt{step\_limit\_factor}), define the allowable relative step bound
+With $c_{\mathrm{step}}>0$, define the allowable relative step bound
 \begin{equation}\label{eq:aa-step-limit}
 \frac{s_{\mathrm{AA}}^{(k+1)}}{c_{\mathrm{step}}\max\!\big(r_{\mathrm{step}}^{(k+1)},\varepsilon_{\mathrm{AA}}\big)} \;\le\; 1.
 \end{equation}
@@ -197,15 +197,14 @@ If \eqref{eq:aa-step-limit} is violated, the step is limited by rescaling the An
 Otherwise, $\widetilde{\mathbf{x}}^{(k+1)}:=\widetilde{\mathbf{x}}_{\mathrm{AA}}^{(k+1)}$.
 
 \paragraph{Adaptive restart scheduling (executed on the next Anderson call).}
-The Anderson implementation maintains (i) a rolling window of the most recent $w_{\mathrm{stall}}$ Picard step sizes $r_{\mathrm{step}}$ (with $w_{\mathrm{stall}}=$ \texttt{restart\_stall\_window}) and (ii) an integer ``stall streak'' counter. Let $b^{(k+1)}:=\min$ of the currently stored window (or $r_{\mathrm{step}}^{(k+1)}$ if the window is not yet full). With $\gamma=$ \texttt{restart\_on\_stall} and $P_{\mathrm{stall}}=$ \texttt{restart\_stall\_patience}, the stall streak is updated by
-The update is performed only when the relevant quantities are finite; specifically, if $r_{\mathrm{step}}^{(k+1)}$ is not finite, or if $b^{(k+1)}$ is not finite, or if $b^{(k+1)}\le 0$, then the stall streak is reset to $0$.
+To guard against stagnation, we maintain (i) a rolling window of the most recent $w_{\mathrm{stall}}\in\mathbb{N}$ Picard step sizes $r_{\mathrm{step}}$ and (ii) an integer stall counter. Let $b^{(k+1)}$ be the minimum of the currently stored window (or $r_{\mathrm{step}}^{(k+1)}$ if the window is not yet full). Given a threshold $\gamma>1$ and patience $P_{\mathrm{stall}}\in\mathbb{N}$, we update the stall counter only when the relevant quantities are finite; otherwise it is reset to $0$.
 
 \[
 \text{if } b^{(k+1)}>0\ \text{and}\ r_{\mathrm{step}}^{(k+1)} > \gamma\, b^{(k+1)}\ \text{ then increment; else reset to }0,
 \]
 and a restart is scheduled when the streak reaches $P_{\mathrm{stall}}$. Additionally, if $r_{\mathrm{step}}^{(k+1)}\le 10^{-12}$ then the stall streak is cleared and no restart is scheduled (the stall and ill-conditioning checks are skipped).
 
-An ill-conditioning restart is scheduled if the condition number of the regularized Gram matrix exceeds a user threshold $\kappa_{\max}$ (\texttt{restart\_on\_cond}).
+An ill-conditioning restart is scheduled if the condition number of the regularized Gram matrix exceeds a user threshold $\kappa_{\max}>1$.
 The condition number is computed from the eigenvalues $\nu$ of $H+\lambda_{\mathrm{eff}}I$ as follows: set $\nu_j^{+}:=\max(\nu_j,0)$ and
 \[
 \mathrm{cond}\big(H+\lambda_{\mathrm{eff}}I\big)\;:=\;\frac{\max_j \nu_j^{+}}{\max\!\big(\min_j \nu_j^{+},\,\varepsilon_{\mathrm{AA}}\big)}.
@@ -216,13 +215,13 @@ A scheduled restart sets an internal ``pending reset'' flag; the history is actu
 
 \paragraph{Stopping, early abort, and logging.}
 We stop as soon as the coupling tolerance is met:
-if $r_{\mathrm{Pic}}^{(k+1)}\le \mathrm{tol}$ (\texttt{coupling\_tol}), the implementation sets the next iterate to the \emph{raw} Gauss--Seidel image,
+if $r_{\mathrm{Pic}}^{(k+1)}\le \mathrm{tol}$, we set the next iterate to the \emph{raw} Gauss--Seidel image,
 \[
 \widetilde{\mathbf{x}}^{(k+1)} := \widetilde{\mathbf{x}}_{\mathrm{raw}}^{(k+1)},
 \]
 writes it back to the physical fields (inverse scaling), and terminates.
 
-If the tolerance is not met, the iteration proceeds until a maximum number of fixed-point subiterations $N_{\max}$ (\texttt{max\_subiters}) is reached. Additionally, an optional ``outer stall'' early-abort criterion is implemented to avoid wasting iterations when the residual stagnates. Let $W=$ \texttt{outer\_stall\_window}, $\delta=$ \texttt{outer\_stall\_min\_rel\_drop}, and $P=$ \texttt{outer\_stall\_patience}. Maintain the rolling window of the last $W$ Picard residuals. Once the window is full (i.e.\ for residual index $\ell=k+1$ with $\ell\ge W$), define
+If the tolerance is not met, the iteration proceeds until a maximum number of fixed-point subiterations $N_{\max}$ is reached. Additionally, to avoid wasting iterations when the residual stagnates we use an optional ``outer stall'' early-abort criterion: fix a window length $W\in\mathbb{N}$, a minimum relative drop $\delta\in(0,1)$, and a patience parameter $P\in\mathbb{N}$. Maintain the rolling window of the last $W$ Picard residuals. Once the window is full (i.e.\ for residual index $\ell=k+1$ with $\ell\ge W$), define
 \[
 r_{\mathrm{first}} := r_{\mathrm{Pic}}^{(\ell-W+1)},\qquad
 r_{\mathrm{best}} := \min_{j=\ell-W+1,\dots,\ell} r_{\mathrm{Pic}}^{(j)}.
@@ -231,12 +230,12 @@ If $r_{\mathrm{first}}$ and $r_{\mathrm{best}}$ are finite and $r_{\mathrm{first
 \[
 \Delta_{\mathrm{rel}} := \frac{r_{\mathrm{first}}-r_{\mathrm{best}}}{r_{\mathrm{first}}};
 \]
-otherwise the outer-stall counter is reset to $0$. If $\Delta_{\mathrm{rel}}<\delta$, the counter is incremented; otherwise it is reset to $0$. The iteration is terminated early with reason \texttt{no\_progress} once the counter reaches $P$.
+otherwise the outer-stall counter is reset to $0$. If $\Delta_{\mathrm{rel}}<\delta$, the counter is incremented; otherwise it is reset to $0$. The iteration is terminated early once the counter reaches $P$.
 
-Per-subiteration diagnostics include the Picard residual $r_{\mathrm{Pic}}^{(k+1)}$, the contraction ratio $\rho^{(k+1)}$ when defined, whether Anderson was active, and (when Anderson is active) the computed $\mathrm{cond}(H+\lambda_{\mathrm{eff}}I)$, whether the step was limited, and the restart reason string (if any) scheduled for the next call.
+Per-subiteration diagnostics include the Picard residual $r_{\mathrm{Pic}}^{(k+1)}$, the contraction ratio $r_{\mathrm{contr}}^{(k+1)}$ when defined, whether Anderson was active, and (when Anderson is active) the computed $\mathrm{cond}(H+\lambda_{\mathrm{eff}}I)$, whether the step was limited, and the restart reason string (if any) scheduled for the next call.
 
 \paragraph{Well-posedness of subsolves.}
-At each evaluation of $\mathcal{G}$ the four subproblems are uniformly elliptic (for fixed arguments) and admit unique solutions in the chosen finite-dimensional spaces: (i) mechanics has a coercive bilinear form by the density floor and $\nu\in(-1,\tfrac12)$, (ii) stimulus is SPD by $(\tau_S/\Delta t^n+1)$ with $D_S\ge0$, (iii) density is SPD by $(1/\Delta t^n)+A_{\mathrm{surf}}(\rho^{n-1})\big(k_{\mathrm{form}}S_+/\rho_{\max}+k_{\mathrm{res}}S_-/\rho_{\min}\big)\ge 1/\Delta t^n$ together with $\mathbf{D}_\rho=D_\rho\mathbf{I}$, and (iv) fabric is SPD by $(c_A/\Delta t^n)+c_A a(\bar{\mathbf{Q}})/\tau_A>0$ with $D_A\ge 0$. Thus each application of $\mathcal{G}$ is well-defined.
+At each evaluation of $\mathcal{G}$ the four subproblems are uniformly elliptic (for fixed arguments) and admit unique solutions in the chosen finite-dimensional spaces: (i) mechanics has a coercive bilinear form by the density floor and $\nu\in(-1,\tfrac12)$, (ii) stimulus is SPD by $(\tau_S/\Delta t^n+1)$ with $D_S\ge0$, (iii) density is SPD by $(1/\Delta t^n)+\alpha_{\mathrm{surf}}(\rho^{n-1})\big(k_{\mathrm{form}}S_+/\rho_{\max}+k_{\mathrm{res}}S_-/\rho_{\min}\big)\ge 1/\Delta t^n$ together with $\mathbf{D}_\rho=D_\rho\mathbf{I}$, and (iv) fabric is SPD by $(c_A/\Delta t^n)+c_A a(\bar{\mathbf{Q}})/\tau_A>0$ with $D_A\ge 0$. Thus each application of $\mathcal{G}$ is well-defined.
 
 \paragraph{Convergence discussion.}
 On bounded sets where the smooth gates/clamps are Lipschitz, $\mathcal{G}$ is locally Lipschitz. If the induced modulus $L<1$, the Gauss--Seidel iteration is linearly convergent in the Picard metric \eqref{eq:fp-picard-res}. The Pulay/DIIS update \eqref{eq:aa-update} acts as a multisecant extrapolation and can reduce the number of subiterations in practice. Robustness is promoted by the step limiter \eqref{eq:aa-step-limit} and by adaptive history restarts triggered by stall or ill-conditioning of the regularized Gram system.
@@ -249,7 +248,7 @@ On bounded sets where the smooth gates/clamps are Lipschitz, $\mathcal{G}$ is lo
     \item Compute the raw Gauss--Seidel image $\mathbf{x}_{\mathrm{raw}}^{(k+1)}=\mathcal{G}(\mathbf{x}^{(k)})$ by performing one sweep of all blocks in the configured order.
     \item If the per-field scales $s_i$ are not yet initialized, compute them from $\mathbf{x}^{(0)}$ and $\mathbf{x}_{\mathrm{raw}}^{(1)}$ using \eqref{eq:fp-scales}. Construct $\widetilde{\mathbf{x}}^{(k)}$ and $\widetilde{\mathbf{x}}_{\mathrm{raw}}^{(k+1)}$ by applying the scaling.
     \item Compute the Picard residual $r_{\mathrm{Pic}}^{(k+1)}$ from \eqref{eq:fp-picard-res}. If $r_{\mathrm{Pic}}^{(k+1)}\le \mathrm{tol}$, set $\widetilde{\mathbf{x}}^{(k+1)}:=\widetilde{\mathbf{x}}_{\mathrm{raw}}^{(k+1)}$ and stop (converged).
-    \item If a previous residual exists with $r_{\mathrm{Pic}}^{(k)}>\varepsilon_{\mathrm{FP}}$, compute $\rho^{(k+1)}$ by \eqref{eq:fp-contraction}; otherwise treat $\rho^{(k+1)}$ as undefined.
+    \item If a previous residual exists with $r_{\mathrm{Pic}}^{(k)}>\varepsilon_{\mathrm{FP}}$, compute $r_{\mathrm{contr}}^{(k+1)}$ by \eqref{eq:fp-contraction}; otherwise treat $r_{\mathrm{contr}}^{(k+1)}$ as undefined.
     \item Decide whether Anderson is active for this update using the hysteretic switching logic in the paragraph ``Adaptive acceleration (Pulay--Picard switching)''. If switching from Picard to Anderson, reset the Anderson history immediately.
     \item Update the scaled state:
     \begin{itemize}
@@ -257,7 +256,7 @@ On bounded sets where the smooth gates/clamps are Lipschitz, $\mathcal{G}$ is lo
       \item If Anderson is active, compute $\widetilde{\mathbf{x}}_{\mathrm{AA}}^{(k+1)}$ via \eqref{eq:aa-update}, apply step limiting \eqref{eq:aa-step-limit} if needed, and obtain $\widetilde{\mathbf{x}}^{(k+1)}$; schedule restarts as described in ``Step limiting and restarts'' (executed on the next Anderson call).
     \end{itemize}
     \item Apply the inverse scaling to write $\mathbf{x}^{(k+1)}$ back to the physical field coefficients and synchronize ghost values.
-    \item Update the outer-stall window and abort early with reason \texttt{no\_progress} if the criterion in ``Stopping, early abort, and logging'' triggers.
+    \item Update the outer-stall window and abort early if the criterion in ``Stopping, early abort, and logging'' triggers.
   \end{enumerate}
-  \item If convergence was not reached and no early abort was triggered, terminate after $N_{\max}$ iterations with reason \texttt{max\_subiters}.
+  \item If convergence was not reached and no early abort was triggered, terminate after $N_{\max}$ iterations.
 \end{enumerate}
