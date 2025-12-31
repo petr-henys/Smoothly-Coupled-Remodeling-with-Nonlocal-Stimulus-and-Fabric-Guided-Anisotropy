@@ -1,7 +1,7 @@
 \section*{Models and datasets}
 \subsection*{Femur}
 \subsubsection{Dataset and normalization}
-We used the \emph{HFValid collection} (Hip-Fracture validation collection; \url{https://amsacta.unibo.it/id/eprint/8431/}), which provides $N=101$ anonymized whole-femur CT scans, corresponding segmentations, and anatomical landmarks. The scans were acquired at IRCCS Istituto Ortopedico Rizzoli (Bologna) between 1999 and 2016 for surgical planning of hip arthroplasty at the contralateral femur. Besides the volumetric images, the dataset provides (i) surface segmentations and (ii) landmark coordinates (including the femoral head centre and distal landmarks), which we use for defining local reference systems and for quality control.
+We used the \emph{HFValid collection} \cite{Aldieri2025_HFValidCollection} (Hip-Fracture validation collection; \url{https://amsacta.unibo.it/id/eprint/8431/}), which provides $N=101$ anonymized whole-femur CT scans, corresponding segmentations, and anatomical landmarks. The scans were acquired at IRCCS Istituto Ortopedico Rizzoli (Bologna) between 1999 and 2016 for surgical planning of hip arthroplasty at the contralateral femur. Besides the volumetric images, the dataset provides (i) surface segmentations and (ii) landmark coordinates (including the femoral head centre and distal landmarks), which we use for defining local reference systems and for quality control.
 
 \paragraph{CT calibration to density.}
 HFValid provides subject-specific calibration coefficients based on European Spine Phantom (ESP) acquisitions. The calibrated volumetric bone mineral density (vBMD) field is obtained from the CT intensity field (in HU) as a linear mapping,
@@ -13,7 +13,7 @@ HFValid provides subject-specific calibration coefficients based on European Spi
 with coefficients $(a_i,b_i)$ provided for each subject $i$.
 
 \paragraph{Population (template) femur.}
-From the HFValid cohort we derived a population-average femur geometry and density distribution (``population femur'') by spatial normalization and unbiased template estimation. The processing followed the methodology described by Heny\v{s} and Kucha\v{r} (Scientific Data, 2025, DOI: 10.1038/s41597-025-05161-y; \url{https://www.nature.com/articles/s41597-025-05161-y}), which combines global alignment (rigid + affine) with a diffeomorphic deformable registration (SyN, ANTs).
+From the HFValid cohort we derived a population-average femur geometry and density distribution (``population femur'') by spatial normalization and unbiased template estimation. The processing followed the methodology described by Heny\v{s} and Kucha\v{r} \cite{Henys2025_BoneDatDatabase}, which combines global alignment (rigid + affine) with a diffeomorphic deformable registration (SyN, ANTs) \cite{Avants2008_SymmetricDiffeomorphicRegistration,Avants2011_ANTsSimilarityMetrics}.
 
 Let $I_i:\Omega_i\rightarrow\mathbb{R}$ denote the subject CT image (HU) and let $\Omega$ denote the current template domain. For each subject we estimate a composite transformation
 \begin{equation}
@@ -26,7 +26,7 @@ where the nonlinear SyN component is represented through a displacement field $\
 T_i^{\mathrm{SyN}}(\mathbf{x}) = \mathbf{x} + \mathbf{u}_i(\mathbf{x}).
 \label{eq:syn_displacement}
 \end{equation}
-The displacement field is obtained by optimizing an image similarity metric between the fixed template image $I_f$ and the moving image $I_i\circ T_i$, subject to regularization constraints that enforce smoothness and invertibility (diffeomorphism). Following Heny\v{s} and Kucha\v{r}, the similarity metric is mutual information (MI),
+The displacement field is obtained by optimizing an image similarity metric between the fixed template image $I_f$ and the moving image $I_i\circ T_i$, subject to regularization constraints that enforce smoothness and invertibility (diffeomorphism). Following Heny\v{s} and Kucha\v{r}, the similarity metric is mutual information (MI) \cite{Maes1997_MutualInformationRegistration},
 \begin{equation}
 \mathrm{MI}(I_f,I_i) = \sum_{p}\sum_{q} p_{f,i}(p,q)\,\log\frac{p_{f,i}(p,q)}{p_f(p)\,p_i(q)},
 \label{eq:mutual_information}
@@ -61,7 +61,7 @@ Using the calibration in Eq.~\eqref{eq:hfvalid_calibration}, the calibrated dens
 The resulting pair $\left(I_{\mathrm{pop}},\rho_{\mathrm{pop}}\right)$ represents the average femur morphology and density distribution of the HFValid cohort and is used as the reference (population) femur model in the remainder of this work.
 
 \subsubsection{Femur Coordinate System (FCS)}
-We define a right-handed femur coordinate system (FCS) that is consistent with the OrthoLoad convention and can be constructed robustly from three anatomical landmarks: the femoral head, the lateral epicondyle (LE) and the medial epicondyle (ME). All vectors and points are expressed either in the global (world) coordinate system (superscript $w$) or in the FCS (superscript $\mathrm{FCS}$).
+We define a right-handed femur coordinate system (FCS) that is consistent with the OrthoLoad convention \cite{OrthoLoadDatabase} and can be constructed robustly from three anatomical landmarks: the femoral head, the lateral epicondyle (LE) and the medial epicondyle (ME). All vectors and points are expressed either in the global (world) coordinate system (superscript $w$) or in the FCS (superscript $\mathrm{FCS}$).
 
 \paragraph{Femoral head centre.}
 Let $\mathcal{S}$ be the triangulated femoral surface. The femoral head centre $\mathbf{O}\in\mathbb{R}^3$ and head radius $R_h$ are obtained by a least-squares sphere fit to the subset of surface points in a region of interest around a user-defined head line:
@@ -110,41 +110,55 @@ Each loading case $c$ consists of (i) a hip joint resultant force $\mathbf{F}_{h
 
 \paragraph{Choice of loading cases and parameter values.}
 The proximal femur is subjected to a highly variable, yet structured, set of loads during activities of daily living.
-In vivo measurements with instrumented hip implants show that (i) level walking and (ii) stair climbing are both among the most frequent activities and among the most decisive for strength and fixation assessments; realistic ``standard'' load scenarios for these activities have therefore been proposed based on the HIP98 data collection (Bergmann et al., 2010; Bergmann et al., 2016; OrthoLoad database).
+In vivo measurements with instrumented hip implants show that (i) level walking and (ii) stair climbing are both among the most frequent activities and among the most decisive for strength and fixation assessments; realistic ``standard'' load scenarios for these activities have therefore been proposed based on the HIP98 data collection \cite{Bergmann2010_RealisticLoadsHipImplants,Bergmann2016_StandardizedLoadsHipImplants,OrthoLoadDatabase}.
 During level walking, the hip contact force profile exhibits distinct load maxima within stance and is accompanied by phase-dependent muscle recruitment.
 To capture these dominant mechanical configurations without simulating the full time series, we represent walking by three discrete instants: heel strike (early stance / weight acceptance), mid-stance (single-leg support with high abductor demand), and toe-off (late stance / push-off).
-We additionally include stair ascent as a higher-demand activity, which is known to induce higher torsional moments and different mean force directions compared with level walking (Bergmann et al., 2010; Bergmann et al., 2016).
+We additionally include stair ascent as a higher-demand activity, which is known to induce higher torsional moments and different mean force directions compared with level walking \cite{Bergmann2010_RealisticLoadsHipImplants,Bergmann2016_StandardizedLoadsHipImplants}.
 
 The magnitudes and directions used here are chosen to be consistent with reported realistic in vivo loads.
-For example, standardized ``average'' peak hip contact forces are on the order of 1800~N for walking and 1900~N for stair ascent, with substantially higher peaks observed for active patients and high-impact events (Bergmann et al., 2010; OrthoLoad database).
-Furthermore, when only walking is simulated, peak forces of about 2880~N and mean force directions around $\alpha_{\mathrm{front}}\approx 17^\circ$ and $\alpha_{\mathrm{sag}}\approx 11^\circ$ have been reported, while stair climbing yields slightly different mean directions (Bergmann et al., 2016).
+For example, standardized ``average'' peak hip contact forces are on the order of 1800~N for walking and 1900~N for stair ascent, with substantially higher peaks observed for active patients and high-impact events \cite{Bergmann2010_RealisticLoadsHipImplants,OrthoLoadDatabase}.
+Furthermore, when only walking is simulated, peak forces of about 2880~N and mean force directions around $\alpha_{\mathrm{front}}\approx 17^\circ$ and $\alpha_{\mathrm{sag}}\approx 11^\circ$ have been reported, while stair climbing yields slightly different mean directions \cite{Bergmann2016_StandardizedLoadsHipImplants}.
 Note that reported angle signs depend on the chosen anatomical coordinate system; here we follow the FCS convention in Eq.~\eqref{eq:force_from_angles} (hence sign differences are possible even if the physical direction is comparable).
 
-Because muscle forces strongly influence femoral deformation, we include a reduced set of major muscles per case; prior work shows that reduced muscle sets built from major contributors can recover physiological strain distributions with only modest error compared with fully balanced load regimes (Duda et al., 1998; Bergmann et al., 2016).
+Because muscle forces strongly influence femoral deformation, we include a reduced set of major muscles per case; prior work shows that reduced muscle sets built from major contributors can recover physiological strain distributions with only modest error compared with fully balanced load regimes \cite{Duda1998_MuscleForcesFemoralStrain,Bergmann2016_StandardizedLoadsHipImplants}.
 
-Finally, the case weights $w_c$ (``day cycles'') are set to reflect relative activity frequencies, i.e., walking dominates daily cycles (order $10^3$) while stair climbing is an order of magnitude less frequent (order $10^2$), but remains mechanically more demanding (Bergmann et al., 2016).
+Finally, the case weights $w_c$ (``day cycles'') are set to reflect relative activity frequencies, i.e., walking dominates daily cycles (order $10^3$) while stair climbing is an order of magnitude less frequent (order $10^2$), but remains mechanically more demanding \cite{Bergmann2016_StandardizedLoadsHipImplants}.
 The values used in the simulations are summarised in Table~\ref{tab:loading_cases}.
 
 
-\begin{table}[!htbp]
+\begin{table*}[!htbp]
 \centering
-\scriptsize
-\setlength{\tabcolsep}{3pt}
-\renewcommand{\arraystretch}{1.15}
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.2}
 \caption{Discrete loading cases used in the FE simulations. Hip resultant forces are parameterised in the femur coordinate system (FCS) by their magnitude $F_h$ and direction angles $(\alpha_{\mathrm{sag}},\alpha_{\mathrm{front}})$ as defined in Eq.~\eqref{eq:force_from_angles}. Muscle entries list magnitude [N] and direction angles [deg] in the same convention. The weight $w_c$ denotes the relative day-cycle frequency used when aggregating multi-case results.}
 \label{tab:loading_cases}
-\resizebox{\textwidth}{!}{%
-\begin{tabular}{l l p{4.3cm} r r r p{6.0cm} r p{3.3cm}}
-\hline
-Case & Activity & Why selected & $F_h$ [N] & $\alpha_{\mathrm{sag}}$ [deg] & $\alpha_{\mathrm{front}}$ [deg] & Major muscle forces & $w_c$ & Literature basis \\
-\hline
-Heel strike & Walking & Early stance / weight acceptance; captures the first walking peak load and extensor-driven stabilisation. & 1900 & -10 & -5 & glmax 900 @ (-50,20); vastus\_lateralis 800 @ (0,10); glmed 500 @ (-10,30) & 1.00 & (Bergmann et al., 2010; Bergmann et al., 2016) \\
-Mid-stance & Walking & Single-leg support; high hip abductor demand and representative bending/torsion configuration. & 2400 & 0 & -5 & glmed 1300 @ (-5,15); glmin 500 @ (10,10); vastus\_lateralis 200 @ (0,5) & 1.00 & (Bergmann et al., 2010; Bergmann et al., 2016) \\
-Toe-off & Walking & Late stance / push-off; captures the second walking peak and increased hip flexor contribution. & 2100 & 10 & -5 & psoas 800 @ (35,15); vastus\_lateralis 300 @ (0,5); glmed 300 @ (0,15) & 1.00 & (Bergmann et al., 2010; Bergmann et al., 2016) \\
-Stair ascent & Stair ascent & Higher-demand ADL; altered force direction and elevated torsional/bending demand compared with level walking. & 2500 & -30 & 30 & glmax 1200 @ (-60,20); vastus\_lateralis 1000 @ (0,10) & 0.10 & (Bergmann et al., 2010; Bergmann et al., 2016) \\
-\\ \hline
-\end{tabular}}
-\end{table}
+\begin{tabularx}{\textwidth}{@{} l l >{\raggedright\arraybackslash}X r r r >{\raggedright\arraybackslash}X r l @{}}
+\toprule
+Case & Activity & Why selected & $F_h$ [N] & $\alpha_{\mathrm{sag}}$ [deg] & $\alpha_{\mathrm{front}}$ [deg] & Major muscle forces & $w_c$ & Sources \\
+\midrule
+Heel strike & Walking & Early stance / weight acceptance; captures the first walking peak load and extensor-driven stabilisation. & 1900 & -10 & -5 &
+glmax 900 @ (-50,20)\newline
+vastus lateralis 800 @ (0,10)\newline
+glmed 500 @ (-10,30)
+& 1.00 & \cite{Bergmann2010_RealisticLoadsHipImplants,Bergmann2016_StandardizedLoadsHipImplants} \\
+Mid-stance & Walking & Single-leg support; high hip abductor demand and representative bending/torsion configuration. & 2400 & 0 & -5 &
+glmed 1300 @ (-5,15)\newline
+glmin 500 @ (10,10)\newline
+vastus lateralis 200 @ (0,5)
+& 1.00 & \cite{Bergmann2010_RealisticLoadsHipImplants,Bergmann2016_StandardizedLoadsHipImplants} \\
+Toe-off & Walking & Late stance / push-off; captures the second walking peak and increased hip flexor contribution. & 2100 & 10 & -5 &
+psoas 800 @ (35,15)\newline
+vastus lateralis 300 @ (0,5)\newline
+glmed 300 @ (0,15)
+& 1.00 & \cite{Bergmann2010_RealisticLoadsHipImplants,Bergmann2016_StandardizedLoadsHipImplants} \\
+Stair ascent & Stair ascent & Higher-demand ADL; altered force direction and elevated torsional/bending demand compared with level walking. & 2500 & -30 & 30 &
+glmax 1200 @ (-60,20)\newline
+vastus lateralis 1000 @ (0,10)
+& 0.10 & \cite{Bergmann2010_RealisticLoadsHipImplants,Bergmann2016_StandardizedLoadsHipImplants} \\
+\bottomrule
+\end{tabularx}
+\end{table*}
 
 \paragraph{Force parameterisation in the FCS.}
 A resultant load is specified by its magnitude $F$ and two angles $(\alpha_{\mathrm{sag}},\alpha_{\mathrm{front}})$. In the FCS, the vector is constructed by prescribing the ratios of the $X$ and $Z$ components to the $Y$ component,
