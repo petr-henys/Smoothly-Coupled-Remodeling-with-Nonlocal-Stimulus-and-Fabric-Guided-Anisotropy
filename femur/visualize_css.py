@@ -94,6 +94,10 @@ def main() -> None:
     
     print(f"  ✓ head_sphere.vtk")  # already saved by FemurCSS
     
+    # Mechanical axis: line from LE-ME midpoint to FHC
+    le_me_midpoint = le_me_line.mean(axis=0)
+    save_vtk(pv.Line(le_me_midpoint, css.fhc), output_dir / "mechanical_axis.vtk")
+    
     axes_arrows = create_axes_arrows(css.fhc, css.axes, css.axis_labels)
     axes_arrows.save(str(output_dir / "css_axes_arrows.vtm"))
     print(f"  ✓ css_axes_arrows.vtm")
