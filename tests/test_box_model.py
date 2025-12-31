@@ -161,7 +161,8 @@ class TestBoxLoader:
     def test_loader_creation(self, box_mesh_and_tags):
         """Test loader can be created."""
         domain, facet_tags = box_mesh_and_tags
-        loader = BoxLoader(domain, facet_tags)
+        cases = [BoxLoadingCase(name="test", day_cycles=1.0)]
+        loader = BoxLoader(domain, facet_tags, load_tag=BoxMeshBuilder.TAG_TOP, loading_cases=cases)
         
         assert loader is not None
         assert loader.traction is not None
@@ -169,7 +170,8 @@ class TestBoxLoader:
     def test_set_pressure(self, box_mesh_and_tags):
         """Test setting uniform pressure."""
         domain, facet_tags = box_mesh_and_tags
-        loader = BoxLoader(domain, facet_tags)
+        cases = [BoxLoadingCase(name="test", day_cycles=1.0)]
+        loader = BoxLoader(domain, facet_tags, load_tag=BoxMeshBuilder.TAG_TOP, loading_cases=cases)
         
         loader.set_pressure(1.0, direction=(0.0, 0.0, -1.0))
         
@@ -183,7 +185,6 @@ class TestBoxLoader:
     def test_precompute_loading_cases(self, box_mesh_and_tags):
         """Test precomputing loading cases."""
         domain, facet_tags = box_mesh_and_tags
-        loader = BoxLoader(domain, facet_tags)
         
         cases = [
             BoxLoadingCase(
@@ -193,15 +194,16 @@ class TestBoxLoader:
             ),
         ]
         
-        loader.precompute_loading_cases(cases)
+        loader = BoxLoader(domain, facet_tags, load_tag=BoxMeshBuilder.TAG_TOP, loading_cases=cases)
         
-        # Should be able to set the case
+        # Should be able to set the case (already precomputed)
         loader.set_loading_case("test_case")
         
     def test_set_loading_case_invalid(self, box_mesh_and_tags):
         """Test that invalid case name raises error."""
         domain, facet_tags = box_mesh_and_tags
-        loader = BoxLoader(domain, facet_tags)
+        cases = [BoxLoadingCase(name="test", day_cycles=1.0)]
+        loader = BoxLoader(domain, facet_tags, load_tag=BoxMeshBuilder.TAG_TOP, loading_cases=cases)
         
         with pytest.raises(KeyError):
             loader.set_loading_case("nonexistent_case")
@@ -278,7 +280,6 @@ class TestBoxScenarios:
     def test_parabolic_loader_produces_peak_at_center(self, box_mesh_and_tags):
         """Test that parabolic loading produces peak traction at center."""
         domain, facet_tags = box_mesh_and_tags
-        loader = BoxLoader(domain, facet_tags)
         
         case = get_parabolic_pressure_case(
             pressure=1.0,
@@ -288,7 +289,7 @@ class TestBoxScenarios:
             box_extent=(0.0, 10.0),
         )
         
-        loader.precompute_loading_cases([case])
+        loader = BoxLoader(domain, facet_tags, load_tag=BoxMeshBuilder.TAG_TOP, loading_cases=[case])
         loader.set_loading_case(case.name)
         
         # Check that traction is non-zero and varies spatially
@@ -339,7 +340,7 @@ class TestBoxFactory:
         rho.x.array[:] = 1.0
         rho.x.scatter_forward()
         
-        loader = BoxLoader(domain, facet_tags)
+        loader = BoxLoader(domain, facet_tags, load_tag=BoxMeshBuilder.TAG_TOP, loading_cases=[BoxLoadingCase(name="test", day_cycles=1.0)])
         
         mech = factory.create_mechanics_solver(u, rho, L, loader)
         
@@ -361,15 +362,15 @@ class TestBoxModelIntegration:
         
         domain, facet_tags = box_mesh_and_tags
         
-        # Create loader and cases
-        loader = BoxLoader(domain, facet_tags)
+        # Create loader with loading cases
         loading_cases = [get_single_pressure_case(pressure=1.0)]
+        loader = BoxLoader(domain, facet_tags, load_tag=BoxMeshBuilder.TAG_TOP, loading_cases=loading_cases)
         
         # Create factory
         factory = BoxSolverFactory(box_cfg)
         
         # Run single step
-        with Remodeller(box_cfg, loader=loader, loading_cases=loading_cases, factory=factory) as remodeller:
+        with Remodeller(box_cfg, loader=loader, factory=factory) as remodeller:
             dt = box_cfg.time.dt_initial
             error, metrics = remodeller.step(dt)
             
@@ -383,11 +384,11 @@ class TestBoxModelIntegration:
         
         domain, facet_tags = box_mesh_and_tags
         
-        loader = BoxLoader(domain, facet_tags)
         loading_cases = [get_single_pressure_case(pressure=2.0)]
+        loader = BoxLoader(domain, facet_tags, load_tag=BoxMeshBuilder.TAG_TOP, loading_cases=loading_cases)
         factory = BoxSolverFactory(box_cfg)
         
-        with Remodeller(box_cfg, loader=loader, loading_cases=loading_cases, factory=factory) as remodeller:
+        with Remodeller(box_cfg, loader=loader, factory=factory) as remodeller:
             # Get initial density
             n_owned = get_owned_size(remodeller.rho)
             rho_initial = remodeller.rho.x.array[:n_owned].copy()
@@ -444,11 +445,11 @@ class TestBoxModelIntegration:
             ),
         )
         
-        loader = BoxLoader(domain, facet_tags)
         loading_cases = [get_single_pressure_case(pressure=1.0)]
+        loader = BoxLoader(domain, facet_tags, load_tag=BoxMeshBuilder.TAG_TOP, loading_cases=loading_cases)
         factory = BoxSolverFactory(cfg)
         
-        with Remodeller(cfg, loader=loader, loading_cases=loading_cases, factory=factory) as remodeller:
+        with Remodeller(cfg, loader=loader, factory=factory) as remodeller:
             remodeller.simulate()
         
         # Verify CSV files were written (rank 0 only)

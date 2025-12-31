@@ -402,11 +402,19 @@ def dummy_load(spaces, cfg):
     
     class MockLoader:
         """Mock Loader for testing without femur-specific dependencies."""
-        def __init__(self, V, load_tag: int = 2):
+        def __init__(self, V, load_tag: int, loading_cases):
             self.V = V
             self.load_tag = load_tag
             self.traction = fem.Function(V, name="Traction")
             self._cache = {}
+            self._loading_cases = loading_cases
+            # Precompute immediately like real Loader
+            self.precompute_loading_cases(loading_cases)
+        
+        @property
+        def loading_cases(self):
+            """Get the list of loading cases."""
+            return self._loading_cases
         
         def precompute_loading_cases(self, cases):
             """Precompute and cache traction arrays for all loading cases."""
@@ -422,10 +430,7 @@ def dummy_load(spaces, cfg):
             self.traction.x.array[:] = cached["traction"]
             self.traction.x.scatter_forward()
     
-    loader = MockLoader(spaces.V, load_tag=2)
     loading_case = LoadingCase(name="test_case", day_cycles=1.0, hip=None, muscles=[])
+    loader = MockLoader(spaces.V, load_tag=2, loading_cases=[loading_case])
     
-    return {
-        "loader": loader,
-        "loading_cases": [loading_case],
-    }
+    return {"loader": loader}

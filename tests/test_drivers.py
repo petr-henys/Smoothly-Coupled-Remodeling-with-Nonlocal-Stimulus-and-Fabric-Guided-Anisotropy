@@ -14,12 +14,20 @@ from femur.loader import LoadingCase
 class MockLoader:
     """Mock Loader for testing GaitDriver."""
     
-    def __init__(self, V, traction_value=0.1):
+    def __init__(self, V, loading_cases, traction_value=0.1):
         self.V = V
         self.load_tag = 2
         self.traction = fem.Function(V, name="Traction")
         self._traction_value = traction_value
         self._cache = {}
+        self._loading_cases = loading_cases
+        # Precompute immediately like real Loader
+        self.precompute_loading_cases(loading_cases)
+    
+    @property
+    def loading_cases(self):
+        """Get the list of loading cases."""
+        return self._loading_cases
     
     def precompute_loading_cases(self, cases):
         """Precompute and cache traction arrays for all loading cases."""
@@ -44,8 +52,8 @@ def driver_setup(spaces, cfg, bc_mech):
     rho.x.array[:] = 0.6
     rho.x.scatter_forward()
 
-    loader = MockLoader(spaces.V, traction_value=0.1)
     loading_cases = [LoadingCase(name="test", day_cycles=1.0, hip=None, muscles=[])]
+    loader = MockLoader(spaces.V, loading_cases, traction_value=0.1)
     
     neumann_bcs = [(loader.traction, 2)]
     mech = MechanicsSolver(u, rho, cfg, bc_mech, neumann_bcs)
@@ -54,7 +62,6 @@ def driver_setup(spaces, cfg, bc_mech):
     return {
         "mech": mech,
         "loader": loader,
-        "loading_cases": loading_cases,
         "cfg": cfg,
     }
 
@@ -69,7 +76,6 @@ class TestGaitDriverUnitCube:
             driver_setup["mech"],
             driver_setup["cfg"],
             driver_setup["loader"],
-            driver_setup["loading_cases"],
         )
         drv.setup()
         stats = drv.sweep()
@@ -91,14 +97,14 @@ class TestGaitDriverUnitCube:
             rho.x.array[:] = 0.6
             rho.x.scatter_forward()
             
-            loader = MockLoader(spaces.V, traction_value=0.1 * scale)
             loading_cases = [LoadingCase(name="test", day_cycles=1.0, hip=None, muscles=[])]
+            loader = MockLoader(spaces.V, loading_cases, traction_value=0.1 * scale)
             
             neumann_bcs = [(loader.traction, 2)]
             mech = MechanicsSolver(u, rho, cfg, bc_mech, neumann_bcs)
             mech.setup()
             
-            drv = GaitDriver(mech, cfg, loader, loading_cases)
+            drv = GaitDriver(mech, cfg, loader)
             drv.setup()
             drv.sweep()
 
@@ -122,7 +128,6 @@ class TestGaitDriverUnitCube:
             driver_setup["mech"],
             driver_setup["cfg"],
             driver_setup["loader"],
-            driver_setup["loading_cases"],
         )
         drv.setup()
         drv.sweep()
@@ -140,19 +145,19 @@ class TestGaitDriverUnitCube:
         rho.x.array[:] = 0.6
         rho.x.scatter_forward()
         
-        loader = MockLoader(spaces.V, traction_value=0.1)
-        
         # Two identical loading cases with equal day_cycles
         loading_cases = [
             LoadingCase(name="case1", day_cycles=1.0, hip=None, muscles=[]),
             LoadingCase(name="case2", day_cycles=1.0, hip=None, muscles=[]),
         ]
         
+        loader = MockLoader(spaces.V, loading_cases, traction_value=0.1)
+        
         neumann_bcs = [(loader.traction, 2)]
         mech = MechanicsSolver(u, rho, cfg, bc_mech, neumann_bcs)
         mech.setup()
         
-        drv = GaitDriver(mech, cfg, loader, loading_cases)
+        drv = GaitDriver(mech, cfg, loader)
         drv.setup()
         drv.sweep()
 

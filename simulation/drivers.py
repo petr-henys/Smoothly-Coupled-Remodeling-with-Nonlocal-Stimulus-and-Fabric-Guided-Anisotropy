@@ -77,13 +77,15 @@ class GaitDriver:
         mech: MechanicsSolver,
         config: Config,
         loader: "Loader",
-        loading_cases: List["LoadingCase"],
     ):
-        """Bind mechanics solver, loader, and list of loading cases."""
+        """Bind mechanics solver and loader.
+        
+        Loading cases are taken from loader.loading_cases (precomputed at loader init).
+        """
         self.mech = mech
         self.cfg = config
         self.loader = loader
-        self.loading_cases = loading_cases
+        self.loading_cases = loader.loading_cases
 
         mesh = self.mech.u.function_space.mesh
         self.comm = mesh.comm
@@ -105,10 +107,7 @@ class GaitDriver:
         self.Qbar = fem.Function(self.V_Q, name="Qbar")
         self._Q_temp = fem.Function(self.V_Q, name="Q_temp")
 
-        # Precompute all loading cases (expensive interpolation done once)
-        self.loader.precompute_loading_cases(self.loading_cases)
-
-        self.logger.debug(f"GaitDriver initialized with {len(loading_cases)} loading case(s), loads precomputed")
+        self.logger.debug(f"GaitDriver initialized with {len(self.loading_cases)} loading case(s)")
 
     def setup(self) -> None:
         """Initialize mechanics solver."""

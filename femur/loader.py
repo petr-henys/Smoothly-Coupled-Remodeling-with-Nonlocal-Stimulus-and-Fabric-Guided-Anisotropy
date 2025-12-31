@@ -6,11 +6,13 @@ Input forces are in N. With mm-based meshes this produces traction in MPa (N/mmÂ
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Dict
+from pathlib import Path
+from typing import List, Dict, Union
 
 import numpy as np
 import dolfinx.fem as fem
 import dolfinx.mesh as dmesh
+import dolfinx.io
 import basix.ufl
 from mpi4py import MPI
 
@@ -72,14 +74,35 @@ class CachedTraction:
 class Loader:
     """MPI-parallel traction loader: precomputes cases, replays them cheaply."""
     
-    def __init__(self, mesh: dmesh.Mesh, facet_tags: dmesh.MeshTags, load_tag: int):
-        """Create loader for `mesh` and proximal surface tag `load_tag`."""
+    def __init__(
+        self,
+        mesh: dmesh.Mesh,
+        facet_tags: dmesh.MeshTags,
+        load_tag: int,
+        loading_cases: List[LoadingCase],
+    ):
+        """Create loader for `mesh` and proximal surface tag `load_tag`.
+        
+        Loading cases are precomputed immediately during initialization.
+        
+        Parameters
+        ----------
+        mesh
+            DOLFINx mesh.
+        facet_tags
+            Mesh tags for boundary facets.
+        load_tag
+            Tag for the loaded surface (e.g., proximal femur).
+        loading_cases
+            List of loading cases to precompute.
+        """
         self.mesh = mesh
         self.comm = mesh.comm
         self.rank = self.comm.rank
         self.facet_tags = facet_tags
         self.load_tag = load_tag
         self.gdim = mesh.geometry.dim
+        self._loading_cases = loading_cases
         
         # Vector function space for traction (P1, 3D)
         P1_vec = basix.ufl.element("Lagrange", mesh.basix_cell(), 1, shape=(self.gdim,))
@@ -108,7 +131,20 @@ class Loader:
             self._init_geometry_rank0()
         
         self._init_interpolation_cache()
+        
+        # Precompute all loading cases immediately
+        self._precompute_all_cases()
         self.comm.Barrier()
+    
+    @property
+    def loading_cases(self) -> List[LoadingCase]:
+        """Get the list of loading cases."""
+        return self._loading_cases
+    
+    def _precompute_all_cases(self) -> None:
+        """Precompute tractions for all loading cases."""
+        for case in self._loading_cases:
+            self._precompute_single_case(case)
     
     def _init_geometry_rank0(self) -> None:
         """Load femur geometry and initialize loaders (rank 0 only)."""
@@ -312,3 +348,44 @@ class Loader:
             # scalar dof indices for these blocks (flattened)
             dof_idx = (blocks[:, None] * bs + np.arange(bs, dtype=np.int32)[None, :]).ravel()
             self.traction.x.array[dof_idx] += local_values[:, :bs].ravel()
+
+    def save_tractions_vtx(
+        self,
+        results_dir: Union[str, Path],
+        filename: str = "tractions.bp",
+        engine: str = "bp4",
+    ) -> None:
+        """Save all cached tractions to VTX file (MPI-collective).
+
+        Each loading case is stored as a separate vector field named after the case.
+        The file can be opened in ParaView (use ADIOS2VTXReader).
+
+        Parameters
+        ----------
+        results_dir
+            Output directory path (e.g., cfg.output.results_dir).
+        filename
+            Output filename, default "tractions.bp".
+        engine
+            ADIOS2 engine, default "bp4".
+        """
+        if not self._cache:
+            raise RuntimeError("No tractions cached. Call precompute_loading_cases() first.")
+
+        output_path = Path(results_dir) / filename
+
+        # Create output directory on rank 0
+        if self.comm.rank == 0:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+        self.comm.Barrier()
+
+        # Create named traction functions for each cached case
+        traction_fields: List[fem.Function] = []
+        for case_name, cached in self._cache.items():
+            func = fem.Function(self.V, name=case_name)
+            assign(func, cached.traction, scatter=True)
+            traction_fields.append(func)
+
+        # Write to VTX with all fields
+        with dolfinx.io.VTXWriter(self.comm, str(output_path), traction_fields, engine=engine) as writer:
+            writer.write(0.0)

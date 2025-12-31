@@ -1,7 +1,7 @@
 """Solver factory for dependency injection."""
 
 from __future__ import annotations
-from typing import List, Protocol, TYPE_CHECKING
+from typing import Protocol, TYPE_CHECKING
 
 from dolfinx import fem
 
@@ -11,7 +11,7 @@ from simulation.utils import build_dirichlet_bcs
 
 if TYPE_CHECKING:
     from simulation.config import Config
-    from femur.loader import Loader, LoadingCase
+    from femur.loader import Loader
 
 
 class SolverFactory(Protocol):
@@ -31,7 +31,6 @@ class SolverFactory(Protocol):
         self,
         mech_solver: MechanicsSolver,
         loader: Loader,
-        loading_cases: List[LoadingCase],
     ) -> GaitDriver:
         """Create the mechanics driver."""
         ...
@@ -95,11 +94,8 @@ class DefaultSolverFactory:
         self,
         mech_solver: MechanicsSolver,
         loader: Loader,
-        loading_cases: List[LoadingCase],
     ) -> GaitDriver:
-        return GaitDriver(
-            mech_solver, self.cfg, loader=loader, loading_cases=loading_cases
-        )
+        return GaitDriver(mech_solver, self.cfg, loader=loader)
 
     def create_fabric_solver(
         self,

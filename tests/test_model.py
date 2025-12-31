@@ -49,7 +49,7 @@ def test_model_initializes_with_traction(tmp_path, unit_cube, facet_tags, dummy_
         output=OutputParams(results_dir=str(tmp_path)),
     )
 
-    with Remodeller(cfg, loader=dummy_load["loader"], loading_cases=dummy_load["loading_cases"]) as rem:
+    with Remodeller(cfg, loader=dummy_load["loader"]) as rem:
         assert "fields" in rem.storage.fields._writers
         rho = rem.state_fields["rho"]
         rho_mean = comm.allreduce(np.mean(rho.x.array), op=MPI.SUM) / comm.size
@@ -67,7 +67,7 @@ def test_mechanics_produces_displacement_under_load(tmp_path, unit_cube, facet_t
         solver=SolverParams(max_subiters=8, ksp_atol=1e-15),
     )
 
-    with Remodeller(cfg, loader=dummy_load["loader"], loading_cases=dummy_load["loading_cases"]) as rem:
+    with Remodeller(cfg, loader=dummy_load["loader"]) as rem:
         rem.step(1.0)
 
         u_fn = rem.driver.mech.u
@@ -88,7 +88,7 @@ def test_stimulus_responds_to_strain_energy(tmp_path, unit_cube, facet_tags, dum
         solver=SolverParams(max_subiters=8),
     )
 
-    with Remodeller(cfg, loader=dummy_load["loader"], loading_cases=dummy_load["loading_cases"]) as rem:
+    with Remodeller(cfg, loader=dummy_load["loader"]) as rem:
         psi_max_init = MPI.COMM_WORLD.allreduce(float(rem.driver.psi.x.array.max()), op=MPI.MAX)
         assert psi_max_init < 1e-2
 
@@ -110,7 +110,7 @@ def test_density_evolves_with_stimulus(tmp_path, unit_cube, facet_tags, dummy_lo
         density=DensityParams(rho0=0.8),
     )
 
-    with Remodeller(cfg, loader=dummy_load["loader"], loading_cases=dummy_load["loading_cases"]) as rem:
+    with Remodeller(cfg, loader=dummy_load["loader"]) as rem:
         rho = rem.state_fields["rho"]
         rho_initial = rho.x.array.copy()
 
@@ -141,7 +141,7 @@ def test_model_single_step_records_metrics(tmp_path, unit_cube, facet_tags, dumm
         solver=SolverParams(max_subiters=6),
     )
 
-    with Remodeller(cfg, loader=dummy_load["loader"], loading_cases=dummy_load["loading_cases"]) as rem:
+    with Remodeller(cfg, loader=dummy_load["loader"]) as rem:
         rem.step(1.0)
         metrics = rem.fixedsolver.subiter_metrics
         assert metrics, "No subiteration metrics recorded"
@@ -157,7 +157,7 @@ def test_model_convergence_stability(tmp_path, unit_cube, facet_tags, dummy_load
         solver=SolverParams(max_subiters=12, coupling_tol=1e-6, ksp_atol=1e-15),
     )
 
-    with Remodeller(cfg, loader=dummy_load["loader"], loading_cases=dummy_load["loading_cases"]) as rem:
+    with Remodeller(cfg, loader=dummy_load["loader"]) as rem:
         rem.step(1.0)
 
         metrics = rem.fixedsolver.subiter_metrics
@@ -179,7 +179,7 @@ def test_model_two_steps_energy_stability(tmp_path, unit_cube, facet_tags, dummy
         solver=SolverParams(max_subiters=6, ksp_atol=1e-15),
     )
 
-    with Remodeller(cfg, loader=dummy_load["loader"], loading_cases=dummy_load["loading_cases"]) as rem:
+    with Remodeller(cfg, loader=dummy_load["loader"]) as rem:
         rem.step(1.0)
         psi1 = MPI.COMM_WORLD.allreduce(float(rem.driver.psi.x.array.mean()), op=MPI.SUM) / MPI.COMM_WORLD.size
 
@@ -202,7 +202,7 @@ def test_fabric_evolves_with_load(tmp_path, unit_cube, facet_tags, dummy_load):
         fabric=FabricParams(fabric_tau=5.0), # Fast evolution
     )
 
-    with Remodeller(cfg, loader=dummy_load["loader"], loading_cases=dummy_load["loading_cases"]) as rem:
+    with Remodeller(cfg, loader=dummy_load["loader"]) as rem:
         L = rem.state_fields["L"]
         
         # Initial state is isotropic (L=0)

@@ -305,12 +305,18 @@ class TestUnifiedStorage:
             from femur.loader import LoadingCase
             
             class MockLoader:
-                def __init__(self):
+                def __init__(self, loading_cases):
                     self.V = V
                     self.load_tag = 1
                     self.traction = fem.Function(V, name="Traction")
                     self.traction.x.array[:] = 0.0
                     self._cache = {}
+                    self._loading_cases = loading_cases
+                    self.precompute_loading_cases(loading_cases)
+                
+                @property
+                def loading_cases(self):
+                    return self._loading_cases
                 
                 def precompute_loading_cases(self, cases):
                     for case in cases:
@@ -320,10 +326,10 @@ class TestUnifiedStorage:
                     cached = self._cache[case_name]
                     self.traction.x.array[:] = cached["traction"]
             
-            loader = MockLoader()
             loading_cases = [LoadingCase(name="test", day_cycles=1.0, hip=None, muscles=[])]
+            loader = MockLoader(loading_cases)
             
-            with Remodeller(cfg, loader=loader, loading_cases=loading_cases) as rem:
+            with Remodeller(cfg, loader=loader) as rem:
                 # Storage should be initialized
                 assert rem.storage is not None
                 assert rem.storage.fields is not None

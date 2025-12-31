@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, List, Tuple
+from typing import TYPE_CHECKING, Dict, Tuple
 
 import basix.ufl
 from dolfinx import fem
@@ -11,7 +11,7 @@ from dolfinx.fem import Function, functionspace
 
 from simulation.config import Config
 from simulation.fixedsolver import FixedPointSolver
-from femur.loader import Loader, LoadingCase
+from femur.loader import Loader
 from simulation.logger import get_logger
 from simulation.progress import ProgressReporter, SweepProgressReporter
 from simulation.registry import BlockRegistry
@@ -31,10 +31,19 @@ class Remodeller:
         self,
         cfg: Config,
         loader: Loader,
-        loading_cases: List[LoadingCase],
         factory: SolverFactory | None = None,
     ):
-        """Initialize simulation environment, storage, and solvers."""
+        """Initialize simulation environment, storage, and solvers.
+        
+        Parameters
+        ----------
+        cfg
+            Simulation configuration.
+        loader
+            Traction loader with precomputed loading cases.
+        factory
+            Solver factory for creating solvers (defaults to DefaultSolverFactory).
+        """
         self.cfg = cfg
         self.domain = cfg.domain
         self.comm: MPI.Comm = self.domain.comm
@@ -42,7 +51,6 @@ class Remodeller:
         self.closed = False
 
         self.loader = loader
-        self.loading_cases = loading_cases
         self.factory = factory or DefaultSolverFactory(cfg)
 
         # Ensure log directory exists (rank 0 creates, all ranks wait)
@@ -121,9 +129,7 @@ class Remodeller:
         )
 
         # 2. Create GaitDriver (handles mechanics and SED averaging)
-        self.driver = self.factory.create_driver(
-            mechsolver, self.loader, self.loading_cases
-        )
+        self.driver = self.factory.create_driver(mechsolver, self.loader)
         self.registry.register(self.driver)
 
         # 3. Create FabricSolver (evolves log-fabric tensor)

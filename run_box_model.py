@@ -75,9 +75,6 @@ def main() -> None:
         logger.info(f"Total nodes: {domain.geometry.x.shape[0]}")
         logger.info(f"Adaptive time stepping: {cfg.time.adaptive_dt}")
 
-    # Create pressure loader
-    loader = BoxLoader(domain, facet_tags, load_tag=BoxMeshBuilder.TAG_TOP)
-
     # Create parabolic loading case (non-uniform to drive interesting adaptation)
     loading_cases = [get_parabolic_pressure_case(
         pressure=box["pressure"],
@@ -91,14 +88,14 @@ def main() -> None:
         logger.info(f"Loading: parabolic pressure, base = {box['pressure']} MPa")
         logger.info(f"  Along axis {box['gradient_axis']}: edge={box['edge_factor']*box['pressure']:.2f}, center={box['center_factor']*box['pressure']:.2f} MPa")
 
+    # Create pressure loader with precomputed loading cases
+    loader = BoxLoader(domain, facet_tags, load_tag=BoxMeshBuilder.TAG_TOP, loading_cases=loading_cases)
+
     # Create solver factory
     factory = BoxSolverFactory(cfg)
 
-    # Precompute loading cases and save traction field
-    loader.precompute_loading_cases(loading_cases)
-    loader.set_loading_case(loading_cases[0].name)
-    
     # Save traction field for visualization
+    loader.set_loading_case(loading_cases[0].name)
     traction_storage = UnifiedStorage(cfg)
     traction_storage.fields.register("traction", [loader.traction], filename="traction.bp")
     traction_storage.fields.write("traction", 0.0)
@@ -107,7 +104,7 @@ def main() -> None:
         logger.info(f"Saved traction field to {cfg.output.results_dir}/traction.bp")
 
     # Run simulation with progress reporting
-    with Remodeller(cfg, loader=loader, loading_cases=loading_cases, factory=factory) as remodeller:
+    with Remodeller(cfg, loader=loader, factory=factory) as remodeller:
         with ProgressReporter(comm, cfg.time.total_time, cfg.solver.max_subiters) as reporter:
             remodeller.simulate(reporter=reporter)
 

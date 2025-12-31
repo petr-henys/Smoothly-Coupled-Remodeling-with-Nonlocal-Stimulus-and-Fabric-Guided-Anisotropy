@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 class BoxDriver(GaitDriver):
     """Multi-load mechanics driver for box model.
     
-    Identical to GaitDriver but accepts BoxLoadingCase instead of LoadingCase.
+    Identical to GaitDriver but accepts BoxLoader instead of Loader.
     The underlying mechanics and SED computation are the same.
     """
     
@@ -40,19 +40,15 @@ class BoxDriver(GaitDriver):
         mech: MechanicsSolver,
         config: "Config",
         loader: BoxLoader,
-        loading_cases: List[BoxLoadingCase],
     ):
         """Initialize box driver.
         
         Args:
             mech: Mechanics solver instance
             config: Simulation configuration
-            loader: Box pressure loader
-            loading_cases: List of box loading cases
+            loader: Box pressure loader (with loading_cases already precomputed)
         """
-        # Convert BoxLoadingCase to LoadingCase-like interface
-        # (They have the same structure for the driver's purposes)
-        super().__init__(mech, config, loader, loading_cases)
+        super().__init__(mech, config, loader)
 
 
 class BoxSolverFactory:
@@ -108,21 +104,17 @@ class BoxSolverFactory:
         self,
         mech_solver: MechanicsSolver,
         loader: BoxLoader,
-        loading_cases: List[BoxLoadingCase],
     ) -> BoxDriver:
         """Create box mechanics driver.
         
         Args:
             mech_solver: Mechanics solver instance
-            loader: Box pressure loader
-            loading_cases: List of loading cases
+            loader: Box pressure loader (with loading_cases precomputed)
             
         Returns:
             BoxDriver for multi-load mechanics
         """
-        return BoxDriver(
-            mech_solver, self.cfg, loader=loader, loading_cases=loading_cases
-        )
+        return BoxDriver(mech_solver, self.cfg, loader=loader)
     
     def create_fabric_solver(
         self,

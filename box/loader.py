@@ -73,14 +73,18 @@ class BoxLoader:
         self, 
         mesh: dmesh.Mesh, 
         facet_tags: dmesh.MeshTags,
-        load_tag: int = BoxMeshBuilder.TAG_TOP,
+        load_tag: int,
+        loading_cases: List[BoxLoadingCase],
     ):
         """Initialize box loader.
+        
+        Loading cases are precomputed immediately during initialization.
         
         Args:
             mesh: DOLFINx mesh
             facet_tags: Mesh tags for boundary facets
-            load_tag: Tag for the loaded surface (default: top surface)
+            load_tag: Tag for the loaded surface (e.g., BoxMeshBuilder.TAG_TOP)
+            loading_cases: List of loading cases to precompute
         """
         self.mesh = mesh
         self.comm = mesh.comm
@@ -88,6 +92,7 @@ class BoxLoader:
         self.facet_tags = facet_tags
         self.load_tag = load_tag
         self.gdim = mesh.geometry.dim
+        self._loading_cases = loading_cases
         
         # Vector function space for traction (P1, 3D)
         P1_vec = basix.ufl.element("Lagrange", mesh.basix_cell(), 1, shape=(self.gdim,))
@@ -106,6 +111,14 @@ class BoxLoader:
         
         # Initialize DOF indexing for loaded surface
         self._init_load_surface_dofs()
+        
+        # Precompute all loading cases immediately
+        self.precompute_loading_cases(self._loading_cases)
+    
+    @property
+    def loading_cases(self) -> List[BoxLoadingCase]:
+        """Get the list of loading cases."""
+        return self._loading_cases
 
     def _init_load_surface_dofs(self) -> None:
         """Identify DOFs on facets with load_tag and cache their indices/coordinates.

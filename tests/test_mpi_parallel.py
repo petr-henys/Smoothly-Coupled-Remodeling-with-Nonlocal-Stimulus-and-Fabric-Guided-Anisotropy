@@ -31,13 +31,20 @@ def create_mock_loader(domain):
     V = fem.functionspace(domain, P1_vec)
     
     class MockLoader:
-        def __init__(self):
+        def __init__(self, loading_cases):
             self.V = V
             self.load_tag = 1
             self.traction = Function(V, name="Traction")
             self.traction.x.array[:] = 0.01
             self.traction.x.scatter_forward()
             self._cache = {}
+            self._loading_cases = loading_cases
+            # Precompute immediately
+            self.precompute_loading_cases(loading_cases)
+        
+        @property
+        def loading_cases(self):
+            return self._loading_cases
         
         def precompute_loading_cases(self, cases):
             for case in cases:
@@ -47,12 +54,9 @@ def create_mock_loader(domain):
             cached = self._cache[case_name]
             self.traction.x.array[:] = cached["traction"]
     
-    return MockLoader()
+    loading_cases = [LoadingCase(name="test", day_cycles=1.0, hip=None, muscles=[])]
+    return MockLoader(loading_cases)
 
-
-def create_loading_cases():
-    """Create loading cases for testing."""
-    return [LoadingCase(name="test", day_cycles=1.0, hip=None, muscles=[])]
 
 # =============================================================================
 # Ghost Update Tests
@@ -217,7 +221,7 @@ class TestMPIIO:
                         output=OutputParams(results_dir=tmpdir))
             loader = create_mock_loader(domain)
             
-            with Remodeller(cfg, loader=loader, loading_cases=create_loading_cases()) as rem:
+            with Remodeller(cfg, loader=loader) as rem:
                 rem.storage.fields.write("fields", 0.0)
                 
                 # Should complete without hanging
@@ -245,7 +249,7 @@ class TestFixedPointParallel:
         )
         loader = create_mock_loader(domain)
         
-        with Remodeller(cfg, loader=loader, loading_cases=create_loading_cases()) as rem:
+        with Remodeller(cfg, loader=loader) as rem:
             # Take one time step
             rem.step(1.0)
             
@@ -268,7 +272,7 @@ class TestFixedPointParallel:
         )
         loader = create_mock_loader(domain)
         
-        with Remodeller(cfg, loader=loader, loading_cases=create_loading_cases()) as rem:
+        with Remodeller(cfg, loader=loader) as rem:
             rem.step(1.0)
             
             # Should converge
