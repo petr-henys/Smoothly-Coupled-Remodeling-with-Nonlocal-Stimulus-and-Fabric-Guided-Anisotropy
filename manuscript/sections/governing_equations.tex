@@ -44,6 +44,13 @@ where $E_0$ is a reference Young's modulus, $\nu_0$ is a (density-independent) P
 k(\widetilde{\rho}) = n_{\mathrm{trab}} (1 - w(\widetilde{\rho})) + n_{\mathrm{cort}} w(\widetilde{\rho}),
 \end{equation}
 where $w(\widetilde{\rho})$ is a smooth interpolation function (smoothstep) transitioning from 0 to 1 over the range $[\rho_{\mathrm{trab}}^{\max}, \rho_{\mathrm{cort}}^{\min}]$. The density $\widetilde{\rho}$ is smoothly clamped to a minimum value $\rho_{\min}$ to ensure positive definiteness. The stress is then $\boldsymbol{\sigma} = \mathbb{C} : \boldsymbol{\varepsilon}$.
+For later use (e.g.\ fabric-guided constitutive evaluation) we remove isotropic scaling in log space and bound the resulting eigenvalue ratios. Let $\mathrm{sym}(\mathbf{L})=\sum_{i=1}^3 \ell_i\,\mathbf{P}_i$ with $\bar\ell:=\tfrac13\sum_i \ell_i$ and define
+\begin{equation}\label{eq:Ahat-blend-nd}
+\widehat{\mathbf{A}} \;:=\; \sum_{i=1}^3 m_i\,\mathbf{P}_i,\qquad
+m_i \;:=\; \exp\!\Big(\min\!\big\{d_{\max},\max\{-d_{\max},\,\ell_i-\bar\ell\}\big\}\Big),\qquad
+d_{\max}:=\ln\!\Big(\max\{m_{\max},1/m_{\min}\}\Big),
+\end{equation}
+which is symmetric positive definite. If the bound is inactive then $\det(\widehat{\mathbf{A}})=1$, while clamping enforces $m_i\in[\exp(-d_{\max}),\exp(d_{\max})]$.
 
 \paragraph{Numerically robust stress evaluation.}
 Two numerical issues arise in practice: (i) the projector/eigenvector representation is ill-conditioned when $\widehat{\mathbf{A}}$ is (nearly) isotropic or transversely isotropic (repeated eigenvalues), and (ii) extreme anisotropy can cause overflow in $\exp(\mathbf{L})$ and large stiffness contrasts. We address (i) by evaluating spectral projectors $\mathbf{P}_i$ without eigenvectors using the Sylvester formula and smoothly blending it to the isotropic limit ($\mathbf{P}_i=\mathbf{I}/3$) and the transversely isotropic limit (unique projector plus an equal split of the orthogonal plane), which avoids basis flips and preserves $\sum_i \mathbf{P}_i=\mathbf{I}$. We address (ii) by clamping the deviatoric log-eigenvalues of $\mathbf{L}$ before exponentiation, consistently with the global anisotropy bounds $m_{\min},m_{\max}$, and by using a smooth, scale-aware gate that blends the orthotropic stress to the isotropic baseline as $\widehat{\mathbf{A}}\to\mathbf{I}$, keeping $\boldsymbol{\sigma}(\mathbf{u},\rho,\mathbf{L})$ continuous through eigenvalue degeneracy. Figure \ref{fig:sylvester_projectors} summarizes these limits and the associated conditioning behavior.
@@ -114,7 +121,7 @@ The mechanical drive $\psi_{\mathrm{day}}$ is constructed as a cycle-weighted po
 where case weights $c_i$ are proportional to cycles-per-day (or relative daily frequency), and $p\ge 1$ biases the average toward peaks ($p=1$ gives a weighted mean, $p\to\infty$ approaches a max). The specific SED $\psi_{\mathrm{day}}/\widetilde\rho$ reflects sensing of strain energy per unit bone mass.
 
 \paragraph{Quantitative analysis and biological interpretation.}
-Equation \eqref{eq:stim-strong-nd} acts as a spatio-temporal low-pass filter of the mechanostat drive, as illustrated in Figure \ref{fig:nonlocal_stimulus}. Regions of sustained overload ($m>m_{\mathrm{ref}}$, i.e.\ $\delta>0$) accumulate positive stimulus, while underloaded regions ($\delta<0$) accumulate negative stimulus. Diffusion broadens and smooths these regions over the characteristic length
+Equation \eqref{eq:stim-strong-nd} acts as a spatio-temporal low-pass filter of the mechanostat drive. Regions of sustained overload ($m>m_{\mathrm{ref}}$, i.e.\ $\delta>0$) accumulate positive stimulus, while underloaded regions ($\delta<0$) accumulate negative stimulus. Diffusion broadens and smooths these regions over the characteristic length
 \(
 \ell_S=\sqrt{\tau_S D_S}
 \), while the reaction term damps transient fluctuations with a characteristic time
@@ -122,13 +129,6 @@ Equation \eqref{eq:stim-strong-nd} acts as a spatio-temporal low-pass filter of 
 t_S=\tau_S
 \).
 The time constant $\tau_S$ thus sets the inertia with respect to temporal fluctuations in the drive, while $D_S$ controls spatial spread via gap-junction/vascular pathways. The homogeneous Neumann condition corresponds to zero normal flux of $S$ at $\partial\Omega$.
-
-\begin{figure}[htbp]
-    \centering
-    \includegraphics[width=\textwidth]{images/nonlocal_stimulus.png}
-    \caption{Nonlocal Stimulus Field. The diffusion-reaction equation smooths the raw mechanical signal (which can be noisy or checkerboard-prone) into a continuous biological stimulus $S$, representing the osteocytic communication network. This nonlocal field drives the remodeling process, preventing numerical instabilities and mimicking the physiological range of cellular signaling.}
-    \label{fig:nonlocal_stimulus}
-\end{figure}
 
 \subsection*{Density submodel}\label{subsec:density-nd}
 The apparent density $\rho=\rho(x,t)$ evolves under diffusive regularization and bounded formation/resorption kinetics driven by the stimulus $S$. The strong form is supplemented with homogeneous no-flux boundary conditions and an admissible initial state,
@@ -142,21 +142,15 @@ In this work, transport is modeled by an isotropic diffusion tensor
 \begin{equation}\label{eq:Drho-nd}
 \mathbf{D}_\rho(x,t) \;=\; D_\rho\,\mathbf{I},
 \end{equation}
-with $D_\rho\ge 0$ in units mm$^2$/day. For later use (e.g.\ fabric-guided constitutive evaluation) we remove isotropic scaling in log space and bound the resulting eigenvalue ratios. Let $\mathrm{sym}(\mathbf{L})=\sum_{i=1}^3 \ell_i\,\mathbf{P}_i$ with $\bar\ell:=\tfrac13\sum_i \ell_i$ and define
-\begin{equation}\label{eq:Ahat-blend-nd}
-\widehat{\mathbf{A}} \;:=\; \sum_{i=1}^3 m_i\,\mathbf{P}_i,\qquad
-m_i \;:=\; \exp\!\Big(\min\!\big\{d_{\max},\max\{-d_{\max},\,\ell_i-\bar\ell\}\big\}\Big),\qquad
-d_{\max}:=\ln\!\Big(\max\{m_{\max},1/m_{\min}\}\Big),
-\end{equation}
-which is symmetric positive definite. If the bound is inactive then $\det(\widehat{\mathbf{A}})=1$, while clamping enforces $m_i\in[\exp(-d_{\max}),\exp(d_{\max})]$.
+with $D_\rho\ge 0$ in units mm$^2$/day.
 
 \paragraph{Bounded formation/resorption kinetics.}
 The density evolution is driven by the stimulus $S$ such that positive stimulus drives growth toward $\rho_{\max}$ and negative stimulus drives resorption toward $\rho_{\min}$. We use smooth positive/negative parts (consistent with the global smoothing width $\varepsilon$):
-\begin{equation}\label{eq:smooth-splits-nd}
-\operatorname{smoothmax}(a,b;\varepsilon):=\tfrac12\!\left(a+b+\sqrt{(a-b)^2+\varepsilon^2}-\varepsilon\right),\qquad
-S_+(S):=\operatorname{smoothmax}(S,0;\varepsilon),\quad
+\begin{align}\label{eq:smooth-splits-nd}
+\operatorname{smoothmax}(a,b;\varepsilon):=\tfrac12\!\left(a+b+\sqrt{(a-b)^2+\varepsilon^2}-\varepsilon\right),\\
+S_+(S):=\operatorname{smoothmax}(S,0;\varepsilon),\\
 S_-(S):=\operatorname{smoothmax}(-S,0;\varepsilon).
-\end{equation}
+\end{align}
 The total evolution equation is:
 \begin{equation}\label{eq:density-strong-nd}
 \partial_t \rho - \nabla \cdot (\mathbf{D}_\rho \nabla \rho) =
@@ -177,13 +171,6 @@ Equation \eqref{eq:density-strong-nd} uses differentiable kinetics and soft boun
     }{\fbox{\parbox{0.9\linewidth}{\centering Missing image: \texttt{images/mechanostat\_law.png}}}}
     \caption{Mechanostat and density kinetics. Top row: stimulus mechanostat drive (lazy zone and saturation). Bottom row: surface-availability factor and bounded formation/resorption rates that keep $\rho$ attracted to $[\rho_{\min},\rho_{\max}]$.}
     \label{fig:mechanostat_law}
-\end{figure}
-
-\begin{figure}[htbp]
-    \centering
-    \includegraphics[width=\textwidth]{images/remodeling.jpg}
-    \caption{Macroscopic Density Evolution. The coupled system evolves the apparent density $\rho$ from a uniform initial state to a heterogeneous structure optimized for the applied loads. High-stress regions densify (cortical bone), while low-stress regions become porous (trabecular bone), governed by the linear thermodynamic driver.}
-    \label{fig:remodeling_evolution}
 \end{figure}
 
 \subsection*{Direction (fabric) submodel}\label{subsec:direction-nd}
@@ -235,12 +222,6 @@ with a small dimensionless $\varepsilon_a>0$.
 
 \paragraph{Quantitative analysis and biological interpretation.}
 Figure \ref{fig:anisotropy_law} visualizes how the log-fabric state biases directional stiffness. The relaxation term in \eqref{eq:L-strong-nd} drives $\mathbf{L}$ toward the mechanically informed target $\mathbf{L}_M(\bar{\mathbf{Q}})$ while diffusion regularizes spatial oscillations; the log-Euclidean representation ensures $\mathbf{A}=\exp(\mathbf{L})\in\mathbb{S}^{3}_{++}$ by construction. The log-space normalization in \eqref{eq:M-hat-nd} enforces $\mathrm{tr}\,\mathbf{L}_M=0$ (unit determinant for $\exp(\mathbf{L}_M)$), so the target acts on anisotropy (eigenvalue ratios) rather than isotropic scaling. In the constitutive evaluation, isotropic scaling is removed by working with eigenvalue ratios (deviatoric part of $\mathbf{L}$) and bounding them by the same $m_{\min},m_{\max}$ used in \eqref{eq:M-hat-nd}.
-\begin{figure}[htbp]
-    \centering
-    \includegraphics[width=\textwidth]{images/fabric_orientation.jpg}
-    \caption{Fabric Tensor Orientation. The principal directions of the fabric tensor $\mathbf{A}$ (visualized as glyphs) align with the principal stress trajectories. This alignment creates an orthotropic material response that efficiently carries load, minimizing shear stresses relative to the material axes.}
-    \label{fig:fabric_orientation}
-\end{figure}
 
 \paragraph{Regularization parameters and defaults.}
 We use a single global smoothing width $\varepsilon$ for the soft clamps in \eqref{eq:smooth-max-nd} and \eqref{eq:smooth-splits-nd}. The stimulus mechanostat uses a dimensionless lazy-zone half-width $\delta_0$ and saturation width $\kappa_S$ in \eqref{eq:stim-strong-nd}. The fabric target uses $\varepsilon_Q$ and eigenvalue-ratio bounds $[m_{\min},m_{\max}]$ in \eqref{eq:M-hat-nd}, and the activity factor uses $\varepsilon_a$ to smoothly gate near-isotropic loading. These choices avoid hard projections while keeping the subproblems well-conditioned in practice.

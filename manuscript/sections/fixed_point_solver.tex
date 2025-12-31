@@ -1,6 +1,6 @@
 \section*{Fixed-point solver at a given time level: block Gauss--Seidel with Pulay (type-II) mixing}
 \label{sec:fp-aa}
-We describe the nonlinear solver used to obtain $(\mathbf{u}^n,S^n,\rho^n,\mathbf{L}^n)$ at a fixed time level $t^n$ from the Backward--Euler subproblems \eqref{eq:be-mech}--\eqref{eq:be-A}. Let the remodeling state be
+We describe the nonlinear solver used to obtain $(\mathbf{L}^n, S^n,\rho^n)$ at a fixed time level $t^n$ from the Backward--Euler subproblems \eqref{eq:be-mech}--\eqref{eq:be-A}. Let the remodeling state be
 \begin{equation*}
 \mathcal{X} \;:=\; T\times Q\times Q,\qquad
 \mathbf{x} \;=\; (\mathbf{L},S,\rho) \in \mathcal{X},
@@ -22,13 +22,7 @@ The block Gauss--Seidel map $\mathcal{G}:\mathcal{X}\to\mathcal{X}$ is then defi
 :=
 \Big(\ \underbrace{\mathsf{L}(\bar{\mathbf{Q}}_{\mathrm{new}})}_{\text{fabric}},\ \underbrace{\mathsf{S}(\psi_{\mathrm{new}},\rho)}_{\text{stim}},\ \underbrace{\mathsf{R}(S_{\mathrm{new}})}_{\text{density}}\ \Big),
 \end{equation}
-where $S_{\mathrm{new}}=\mathsf{S}(\psi_{\mathrm{new}},\rho)$ is the updated stimulus. This structure highlights that $\mathsf{S}$ and $\mathsf{L}$ depend on mechanics only through intermediate drivers. We take the daily driver as a cycle-weighted power mean of local strain energy density across loading cases,
-\[
-\psi_{\mathrm{day}}(x)=\left(\frac{\sum_i c_i\,\psi_i(x)^p}{\sum_i c_i}\right)^{1/p},\qquad
-\psi_i(x):=\max\!\Big(0,\tfrac12\,\boldsymbol{\sigma}_i(x):\boldsymbol{\varepsilon}_i(x)\Big),
-\]
-with exponent $p\ge 1$ and cycle weights $c_i$ (cycles/day); the fabric driver is $\bar{\mathbf{Q}}=\sum_i c_i\,\mathrm{sym}(\boldsymbol{\sigma}_{i,\mathrm{dev}}\boldsymbol{\sigma}_{i,\mathrm{dev}}^{\!\top})/\sum_i c_i$ with $\boldsymbol{\sigma}_{i,\mathrm{dev}}:=\boldsymbol{\sigma}_i-\tfrac13(\mathrm{tr}\,\boldsymbol{\sigma}_i)\mathbf{I}$.
-
+where $S_{\mathrm{new}}=\mathsf{S}(\psi_{\mathrm{new}},\rho)$ is the updated stimulus. 
 The fixed point at $t^n$ solves
 \begin{equation}\label{eq:fp-residual}
 \mathbf{F}(\mathbf{x}^n)\;:=\;\mathcal{G}(\mathbf{x}^n)-\mathbf{x}^n \;=\; \mathbf{0}\quad\text{in }\mathcal{X}.

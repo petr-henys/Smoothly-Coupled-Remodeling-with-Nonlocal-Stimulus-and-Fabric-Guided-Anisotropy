@@ -64,12 +64,6 @@
 We propose a four-field bone-remodeling formulation that co-evolves displacement $\mathbf{u}$, apparent density $\rho$, log-fabric $\mathbf{L} = \ln \mathbf{A}$, and a nonlocal mechanotransductive stimulus $S$. The elastic response follows a fabric-guided orthotropic law, where stiffness tensors are constructed from the spectral decomposition of $\mathbf{L}$. A cycle-weighted strain-energy driver is filtered by a diffusion--reaction stimulus with a smooth saturating (lazy-zone) mechanostat; density evolves via bounded formation/resorption kinetics with diffusive regularization; and log-fabric relaxes toward a trace-free logarithmic target constructed from cycle-weighted \emph{deviatoric} stress outer-products, with spatial diffusion and activity gating. Time integration is fully implicit Backward--Euler; space is discretized by conforming $H^1$ finite elements in a unified weak-form notation. Nonlinear coupling is solved by a partitioned block Gauss--Seidel sweep (mechanics $\rightarrow$ fabric $\rightarrow$ stimulus $\rightarrow$ density) wrapped in Pulay (type-II) mixing (DIIS form) with scaled Tikhonov regularization, step limiting, and adaptive history restarts. A single smoothing policy used across clamping and normalizations ensures differentiability and preserves coercivity, while the solver architecture yields stable, mesh-robust convergence without monolithic Jacobians.
 \end{abstract}
 
-%% Graphical abstract
-\begin{graphicalabstract}
-\centering
-\includegraphics[width=\textwidth]{images/graphical_abstract.jpg}
-\end{graphicalabstract}
-
 %% Keywords
 \begin{keyword}
 Bone remodeling \sep finite element method \sep Backward--Euler \sep Anderson acceleration \sep Gauss--Seidel splitting \sep fabric tensor \sep nonlocal stimulus \sep diffusion--reaction.
@@ -80,11 +74,9 @@ Bone remodeling \sep finite element method \sep Backward--Euler \sep Anderson ac
 %\linenumbers
 \input{sections/introduction}
 
-\input{sections/related_novelty}
+\input{sections/novelty_and_contribution}
 
 \input{sections/governing_equations}
-
-\input{sections/constitutive_gait_integration}
 
 \input{sections/time_discretization}
 
@@ -92,17 +84,23 @@ Bone remodeling \sep finite element method \sep Backward--Euler \sep Anderson ac
 
 \input{sections/fixed_point_solver}
 
-\input{sections/parameter_analysis}
+\input{sections/parameter_governance}
+
+\input{sections/convergence_and_performance_analysis}
+
+\input{sections/projector_robustness}
+
+\input{sections/structure_preserving}
+
+\input{sections/reproducibility}
 
 \input{sections/discussion}
-\input{sections/reproducibility}
+
 \input{sections/conflict_of_interest}
 
 \input{sections/ai_tools}
 
 \input{sections/acknowledgments}
-
-\input{sections/appendix_convergence_analysis}
 
 %% Loading bibliography style file
 \bibliographystyle{elsarticle-num}

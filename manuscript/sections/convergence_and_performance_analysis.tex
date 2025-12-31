@@ -1,5 +1,4 @@
-\appendix
-\section{Convergence Analysis}
+\section{Convergence and Performance Analysis}
 \label{app:convergence}
 \subsection*{Convergence and performance}
 
@@ -30,26 +29,8 @@ reported for both $L^2$ and $H^1$–semi norms. When only three levels are avail
 \begin{figure}[htbp]
   \centering
   \IfFileExists{images/convergence_plot.png}{%
-    \includegraphics[width=0.92\linewidth]{images/convergence_plot.png}%
-  }{\fbox{\parbox{0.9\linewidth}{\centering Missing image: \texttt{images/convergence_plot.png}}}}
+    \includegraphics[width=1\linewidth]{images/convergence_plot.png}%
+  }{\fbox{\parbox{1\linewidth}{\centering Missing image: \texttt{images/convergence_plot.png}}}}
   \caption{Convergence of spatial and temporal errors under mesh and time-step refinement. Solid lines: errors (norms specified in the text). Dotted lines: ideal slopes for $P^1$ elements and the Backward--Euler scheme. Shaded bands show interquartile ranges across regions of interest.}
   \label{fig:individual_convergence}
-\end{figure}
-
-\paragraph{Spatial convergence}
-At fixed $\Delta t$, errors decrease monotonically under mesh refinement and pairwise orders stabilize toward the theoretical rates. Local deviations near high gradients reflect limited smoothness but do not break the global trend (\cref{fig:individual_convergence}).
-
-\paragraph{Temporal convergence}
-Decreasing $\Delta t$ shows an initial sublinear regime (transient adaptation) followed by the asymptotic behavior indicated by the dotted reference slope.
-
-\paragraph{Solver performance}
-We profile per-timestep cost and memory across meshes and time steps (\cref{fig:performance}). Metrics are aggregated across the simulated horizon: means for subiterations and memory; sums for linear iterations and walltime. The figure summarizes how iteration counts, walltime, memory, and the distribution across subsolvers vary with total DOFs and timestep size.
-
-\begin{figure}[htbp]
-  \centering
-  \IfFileExists{images/performance_plot.png}{%
-    \includegraphics[width=1\linewidth]{images/performance_plot.png}%
-  }{\fbox{\parbox{0.9\linewidth}{\centering Missing image: \texttt{images/performance_plot.png}}}}
-  \caption{Solver performance summary. Panel (a): fixed-point subiterations per timestep versus total DOFs for several $\Delta t$. Panels (b)--(d) at fixed $\Delta t=25$ days: (b) cumulative KSP iterations per timestep by subsolver, (c) memory consumption (total across ranks and maximum per rank), and (d) cumulative walltime per timestep by subsolver, all versus total DOFs. Axes are log--log.}
-  \label{fig:performance}
 \end{figure}
