@@ -56,7 +56,10 @@
      inkscape:label="Vrstva 1"
      inkscape:groupmode="layer"
      id="layer1"><g
-       id="g15"><g
+       id="g15"
+       inkscape:export-filename="../femur_css.png"
+       inkscape:export-xdpi="500"
+       inkscape:export-ydpi="500"><g
          id="g11"
          transform="matrix(0.25386838,0,0,0.25386838,29.776766,9.1046116)"><g
            id="g10"
@@ -233,7 +236,10 @@
            x="87.597435"
            y="11.741246">A</tspan></text></g><g
        id="g13"
-       transform="translate(-22.030359,-51.64494)"><g
+       transform="translate(-22.030359,-51.64494)"
+       inkscape:export-filename="femur_boundary_conditions.png"
+       inkscape:export-xdpi="500"
+       inkscape:export-ydpi="500"><g
          id="g14"
          transform="translate(-77.106255,105.4568)"><image
            width="2.5378079"
