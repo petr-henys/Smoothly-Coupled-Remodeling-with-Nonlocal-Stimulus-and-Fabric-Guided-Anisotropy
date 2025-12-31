@@ -303,7 +303,7 @@ class FixedPointSolver:
                 }
             elif use_anderson:
                 x_new_s, aa = self.anderson.mix(x_old_s, x_raw_s)
-                aa["aa_off"] = False
+                aa.setdefault("aa_off", False)
             else:
                 # Pure damped Picard
                 beta = self.cfg.solver.beta

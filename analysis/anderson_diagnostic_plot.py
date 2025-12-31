@@ -35,7 +35,6 @@ from matplotlib.colors import Normalize
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 from analysis.plot_utils import (
-    FIGSIZE_DOUBLE_COLUMN,
     PLOT_LINEWIDTH,
     PUBLICATION_DPI,
     apply_style,
@@ -47,7 +46,7 @@ from analysis.plot_utils import (
 # Configuration
 # =============================================================================
 
-DEFAULT_RUN_DIR = Path(".results/")
+DEFAULT_RUN_DIR = Path(".results_box/")
 OUTPUT_FILE = Path("manuscript/images/anderson_diagnostic.png")
 
 # Colors for events

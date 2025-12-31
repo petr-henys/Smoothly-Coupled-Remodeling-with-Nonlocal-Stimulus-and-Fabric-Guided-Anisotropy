@@ -188,13 +188,33 @@ class Anderson:
         avg_diag = np.trace(H) / max(p, 1)
         lam_eff = self.lam * max(avg_diag, self._TINY)
 
-        # Solve for mixing weights
-        alpha, alpha_method = self._solve_weights(H, lam_eff)
         cond_H = self._cond_number(H, lam_eff)
 
         # Compute residual norm for diagnostics and restart logic
         r_norm = self._rel_step(x_old, x_raw, x_raw)
         self._recent_res.append(r_norm)
+
+        # Check for restart conditions *before* forming the AA step to avoid
+        # the "last toxic Anderson step" right before a restart.
+        restart_reason = self._check_restart(r_norm, cond_H)
+        if restart_reason:
+            x_picard = x_old + self.beta * residual
+            step_norm = self._rel_step(x_old, x_picard, x_raw)
+            info: Dict = {
+                "aa_hist": p - 1,
+                "condH": cond_H,
+                "r_norm": r_norm,
+                "step_norm": step_norm,
+                "alpha_method": "skipped",
+                "limited": False,
+                "restart_reason": restart_reason,
+                "accepted": True,  # For API compatibility
+                "aa_off": True,  # This iteration used damped Picard
+            }
+            return x_picard, info
+
+        # Solve for mixing weights (safe: restart not triggered)
+        alpha, alpha_method = self._solve_weights(H, lam_eff)
 
         # Compute accelerated iterate (Pulay/DIIS form)
         x_aa = self._compute_accelerated_iterate(x_old, residual, alpha, p)
@@ -210,9 +230,6 @@ class Anderson:
             x_aa = x_old + scale_factor * (x_aa - x_old)
             step_norm = self._rel_step(x_old, x_aa, x_raw)
 
-        # Check for restart conditions
-        restart_reason = self._check_restart(r_norm, cond_H)
-
         info: Dict = {
             "aa_hist": p - 1,
             "condH": cond_H,
@@ -222,6 +239,7 @@ class Anderson:
             "limited": limited,
             "restart_reason": restart_reason,
             "accepted": True,  # For API compatibility
+            "aa_off": False,
         }
 
         return x_aa, info
