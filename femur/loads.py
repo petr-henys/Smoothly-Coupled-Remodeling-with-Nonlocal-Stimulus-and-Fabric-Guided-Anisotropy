@@ -23,16 +23,6 @@ if TYPE_CHECKING:
 # Module-level logger for standalone functions
 _logger = get_logger(MPI.COMM_WORLD, name="femur_loads")
 
-def build_load(gait_data, force_vector):
-    gait_cycle = gait_data[:, 0]
-    gait_values = gait_data[:, 1]
-    full_data = np.zeros((len(gait_cycle), 4))
-    full_data[:, 0] = gait_cycle
-    full_data[:, 1] = force_vector[0] * gait_values
-    full_data[:, 2] = force_vector[1] * gait_values
-    full_data[:, 3] = force_vector[2] * gait_values
-    return full_data
-
 def vector_from_angles(magnitude: float, alpha_sag: float = 0.0, alpha_front: float = 0.0) -> np.ndarray:
     """Convert force magnitude [N] and angles [deg] to a 3D force vector."""
     a_sag, a_front = np.deg2rad([alpha_sag, alpha_front])
@@ -43,29 +33,6 @@ def vector_from_angles(magnitude: float, alpha_sag: float = 0.0, alpha_front: fl
     vector = np.array([t_sag * y, y, t_front * y])
     _logger.debug(f"vector_from_angles → mag={magnitude}, sag={alpha_sag}, front={alpha_front}, vec={vector}")
     return vector
-
-def gait_interpolator(gait_vs_force: np.ndarray) -> np.ndarray:
-    """Build a cubic interpolator mapping gait phase to a 3D force vector.
-
-    Expects an array shaped `(N, 4)` with columns `[gait, Fx, Fy, Fz]` and
-    returns `interp1d(gait) -> (Fx, Fy, Fz)`.
-    """
-    if not isinstance(gait_vs_force, np.ndarray):
-        raise TypeError("Input must be a numpy ndarray.")
-    if gait_vs_force.ndim != 2 or gait_vs_force.shape[1] != 4:
-        raise ValueError("Provide an (N,4) array of [gait, Fx, Fy, Fz].")
-    if gait_vs_force.shape[0] < 2:
-        raise ValueError("At least two data points are required for interpolation.")
-
-    # Sort by gait phase.
-    pts = gait_vs_force[gait_vs_force[:, 0].argsort()]
-    # Force components are interpolated as provided.
-    t_interp = interp1d(pts[:, 0], pts[:, 1:], axis=0, kind='cubic', fill_value='extrapolate')
-    return t_interp
-
-def orthoload2ISB(points: np.ndarray) -> np.ndarray:
-
-    return points[:, [0, 2, 3, 1]]
 
 class GaussianSurfaceLoad:
     """Base class for Gaussian-distributed surface loads."""

@@ -59,13 +59,11 @@ class FemurCSS:
         femur: pv.PolyData,
         head_line: NDArrayF,
         le_me: NDArrayF,
-        side: Literal["left", "right"] = "left",
+        axis_labels: dict[str, str],
         save_head_sphere: str | Path | None = None,
     ) -> None:
         self.femur = femur
-        self.side = side.lower()
-        if self.side not in {"left", "right"}:
-            raise ValueError("side must be 'left' or 'right'")
+        self.axis_labels = axis_labels
 
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
 
@@ -84,28 +82,19 @@ class FemurCSS:
         cp.transform(M, inplace=True)
         return cp
 
-    def save_axes_vtk(self, filename: str | Path = "css_axes.vtk") -> None:
-        point = pv.PolyData(np.asarray([self.fhc]))
-        for k, v in self.axes.items():
-            point[k] = v[np.newaxis, :]
-        point.save(str(filename))
-        self.logger.info("CSS axes written to %s", filename)
-
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
 
     def _build_axes(self, le_me: NDArrayF) -> None:
-        """Compute Y, Z (dependent on *side*) and X = Y × Z."""
+        """Compute Y, Z and X = Y × Z."""
         y = _unit(self.fhc - le_me.mean(axis=0))
 
         # vector along epicondylar line, projected to ⟂ Y
         le, me = le_me  # expected order [LE, ME]
-        line_vec = le - me
+        line_vec = me - le
         line_vec -= np.dot(line_vec, y) * y
         z = _unit(line_vec)
-        if self.side == "left":
-            z = -z
 
         x = _unit(np.cross(y, z))  # Y × Z ensures right‑handed system
 
@@ -169,5 +158,5 @@ if __name__ == "__main__":
     head_line = load_json_points(FemurPaths.HEAD_LINE_JSON)
     le_me_line = load_json_points(FemurPaths.LE_ME_LINE_JSON)
 
-    css = FemurCSS(femur_mesh, head_line, le_me_line, side="right")
+    css = FemurCSS(femur_mesh, head_line, le_me_line)
     css.save_axes_vtk(filename=FemurPaths.CSS_AXES_VTK)
