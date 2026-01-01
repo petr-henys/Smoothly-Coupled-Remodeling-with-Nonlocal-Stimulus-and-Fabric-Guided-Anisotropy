@@ -1,13 +1,21 @@
 \appendix
 \section{Robust Sylvester projectors for symmetric $3\times 3$ tensors}
 \label{sec:projector-robustness}
-\paragraph{Numerically robust stress evaluation.}
-Two numerical issues arise in practice: (i) the projector/eigenvector representation is ill-conditioned when $\widehat{\mathbf{A}}$ is (nearly) isotropic or transversely isotropic (repeated eigenvalues), and (ii) extreme anisotropy can cause overflow in $\exp(\mathbf{L})$ and large stiffness contrasts. We address (i) by evaluating spectral projectors $\mathbf{P}_i$ without eigenvectors using the Sylvester formula and smoothly blending it to the isotropic limit ($\mathbf{P}_i=\mathbf{I}/3$) and the transversely isotropic limit (unique projector plus an equal split of the orthogonal plane), which avoids basis flips and preserves $\sum_i \mathbf{P}_i=\mathbf{I}$. We address (ii) by clamping the deviatoric log-eigenvalues of $\mathbf{L}$ before exponentiation, consistently with the global anisotropy bounds $m_{\min},m_{\max}$, and by using a smooth, scale-aware gate that blends the orthotropic stress to the isotropic baseline as $\widehat{\mathbf{A}}\to\mathbf{I}$, keeping $\boldsymbol{\sigma}(\mathbf{u},\rho,\mathbf{L})$ continuous through eigenvalue degeneracy. Figure \ref{fig:sylvester_projectors} summarizes these limits and the associated conditioning behavior.
-
+Two numerical issues arise in practice: (i) the projector/eigenvector representation is ill-conditioned when $\widehat{\mathbf{A}}$ is (nearly) isotropic or transversely isotropic (repeated eigenvalues), and (ii) extreme anisotropy can cause overflow in $\exp(\mathbf{L})$ and large stiffness contrasts.
+We address (i) by evaluating spectral projectors $\mathbf{P}_i$ without eigenvectors using the Sylvester formula and smoothly blending it to the isotropic limit ($\mathbf{P}_i=\mathbf{I}/3$) and the transversely isotropic limit (unique projector plus an equal split of the orthogonal plane), which avoids basis flips and preserves $\sum_i \mathbf{P}_i=\mathbf{I}$.
+We address (ii) by clamping the deviatoric log-eigenvalues of $\mathbf{L}$ before exponentiation, consistently with the global anisotropy bounds $m_{\min},m_{\max}$, and by using a smooth, scale-aware gate that blends the orthotropic stress to the isotropic baseline as $\widehat{\mathbf{A}}\to\mathbf{I}$, keeping $\boldsymbol{\sigma}(\mathbf{u},\rho,\mathbf{L})$ continuous through eigenvalue degeneracy.
+Figure \ref{fig:sylvester_projectors} summarizes these limits and the associated conditioning behavior.
 \begin{figure}[htbp]
     \centering
     \includegraphics[width=\textwidth]{images/sylvester_projectors.png}
-    \caption{Robust Sylvester projectors for symmetric $3\times3$ tensors. (a) In the transversely isotropic (pair-degenerate) limit, rank-one eigenvector projectors in the degenerate plane depend on an arbitrary in-plane basis rotation, while the robust construction assigns an equal split. (b) In the isotropic limit, rank-one eigenvector projectors depend on the arbitrary orthonormal basis; the robust limit yields $\mathbf{I}/3$. (c) Near a pair-degeneracy, the raw Sylvester formula becomes ill-conditioned; denominator regularization and the blended TI limit keep the (unique) plane projector $P_2+P_3$ accurate. (d) Enforcing $P_1+P_2+P_3=\mathbf{I}$ removes drift from finite precision. (e) Smooth degeneracy weights transition from the fully anisotropic regime to the TI split as the eigenvalue gap shrinks. (f) The robust construction smoothly equalizes the two degenerate projectors, $\|P_2-P_3\|_F\to0$, avoiding basis flips.}
+    \caption{Robust Sylvester projectors for symmetric $3\times3$ tensors.
+(a) \textbf{TI limit (basis dependence):} In the transversely isotropic limit ($\lambda_2 \approx \lambda_3$), spectral projectors computed via eigendecomposition oscillate depending on the arbitrary choice of basis in the degenerate plane. The robust construction enforces a symmetric split, yielding a unique, invariant result.
+(b) \textbf{Isotropic limit (non-uniqueness):} For equal eigenvalues, standard rank-one eigenprojectors are random (dependent on noise/basis). The robust limit correctly yields $\mathbf{I}/3$.
+(c) \textbf{Conditioning near TI:} The raw Sylvester formula becomes singular as eigenvalue gaps vanish.
+The robust method remains bounded; although the enforcement of the partition of unity distributes the regularization residual (leading to a finite approximation error in the transition regime), it ensures numerical stability and prevents divergence.
+(d) \textbf{Partition of unity:} Explicitly enforcing $\sum \mathbf{P}_i=\mathbf{I}$ removes the drift associated with finite-precision arithmetic.
+(e) \textbf{Regime blending:} Smooth weights transition from the full anisotropic formula to the TI split as the gap shrinks.
+(f) \textbf{Robust equalization:} The robust construction forces $\|\mathbf{P}_2-\mathbf{P}_3\|_F\to0$ in the degenerate limit, effectively avoiding basis flips inherent to standard eigensolvers.}
     \label{fig:sylvester_projectors}
 \end{figure}
 
@@ -19,9 +27,9 @@ The spectral decomposition reads
 \mathbf{P}_i=\mathbf{n}_i\otimes \mathbf{n}_i,\qquad
 \sum_{i=1}^{3}\mathbf{P}_i=\mathbf{I},
 \end{equation}
-where $\mathbf{P}_i$ are orthogonal projectors. In anisotropic settings, the projectors can be obtained
+where $\mathbf{P}_i$ are orthogonal projectors.
+In anisotropic settings, the projectors can be obtained
 without explicit eigenvectors by Sylvester's (Lagrange) interpolation.
-
 \paragraph{Anisotropic (three distinct eigenvalues).}
 For mutually distinct $\lambda_i$, the Sylvester projectors are
 \begin{equation}
@@ -57,9 +65,11 @@ To enforce the partition of unity exactly, we apply the symmetric correction
 
 \paragraph{Degeneracies: transverse and full isotropy.}
 When two eigenvalues coalesce (transverse isotropy), only the projector onto the simple eigenvalue is unique,
-whereas any orthonormal basis in the associated two-dimensional eigenspace is admissible. To avoid arbitrary
+whereas any orthonormal basis in the associated two-dimensional eigenspace is admissible.
+To avoid arbitrary
 basis selection, we introduce transverse-isotropic (TI) projector sets by splitting the degenerate subspace
-symmetrically. For example, if $\lambda_2\approx \lambda_3$ (pair $(23)$), we define
+symmetrically.
+For example, if $\lambda_2\approx \lambda_3$ (pair $(23)$), we define
 \begin{equation}
 \label{eq:TI_split_23}
 \mathbf{P}_1^{(23)}=\mathbf{P}_1^{\mathrm{full}},\qquad
