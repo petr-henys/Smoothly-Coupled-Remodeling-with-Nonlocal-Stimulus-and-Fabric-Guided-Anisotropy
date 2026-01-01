@@ -28,19 +28,23 @@ class GradientType(Enum):
 class PressureLoadSpec:
     """Pressure load specification.
     
-    For single-wall loading (backward compatible):
+    Each PressureLoadSpec knows which surface(s) it applies to:
+    
+    For single-wall loading:
+        - Set `load_tag` to the facet tag (e.g., BoxMeshBuilder.TAG_TOP)
         - Use `direction` to specify the traction direction
         
     For multi-wall loading (e.g., hydrostatic pressure):
         - Use `wall_tags` to specify which walls receive load
         - Use `wall_directions` to specify inward normal for each wall
-        - If `wall_tags` is empty, uses single-wall mode with `direction`
+        - `load_tag` is ignored when `wall_tags` is non-empty
     
     Attributes:
         magnitude: Pressure magnitude [MPa] (positive = compression into surface)
+        load_tag: Facet tag for single-wall loading. Required unless wall_tags is set.
         direction: Load direction as unit vector (default: -z for compression).
-                   Used when wall_tags is empty (single-wall mode).
-        wall_tags: List of facet tags for walls to load (empty = use direction).
+                   Used in single-wall mode (when wall_tags is empty).
+        wall_tags: Tuple of facet tags for multi-wall loading. Overrides load_tag.
         wall_directions: Direction (inward normal) for each wall in wall_tags.
                          Must have same length as wall_tags.
         gradient_axis: If not None, apply gradient along this axis (0=x, 1=y, 2=z)
@@ -49,8 +53,9 @@ class PressureLoadSpec:
         box_extent: (min_coord, max_coord) along gradient axis for normalization
     """
     magnitude: float = 1.0
+    load_tag: int | None = None  # Facet tag for single-wall loading
     direction: tuple[float, float, float] = (0.0, 0.0, -1.0)
-    wall_tags: tuple[int, ...] = ()  # Empty = single-wall mode using direction
+    wall_tags: tuple[int, ...] = ()  # Non-empty = multi-wall mode
     wall_directions: tuple[tuple[float, float, float], ...] = ()  # One per wall_tag
     gradient_axis: int | None = None  # None = uniform, 0=x, 1=y
     gradient_type: GradientType = GradientType.LINEAR
@@ -58,12 +63,26 @@ class PressureLoadSpec:
     box_extent: tuple[float, float] = (0.0, 10.0)  # (min, max) along gradient axis
     
     def __post_init__(self) -> None:
-        """Validate wall_tags and wall_directions have matching lengths."""
+        """Validate configuration."""
         if len(self.wall_tags) != len(self.wall_directions):
             raise ValueError(
                 f"wall_tags ({len(self.wall_tags)}) and wall_directions "
                 f"({len(self.wall_directions)}) must have the same length"
             )
+        # In single-wall mode, load_tag must be set
+        if not self.wall_tags and self.load_tag is None:
+            raise ValueError(
+                "Either load_tag must be set (single-wall) or wall_tags must be "
+                "non-empty (multi-wall)"
+            )
+    
+    def get_all_tags(self) -> tuple[int, ...]:
+        """Return all facet tags this spec applies to."""
+        if self.wall_tags:
+            return self.wall_tags
+        elif self.load_tag is not None:
+            return (self.load_tag,)
+        return ()
 
 
 @dataclass
@@ -87,46 +106,40 @@ class BoxLoader:
     Compatible with the Remodeller framework via the same interface as Loader.
     Traction values are stored ONLY at DOFs on the loaded surfaces.
     
-    Supports:
-    - Single-wall loading (backward compatible): pass single load_tag
-    - Multi-wall loading (e.g., hydrostatic): pass multiple load_tags
+    The loader automatically determines which surfaces need loading from the
+    PressureLoadSpec in each loading case. Each spec defines its own load_tag
+    (single-wall) or wall_tags (multi-wall).
     """
     
     def __init__(
         self, 
         mesh: dmesh.Mesh, 
         facet_tags: dmesh.MeshTags,
-        load_tags: int | Sequence[int],
         loading_cases: List[BoxLoadingCase],
     ):
         """Initialize box loader.
         
         Loading cases are precomputed immediately during initialization.
+        Tags are automatically extracted from each loading case's PressureLoadSpec.
         
         Args:
             mesh: DOLFINx mesh
             facet_tags: Mesh tags for boundary facets
-            load_tags: Tag(s) for loaded surfaces (e.g., BoxMeshBuilder.TAG_TOP,
-                       or [TAG_TOP, TAG_X_MAX, TAG_Y_MAX] for triaxial).
-                       Can be single int (backward compatible) or sequence.
-            loading_cases: List of loading cases to precompute
+            loading_cases: List of loading cases to precompute. Each case's
+                          PressureLoadSpec defines which surface(s) it applies to.
         """
         self.mesh = mesh
         self.comm = mesh.comm
         self.rank = self.comm.rank
         self.facet_tags = facet_tags
+        self.gdim = mesh.geometry.dim
+        self._loading_cases = loading_cases
         
-        # Normalize to tuple for uniform handling
-        if isinstance(load_tags, int):
-            self.load_tags: Tuple[int, ...] = (load_tags,)
-        else:
-            self.load_tags = tuple(load_tags)
+        # Extract all unique tags from loading cases
+        self.load_tags = self._extract_tags_from_cases(loading_cases)
         
         # Backward compatibility: expose first tag as load_tag
         self.load_tag = self.load_tags[0] if self.load_tags else 0
-        
-        self.gdim = mesh.geometry.dim
-        self._loading_cases = loading_cases
         
         # Vector function space for traction (P1, 3D)
         P1_vec = basix.ufl.element("Lagrange", mesh.basix_cell(), 1, shape=(self.gdim,))
@@ -148,6 +161,15 @@ class BoxLoader:
         
         # Precompute all loading cases immediately
         self.precompute_loading_cases(self._loading_cases)
+    
+    @staticmethod
+    def _extract_tags_from_cases(loading_cases: List[BoxLoadingCase]) -> Tuple[int, ...]:
+        """Extract all unique facet tags from loading cases."""
+        tags: set[int] = set()
+        for case in loading_cases:
+            if case.pressure is not None:
+                tags.update(case.pressure.get_all_tags())
+        return tuple(sorted(tags))
     
     @property
     def loading_cases(self) -> List[BoxLoadingCase]:
@@ -354,18 +376,19 @@ class BoxLoader:
                         dof_idx = (owned_blocks[:, None] * bs + np.arange(bs, dtype=np.int32)[None, :]).ravel()
                         values[dof_idx] = wall_values
                 else:
-                    # Single-wall mode (backward compatible): use direction on all load_tags
+                    # Single-wall mode: use load_tag from the spec
                     d = np.array(spec.direction, dtype=np.float64)
                     d = d / np.linalg.norm(d)
                     
-                    for tag in self.load_tags:
-                        owned_blocks = self._owned_blocks_per_tag[tag]
-                        n_owned = self._n_owned_per_tag[tag]
-                        x_owned = self._x_owned_per_tag[tag]
-                        
-                        if n_owned == 0:
-                            continue
-                        
+                    tag = spec.load_tag
+                    if tag is None or tag not in self._owned_blocks_per_tag:
+                        continue
+                    
+                    owned_blocks = self._owned_blocks_per_tag[tag]
+                    n_owned = self._n_owned_per_tag[tag]
+                    x_owned = self._x_owned_per_tag[tag]
+                    
+                    if n_owned > 0:
                         if spec.gradient_axis is None:
                             # Uniform pressure
                             traction_vec = p * d

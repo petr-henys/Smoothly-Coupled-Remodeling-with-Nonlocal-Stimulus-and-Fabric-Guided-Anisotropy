@@ -161,17 +161,18 @@ class TestBoxLoader:
     def test_loader_creation(self, box_mesh_and_tags):
         """Test loader can be created."""
         domain, facet_tags = box_mesh_and_tags
-        cases = [BoxLoadingCase(name="test", day_cycles=1.0)]
-        loader = BoxLoader(domain, facet_tags, load_tags=BoxMeshBuilder.TAG_TOP, loading_cases=cases)
+        cases = [get_single_pressure_case(pressure=1.0, load_tag=BoxMeshBuilder.TAG_TOP)]
+        loader = BoxLoader(domain, facet_tags, loading_cases=cases)
         
         assert loader is not None
         assert loader.traction is not None
+        assert loader.load_tags == (BoxMeshBuilder.TAG_TOP,)
         
     def test_set_pressure(self, box_mesh_and_tags):
         """Test setting uniform pressure."""
         domain, facet_tags = box_mesh_and_tags
-        cases = [BoxLoadingCase(name="test", day_cycles=1.0)]
-        loader = BoxLoader(domain, facet_tags, load_tags=BoxMeshBuilder.TAG_TOP, loading_cases=cases)
+        cases = [get_single_pressure_case(pressure=1.0, load_tag=BoxMeshBuilder.TAG_TOP)]
+        loader = BoxLoader(domain, facet_tags, loading_cases=cases)
         
         loader.set_pressure(1.0, direction=(0.0, 0.0, -1.0))
         
@@ -190,11 +191,11 @@ class TestBoxLoader:
             BoxLoadingCase(
                 name="test_case",
                 day_cycles=1.0,
-                pressure=PressureLoadSpec(magnitude=2.0),
+                pressure=PressureLoadSpec(magnitude=2.0, load_tag=BoxMeshBuilder.TAG_TOP),
             ),
         ]
         
-        loader = BoxLoader(domain, facet_tags, load_tags=BoxMeshBuilder.TAG_TOP, loading_cases=cases)
+        loader = BoxLoader(domain, facet_tags, loading_cases=cases)
         
         # Should be able to set the case (already precomputed)
         loader.set_loading_case("test_case")
@@ -202,8 +203,8 @@ class TestBoxLoader:
     def test_set_loading_case_invalid(self, box_mesh_and_tags):
         """Test that invalid case name raises error."""
         domain, facet_tags = box_mesh_and_tags
-        cases = [BoxLoadingCase(name="test", day_cycles=1.0)]
-        loader = BoxLoader(domain, facet_tags, load_tags=BoxMeshBuilder.TAG_TOP, loading_cases=cases)
+        cases = [get_single_pressure_case(pressure=1.0, load_tag=BoxMeshBuilder.TAG_TOP)]
+        loader = BoxLoader(domain, facet_tags, loading_cases=cases)
         
         with pytest.raises(KeyError):
             loader.set_loading_case("nonexistent_case")
@@ -283,13 +284,14 @@ class TestBoxScenarios:
         
         case = get_parabolic_pressure_case(
             pressure=1.0,
+            load_tag=BoxMeshBuilder.TAG_TOP,
             gradient_axis=0,
             center_factor=2.0,
             edge_factor=0.5,
             box_extent=(0.0, 10.0),
         )
         
-        loader = BoxLoader(domain, facet_tags, load_tags=BoxMeshBuilder.TAG_TOP, loading_cases=[case])
+        loader = BoxLoader(domain, facet_tags, loading_cases=[case])
         loader.set_loading_case(case.name)
         
         # Check that traction is non-zero and varies spatially
@@ -313,22 +315,20 @@ class TestMultiWallLoading:
     """Tests for multi-wall loading (hydrostatic, triaxial)."""
     
     def test_multi_wall_loader_creation(self, box_mesh_and_tags):
-        """Test loader can be created with multiple load tags."""
+        """Test loader can be created with multi-wall loading case."""
         domain, facet_tags = box_mesh_and_tags
+        from box.scenarios import get_hydrostatic_pressure_case
         
-        # Use three walls for triaxial loading
-        load_tags = [
-            BoxMeshBuilder.TAG_TOP,
-            BoxMeshBuilder.TAG_X_MAX,
-            BoxMeshBuilder.TAG_Y_MAX,
-        ]
-        
-        cases = [BoxLoadingCase(name="test", day_cycles=1.0)]
-        loader = BoxLoader(domain, facet_tags, load_tags=load_tags, loading_cases=cases)
+        # Hydrostatic case uses three walls
+        cases = [get_hydrostatic_pressure_case(pressure=1.0)]
+        loader = BoxLoader(domain, facet_tags, loading_cases=cases)
         
         assert loader is not None
+        # Tags are automatically extracted from the loading case
         assert len(loader.load_tags) == 3
-        assert loader.load_tag == BoxMeshBuilder.TAG_TOP  # Backward compat
+        assert BoxMeshBuilder.TAG_TOP in loader.load_tags
+        assert BoxMeshBuilder.TAG_X_MAX in loader.load_tags
+        assert BoxMeshBuilder.TAG_Y_MAX in loader.load_tags
         
     def test_hydrostatic_pressure_case(self):
         """Test hydrostatic pressure case creation."""
@@ -365,15 +365,9 @@ class TestMultiWallLoading:
         
         domain, facet_tags = box_mesh_and_tags
         
-        # Create multi-wall loader
-        load_tags = [
-            BoxMeshBuilder.TAG_TOP,
-            BoxMeshBuilder.TAG_X_MAX,
-            BoxMeshBuilder.TAG_Y_MAX,
-        ]
-        
+        # Tags are extracted automatically from the loading case
         case = get_hydrostatic_pressure_case(pressure=1.0)
-        loader = BoxLoader(domain, facet_tags, load_tags=load_tags, loading_cases=[case])
+        loader = BoxLoader(domain, facet_tags, loading_cases=[case])
         loader.set_loading_case(case.name)
         
         # Check traction has non-zero values on all three walls
@@ -390,6 +384,14 @@ class TestMultiWallLoading:
                 magnitude=1.0,
                 wall_tags=(1, 2, 3),
                 wall_directions=((1, 0, 0), (0, 1, 0)),  # Only 2 directions for 3 tags
+            )
+    
+    def test_pressure_load_spec_requires_load_tag_or_wall_tags(self):
+        """Test that either load_tag or wall_tags must be set."""
+        with pytest.raises(ValueError, match="Either load_tag.*or wall_tags"):
+            PressureLoadSpec(
+                magnitude=1.0,
+                # Neither load_tag nor wall_tags set
             )
 
 
@@ -428,7 +430,7 @@ class TestBoxFactory:
         rho.x.array[:] = 1.0
         rho.x.scatter_forward()
         
-        loader = BoxLoader(domain, facet_tags, load_tags=BoxMeshBuilder.TAG_TOP, loading_cases=[BoxLoadingCase(name="test", day_cycles=1.0)])
+        loader = BoxLoader(domain, facet_tags, loading_cases=[get_single_pressure_case(pressure=1.0, load_tag=BoxMeshBuilder.TAG_TOP)])
         
         mech = factory.create_mechanics_solver(u, rho, L, loader)
         
@@ -452,7 +454,7 @@ class TestBoxModelIntegration:
         
         # Create loader with loading cases
         loading_cases = [get_single_pressure_case(pressure=1.0)]
-        loader = BoxLoader(domain, facet_tags, load_tags=BoxMeshBuilder.TAG_TOP, loading_cases=loading_cases)
+        loader = BoxLoader(domain, facet_tags, loading_cases=loading_cases)
         
         # Create factory
         factory = BoxSolverFactory(box_cfg)
@@ -473,7 +475,7 @@ class TestBoxModelIntegration:
         domain, facet_tags = box_mesh_and_tags
         
         loading_cases = [get_single_pressure_case(pressure=2.0)]
-        loader = BoxLoader(domain, facet_tags, load_tags=BoxMeshBuilder.TAG_TOP, loading_cases=loading_cases)
+        loader = BoxLoader(domain, facet_tags, loading_cases=loading_cases)
         factory = BoxSolverFactory(box_cfg)
         
         with Remodeller(box_cfg, loader=loader, factory=factory) as remodeller:
@@ -534,7 +536,7 @@ class TestBoxModelIntegration:
         )
         
         loading_cases = [get_single_pressure_case(pressure=1.0)]
-        loader = BoxLoader(domain, facet_tags, load_tags=BoxMeshBuilder.TAG_TOP, loading_cases=loading_cases)
+        loader = BoxLoader(domain, facet_tags, loading_cases=loading_cases)
         factory = BoxSolverFactory(cfg)
         
         with Remodeller(cfg, loader=loader, factory=factory) as remodeller:

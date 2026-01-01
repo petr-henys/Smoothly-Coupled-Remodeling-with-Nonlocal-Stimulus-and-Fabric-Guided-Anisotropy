@@ -14,10 +14,12 @@ from __future__ import annotations
 from typing import List
 
 from box.loader import BoxLoadingCase, GradientType, PressureLoadSpec
+from box.mesh import BoxMeshBuilder
 
 
 def get_single_pressure_case(
     pressure: float = 1.0,
+    load_tag: int = BoxMeshBuilder.TAG_TOP,
     name: str = "static_compression",
     day_cycles: float = 1.0,
 ) -> BoxLoadingCase:
@@ -25,6 +27,7 @@ def get_single_pressure_case(
     
     Args:
         pressure: Pressure magnitude [MPa] (positive = compression)
+        load_tag: Facet tag for loaded surface (default: TAG_TOP)
         name: Case name
         day_cycles: Loading cycles per day
         
@@ -36,6 +39,7 @@ def get_single_pressure_case(
         day_cycles=day_cycles,
         pressure=PressureLoadSpec(
             magnitude=pressure,
+            load_tag=load_tag,
             direction=(0.0, 0.0, -1.0),  # Compression in -z
         ),
     )
@@ -43,6 +47,7 @@ def get_single_pressure_case(
 
 def get_gradient_pressure_case(
     pressure: float = 1.0,
+    load_tag: int = BoxMeshBuilder.TAG_TOP,
     gradient_axis: int = 0,
     gradient_range: tuple[float, float] = (0.5, 1.5),
     gradient_type: GradientType = GradientType.LINEAR,
@@ -57,6 +62,7 @@ def get_gradient_pressure_case(
     
     Args:
         pressure: Base pressure magnitude [MPa]
+        load_tag: Facet tag for loaded surface (default: TAG_TOP)
         gradient_axis: Axis for gradient (0=x, 1=y)
         gradient_range: (min_factor, max_factor) for pressure variation
         gradient_type: Type of gradient (LINEAR, PARABOLIC, BENDING)
@@ -72,6 +78,7 @@ def get_gradient_pressure_case(
         day_cycles=day_cycles,
         pressure=PressureLoadSpec(
             magnitude=pressure,
+            load_tag=load_tag,
             direction=(0.0, 0.0, -1.0),
             gradient_axis=gradient_axis,
             gradient_type=gradient_type,
@@ -83,6 +90,7 @@ def get_gradient_pressure_case(
 
 def get_parabolic_pressure_case(
     pressure: float = 1.0,
+    load_tag: int = BoxMeshBuilder.TAG_TOP,
     gradient_axis: int = 0,
     center_factor: float = 2.0,
     edge_factor: float = 0.5,
@@ -100,6 +108,7 @@ def get_parabolic_pressure_case(
     
     Args:
         pressure: Base pressure magnitude [MPa]
+        load_tag: Facet tag for loaded surface (default: TAG_TOP)
         gradient_axis: Axis for parabola (0=x, 1=y)
         center_factor: Factor at center (peak)
         edge_factor: Factor at edges (min)
@@ -115,6 +124,7 @@ def get_parabolic_pressure_case(
         day_cycles=day_cycles,
         pressure=PressureLoadSpec(
             magnitude=pressure,
+            load_tag=load_tag,
             direction=(0.0, 0.0, -1.0),
             gradient_axis=gradient_axis,
             gradient_type=GradientType.PARABOLIC,
@@ -126,6 +136,7 @@ def get_parabolic_pressure_case(
 
 def get_bending_like_case(
     pressure: float = 1.0,
+    load_tag: int = BoxMeshBuilder.TAG_TOP,
     gradient_axis: int = 0,
     tension_factor: float = 0.2,
     compression_factor: float = 1.8,
@@ -143,6 +154,7 @@ def get_bending_like_case(
     
     Args:
         pressure: Base pressure magnitude [MPa]
+        load_tag: Facet tag for loaded surface (default: TAG_TOP)
         gradient_axis: Axis across which load varies (0=x, 1=y)
         tension_factor: Factor on low-load side (< 1.0)
         compression_factor: Factor on high-load side (> 1.0)
@@ -158,6 +170,7 @@ def get_bending_like_case(
         day_cycles=day_cycles,
         pressure=PressureLoadSpec(
             magnitude=pressure,
+            load_tag=load_tag,
             direction=(0.0, 0.0, -1.0),
             gradient_axis=gradient_axis,
             gradient_type=GradientType.LINEAR,  # Linear gives bending-like distribution
@@ -167,13 +180,18 @@ def get_bending_like_case(
     )
 
 
-def get_physiological_compression_cases() -> List[BoxLoadingCase]:
+def get_physiological_compression_cases(
+    load_tag: int = BoxMeshBuilder.TAG_TOP,
+) -> List[BoxLoadingCase]:
     """Standard physiological-like compression scenarios.
     
     Simulates daily loading typical of trabecular bone:
     - Low load: resting/low activity periods
     - Medium load: normal walking
     - High load: stair climbing, jumping
+    
+    Args:
+        load_tag: Facet tag for loaded surface (default: TAG_TOP)
     
     Returns:
         List of BoxLoadingCase for physiological loading
@@ -184,6 +202,7 @@ def get_physiological_compression_cases() -> List[BoxLoadingCase]:
         day_cycles=0.3,  # 30% of time at low load
         pressure=PressureLoadSpec(
             magnitude=0.5,  # 0.5 MPa
+            load_tag=load_tag,
             direction=(0.0, 0.0, -1.0),
         ),
     )
@@ -194,6 +213,7 @@ def get_physiological_compression_cases() -> List[BoxLoadingCase]:
         day_cycles=0.5,  # 50% of time at medium load
         pressure=PressureLoadSpec(
             magnitude=2.0,  # 2 MPa
+            load_tag=load_tag,
             direction=(0.0, 0.0, -1.0),
         ),
     )
@@ -204,6 +224,7 @@ def get_physiological_compression_cases() -> List[BoxLoadingCase]:
         day_cycles=0.2,  # 20% of time at high load
         pressure=PressureLoadSpec(
             magnitude=5.0,  # 5 MPa
+            load_tag=load_tag,
             direction=(0.0, 0.0, -1.0),
         ),
     )
@@ -211,10 +232,15 @@ def get_physiological_compression_cases() -> List[BoxLoadingCase]:
     return [case_low, case_medium, case_high]
 
 
-def get_overload_scenarios() -> List[BoxLoadingCase]:
+def get_overload_scenarios(
+    load_tag: int = BoxMeshBuilder.TAG_TOP,
+) -> List[BoxLoadingCase]:
     """Overload scenarios for studying hypertrophy.
     
     Simulates increased mechanical loading to study bone formation.
+    
+    Args:
+        load_tag: Facet tag for loaded surface (default: TAG_TOP)
     
     Returns:
         List of BoxLoadingCase for overload conditions
@@ -224,6 +250,7 @@ def get_overload_scenarios() -> List[BoxLoadingCase]:
         day_cycles=1.0,
         pressure=PressureLoadSpec(
             magnitude=8.0,  # 8 MPa - above normal physiological
+            load_tag=load_tag,
             direction=(0.0, 0.0, -1.0),
         ),
     )
@@ -231,10 +258,15 @@ def get_overload_scenarios() -> List[BoxLoadingCase]:
     return [case_overload]
 
 
-def get_disuse_scenarios() -> List[BoxLoadingCase]:
+def get_disuse_scenarios(
+    load_tag: int = BoxMeshBuilder.TAG_TOP,
+) -> List[BoxLoadingCase]:
     """Disuse scenarios for studying bone loss.
     
     Simulates reduced mechanical loading (bed rest, microgravity).
+    
+    Args:
+        load_tag: Facet tag for loaded surface (default: TAG_TOP)
     
     Returns:
         List of BoxLoadingCase for disuse conditions  
@@ -244,6 +276,7 @@ def get_disuse_scenarios() -> List[BoxLoadingCase]:
         day_cycles=1.0,
         pressure=PressureLoadSpec(
             magnitude=0.1,  # 0.1 MPa - minimal loading
+            load_tag=load_tag,
             direction=(0.0, 0.0, -1.0),
         ),
     )
@@ -255,6 +288,7 @@ def get_cyclic_loading_cases(
     pressure_min: float = 0.5,
     pressure_max: float = 3.0,
     n_levels: int = 3,
+    load_tag: int = BoxMeshBuilder.TAG_TOP,
 ) -> List[BoxLoadingCase]:
     """Generate multiple loading levels for cycle-weighted stimulus.
     
@@ -265,6 +299,7 @@ def get_cyclic_loading_cases(
         pressure_min: Minimum pressure [MPa]
         pressure_max: Maximum pressure [MPa]
         n_levels: Number of loading levels
+        load_tag: Facet tag for loaded surface (default: TAG_TOP)
         
     Returns:
         List of BoxLoadingCase with varying pressure levels
@@ -280,6 +315,7 @@ def get_cyclic_loading_cases(
             day_cycles=1.0 / n_levels,  # Equal weighting
             pressure=PressureLoadSpec(
                 magnitude=p,
+                load_tag=load_tag,
                 direction=(0.0, 0.0, -1.0),
             ),
         ))
@@ -302,9 +338,7 @@ def get_hydrostatic_pressure_case(
     Note: Bottom (z=0) is typically fixed (Dirichlet), and X_MIN/Y_MIN
     are often constrained by symmetry. Adjust wall_tags as needed.
     
-    To use this, the BoxLoader must be initialized with all three load_tags:
-        load_tags = [BoxMeshBuilder.TAG_TOP, BoxMeshBuilder.TAG_X_MAX, 
-                     BoxMeshBuilder.TAG_Y_MAX]
+    The BoxLoader will automatically extract the required tags from this case.
     
     Args:
         pressure: Pressure magnitude [MPa] (positive = compression)
@@ -314,8 +348,6 @@ def get_hydrostatic_pressure_case(
     Returns:
         BoxLoadingCase for hydrostatic pressure (triaxial compression)
     """
-    from box.mesh import BoxMeshBuilder
-    
     return BoxLoadingCase(
         name=name,
         day_cycles=day_cycles,
@@ -351,8 +383,7 @@ def get_triaxial_pressure_case(
     
     For hydrostatic stress state, use equal pressures on all axes.
     
-    Note: This uses a single magnitude scaled differently per wall. For truly
-    independent magnitudes, create separate BoxLoadingCase instances.
+    The BoxLoader will automatically extract the required tags from this case.
     
     Args:
         pressure_z: Axial pressure [MPa] (z-direction, main loading axis)
@@ -364,8 +395,6 @@ def get_triaxial_pressure_case(
     Returns:
         BoxLoadingCase for triaxial loading
     """
-    from box.mesh import BoxMeshBuilder
-    
     # We use magnitude=1 and encode actual pressures in direction vectors
     # Direction = pressure_i * unit_inward_normal
     return BoxLoadingCase(

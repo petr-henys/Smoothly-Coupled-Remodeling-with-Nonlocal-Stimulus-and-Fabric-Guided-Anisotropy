@@ -33,7 +33,6 @@ from simulation.params import create_config, load_default_params
 from simulation.progress import ProgressReporter
 from simulation.storage import UnifiedStorage
 
-
 def main() -> None:
     """Run the box model bone remodeling simulation."""
     comm = MPI.COMM_WORLD
@@ -78,6 +77,7 @@ def main() -> None:
     # Create parabolic loading case (non-uniform to drive interesting adaptation)
     loading_cases = [get_parabolic_pressure_case(
         pressure=box["pressure"],
+        load_tag=BoxMeshBuilder.TAG_TOP,
         gradient_axis=box["gradient_axis"],
         center_factor=box["center_factor"],
         edge_factor=box["edge_factor"],
@@ -88,8 +88,8 @@ def main() -> None:
         logger.info(f"Loading: parabolic pressure, base = {box['pressure']} MPa")
         logger.info(f"  Along axis {box['gradient_axis']}: edge={box['edge_factor']*box['pressure']:.2f}, center={box['center_factor']*box['pressure']:.2f} MPa")
 
-    # Create pressure loader with precomputed loading cases
-    loader = BoxLoader(domain, facet_tags, load_tag=BoxMeshBuilder.TAG_TOP, loading_cases=loading_cases)
+    # Create pressure loader - tags are automatically extracted from loading cases
+    loader = BoxLoader(domain, facet_tags, loading_cases=loading_cases)
 
     # Create solver factory
     factory = BoxSolverFactory(cfg)
