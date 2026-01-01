@@ -1,5 +1,14 @@
 \section*{Governing equations}
 \label{sec:strong-forms-nd}
+
+\paragraph{Smooth regularization operators.}
+To ensure numerical stability and differentiability, we employ a consistent set of smooth regularization operators parameterized by a smoothing width $\varepsilon > 0$. We define the smooth absolute value as $|x|_\varepsilon := \sqrt{x^2+\varepsilon^2}-\varepsilon$. Based on this, we define smooth maximum, minimum, and clamping operators:
+\begin{align*}
+\operatorname{smax}(x,y;\varepsilon) &:= \tfrac{1}{2}(x+y+|x-y|_\varepsilon), \\
+\operatorname{smin}(x,y;\varepsilon) &:= \tfrac{1}{2}(x+y-|x-y|_\varepsilon), \\
+\operatorname{sclamp}(x,a,b;\varepsilon) &:= \operatorname{smin}(\operatorname{smax}(x,a;\varepsilon),b;\varepsilon).
+\end{align*}
+
 \paragraph{Units and scaling.}
 We use the unit system: length [mm], time [day], stress/energy [MPa], and density [g/cm$^3$]. The stimulus $S$ is dimensionless, the apparent density $\rho$ is in g/cm$^3$, and fabric quantities ($\mathbf{A}$, $\mathbf{L}$) are dimensionless. The boundary partition is $\partial\Omega=\Gamma_D\cup\Gamma_N$ with outward unit normal $\mathbf{n}$.
 
@@ -47,7 +56,7 @@ where $w(\widetilde{\rho})$ is a smooth interpolation function (smoothstep) tran
 For later use (e.g.\ fabric-guided constitutive evaluation) we remove isotropic scaling in log space and bound the resulting eigenvalue ratios. Let $\mathrm{sym}(\mathbf{L})=\sum_{i=1}^3 \ell_i\,\mathbf{P}_i$ with $\bar\ell:=\tfrac13\sum_i \ell_i$ and define
 \begin{equation}\label{eq:Ahat-blend-nd}
 \widehat{\mathbf{A}} \;:=\; \sum_{i=1}^3 m_i\,\mathbf{P}_i,\qquad
-m_i \;:=\; \exp\!\Big(\min\!\big\{d_{\max},\max\{-d_{\max},\,\ell_i-\bar\ell\}\big\}\Big),\qquad
+m_i \;:=\; \exp\!\Big(\operatorname{sclamp}(\ell_i-\bar\ell, -d_{\max}, d_{\max}; \varepsilon)\Big),\qquad
 d_{\max}:=\ln\!\Big(\max\{m_{\max},1/m_{\min}\}\Big),
 \end{equation}
 which is symmetric positive definite. If the bound is inactive then $\det(\widehat{\mathbf{A}})=1$, while clamping enforces $m_i\in[\exp(-d_{\max}),\exp(d_{\max})]$. Two numerical issues arise in practice: (i) the projector/eigenvector representation is ill-conditioned when $\widehat{\mathbf{A}}$ is (nearly) isotropic or transversely isotropic (repeated eigenvalues), and (ii) extreme anisotropy can cause overflow in $\exp(\mathbf{L})$ and large stiffness contrasts. We address these issues by modified numerical procedures detailed in the appendix.
@@ -55,8 +64,7 @@ which is symmetric positive definite. If the bound is inactive then $\det(\wideh
 \paragraph{Smooth lower density clamp.}
 To maintain uniform strong ellipticity and avoid case distinctions in highly porous regions, we use a smooth ``max'' operator:
 \begin{equation}\label{eq:smooth-max-nd}
-\widetilde{\rho}(\rho;\rho_{\min},\varepsilon)
-:=\rho_{\min}+\tfrac12\!\left[(\rho-\rho_{\min})+\sqrt{(\rho-\rho_{\min})^2+\varepsilon^2}-\varepsilon\right].
+\widetilde{\rho}(\rho) := \operatorname{smax}(\rho, \rho_{\min}; \varepsilon).
 \end{equation}
 This monotone, everywhere differentiable approximation of $\max\{\rho,\rho_{\min}\}$ enforces $\widetilde{\rho}\ge\rho_{\min}$ with a single global smoothing width $\varepsilon>0$. No upper clamp is imposed.
 
@@ -137,9 +145,8 @@ with $D_\rho\ge 0$ in units mm$^2$/day.
 \paragraph{Bounded formation/resorption kinetics.}
 The density evolution is driven by the stimulus $S$ such that positive stimulus drives growth toward $\rho_{\max}$ and negative stimulus drives resorption toward $\rho_{\min}$. We use smooth positive/negative parts (consistent with the global smoothing width $\varepsilon$):
 \begin{align}\label{eq:smooth-splits-nd}
-\operatorname{smoothmax}(a,b;\varepsilon):=\tfrac12\!\left(a+b+\sqrt{(a-b)^2+\varepsilon^2}-\varepsilon\right),\\
-S_+(S):=\operatorname{smoothmax}(S,0;\varepsilon),\\
-S_-(S):=\operatorname{smoothmax}(-S,0;\varepsilon).
+S_+(S):=\operatorname{smax}(S,0;\varepsilon),\\
+S_-(S):=\operatorname{smax}(-S,0;\varepsilon).
 \end{align}
 The total evolution equation is:
 \begin{equation}\label{eq:density-strong-nd}
@@ -155,8 +162,7 @@ Here $k_{\mathrm{form}},k_{\mathrm{res}}\ge 0$ are formation/resorption gains. T
 To mimic reduced active remodeling surface in dense bone, we use a smooth factor $\alpha_{\mathrm{surf}}(\rho)\in[\alpha_{\min},1]$ based on a porosity proxy. Let $\rho_t>0$ be the tissue density and define the (dimensionless) porosity-like variable
 \begin{align*}
 f_{\mathrm{raw}}(\rho) &:= 1-\frac{\rho}{\rho_t},\\
-\operatorname{smoothmin}(a,b;\varepsilon) &:= a+b-\operatorname{smoothmax}(a,b;\varepsilon),\\
-f(\rho) &:= \operatorname{smoothmin}\!\Big(\operatorname{smoothmax}(f_{\mathrm{raw}}(\rho),0;\varepsilon),1;\varepsilon\Big).
+f(\rho) &:= \operatorname{sclamp}(f_{\mathrm{raw}}(\rho), 0, 1; \varepsilon).
 \end{align*}
 We estimate a specific-surface proxy by blending a Martin-type trabecular polynomial
 \[
@@ -216,11 +222,11 @@ and compute a cycle-weighted average
 \),
 where $w_i$ are the same daily weights as in \eqref{eq:stim-psi-nd}. To construct a bounded, trace-free logarithmic target we use the eigen-decomposition of a regularized tensor $\mathbf{Q}:=\mathrm{sym}(\bar{\mathbf{Q}})+\varepsilon_Q\mathbf{I}$, $\mathbf{Q}=\sum_i \lambda_i\mathbf{P}_i$, and define
 \begin{equation}\label{eq:M-hat-nd}
-\tilde m_i \;:=\; \operatorname{clamp}\!\big((\lambda_i/g)^{\gamma_F},\,m_{\min},\,m_{\max}\big),\qquad
+\tilde m_i \;:=\; \operatorname{sclamp}((\lambda_i/g)^{\gamma_F}, m_{\min}, m_{\max}; \varepsilon),\qquad
 g:=(\lambda_1\lambda_2\lambda_3)^{1/3},\qquad
 \mathbf{L}_M(\bar{\mathbf{Q}})\;:=\;\sum_{i=1}^3\Big(\ln(\tilde m_i)-\tfrac13\sum_{j=1}^3\ln(\tilde m_j)\Big)\mathbf{P}_i,
 \end{equation}
-so that $\mathrm{tr}\,\mathbf{L}_M=0$ (equivalently $\det(\exp(\mathbf{L}_M))=1$) and the induced eigenvalue ratios are bounded by $m_{\min},m_{\max}$. Here $\operatorname{clamp}(x,a,b):=\min\{b,\max\{a,x\}\}$. In computation we evaluate $\{\lambda_i,\mathbf{P}_i\}$ using a stabilized Sylvester-projector construction (as above), which is robust under isotropic and transversely isotropic limits of $\mathbf{Q}$.
+so that $\mathrm{tr}\,\mathbf{L}_M=0$ (equivalently $\det(\exp(\mathbf{L}_M))=1$) and the induced eigenvalue ratios are bounded by $m_{\min},m_{\max}$. In computation we evaluate $\{\lambda_i,\mathbf{P}_i\}$ using a stabilized Sylvester-projector construction (as above), which is robust under isotropic and transversely isotropic limits of $\mathbf{Q}$.
 
 The activity factor $a(\bar{\mathbf{Q}})$ is computed from the deviatoric magnitude of $\mathbf{Q}$: let $\mathbf{Q}_{\mathrm{dev}}:=\mathbf{Q}-\frac13(\mathrm{tr}\,\mathbf{Q})\mathbf{I}$ and
 \[

@@ -18,7 +18,7 @@ from simulation.utils import (
     build_nullspace,
     smooth_max,
     smoothstep01,
-    clamp,
+    smooth_clamp,
     symm,
     eigenvalues_sym3,
     projectors_sylvester,
@@ -147,9 +147,9 @@ class MechanicsSolver(BaseLinearSolver):
         a_cap = max(m_max, 1.0 / m_min)
         dmax = math.log(a_cap)
 
-        d1 = clamp(l1 - mean_l, -dmax, dmax)
-        d2 = clamp(l2 - mean_l, -dmax, dmax)
-        d3 = clamp(l3 - mean_l, -dmax, dmax)
+        d1 = smooth_clamp(l1 - mean_l, -dmax, dmax, self.smooth_eps)
+        d2 = smooth_clamp(l2 - mean_l, -dmax, dmax, self.smooth_eps)
+        d3 = smooth_clamp(l3 - mean_l, -dmax, dmax, self.smooth_eps)
 
         a1_hat = ufl.exp(d1)
         a2_hat = ufl.exp(d2)

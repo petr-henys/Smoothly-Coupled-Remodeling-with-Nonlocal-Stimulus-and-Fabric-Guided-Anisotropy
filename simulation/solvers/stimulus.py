@@ -11,7 +11,7 @@ import ufl
 
 from simulation.solvers.base import BaseLinearSolver
 from simulation.stats import SweepStats
-from simulation.utils import smooth_max
+from simulation.utils import smooth_max, smooth_abs
 
 if TYPE_CHECKING:
     from simulation.config import Config
@@ -70,7 +70,7 @@ class StimulusSolver(BaseLinearSolver):
         m = self.psi / rho_safe
         m_ref = float(self.cfg.stimulus.psi_ref) / float(self.cfg.density.rho_ref)
         delta = (m - m_ref) / m_ref
-        delta_abs = ufl.sqrt(delta * delta + eps * eps)
+        delta_abs = smooth_abs(delta, eps)
 
         delta0 = float(self.cfg.stimulus.stimulus_delta0)
         if delta0 > 0.0:

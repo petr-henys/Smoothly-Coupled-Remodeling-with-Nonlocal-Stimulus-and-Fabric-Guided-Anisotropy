@@ -11,7 +11,7 @@ import ufl
 
 from simulation.solvers.base import BaseLinearSolver
 from simulation.stats import SweepStats
-from simulation.utils import smooth_max, smoothstep01
+from simulation.utils import smooth_max, smoothstep01, smooth_clamp
 
 if TYPE_CHECKING:
     from simulation.config import Config
@@ -50,9 +50,6 @@ class DensitySolver(BaseLinearSolver):
 
         eps = float(self.cfg.numerics.smooth_eps)
 
-        def smooth_min(a, b, eps_):
-            return a + b - smooth_max(a, b, eps_)
-
         S_pos = smooth_max(self.S, 0.0, eps)
         S_neg = smooth_max(-self.S, 0.0, eps)
 
@@ -60,7 +57,7 @@ class DensitySolver(BaseLinearSolver):
         if bool(self.cfg.density.surface_use):
             rho_t = float(self.cfg.density.rho_tissue)
             f_raw = 1.0 - (self.rho_old / rho_t)
-            f = smooth_min(smooth_max(f_raw, 0.0, eps), 1.0, eps)
+            f = smooth_clamp(f_raw, 0.0, 1.0, eps)
 
             rho_trab_max = float(self.cfg.material.rho_trab_max)
             rho_cort_min = float(self.cfg.material.rho_cort_min)

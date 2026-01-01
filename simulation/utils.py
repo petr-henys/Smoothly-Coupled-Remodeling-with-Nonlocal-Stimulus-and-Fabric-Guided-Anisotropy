@@ -142,9 +142,19 @@ def smooth_max(x, y, eps=1e-4):
     return 0.5 * (x + y + smooth_abs(x - y, eps))
 
 
+def smooth_min(x, y, eps=1e-4):
+    """C¹ approximation of min(x, y)."""
+    return 0.5 * (x + y - smooth_abs(x - y, eps))
+
+
+def smooth_clamp(x, min_val, max_val, eps=1e-4):
+    """C¹ approximation of clamp(x, min_val, max_val)."""
+    return smooth_min(smooth_max(x, min_val, eps), max_val, eps)
+
+
 def smoothstep01(t):
     """Cubic smoothstep on [0,1]: 0 for t≤0, 1 for t≥1, t²(3-2t) in between."""
-    t_clamped = ufl.conditional(ufl.le(t, 0.0), 0.0, ufl.conditional(ufl.ge(t, 1.0), 1.0, t))
+    t_clamped = smooth_clamp(t, 0.0, 1.0)
     return t_clamped * t_clamped * (3.0 - 2.0 * t_clamped)
 
 
@@ -153,8 +163,8 @@ def smoothstep01(t):
 # ---------------------------------------------------------------------------
 
 def clamp(x, a, b):
-    """UFL clamp: max(a, min(x, b))."""
-    return ufl.conditional(ufl.lt(x, a), a, ufl.conditional(ufl.gt(x, b), b, x))
+    """Deprecated: Use smooth_clamp instead."""
+    return smooth_clamp(x, a, b)
 
 
 def symm(X):
