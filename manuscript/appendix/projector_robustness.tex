@@ -1,6 +1,15 @@
 \appendix
 \section{Robust Sylvester projectors for symmetric $3\times 3$ tensors}
 \label{sec:projector-robustness}
+\paragraph{Numerically robust stress evaluation.}
+Two numerical issues arise in practice: (i) the projector/eigenvector representation is ill-conditioned when $\widehat{\mathbf{A}}$ is (nearly) isotropic or transversely isotropic (repeated eigenvalues), and (ii) extreme anisotropy can cause overflow in $\exp(\mathbf{L})$ and large stiffness contrasts. We address (i) by evaluating spectral projectors $\mathbf{P}_i$ without eigenvectors using the Sylvester formula and smoothly blending it to the isotropic limit ($\mathbf{P}_i=\mathbf{I}/3$) and the transversely isotropic limit (unique projector plus an equal split of the orthogonal plane), which avoids basis flips and preserves $\sum_i \mathbf{P}_i=\mathbf{I}$. We address (ii) by clamping the deviatoric log-eigenvalues of $\mathbf{L}$ before exponentiation, consistently with the global anisotropy bounds $m_{\min},m_{\max}$, and by using a smooth, scale-aware gate that blends the orthotropic stress to the isotropic baseline as $\widehat{\mathbf{A}}\to\mathbf{I}$, keeping $\boldsymbol{\sigma}(\mathbf{u},\rho,\mathbf{L})$ continuous through eigenvalue degeneracy. Figure \ref{fig:sylvester_projectors} summarizes these limits and the associated conditioning behavior.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{images/sylvester_projectors.png}
+    \caption{Robust Sylvester projectors for symmetric $3\times3$ tensors. (a) In the transversely isotropic (pair-degenerate) limit, rank-one eigenvector projectors in the degenerate plane depend on an arbitrary in-plane basis rotation, while the robust construction assigns an equal split. (b) In the isotropic limit, rank-one eigenvector projectors depend on the arbitrary orthonormal basis; the robust limit yields $\mathbf{I}/3$. (c) Near a pair-degeneracy, the raw Sylvester formula becomes ill-conditioned; denominator regularization and the blended TI limit keep the (unique) plane projector $P_2+P_3$ accurate. (d) Enforcing $P_1+P_2+P_3=\mathbf{I}$ removes drift from finite precision. (e) Smooth degeneracy weights transition from the fully anisotropic regime to the TI split as the eigenvalue gap shrinks. (f) The robust construction smoothly equalizes the two degenerate projectors, $\|P_2-P_3\|_F\to0$, avoiding basis flips.}
+    \label{fig:sylvester_projectors}
+\end{figure}
 
 Let $\mathbf{X}\in\mathbb{R}^{3\times 3}$ be a symmetric second-order tensor with (real) eigenvalues
 $\{\lambda_1,\lambda_2,\lambda_3\}$, assumed available from an invariant-based closed-form procedure.

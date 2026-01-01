@@ -376,6 +376,46 @@ class TestMultiWallLoading:
         total_norm = comm.allreduce(traction_norm**2, op=MPI.SUM) ** 0.5
         
         assert total_norm > 0, "Traction should be non-zero for multi-wall loading"
+
+    def test_multiwall_per_tag_traction_vectors(self, box_mesh_and_tags):
+        """Multi-wall loads must keep correct per-wall traction directions.
+
+        Regression test: a single CG traction field cannot represent different
+        face-normal tractions at shared edges/corners; we therefore require
+        `BoxLoader.traction_by_tag[tag]` to be set correctly per tag.
+        """
+        import numpy as np
+        from mpi4py import MPI
+        from box.scenarios import get_triaxial_pressure_case
+
+        domain, facet_tags = box_mesh_and_tags
+
+        case = get_triaxial_pressure_case(pressure_z=2.0, pressure_x=1.0, pressure_y=0.5)
+        loader = BoxLoader(domain, facet_tags, loading_cases=[case])
+        loader.set_loading_case(case.name)
+
+        expected = {
+            BoxMeshBuilder.TAG_TOP: np.array([0.0, 0.0, -2.0]),
+            BoxMeshBuilder.TAG_X_MAX: np.array([-1.0, 0.0, 0.0]),
+            BoxMeshBuilder.TAG_Y_MAX: np.array([0.0, -0.5, 0.0]),
+        }
+
+        bs = int(loader.V.dofmap.index_map_bs)
+        for tag, expected_vec in expected.items():
+            tfun = loader.traction_by_tag[tag]
+            owned_blocks = loader._owned_blocks_per_tag[tag]
+            n_owned = int(owned_blocks.size)
+
+            if n_owned == 0:
+                continue
+
+            dof_idx = (owned_blocks[:, None] * bs + np.arange(bs, dtype=np.int32)[None, :]).ravel()
+            vals = tfun.x.array[dof_idx].reshape(-1, bs)
+
+            # All owned surface DOFs on this wall carry the same traction vector
+            max_err = float(np.max(np.linalg.norm(vals - expected_vec[None, :], axis=1)))
+            max_err = MPI.COMM_WORLD.allreduce(max_err, op=MPI.MAX)
+            assert max_err < 1e-12
         
     def test_pressure_load_spec_validation(self):
         """Test that wall_tags and wall_directions must have same length."""

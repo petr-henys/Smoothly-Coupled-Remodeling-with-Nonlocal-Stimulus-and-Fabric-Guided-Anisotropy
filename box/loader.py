@@ -36,7 +36,7 @@ class PressureLoadSpec:
         
     For multi-wall loading (e.g., hydrostatic pressure):
         - Use `wall_tags` to specify which walls receive load
-        - Use `wall_directions` to specify inward normal for each wall
+        - Use `wall_directions` to specify inward direction for each wall
         - `load_tag` is ignored when `wall_tags` is non-empty
     
     Attributes:
@@ -45,7 +45,10 @@ class PressureLoadSpec:
         direction: Load direction as unit vector (default: -z for compression).
                    Used in single-wall mode (when wall_tags is empty).
         wall_tags: Tuple of facet tags for multi-wall loading. Overrides load_tag.
-        wall_directions: Direction (inward normal) for each wall in wall_tags.
+        wall_directions: Inward direction vectors for each wall in wall_tags.
+                         In multi-wall mode, the vector norm is preserved, so you may:
+                         - pass unit inward normals and set `magnitude` to the desired pressure, or
+                         - encode per-wall pressure magnitudes in the vectors and set `magnitude=1.0`.
                          Must have same length as wall_tags.
         gradient_axis: If not None, apply gradient along this axis (0=x, 1=y, 2=z)
         gradient_type: Type of gradient (LINEAR, PARABOLIC, BENDING)
@@ -105,6 +108,9 @@ class BoxLoader:
     Applies pressure-derived traction (uniform or graded) on one or more surfaces.
     Compatible with the Remodeller framework via the same interface as Loader.
     Traction values are stored ONLY at DOFs on the loaded surfaces.
+    For multi-wall loading where different faces require different traction
+    directions, use `traction_by_tag[tag]` (one field per wall) when assembling
+    Neumann BCs to avoid continuity artifacts at edges/corners.
     
     The loader automatically determines which surfaces need loading from the
     PressureLoadSpec in each loading case. Each spec defines its own load_tag
@@ -145,11 +151,20 @@ class BoxLoader:
         P1_vec = basix.ufl.element("Lagrange", mesh.basix_cell(), 1, shape=(self.gdim,))
         self.V = fem.functionspace(mesh, P1_vec)
         
-        # Traction field (updated by set_loading_case)
+        # Combined traction field (updated by set_loading_case; kept for backward compatibility
+        # and quick visualization). For multi-wall loading, use `traction_by_tag` to avoid
+        # enforcing continuity across edges/corners where traction directions differ.
         self.traction = fem.Function(self.V, name="Traction")
+
+        # Per-tag traction fields used for Neumann BC assembly. This avoids the
+        # "edge overwrite" problem when different faces require different traction
+        # directions but the traction space is continuous (CG).
+        self.traction_by_tag: dict[int, fem.Function] = {
+            int(tag): fem.Function(self.V, name=f"Traction_tag_{int(tag)}") for tag in self.load_tags
+        }
         
         # Cache for precomputed tractions (only owned DOFs on load surfaces)
-        self._cached_tractions: dict[str, np.ndarray] = {}
+        self._cached_tractions: dict[str, dict[int, np.ndarray]] = {}
         
         # Total owned DOFs in the function
         self._n_owned_total: int = (
@@ -329,14 +344,18 @@ class BoxLoader:
         
         for case in loading_cases:
             if case.pressure is None:
-                # No load case - zero traction (store only surface DOF values)
-                self._cached_tractions[case.name] = np.zeros(self._n_owned_total)
+                # No load case - zero traction (store per-tag arrays)
+                self._cached_tractions[case.name] = {
+                    int(tag): np.zeros(self._n_owned_total, dtype=np.float64) for tag in self.load_tags
+                }
             else:
                 spec = case.pressure
                 p = spec.magnitude
                 
-                # Initialize full array with zeros
-                values = np.zeros(self._n_owned_total, dtype=np.float64)
+                # Initialize per-tag arrays with zeros (full-length, owned+ghost)
+                values_by_tag: dict[int, np.ndarray] = {
+                    int(tag): np.zeros(self._n_owned_total, dtype=np.float64) for tag in self.load_tags
+                }
                 
                 if spec.wall_tags:
                     # Multi-wall mode: apply pressure to each specified wall
@@ -345,7 +364,9 @@ class BoxLoader:
                             continue  # Skip tags not in our load_tags
                         
                         d = np.array(wall_dir, dtype=np.float64)
-                        d = d / np.linalg.norm(d)  # Normalize direction
+                        # NOTE: In multi-wall mode we preserve the norm of `wall_dir`.
+                        # This allows encoding different per-wall magnitudes directly in
+                        # the direction vectors (see box.scenarios.get_triaxial_pressure_case).
                         
                         owned_blocks = self._owned_blocks_per_tag[wall_tag]
                         n_owned = self._n_owned_per_tag[wall_tag]
@@ -374,7 +395,7 @@ class BoxLoader:
                         
                         # Write to appropriate DOF indices
                         dof_idx = (owned_blocks[:, None] * bs + np.arange(bs, dtype=np.int32)[None, :]).ravel()
-                        values[dof_idx] = wall_values
+                        values_by_tag[int(wall_tag)][dof_idx] = wall_values
                 else:
                     # Single-wall mode: use load_tag from the spec
                     d = np.array(spec.direction, dtype=np.float64)
@@ -408,10 +429,10 @@ class BoxLoader:
                             wall_values = traction_at_dofs.ravel()
                         
                         dof_idx = (owned_blocks[:, None] * bs + np.arange(bs, dtype=np.int32)[None, :]).ravel()
-                        values[dof_idx] = wall_values
+                        values_by_tag[int(tag)][dof_idx] = wall_values
                 
                 # Cache the computed values
-                self._cached_tractions[case.name] = values.copy()
+                self._cached_tractions[case.name] = {k: v.copy() for k, v in values_by_tag.items()}
     
     def set_loading_case(self, case_name: str) -> None:
         """Set the current loading case by name.
@@ -430,9 +451,23 @@ class BoxLoader:
                 f"Available cases: {list(self._cached_tractions.keys())}"
             )
         
-        # Cached values are now full-length arrays with zeros at non-surface DOFs
-        self.traction.x.array[:self._n_owned_total] = self._cached_tractions[case_name][:self._n_owned_total]
-        
+        cached = self._cached_tractions[case_name]
+
+        # Set per-tag traction fields (used for Neumann BC assembly)
+        for tag, tfun in self.traction_by_tag.items():
+            vals = cached.get(int(tag))
+            if vals is None:
+                tfun.x.array[:self._n_owned_total] = 0.0
+            else:
+                tfun.x.array[:self._n_owned_total] = vals[:self._n_owned_total]
+            tfun.x.scatter_forward()
+
+        # Backward-compatible combined traction (simple sum; convenient for visualization)
+        self.traction.x.array[:self._n_owned_total] = 0.0
+        for tag in self.load_tags:
+            vals = cached.get(int(tag))
+            if vals is not None:
+                self.traction.x.array[:self._n_owned_total] += vals[:self._n_owned_total]
         self.traction.x.scatter_forward()
     
     def set_pressure(self, pressure: float, direction: tuple[float, float, float] = (0.0, 0.0, -1.0)) -> None:
@@ -454,8 +489,10 @@ class BoxLoader:
         
         bs = int(self.V.dofmap.index_map_bs)
         
-        # Zero entire traction field first
+        # Zero all traction fields first
         self.traction.x.array[:self._n_owned_total] = 0.0
+        for tfun in self.traction_by_tag.values():
+            tfun.x.array[:self._n_owned_total] = 0.0
         
         # Set values at surface DOFs for all load_tags
         for tag in self.load_tags:
@@ -465,6 +502,9 @@ class BoxLoader:
             if n_owned > 0:
                 dof_idx = (owned_blocks[:, None] * bs + np.arange(bs, dtype=np.int32)[None, :]).ravel()
                 values = np.tile(traction_vec, n_owned)
-                self.traction.x.array[dof_idx] = values
+                self.traction_by_tag[int(tag)].x.array[dof_idx] = values
+                self.traction.x.array[dof_idx] += values
         
         self.traction.x.scatter_forward()
+        for tfun in self.traction_by_tag.values():
+            tfun.x.scatter_forward()

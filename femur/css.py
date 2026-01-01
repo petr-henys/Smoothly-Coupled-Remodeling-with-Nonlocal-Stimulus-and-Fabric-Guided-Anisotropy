@@ -59,16 +59,23 @@ class FemurCSS:
         femur: pv.PolyData,
         head_line: NDArrayF,
         le_me: NDArrayF,
-        axis_labels: dict[str, str],
+        *,
+        side: Literal["left", "right"] = "left",
+        axis_labels: dict[str, str] | None = None,
         save_head_sphere: str | Path | None = None,
     ) -> None:
         self.femur = femur
-        self.axis_labels = axis_labels
+        if side not in ("left", "right"):
+            raise ValueError("side must be 'left' or 'right'")
+        self.side: Literal["left", "right"] = side
+
+        # Used for visualization / reporting (not required for computation).
+        self.axis_labels = axis_labels or {"x": "Anterior", "y": "Superior", "z": "Medial"}
 
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
 
         self.fhc, self.head_radius = _fit_femoral_head(femur, head_line, save_head_sphere)
-        self._build_axes(le_me)
+        self._build_axes(le_me, side=self.side)
 
     def forward_transform(self, mesh: pv.PolyData) -> pv.PolyData:
         M = self._transformation_matrix(world_to_css=True)
@@ -86,7 +93,7 @@ class FemurCSS:
     # Internals
     # ------------------------------------------------------------------
 
-    def _build_axes(self, le_me: NDArrayF) -> None:
+    def _build_axes(self, le_me: NDArrayF, *, side: Literal["left", "right"]) -> None:
         """Compute Y, Z and X = Y × Z."""
         y = _unit(self.fhc - le_me.mean(axis=0))
 
@@ -95,6 +102,10 @@ class FemurCSS:
         line_vec = me - le
         line_vec -= np.dot(line_vec, y) * y
         z = _unit(line_vec)
+
+        # Enforce consistent anatomical "medial" axis direction across sides.
+        if side == "right":
+            z = -z
 
         x = _unit(np.cross(y, z))  # Y × Z ensures right‑handed system
 
@@ -149,6 +160,17 @@ class FemurCSS:
         R = np.vstack([self.axes[a] for a in ("x", "y", "z")])
         return R @ (p_w - self.fhc)
 
+    def save_axes_vtk(self, filename: str | Path) -> None:
+        """Save a VTK PolyData with axes vectors as point data arrays."""
+        path = Path(filename)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        pd = pv.PolyData(self.fhc.reshape(1, 3))
+        pd["x"] = self.axes["x"].reshape(1, 3)
+        pd["y"] = self.axes["y"].reshape(1, 3)
+        pd["z"] = self.axes["z"].reshape(1, 3)
+        pd.save(str(path))
+
 ###############################################################################
 # CLI demo (for manual testing) – run `python femur_css.py <femur.vtk> <line1.json> <line2.json>`
 ###############################################################################
@@ -158,5 +180,5 @@ if __name__ == "__main__":
     head_line = load_json_points(FemurPaths.HEAD_LINE_JSON)
     le_me_line = load_json_points(FemurPaths.LE_ME_LINE_JSON)
 
-    css = FemurCSS(femur_mesh, head_line, le_me_line)
-    css.save_axes_vtk(filename=FemurPaths.CSS_AXES_VTK)
+    css = FemurCSS(femur_mesh, head_line, le_me_line, side="left")
+    css.save_axes_vtk(FemurPaths.CSS_AXES_VTK)
