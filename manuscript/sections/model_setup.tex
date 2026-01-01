@@ -55,15 +55,6 @@ p(\xi) = P_{\mathrm{ref}} \left[ k_{\mathrm{edge}} + (k_{\mathrm{center}} - k_{\
 \end{equation}
 This distribution drives bone formation in the central core while promoting resorption at the periphery.
 
-\paragraph{Physiological Loading Sets.}
-Similar to the femur model, time-dependent loading is approximated by a finite set of load cases with weights $\{w_i\}$.
-The standard physiological set consists of three intensity levels representing daily activity:
-\begin{itemize}
-    \item \textbf{Low load (case $i=1$):} $0.5$\,MPa (weight $w_1=0.3$), representing rest/light activity.
-    \item \textbf{Medium load (case $i=2$):} $2.0$\,MPa (weight $w_2=0.5$), representing normal walking.
-    \item \textbf{High load (case $i=3$):} $5.0$\,MPa (weight $w_3=0.2$), representing impact activities.
-\end{itemize}
-
 \subsection*{Femur}
 \subsubsection{Dataset and normalization}
 We used the \emph{HFValid collection} \cite{Aldieri2025_HFValidCollection} (Hip-Fracture validation collection; \url{https://amsacta.unibo.it/id/eprint/8431/}), which provides $N=101$ anonymized whole-femur CT scans, corresponding segmentations, and anatomical landmarks. The scans were acquired at IRCCS Istituto Ortopedico Rizzoli (Bologna) between 1999 and 2016 for surgical planning of hip arthroplasty at the contralateral femur. Besides the volumetric images, the dataset provides (i) surface segmentations and (ii) landmark coordinates (including the femoral head centre and distal landmarks), which we use for defining local reference systems and for quality control.

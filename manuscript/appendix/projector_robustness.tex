@@ -1,4 +1,4 @@
-\section{Robust Sylvester projectors for symmetric $3\times 3$ tensors}
+\section{Robust Sylvester projectors}
 \label{sec:projector-robustness}
 Two numerical issues arise in practice: (i) the projector/eigenvector representation is ill-conditioned when $\widehat{\mathbf{A}}$ is (nearly) isotropic or transversely isotropic (repeated eigenvalues), and (ii) extreme anisotropy can cause overflow in $\exp(\mathbf{L})$ and large stiffness contrasts.
 We address (i) by evaluating spectral projectors $\mathbf{P}_i$ without eigenvectors using the Sylvester formula and smoothly blending it to the isotropic limit ($\mathbf{P}_i=\mathbf{I}/3$) and the transversely isotropic limit (unique projector plus an equal split of the orthogonal plane), which avoids basis flips and preserves $\sum_i \mathbf{P}_i=\mathbf{I}$.
