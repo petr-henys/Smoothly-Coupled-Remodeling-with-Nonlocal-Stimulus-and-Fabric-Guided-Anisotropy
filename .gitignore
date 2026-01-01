@@ -19,7 +19,7 @@
 !/run_box_model.py
 !/run_convergence_sweep.py
 !/run_anderson_sweep.py
-!/run_model.py
+!/run_femur_model.py
 !/intensity_mapper.py
 !/default_params_box.json
 !/default_params_femur.json
