@@ -19,6 +19,8 @@ from box.scenarios import (
     get_overload_scenarios,
     get_disuse_scenarios,
     get_cyclic_loading_cases,
+    get_hydrostatic_pressure_case,
+    get_triaxial_pressure_case,
 )
 from box.factory import BoxSolverFactory, BoxDriver
 
@@ -41,6 +43,8 @@ __all__ = [
     "get_overload_scenarios",
     "get_disuse_scenarios",
     "get_cyclic_loading_cases",
+    "get_hydrostatic_pressure_case",
+    "get_triaxial_pressure_case",
     # Factory
     "BoxSolverFactory",
     "BoxDriver",

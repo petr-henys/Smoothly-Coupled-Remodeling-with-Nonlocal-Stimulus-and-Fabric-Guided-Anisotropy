@@ -162,7 +162,7 @@ class TestBoxLoader:
         """Test loader can be created."""
         domain, facet_tags = box_mesh_and_tags
         cases = [BoxLoadingCase(name="test", day_cycles=1.0)]
-        loader = BoxLoader(domain, facet_tags, load_tag=BoxMeshBuilder.TAG_TOP, loading_cases=cases)
+        loader = BoxLoader(domain, facet_tags, load_tags=BoxMeshBuilder.TAG_TOP, loading_cases=cases)
         
         assert loader is not None
         assert loader.traction is not None
@@ -171,7 +171,7 @@ class TestBoxLoader:
         """Test setting uniform pressure."""
         domain, facet_tags = box_mesh_and_tags
         cases = [BoxLoadingCase(name="test", day_cycles=1.0)]
-        loader = BoxLoader(domain, facet_tags, load_tag=BoxMeshBuilder.TAG_TOP, loading_cases=cases)
+        loader = BoxLoader(domain, facet_tags, load_tags=BoxMeshBuilder.TAG_TOP, loading_cases=cases)
         
         loader.set_pressure(1.0, direction=(0.0, 0.0, -1.0))
         
@@ -194,7 +194,7 @@ class TestBoxLoader:
             ),
         ]
         
-        loader = BoxLoader(domain, facet_tags, load_tag=BoxMeshBuilder.TAG_TOP, loading_cases=cases)
+        loader = BoxLoader(domain, facet_tags, load_tags=BoxMeshBuilder.TAG_TOP, loading_cases=cases)
         
         # Should be able to set the case (already precomputed)
         loader.set_loading_case("test_case")
@@ -203,7 +203,7 @@ class TestBoxLoader:
         """Test that invalid case name raises error."""
         domain, facet_tags = box_mesh_and_tags
         cases = [BoxLoadingCase(name="test", day_cycles=1.0)]
-        loader = BoxLoader(domain, facet_tags, load_tag=BoxMeshBuilder.TAG_TOP, loading_cases=cases)
+        loader = BoxLoader(domain, facet_tags, load_tags=BoxMeshBuilder.TAG_TOP, loading_cases=cases)
         
         with pytest.raises(KeyError):
             loader.set_loading_case("nonexistent_case")
@@ -289,7 +289,7 @@ class TestBoxScenarios:
             box_extent=(0.0, 10.0),
         )
         
-        loader = BoxLoader(domain, facet_tags, load_tag=BoxMeshBuilder.TAG_TOP, loading_cases=[case])
+        loader = BoxLoader(domain, facet_tags, load_tags=BoxMeshBuilder.TAG_TOP, loading_cases=[case])
         loader.set_loading_case(case.name)
         
         # Check that traction is non-zero and varies spatially
@@ -303,6 +303,94 @@ class TestBoxScenarios:
         
         # Should have variation (center > edge)
         assert global_max > global_min, "Parabolic load should have spatial variation"
+
+
+# =============================================================================
+# Multi-wall loading tests
+# =============================================================================
+
+class TestMultiWallLoading:
+    """Tests for multi-wall loading (hydrostatic, triaxial)."""
+    
+    def test_multi_wall_loader_creation(self, box_mesh_and_tags):
+        """Test loader can be created with multiple load tags."""
+        domain, facet_tags = box_mesh_and_tags
+        
+        # Use three walls for triaxial loading
+        load_tags = [
+            BoxMeshBuilder.TAG_TOP,
+            BoxMeshBuilder.TAG_X_MAX,
+            BoxMeshBuilder.TAG_Y_MAX,
+        ]
+        
+        cases = [BoxLoadingCase(name="test", day_cycles=1.0)]
+        loader = BoxLoader(domain, facet_tags, load_tags=load_tags, loading_cases=cases)
+        
+        assert loader is not None
+        assert len(loader.load_tags) == 3
+        assert loader.load_tag == BoxMeshBuilder.TAG_TOP  # Backward compat
+        
+    def test_hydrostatic_pressure_case(self):
+        """Test hydrostatic pressure case creation."""
+        from box.scenarios import get_hydrostatic_pressure_case
+        
+        case = get_hydrostatic_pressure_case(pressure=2.0)
+        
+        assert case.name == "hydrostatic"
+        assert case.pressure.magnitude == 2.0
+        assert len(case.pressure.wall_tags) == 3
+        assert len(case.pressure.wall_directions) == 3
+        
+    def test_triaxial_pressure_case(self):
+        """Test triaxial pressure case creation."""
+        from box.scenarios import get_triaxial_pressure_case
+        
+        case = get_triaxial_pressure_case(
+            pressure_z=2.0,
+            pressure_x=1.0,
+            pressure_y=0.5,
+        )
+        
+        assert case.name == "triaxial"
+        assert len(case.pressure.wall_tags) == 3
+        # Check that different pressures are encoded in directions
+        dirs = case.pressure.wall_directions
+        assert dirs[0] == (0.0, 0.0, -2.0)  # z pressure
+        assert dirs[1] == (-1.0, 0.0, 0.0)  # x pressure
+        assert dirs[2] == (0.0, -0.5, 0.0)  # y pressure
+        
+    def test_multiwall_traction_applied_to_all_walls(self, box_mesh_and_tags):
+        """Test that traction is applied to all specified walls."""
+        from box.scenarios import get_hydrostatic_pressure_case
+        
+        domain, facet_tags = box_mesh_and_tags
+        
+        # Create multi-wall loader
+        load_tags = [
+            BoxMeshBuilder.TAG_TOP,
+            BoxMeshBuilder.TAG_X_MAX,
+            BoxMeshBuilder.TAG_Y_MAX,
+        ]
+        
+        case = get_hydrostatic_pressure_case(pressure=1.0)
+        loader = BoxLoader(domain, facet_tags, load_tags=load_tags, loading_cases=[case])
+        loader.set_loading_case(case.name)
+        
+        # Check traction has non-zero values on all three walls
+        comm = MPI.COMM_WORLD
+        traction_norm = np.linalg.norm(loader.traction.x.array)
+        total_norm = comm.allreduce(traction_norm**2, op=MPI.SUM) ** 0.5
+        
+        assert total_norm > 0, "Traction should be non-zero for multi-wall loading"
+        
+    def test_pressure_load_spec_validation(self):
+        """Test that wall_tags and wall_directions must have same length."""
+        with pytest.raises(ValueError, match="wall_tags.*wall_directions.*same length"):
+            PressureLoadSpec(
+                magnitude=1.0,
+                wall_tags=(1, 2, 3),
+                wall_directions=((1, 0, 0), (0, 1, 0)),  # Only 2 directions for 3 tags
+            )
 
 
 # =============================================================================
@@ -340,7 +428,7 @@ class TestBoxFactory:
         rho.x.array[:] = 1.0
         rho.x.scatter_forward()
         
-        loader = BoxLoader(domain, facet_tags, load_tag=BoxMeshBuilder.TAG_TOP, loading_cases=[BoxLoadingCase(name="test", day_cycles=1.0)])
+        loader = BoxLoader(domain, facet_tags, load_tags=BoxMeshBuilder.TAG_TOP, loading_cases=[BoxLoadingCase(name="test", day_cycles=1.0)])
         
         mech = factory.create_mechanics_solver(u, rho, L, loader)
         
@@ -364,7 +452,7 @@ class TestBoxModelIntegration:
         
         # Create loader with loading cases
         loading_cases = [get_single_pressure_case(pressure=1.0)]
-        loader = BoxLoader(domain, facet_tags, load_tag=BoxMeshBuilder.TAG_TOP, loading_cases=loading_cases)
+        loader = BoxLoader(domain, facet_tags, load_tags=BoxMeshBuilder.TAG_TOP, loading_cases=loading_cases)
         
         # Create factory
         factory = BoxSolverFactory(box_cfg)
@@ -385,7 +473,7 @@ class TestBoxModelIntegration:
         domain, facet_tags = box_mesh_and_tags
         
         loading_cases = [get_single_pressure_case(pressure=2.0)]
-        loader = BoxLoader(domain, facet_tags, load_tag=BoxMeshBuilder.TAG_TOP, loading_cases=loading_cases)
+        loader = BoxLoader(domain, facet_tags, load_tags=BoxMeshBuilder.TAG_TOP, loading_cases=loading_cases)
         factory = BoxSolverFactory(box_cfg)
         
         with Remodeller(box_cfg, loader=loader, factory=factory) as remodeller:
@@ -446,7 +534,7 @@ class TestBoxModelIntegration:
         )
         
         loading_cases = [get_single_pressure_case(pressure=1.0)]
-        loader = BoxLoader(domain, facet_tags, load_tag=BoxMeshBuilder.TAG_TOP, loading_cases=loading_cases)
+        loader = BoxLoader(domain, facet_tags, load_tags=BoxMeshBuilder.TAG_TOP, loading_cases=loading_cases)
         factory = BoxSolverFactory(cfg)
         
         with Remodeller(cfg, loader=loader, factory=factory) as remodeller:

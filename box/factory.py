@@ -93,8 +93,8 @@ class BoxSolverFactory:
             value=0.0,
         )
         
-        # Neumann BC: pressure on top surface
-        neumann_bcs = [(loader.traction, loader.load_tag)]
+        # Neumann BC: pressure on loaded surfaces (one or more)
+        neumann_bcs = [(loader.traction, tag) for tag in loader.load_tags]
         
         return MechanicsSolver(
             u, rho, self.cfg, bc_mech, neumann_bcs, L=L

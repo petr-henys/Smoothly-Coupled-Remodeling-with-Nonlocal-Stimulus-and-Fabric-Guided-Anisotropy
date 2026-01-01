@@ -111,6 +111,5 @@ def main() -> None:
     if comm.rank == 0:
         logger.info(f"Simulation completed. Results in: {cfg.output.results_dir}")
 
-
 if __name__ == "__main__":
     main()

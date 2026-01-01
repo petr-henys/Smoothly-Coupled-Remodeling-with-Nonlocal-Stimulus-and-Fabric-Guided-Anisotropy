@@ -285,3 +285,103 @@ def get_cyclic_loading_cases(
         ))
     
     return cases
+
+
+def get_hydrostatic_pressure_case(
+    pressure: float = 1.0,
+    name: str = "hydrostatic",
+    day_cycles: float = 1.0,
+) -> BoxLoadingCase:
+    """Create a hydrostatic pressure case (uniform compression from all sides).
+    
+    This creates triaxial loading where pressure is applied on:
+    - Top (z=Lz): inward normal (0, 0, -1)
+    - X_MAX (x=Lx): inward normal (-1, 0, 0)
+    - Y_MAX (y=Ly): inward normal (0, -1, 0)
+    
+    Note: Bottom (z=0) is typically fixed (Dirichlet), and X_MIN/Y_MIN
+    are often constrained by symmetry. Adjust wall_tags as needed.
+    
+    To use this, the BoxLoader must be initialized with all three load_tags:
+        load_tags = [BoxMeshBuilder.TAG_TOP, BoxMeshBuilder.TAG_X_MAX, 
+                     BoxMeshBuilder.TAG_Y_MAX]
+    
+    Args:
+        pressure: Pressure magnitude [MPa] (positive = compression)
+        name: Case name
+        day_cycles: Loading cycles per day
+        
+    Returns:
+        BoxLoadingCase for hydrostatic pressure (triaxial compression)
+    """
+    from box.mesh import BoxMeshBuilder
+    
+    return BoxLoadingCase(
+        name=name,
+        day_cycles=day_cycles,
+        pressure=PressureLoadSpec(
+            magnitude=pressure,
+            wall_tags=(
+                BoxMeshBuilder.TAG_TOP,
+                BoxMeshBuilder.TAG_X_MAX,
+                BoxMeshBuilder.TAG_Y_MAX,
+            ),
+            wall_directions=(
+                (0.0, 0.0, -1.0),   # Top: press down
+                (-1.0, 0.0, 0.0),   # X_MAX: press inward (-x)
+                (0.0, -1.0, 0.0),   # Y_MAX: press inward (-y)
+            ),
+        ),
+    )
+
+
+def get_triaxial_pressure_case(
+    pressure_z: float = 1.0,
+    pressure_x: float = 0.5,
+    pressure_y: float = 0.5,
+    name: str = "triaxial",
+    day_cycles: float = 1.0,
+) -> BoxLoadingCase:
+    """Create a triaxial pressure case with independent pressures on each axis.
+    
+    Applies different pressure magnitudes on each face:
+    - Top (z=Lz): pressure_z with inward normal (0, 0, -1)
+    - X_MAX (x=Lx): pressure_x with inward normal (-1, 0, 0)  
+    - Y_MAX (y=Ly): pressure_y with inward normal (0, -1, 0)
+    
+    For hydrostatic stress state, use equal pressures on all axes.
+    
+    Note: This uses a single magnitude scaled differently per wall. For truly
+    independent magnitudes, create separate BoxLoadingCase instances.
+    
+    Args:
+        pressure_z: Axial pressure [MPa] (z-direction, main loading axis)
+        pressure_x: Confining pressure [MPa] (x-direction)
+        pressure_y: Confining pressure [MPa] (y-direction)
+        name: Case name
+        day_cycles: Loading cycles per day
+        
+    Returns:
+        BoxLoadingCase for triaxial loading
+    """
+    from box.mesh import BoxMeshBuilder
+    
+    # We use magnitude=1 and encode actual pressures in direction vectors
+    # Direction = pressure_i * unit_inward_normal
+    return BoxLoadingCase(
+        name=name,
+        day_cycles=day_cycles,
+        pressure=PressureLoadSpec(
+            magnitude=1.0,  # Actual pressure encoded in directions
+            wall_tags=(
+                BoxMeshBuilder.TAG_TOP,
+                BoxMeshBuilder.TAG_X_MAX,
+                BoxMeshBuilder.TAG_Y_MAX,
+            ),
+            wall_directions=(
+                (0.0, 0.0, -pressure_z),
+                (-pressure_x, 0.0, 0.0),
+                (0.0, -pressure_y, 0.0),
+            ),
+        ),
+    )

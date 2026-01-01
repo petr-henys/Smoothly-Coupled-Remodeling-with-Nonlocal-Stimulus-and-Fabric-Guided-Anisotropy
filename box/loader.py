@@ -1,24 +1,21 @@
 """Pressure/traction loader for box mesh simulations.
 
-Applies uniform or spatially varying pressure on a tagged surface.
+Applies uniform or spatially varying pressure on one or more tagged surfaces.
+Supports multi-wall loading for hydrostatic pressure or triaxial stress states.
 
 Units: MPa (1 MPa = 1 N/mm²) for pressure/traction with mm-based meshes.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import List
+from typing import Dict, List, Sequence, Tuple
 
 import numpy as np
 import basix.ufl
 from dolfinx import fem
 from dolfinx import mesh as dmesh
-from mpi4py import MPI
-
-from box.mesh import BoxMeshBuilder
-
 
 class GradientType(Enum):
     """Type of spatial pressure gradient."""
@@ -31,9 +28,21 @@ class GradientType(Enum):
 class PressureLoadSpec:
     """Pressure load specification.
     
+    For single-wall loading (backward compatible):
+        - Use `direction` to specify the traction direction
+        
+    For multi-wall loading (e.g., hydrostatic pressure):
+        - Use `wall_tags` to specify which walls receive load
+        - Use `wall_directions` to specify inward normal for each wall
+        - If `wall_tags` is empty, uses single-wall mode with `direction`
+    
     Attributes:
         magnitude: Pressure magnitude [MPa] (positive = compression into surface)
-        direction: Load direction as unit vector (default: -z for compression)
+        direction: Load direction as unit vector (default: -z for compression).
+                   Used when wall_tags is empty (single-wall mode).
+        wall_tags: List of facet tags for walls to load (empty = use direction).
+        wall_directions: Direction (inward normal) for each wall in wall_tags.
+                         Must have same length as wall_tags.
         gradient_axis: If not None, apply gradient along this axis (0=x, 1=y, 2=z)
         gradient_type: Type of gradient (LINEAR, PARABOLIC, BENDING)
         gradient_range: (min_factor, max_factor) for gradient
@@ -41,10 +50,20 @@ class PressureLoadSpec:
     """
     magnitude: float = 1.0
     direction: tuple[float, float, float] = (0.0, 0.0, -1.0)
+    wall_tags: tuple[int, ...] = ()  # Empty = single-wall mode using direction
+    wall_directions: tuple[tuple[float, float, float], ...] = ()  # One per wall_tag
     gradient_axis: int | None = None  # None = uniform, 0=x, 1=y
     gradient_type: GradientType = GradientType.LINEAR
     gradient_range: tuple[float, float] = (0.5, 1.5)  # (min_factor, max_factor)
     box_extent: tuple[float, float] = (0.0, 10.0)  # (min, max) along gradient axis
+    
+    def __post_init__(self) -> None:
+        """Validate wall_tags and wall_directions have matching lengths."""
+        if len(self.wall_tags) != len(self.wall_directions):
+            raise ValueError(
+                f"wall_tags ({len(self.wall_tags)}) and wall_directions "
+                f"({len(self.wall_directions)}) must have the same length"
+            )
 
 
 @dataclass
@@ -62,18 +81,22 @@ class BoxLoadingCase:
 
 
 class BoxLoader:
-    """Simple pressure loader for box mesh simulations.
+    """Pressure loader for box mesh simulations.
     
-    Applies pressure-derived traction (uniform or graded) on one surface.
+    Applies pressure-derived traction (uniform or graded) on one or more surfaces.
     Compatible with the Remodeller framework via the same interface as Loader.
-    Traction values are stored ONLY at DOFs on the loaded surface (load_tag).
+    Traction values are stored ONLY at DOFs on the loaded surfaces.
+    
+    Supports:
+    - Single-wall loading (backward compatible): pass single load_tag
+    - Multi-wall loading (e.g., hydrostatic): pass multiple load_tags
     """
     
     def __init__(
         self, 
         mesh: dmesh.Mesh, 
         facet_tags: dmesh.MeshTags,
-        load_tag: int,
+        load_tags: int | Sequence[int],
         loading_cases: List[BoxLoadingCase],
     ):
         """Initialize box loader.
@@ -83,14 +106,25 @@ class BoxLoader:
         Args:
             mesh: DOLFINx mesh
             facet_tags: Mesh tags for boundary facets
-            load_tag: Tag for the loaded surface (e.g., BoxMeshBuilder.TAG_TOP)
+            load_tags: Tag(s) for loaded surfaces (e.g., BoxMeshBuilder.TAG_TOP,
+                       or [TAG_TOP, TAG_X_MAX, TAG_Y_MAX] for triaxial).
+                       Can be single int (backward compatible) or sequence.
             loading_cases: List of loading cases to precompute
         """
         self.mesh = mesh
         self.comm = mesh.comm
         self.rank = self.comm.rank
         self.facet_tags = facet_tags
-        self.load_tag = load_tag
+        
+        # Normalize to tuple for uniform handling
+        if isinstance(load_tags, int):
+            self.load_tags: Tuple[int, ...] = (load_tags,)
+        else:
+            self.load_tags = tuple(load_tags)
+        
+        # Backward compatibility: expose first tag as load_tag
+        self.load_tag = self.load_tags[0] if self.load_tags else 0
+        
         self.gdim = mesh.geometry.dim
         self._loading_cases = loading_cases
         
@@ -101,7 +135,7 @@ class BoxLoader:
         # Traction field (updated by set_loading_case)
         self.traction = fem.Function(self.V, name="Traction")
         
-        # Cache for precomputed tractions (only owned DOFs on load surface)
+        # Cache for precomputed tractions (only owned DOFs on load surfaces)
         self._cached_tractions: dict[str, np.ndarray] = {}
         
         # Total owned DOFs in the function
@@ -109,7 +143,7 @@ class BoxLoader:
             self.V.dofmap.index_map.size_local * self.V.dofmap.index_map_bs
         )
         
-        # Initialize DOF indexing for loaded surface
+        # Initialize DOF indexing for loaded surfaces (per-tag)
         self._init_load_surface_dofs()
         
         # Precompute all loading cases immediately
@@ -121,9 +155,10 @@ class BoxLoader:
         return self._loading_cases
 
     def _init_load_surface_dofs(self) -> None:
-        """Identify DOFs on facets with load_tag and cache their indices/coordinates.
+        """Identify DOFs on facets with load_tags and cache their indices/coordinates.
         
-        After this, traction is only set at DOFs on the loaded surface.
+        Stores per-tag DOF blocks and coordinates for multi-wall loading.
+        After this, traction is only set at DOFs on the loaded surfaces.
         Other DOFs remain zero, making it clear where the load is applied.
         """
         V = self.V
@@ -131,34 +166,13 @@ class BoxLoader:
         bs = int(V.dofmap.index_map_bs)
         n_blocks_total = int(imap.size_local + imap.num_ghosts)
         
-        # Find facets with load_tag
         tdim = self.mesh.topology.dim
         fdim = tdim - 1
         
         # Ensure connectivity is created (collective operation)
         self.mesh.topology.create_connectivity(fdim, tdim)
         
-        facets = self.facet_tags.find(self.load_tag)
-        
-        # locate_dofs_topological is collective - all ranks must call it
-        dofs = fem.locate_dofs_topological(V, fdim, facets)
-        
-        if dofs.size == 0:
-            block_ids = np.empty(0, dtype=np.int32)
-        else:
-            # Check if DOFs are scalar or block indices
-            if bs > 1 and int(dofs.max()) >= n_blocks_total:
-                block_ids = np.unique(dofs // bs).astype(np.int32, copy=False)
-            else:
-                block_ids = np.unique(dofs).astype(np.int32, copy=False)
-        
-        # Keep only owned (non-ghost) blocks
-        self._owned_blocks = np.ascontiguousarray(
-            block_ids[block_ids < imap.size_local], dtype=np.int32
-        )
-        self._n_owned = int(self._owned_blocks.size)
-        
-        # Cache coordinates for owned blocks on load surface
+        # Cache coordinates once
         coords = V.tabulate_dof_coordinates()
         n_coords = int(coords.shape[0])
         
@@ -172,6 +186,53 @@ class BoxLoader:
             else:
                 block_coords = coords[:n_blocks_total]
         
+        # Per-tag storage
+        self._owned_blocks_per_tag: Dict[int, np.ndarray] = {}
+        self._x_owned_per_tag: Dict[int, np.ndarray] = {}
+        self._n_owned_per_tag: Dict[int, int] = {}
+        
+        # Collect all owned blocks across all tags (for unified access)
+        all_owned_blocks_list: List[np.ndarray] = []
+        
+        for tag in self.load_tags:
+            facets = self.facet_tags.find(tag)
+            
+            # locate_dofs_topological is collective - all ranks must call it
+            dofs = fem.locate_dofs_topological(V, fdim, facets)
+            
+            if dofs.size == 0:
+                block_ids = np.empty(0, dtype=np.int32)
+            else:
+                # Check if DOFs are scalar or block indices
+                if bs > 1 and int(dofs.max()) >= n_blocks_total:
+                    block_ids = np.unique(dofs // bs).astype(np.int32, copy=False)
+                else:
+                    block_ids = np.unique(dofs).astype(np.int32, copy=False)
+            
+            # Keep only owned (non-ghost) blocks
+            owned_blocks = np.ascontiguousarray(
+                block_ids[block_ids < imap.size_local], dtype=np.int32
+            )
+            n_owned = int(owned_blocks.size)
+            
+            self._owned_blocks_per_tag[tag] = owned_blocks
+            self._n_owned_per_tag[tag] = n_owned
+            
+            if n_owned > 0:
+                self._x_owned_per_tag[tag] = np.ascontiguousarray(block_coords[owned_blocks])
+                all_owned_blocks_list.append(owned_blocks)
+            else:
+                self._x_owned_per_tag[tag] = np.empty((0, self.gdim), dtype=np.float64)
+        
+        # Backward compatibility: unified owned blocks (union of all tags, unique)
+        if all_owned_blocks_list:
+            all_blocks = np.unique(np.concatenate(all_owned_blocks_list))
+            self._owned_blocks = np.ascontiguousarray(all_blocks, dtype=np.int32)
+        else:
+            self._owned_blocks = np.empty(0, dtype=np.int32)
+        self._n_owned = int(self._owned_blocks.size)
+        
+        # Unified coordinates (for backward compatibility)
         if self._n_owned > 0:
             self._x_owned = np.ascontiguousarray(block_coords[self._owned_blocks])
         else:
@@ -233,9 +294,11 @@ class BoxLoader:
     def precompute_loading_cases(self, loading_cases: List[BoxLoadingCase]) -> None:
         """Precompute traction arrays for all loading cases.
         
-        Traction values are computed ONLY at DOFs on the load surface (load_tag).
-        Other DOFs remain zero. Supports uniform, linear gradient, parabolic, 
-        and bending distributions.
+        Traction values are computed ONLY at DOFs on the load surfaces.
+        Other DOFs remain zero. Supports:
+        - Single-wall loading (backward compatible)
+        - Multi-wall loading via wall_tags in PressureLoadSpec
+        - Uniform, linear gradient, parabolic, and bending distributions.
         
         Args:
             loading_cases: List of loading cases to precompute
@@ -245,43 +308,92 @@ class BoxLoader:
         for case in loading_cases:
             if case.pressure is None:
                 # No load case - zero traction (store only surface DOF values)
-                self._cached_tractions[case.name] = np.zeros(self._n_owned * bs)
+                self._cached_tractions[case.name] = np.zeros(self._n_owned_total)
             else:
                 spec = case.pressure
                 p = spec.magnitude
-                d = np.array(spec.direction, dtype=np.float64)
-                d = d / np.linalg.norm(d)  # Normalize direction
                 
-                if spec.gradient_axis is None:
-                    # Uniform pressure: same traction at all surface DOFs
-                    traction_vec = p * d  # shape (3,)
-                    # Tile for each owned block DOF
-                    values = np.tile(traction_vec, self._n_owned)
+                # Initialize full array with zeros
+                values = np.zeros(self._n_owned_total, dtype=np.float64)
+                
+                if spec.wall_tags:
+                    # Multi-wall mode: apply pressure to each specified wall
+                    for wall_tag, wall_dir in zip(spec.wall_tags, spec.wall_directions):
+                        if wall_tag not in self._owned_blocks_per_tag:
+                            continue  # Skip tags not in our load_tags
+                        
+                        d = np.array(wall_dir, dtype=np.float64)
+                        d = d / np.linalg.norm(d)  # Normalize direction
+                        
+                        owned_blocks = self._owned_blocks_per_tag[wall_tag]
+                        n_owned = self._n_owned_per_tag[wall_tag]
+                        x_owned = self._x_owned_per_tag[wall_tag]
+                        
+                        if n_owned == 0:
+                            continue
+                        
+                        if spec.gradient_axis is None:
+                            # Uniform pressure on this wall
+                            traction_vec = p * d
+                            wall_values = np.tile(traction_vec, n_owned)
+                        else:
+                            # Gradient pressure on this wall
+                            axis = spec.gradient_axis
+                            grad_type = spec.gradient_type
+                            f_min, f_max = spec.gradient_range
+                            x_min, x_max = spec.box_extent
+                            
+                            x_transposed = x_owned.T
+                            factor = self._compute_gradient_factor(
+                                x_transposed, axis, grad_type, f_min, f_max, x_min, x_max
+                            )
+                            traction_at_dofs = np.outer(factor * p, d)
+                            wall_values = traction_at_dofs.ravel()
+                        
+                        # Write to appropriate DOF indices
+                        dof_idx = (owned_blocks[:, None] * bs + np.arange(bs, dtype=np.int32)[None, :]).ravel()
+                        values[dof_idx] = wall_values
                 else:
-                    # Gradient pressure: evaluate at surface DOF coordinates
-                    axis = spec.gradient_axis
-                    grad_type = spec.gradient_type
-                    f_min, f_max = spec.gradient_range
-                    x_min, x_max = spec.box_extent
+                    # Single-wall mode (backward compatible): use direction on all load_tags
+                    d = np.array(spec.direction, dtype=np.float64)
+                    d = d / np.linalg.norm(d)
                     
-                    # Compute traction at each owned surface DOF
-                    # self._x_owned is (n_owned, gdim), need to transpose for _compute_gradient_factor
-                    x_transposed = self._x_owned.T  # (gdim, n_owned)
-                    factor = self._compute_gradient_factor(
-                        x_transposed, axis, grad_type, f_min, f_max, x_min, x_max
-                    )  # shape (n_owned,)
-                    # Traction at each DOF: p * factor * d
-                    # Result: (n_owned, gdim)
-                    traction_at_dofs = np.outer(factor * p, d)
-                    values = traction_at_dofs.ravel()  # flatten for storage
+                    for tag in self.load_tags:
+                        owned_blocks = self._owned_blocks_per_tag[tag]
+                        n_owned = self._n_owned_per_tag[tag]
+                        x_owned = self._x_owned_per_tag[tag]
+                        
+                        if n_owned == 0:
+                            continue
+                        
+                        if spec.gradient_axis is None:
+                            # Uniform pressure
+                            traction_vec = p * d
+                            wall_values = np.tile(traction_vec, n_owned)
+                        else:
+                            # Gradient pressure
+                            axis = spec.gradient_axis
+                            grad_type = spec.gradient_type
+                            f_min, f_max = spec.gradient_range
+                            x_min, x_max = spec.box_extent
+                            
+                            x_transposed = x_owned.T
+                            factor = self._compute_gradient_factor(
+                                x_transposed, axis, grad_type, f_min, f_max, x_min, x_max
+                            )
+                            traction_at_dofs = np.outer(factor * p, d)
+                            wall_values = traction_at_dofs.ravel()
+                        
+                        dof_idx = (owned_blocks[:, None] * bs + np.arange(bs, dtype=np.int32)[None, :]).ravel()
+                        values[dof_idx] = wall_values
                 
-                # Cache the computed values for surface DOFs only
+                # Cache the computed values
                 self._cached_tractions[case.name] = values.copy()
     
     def set_loading_case(self, case_name: str) -> None:
         """Set the current loading case by name.
         
-        Traction is set ONLY at DOFs on the load surface; other DOFs are zeroed.
+        Traction is set ONLY at DOFs on the load surfaces; other DOFs are zeroed.
         
         Args:
             case_name: Name of the precomputed loading case
@@ -295,24 +407,19 @@ class BoxLoader:
                 f"Available cases: {list(self._cached_tractions.keys())}"
             )
         
-        bs = int(self.V.dofmap.index_map_bs)
-        
-        # Zero entire traction field first
-        self.traction.x.array[:self._n_owned_total] = 0.0
-        
-        # Set cached values at surface DOFs only
-        if self._n_owned > 0:
-            blocks = self._owned_blocks
-            # Scalar DOF indices for these blocks
-            dof_idx = (blocks[:, None] * bs + np.arange(bs, dtype=np.int32)[None, :]).ravel()
-            self.traction.x.array[dof_idx] = self._cached_tractions[case_name]
+        # Cached values are now full-length arrays with zeros at non-surface DOFs
+        self.traction.x.array[:self._n_owned_total] = self._cached_tractions[case_name][:self._n_owned_total]
         
         self.traction.x.scatter_forward()
     
     def set_pressure(self, pressure: float, direction: tuple[float, float, float] = (0.0, 0.0, -1.0)) -> None:
-        """Directly set uniform pressure (without caching).
+        """Directly set uniform pressure on all load surfaces (without caching).
         
-        Traction is set ONLY at DOFs on the load surface; other DOFs are zeroed.
+        Traction is set ONLY at DOFs on the load surfaces; other DOFs are zeroed.
+        Applies the same direction to all surfaces (single-wall mode behavior).
+        
+        For multi-wall loading with different directions per wall, use
+        precompute_loading_cases with PressureLoadSpec.wall_tags instead.
         
         Args:
             pressure: Pressure magnitude [MPa]
@@ -327,12 +434,14 @@ class BoxLoader:
         # Zero entire traction field first
         self.traction.x.array[:self._n_owned_total] = 0.0
         
-        # Set values at surface DOFs only
-        if self._n_owned > 0:
-            blocks = self._owned_blocks
-            dof_idx = (blocks[:, None] * bs + np.arange(bs, dtype=np.int32)[None, :]).ravel()
-            # Tile the traction vector for each surface DOF
-            values = np.tile(traction_vec, self._n_owned)
-            self.traction.x.array[dof_idx] = values
+        # Set values at surface DOFs for all load_tags
+        for tag in self.load_tags:
+            owned_blocks = self._owned_blocks_per_tag[tag]
+            n_owned = self._n_owned_per_tag[tag]
+            
+            if n_owned > 0:
+                dof_idx = (owned_blocks[:, None] * bs + np.arange(bs, dtype=np.int32)[None, :]).ravel()
+                values = np.tile(traction_vec, n_owned)
+                self.traction.x.array[dof_idx] = values
         
         self.traction.x.scatter_forward()
