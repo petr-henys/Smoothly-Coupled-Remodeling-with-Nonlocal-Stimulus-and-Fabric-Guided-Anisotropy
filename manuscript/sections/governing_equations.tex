@@ -3,11 +3,11 @@
 
 \paragraph{Smooth regularization operators.}
 To ensure numerical stability and differentiability, we employ a consistent set of smooth regularization operators parameterized by a smoothing width $\varepsilon > 0$. We define the smooth absolute value as $|x|_\varepsilon := \sqrt{x^2+\varepsilon^2}-\varepsilon$. Based on this, we define smooth maximum, minimum, and clamping operators:
-\begin{align*}
-\operatorname{smax}(x,y;\varepsilon) &:= \tfrac{1}{2}(x+y+|x-y|_\varepsilon), \\
+\begin{align} \label{eq:smooth-max-nd}
+\operatorname{smax}(x,y;\varepsilon) &:= \tfrac{1}{2}(x+y+|x-y|_\varepsilon), \nonumber \\
 \operatorname{smin}(x,y;\varepsilon) &:= \tfrac{1}{2}(x+y-|x-y|_\varepsilon), \\
-\operatorname{sclamp}(x,a,b;\varepsilon) &:= \operatorname{smin}(\operatorname{smax}(x,a;\varepsilon),b;\varepsilon).
-\end{align*}
+\operatorname{sclamp}(x,a,b;\varepsilon) &:= \operatorname{smin}(\operatorname{smax}(x,a;\varepsilon),b;\varepsilon). \nonumber
+\end{align}
 
 \paragraph{Units and scaling.}
 We use the unit system: length [mm], time [day], stress/energy [MPa], and density [g/cm$^3$]. The stimulus $S$ is dimensionless, the apparent density $\rho$ is in g/cm$^3$, and fabric quantities ($\mathbf{A}$, $\mathbf{L}$) are dimensionless. The boundary partition is $\partial\Omega=\Gamma_D\cup\Gamma_N$ with outward unit normal $\mathbf{n}$.
@@ -36,7 +36,11 @@ The orthotropic engineering constants are given by:
     \nu_{ij} &= \nu_0 \sqrt{\frac{E_i}{E_j}} \quad \text{for } i\neq j,
 \end{aligned}
 \end{equation}
-
+where $E_0$ is a reference Young's modulus, $\nu_0$ is a (density-independent) Poisson ratio, $\rho_{\mathrm{ref}}$ is a reference density, and $p_E$ and $p_G$ are stiffness exponents controlling axial and shear scaling with fabric. The density-dependent exponent $k(\widetilde{\rho})$ transitions smoothly from a trabecular exponent $n_{\mathrm{trab}}$ to a cortical exponent $n_{\mathrm{cort}}$:
+\begin{equation}\label{eq:variable-exponent}
+k(\widetilde{\rho}) = n_{\mathrm{trab}} (1 - w(\widetilde{\rho})) + n_{\mathrm{cort}} w(\widetilde{\rho}),
+\end{equation}
+where $w(\widetilde{\rho})$ is a smooth interpolation function (smoothstep) transitioning from 0 to 1 over the range $[\rho_{\mathrm{trab}}^{\max}, \rho_{\mathrm{cort}}^{\min}]$. The density $\widetilde{\rho}$ is smoothly clamped to a minimum value $\rho_{\min}$ to ensure positive definiteness.
 \paragraph{Orthotropic tensor construction and physical admissibility.}
 The coefficients \eqref{eq:zysset-curnier} define engineering constants in the \emph{principal fabric frame}.
 Let $\widehat{\mathbf{A}}$ denote the \emph{deviatoric (isotropic-scaling-removed) normalization} of the fabric tensor, defined by \eqref{eq:Ahat-blend-nd}. We denote by $\{\mathbf{a}_i\}_{i=1}^3$ the orthonormal eigenvectors of $\widehat{\mathbf{A}}$ and by $\{m_i\}_{i=1}^3$ its eigenvalues, which represent bounded \emph{anisotropy factors} with isotropic scaling removed in log space.
@@ -46,33 +50,21 @@ The stiffness operator entering $\boldsymbol{\sigma}=\mathbb{C}:\boldsymbol{\var
 \)
 with $\mathbf{P}_i:=\mathbf{a}_i\otimes\mathbf{a}_i$ in the fully anisotropic case. Conceptually, one may assemble $\mathbb{C}$ by forming the orthotropic compliance matrix $\mathbb{S}$ from $\{E_i,G_{ij},\nu_{ij}\}$ (Voigt notation), enforcing reciprocity ($\nu_{ji}E_i=\nu_{ij}E_j$), inverting $\mathbb{S}$, and rotating to the spatial frame.
 This construction ensures that the resulting constitutive operator is \emph{conservative} (minor and major symmetries) and admits a standard strain energy density $U=\tfrac12\boldsymbol{\sigma}:\boldsymbol{\varepsilon}$.
-In addition to the lower-density clamp \eqref{eq:smooth-max-nd} (which guarantees strictly positive moduli in \eqref{eq:zysset-curnier}), we ensure \emph{strong ellipticity} through admissible parameter ranges and bounded anisotropy (via eigenvalue-ratio bounds), and the law reduces smoothly to the isotropic baseline as $\widehat{\mathbf{A}}\to\mathbf{I}$.
+We ensure \emph{strong ellipticity} through admissible parameter ranges and bounded anisotropy (via eigenvalue-ratio bounds), and the law reduces smoothly to the isotropic baseline as $\widehat{\mathbf{A}}\to\mathbf{I}$.
 
-where $E_0$ is a reference Young's modulus, $\nu_0$ is a (density-independent) Poisson ratio, $\rho_{\mathrm{ref}}$ is a reference density, and $p_E$ and $p_G$ are stiffness exponents controlling axial and shear scaling with fabric. The density-dependent exponent $k(\widetilde{\rho})$ transitions smoothly from a trabecular exponent $n_{\mathrm{trab}}$ to a cortical exponent $n_{\mathrm{cort}}$:
-\begin{equation}\label{eq:variable-exponent}
-k(\widetilde{\rho}) = n_{\mathrm{trab}} (1 - w(\widetilde{\rho})) + n_{\mathrm{cort}} w(\widetilde{\rho}),
-\end{equation}
-where $w(\widetilde{\rho})$ is a smooth interpolation function (smoothstep) transitioning from 0 to 1 over the range $[\rho_{\mathrm{trab}}^{\max}, \rho_{\mathrm{cort}}^{\min}]$. The density $\widetilde{\rho}$ is smoothly clamped to a minimum value $\rho_{\min}$ to ensure positive definiteness. The stress is then $\boldsymbol{\sigma} = \mathbb{C} : \boldsymbol{\varepsilon}$.
 For later use (e.g.\ fabric-guided constitutive evaluation) we remove isotropic scaling in log space and bound the resulting eigenvalue ratios. Let $\mathrm{sym}(\mathbf{L})=\sum_{i=1}^3 \ell_i\,\mathbf{P}_i$ with $\bar\ell:=\tfrac13\sum_i \ell_i$ and define
 \begin{equation}\label{eq:Ahat-blend-nd}
 \widehat{\mathbf{A}} \;:=\; \sum_{i=1}^3 m_i\,\mathbf{P}_i,\qquad
 m_i \;:=\; \exp\!\Big(\operatorname{sclamp}(\ell_i-\bar\ell, -d_{\max}, d_{\max}; \varepsilon)\Big),\qquad
 d_{\max}:=\ln\!\Big(\max\{m_{\max},1/m_{\min}\}\Big),
 \end{equation}
-which is symmetric positive definite. If the bound is inactive then $\det(\widehat{\mathbf{A}})=1$, while clamping enforces $m_i\in[\exp(-d_{\max}),\exp(d_{\max})]$. Two numerical issues arise in practice: (i) the projector/eigenvector representation is ill-conditioned when $\widehat{\mathbf{A}}$ is (nearly) isotropic or transversely isotropic (repeated eigenvalues), and (ii) extreme anisotropy can cause overflow in $\exp(\mathbf{L})$ and large stiffness contrasts. We address these issues by modified numerical procedures detailed in the appendix.
-
-\paragraph{Smooth lower density clamp.}
-To maintain uniform strong ellipticity and avoid case distinctions in highly porous regions, we use a smooth ``max'' operator:
-\begin{equation}\label{eq:smooth-max-nd}
-\widetilde{\rho}(\rho) := \operatorname{smax}(\rho, \rho_{\min}; \varepsilon).
-\end{equation}
-This monotone, everywhere differentiable approximation of $\max\{\rho,\rho_{\min}\}$ enforces $\widetilde{\rho}\ge\rho_{\min}$ with a single global smoothing width $\varepsilon>0$. No upper clamp is imposed.
+which is symmetric positive definite. If the bound is inactive then $\det(\widehat{\mathbf{A}})=1$, while clamping enforces $m_i\in[\exp(-d_{\max}),\exp(d_{\max})]$. Two numerical issues arise in practice: (i) the projector/eigenvector representation is ill-conditioned when $\widehat{\mathbf{A}}$ is (nearly) isotropic or transversely isotropic (repeated eigenvalues), and (ii) extreme anisotropy can cause overflow in $\exp(\mathbf{L})$ and large stiffness contrasts. We address these issues by modified numerical procedures detailed in~\ref{sec:projector-robustness}.
 
 \paragraph{Log-Euclidean Fabric Framework.}
-To ensure the fabric tensor $\mathbf{A}$ remains symmetric and positive-definite (SPD) throughout the simulation, we evolve its matrix logarithm $\mathbf{L} = \ln \mathbf{A}$. The fabric tensor is recovered via $\mathbf{A} = \exp(\mathbf{L})$. This parameterization guarantees that $\mathbf{A}$ is always SPD for any real symmetric tensor $\mathbf{L}$, avoiding the need for ad-hoc projections or constraints.
+To ensure the fabric tensor $\mathbf{A}$ remains symmetric and positive-definite (SPD) throughout the simulation, we evolve its matrix logarithm $\mathbf{L} = \ln \mathbf{A}$. The fabric tensor is recovered via $\mathbf{A} = \exp(\mathbf{L})$. This parameterization guarantees that $\mathbf{A}$ is always SPD for any real symmetric tensor $\mathbf{L}$, avoiding the need for ad-hoc projections or constraints, see the details in~\ref{sec:structure-preserving}.
 
 \paragraph{Quantitative analysis and biological interpretation.}
-Figure \ref{fig:constitutive_law} illustrates the behavior of the density-elasticity law. Panel (a) shows the stiffness $E(\rho)$ transitioning from a quadratic trabecular regime ($n_{\mathrm{trab}}=2.0$) to a near-linear cortical regime ($n_{\mathrm{cort}}=1.3$). This dual-power law captures the stiffening efficiency of dense bone while maintaining the rapid compliance increase in porous bone. Panel (b) explicitly plots the exponent $n(\rho)$, which varies smoothly between the two regimes via the cubic smoothstep function shown in (f). Panels (c) and (d) demonstrate the sensitivity of the stiffness curve to the transition thresholds $\rho_{\mathrm{trab}}^{\max}$ and $\rho_{\mathrm{cort}}^{\min}$; shifting these parameters allows for calibration to specific anatomical sites where the trabecular-cortical boundary may differ. Panel (e) highlights the effect of the exponents themselves; higher $n_{\mathrm{trab}}$ suppresses stiffness in low-density regions, effectively modeling the loss of connectivity in osteoporotic bone. The smooth lower clamp \eqref{eq:smooth-max-nd} guarantees strictly positive stiffness even in highly porous regions, thus preventing mechanical degeneracy and preserving differentiability. The normalization \eqref{eq:Ahat-blend-nd} removes isotropic scaling in log space and bounds anisotropy through eigenvalue-ratio limits; when clamping is inactive, the normalization reduces to a unit-determinant descriptor.
+Figure \ref{fig:constitutive_law} illustrates the behavior of the density-elasticity law. Panel (a) shows the stiffness $E(\rho)$ transitioning from a quadratic trabecular regime ($n_{\mathrm{trab}}=2.0$) to a near-linear cortical regime ($n_{\mathrm{cort}}=1.3$). This dual-power law captures the stiffening efficiency of dense bone while maintaining the rapid compliance increase in porous bone. Panel (b) explicitly plots the exponent $n(\rho)$, which varies smoothly between the two regimes via the cubic smoothstep function shown in (f). Panels (c) and (d) demonstrate the sensitivity of the stiffness curve to the transition thresholds $\rho_{\mathrm{trab}}^{\max}$ and $\rho_{\mathrm{cort}}^{\min}$; shifting these parameters allows for calibration to specific anatomical sites where the trabecular-cortical boundary may differ. Panel (e) highlights the effect of the exponents themselves; higher $n_{\mathrm{trab}}$ suppresses stiffness in low-density regions, effectively modeling the loss of connectivity in osteoporotic bone. The smooth lower clamp guarantees strictly positive stiffness even in highly porous regions, thus preventing mechanical degeneracy and preserving differentiability. The normalization \eqref{eq:Ahat-blend-nd} removes isotropic scaling in log space and bounds anisotropy through eigenvalue-ratio limits; when clamping is inactive, the normalization reduces to a unit-determinant descriptor.
 
 \begin{figure}[htbp]
     \centering
