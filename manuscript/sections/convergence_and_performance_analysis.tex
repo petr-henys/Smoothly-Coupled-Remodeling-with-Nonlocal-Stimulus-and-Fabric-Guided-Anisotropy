@@ -1,6 +1,6 @@
 \section{Convergence and Performance Analysis}
 \label{app:convergence}
-\subsection*{Convergence and performance}
+\subsection*{Spatio-temporal convergence and performance}
 
 We verify spatial consistency using field–norm error estimates on nested meshes with non-matching transfer. All quantities are dimensional; averages are normalized by $|\Omega|$.
 
@@ -25,7 +25,6 @@ p \;=\; \arg\min_{p} \sum_{i} \big(\log e_{i\to i+1}^{X,\bullet} - p\log h_{i+1}
 \]
 reported for both $L^2$ and $H^1$–semi norms. When only three levels are available, we also quote the two–ratio estimate $p \approx \log(e_{H\to h}/e_{h\to h/2})/\log(r)$ with $r=h_H/h_h$.
 
-
 \begin{figure}[htbp]
   \centering
   \IfFileExists{images/convergence_plot.png}{%
@@ -33,4 +32,14 @@ reported for both $L^2$ and $H^1$–semi norms. When only three levels are avail
   }{\fbox{\parbox{1\linewidth}{\centering Missing image: \texttt{images/convergence_plot.png}}}}
   \caption{Convergence of spatial and temporal errors under mesh and time-step refinement. Solid lines: errors (norms specified in the text). Dotted lines: ideal slopes for $P^1$ elements and the Backward--Euler scheme. Shaded bands show interquartile ranges across regions of interest.}
   \label{fig:individual_convergence}
+\end{figure}
+
+\subsubsection*{Anderson convergence and performance}
+\begin{figure}[htbp]
+  \centering
+  \IfFileExists{images/convergence_plot.png}{%
+    \includegraphics[width=1\linewidth]{images/anderson_diagnostic.png}%
+  }{\fbox{\parbox{1\linewidth}{\centering Missing image: \texttt{images/convergence_plot.png}}}}
+  \caption{}
+  \label{fig:anderson_convergence}
 \end{figure}
