@@ -18,7 +18,7 @@ def get_standard_gait_cases() -> list[LoadingCase]:
             magnitude=1900,
             alpha_sag=-10.0,
             alpha_front=-5.0,
-            sigma_deg=25.0,
+            sigma_deg=35.0,
             flip=True,
         ),
         muscles=[
@@ -57,7 +57,7 @@ def get_standard_gait_cases() -> list[LoadingCase]:
             magnitude=2400,
             alpha_sag=0.0,
             alpha_front=-5.0,
-            sigma_deg=25.0,
+            sigma_deg=35.0,
             flip=True,
         ),
         muscles=[
@@ -96,7 +96,7 @@ def get_standard_gait_cases() -> list[LoadingCase]:
             magnitude=2100,
             alpha_sag=10.0,
             alpha_front=-5.0,
-            sigma_deg=25.0,
+            sigma_deg=35.0,
             flip=True,
         ),
         muscles=[
@@ -135,7 +135,7 @@ def get_standard_gait_cases() -> list[LoadingCase]:
             magnitude=2500,
             alpha_sag=-30.0,
             alpha_front=30.0,
-            sigma_deg=25.0,
+            sigma_deg=35.0,
             flip=True,
         ),
         muscles=[

@@ -38,7 +38,7 @@
     
     "fabric": {
         "fabric_tau": 50.0,
-        "fabric_D": 1.0,
+        "filter_length": 2.0,
         "fabric_cA": 1.0,
         "fabric_gammaF": 1.0,
         "fabric_epsQ": 1e-12,

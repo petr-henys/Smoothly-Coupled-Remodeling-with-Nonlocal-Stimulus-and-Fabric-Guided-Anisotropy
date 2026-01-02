@@ -1,13 +1,55 @@
 \section*{Performance Analysis of the Anderson-Accelerated Block Gauss-Seidel Solver}
 \label{sec:fp-aa-performance}
 
+\paragraph{Anderson vs. picard}
+Fixed point solver jsme testovali na BOX modelu zatizeneho parabalickym tlakem (MODEL BOX-P1). Testovali jsme solver bez zapnutého akcelerátoru, tj čistokrevný damped pikard a model s Andersonovou akcelerací s nasledujícícm nastavením:     
+    \begin{table}[htbp]
+      \centering
+      \caption{Anderson acceleration parameters}
+      \label{tab:anderson-params}
+      \begin{tabular}{llr}
+        \toprule
+        \textbf{Parameter} & \textbf{Description} & \textbf{Value} \\
+        \midrule
+        $m$ & History depth & 5 \\
+        $\beta$ & Relaxation factor & 1.0 \\
+        $\lambda$ & Regularization parameter & $10^{-3}$ \\
+        $\varepsilon_{\text{tol}}$ & Coupling tolerance & $10^{-6}$ \\
+        $\rho_{\text{stall}}$ & Stall restart threshold & 1.1 \\
+        $\kappa_{\text{max}}$ & Condition number restart threshold & $10^{4}$ \\
+        $\alpha_{\text{step}}$ & Step limit factor & 1.5 \\
+        $w_{\text{stall}}$ & Stall detection window & 2 \\
+        $p_{\text{stall}}$ & Stall patience & 2 \\
+        $k_{\text{max}}$ & Maximum sub-iterations & 25 \\
+        $w_{\text{outer}}$ & Outer stall window & 4 \\
+        $\delta_{\text{min}}$ & Minimum relative drop & 0.05 \\
+        $p_{\text{outer}}$ & Outer stall patience & 2 \\
+        $\rho_{\text{off}}$ & Anderson deactivation threshold & 0.3 \\
+        $\rho_{\text{on}}$ & Anderson activation threshold & 0.7 \\
+        $p_{\rho}$ & Anderson switch patience & 3 \\
+        \bottomrule
+      \end{tabular}
+    \end{table}
 
+    Každy model běžel na StiffSetup a na PhysioSetup s pevně zafioxovaným dt=25 dní a total time, T=500 dní. Nutno poznamenat, že časový krok je poměrně velký a transientní chování nemusí být dobře zachycené, zejména u StiffSetup, ale pro účely otestování róbustnosti solveru je to nepodstatné, jde o to, že vyšší dt významně zvyšuje nároky na konvergenci solveru.
 
+  \begin{figure}[htbp]
+  \centering
+  \IfFileExists{images/anderson_comparison.png}{%
+    \includegraphics[width=1\linewidth]{images/anderson_comparison.png}%
+  }{\fbox{\parbox{1\linewidth}{\centering Missing image: \texttt{images/anderson_comparison.png}}}}
+  \caption{}
+  \label{fig:anderson_comparison}
+\end{figure}
+\paragraph{Scaling Anderson to Femur model}
+
+Pro detailnější analýzu výkonu Andersonova akcelerátoru jsme provedli diagnostický běh na stejném modelu femuru na StiffSetup s dt=25 dní a T=500 dní, kde jsme zaznamenávali podrobné informace o každé subiteraci Andersonova akcelerátoru. Výsledky jsou shrnuty na obrázku \ref{fig:anderson_diagnostic}.
+  
 \begin{figure}[htbp]
   \centering
-  \IfFileExists{images/convergence_plot.png}{%
+  \IfFileExists{images/anderson_diagnostic.png}{%
     \includegraphics[width=1\linewidth]{images/anderson_diagnostic.png}%
   }{\fbox{\parbox{1\linewidth}{\centering Missing image: \texttt{images/anderson_diagnostic.png}}}}
   \caption{}
-  \label{fig:anderson_convergence}
+  \label{fig:anderson_diagnostic}
 \end{figure}

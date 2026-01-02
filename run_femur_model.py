@@ -26,7 +26,7 @@ def main() -> None:
     mesh = mdl.mesh_dolfinx
 
     # Load parameters from JSON
-    params = load_default_params("default_params_femur.json")
+    params = load_default_params("stiff_params_femur.json")
     
     # Modify params as needed (example):
     # params["time"].total_time = 200.0
