@@ -85,7 +85,7 @@ class DensitySolver(BaseLinearSolver):
 
             denom = max(rho_cort_min - rho_trab_max, 1e-12)
             t = (self.rho_old - rho_trab_max) / denom
-            w_cort = smoothstep01(t)
+            w_cort = smoothstep01(t, eps)
 
             S_v = (1.0 - w_cort) * S_trab + w_cort * S_cort
             S_v = smooth_max(S_v, 0.0, eps)

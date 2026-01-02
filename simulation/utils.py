@@ -152,9 +152,30 @@ def smooth_clamp(x, min_val, max_val, eps=1e-4):
     return smooth_min(smooth_max(x, min_val, eps), max_val, eps)
 
 
-def smoothstep01(t):
-    """Cubic smoothstep on [0,1]: 0 for t≤0, 1 for t≥1, t²(3-2t) in between."""
-    t_clamped = smooth_clamp(t, 0.0, 1.0)
+
+def hard_max(x, y):
+    """Pointwise max using UFL's built-in max_value (non-smooth)."""
+    return ufl.max_value(x, y)
+
+
+def hard_min(x, y):
+    """Pointwise min using UFL's built-in min_value (non-smooth)."""
+    return ufl.min_value(x, y)
+
+
+def hard_clamp(x, min_val, max_val):
+    """Pointwise clamp using hard min/max (guaranteed range, non-smooth at bounds)."""
+    return hard_min(hard_max(x, min_val), max_val)
+
+
+def smoothstep01(t, eps=1e-4):
+    """Cubic smoothstep on [0,1] with optional smooth clamping width.
+
+    Notes:
+      - We intentionally clamp t to [0,1] (smoothly) before evaluating the polynomial.
+      - Pass the global smoothing width (cfg.numerics.smooth_eps) to keep behavior consistent.
+    """
+    t_clamped = smooth_clamp(t, 0.0, 1.0, eps)
     return t_clamped * t_clamped * (3.0 - 2.0 * t_clamped)
 
 
@@ -162,9 +183,12 @@ def smoothstep01(t):
 # UFL tensor utilities
 # ---------------------------------------------------------------------------
 
-def clamp(x, a, b):
-    """Deprecated: Use smooth_clamp instead."""
-    return smooth_clamp(x, a, b)
+def clamp(x, a, b, eps=1e-4):
+    """Backward-compatible alias for smooth_clamp.
+
+    Prefer calling smooth_clamp(...) explicitly in new code.
+    """
+    return smooth_clamp(x, a, b, eps)
 
 
 def symm(X):
@@ -187,7 +211,7 @@ def eigenvalues_sym3(X, *, eps_p: float = 1e-18, eps_r: float = 1e-12, tol: floa
 
     p = ufl.sqrt(ufl.max_value(p2, eps_p * scale2))
     r = ufl.det(B) / (2.0 * p * p * p)
-    r_clamped = clamp(r, -1.0 + eps_r, 1.0 - eps_r)
+    r_clamped = hard_clamp(r, -1.0 + eps_r, 1.0 - eps_r)
 
     phi = ufl.acos(r_clamped) / 3.0
     two_pi_over_3 = 2.0 * ufl.pi / 3.0

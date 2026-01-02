@@ -125,9 +125,9 @@ class FabricSolver(BaseLinearSolver):
         a2 = lam2 / geo
         a3 = lam3 / geo
 
-        m1 = clamp(a1**gammaF, m_min, m_max)
-        m2 = clamp(a2**gammaF, m_min, m_max)
-        m3 = clamp(a3**gammaF, m_min, m_max)
+        m1 = clamp(a1**gammaF, m_min, m_max, float(self.cfg.numerics.smooth_eps))
+        m2 = clamp(a2**gammaF, m_min, m_max, float(self.cfg.numerics.smooth_eps))
+        m3 = clamp(a3**gammaF, m_min, m_max, float(self.cfg.numerics.smooth_eps))
 
         # Normalize in log-space so tr(L_target)=0 exactly
         lnm1 = ufl.ln(m1)

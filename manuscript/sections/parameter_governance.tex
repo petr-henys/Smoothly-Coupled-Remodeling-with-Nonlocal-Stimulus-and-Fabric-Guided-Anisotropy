@@ -14,3 +14,66 @@ Weinans et al.\ reported $\rho_{\max}\approx 1.74~\mathrm{g/cm^3}$ and a near-re
 
 \paragraph{Fabric parameters.}
 Microstructural reorientation is expected to evolve on the remodeling time scale (months) rather than on the loading time scale; consequently $\tau_A\sim 30$--$300~\mathrm{d}$ is a reasonable prior if fabric represents remodeling-driven alignment \cite{Robling2006}. The diffusion coefficient $D_A$ sets a smoothing length $\sqrt{T D_A}$ and can be tuned to the targeted spatial correlation length of anisotropy. The exponent $\gamma_F$ controls how strongly stress-eigenvalue contrasts translate into fabric-eigenvalue ratios; $\gamma_F\in[0.5,2]$ is conservative (with $\gamma_F=1$ a neutral default). The bounds $m_{\min},m_{\max}$ cap admissible anisotropy; the ratio $m_{\max}/m_{\min}$ limits the maximum eigenvalue ratio and should be chosen to avoid numerically extreme stiffness contrasts. Finally, the regularization parameters $\varepsilon_Q$ and $\varepsilon_a$ should be small relative to the scale of $\mathbf{Q}$ so that they only stabilize eigen-decomposition and activity gating near isotropy.
+
+\subsection{Parameter Sets for Literature-Based Validation and Numerical Benchmarking}
+
+To rigorously assess both the physiological plausibility and the numerical robustness of the proposed framework, we define two distinct parameter configurations: the \textit{PhysioSetup} and the \textit{StiffSetup} (summarized in Table~\ref{tab:param_setup}).
+
+The \textbf{PhysioSetup} represents a baseline physiological state, calibrated according to established values reported in the literature. It employs kinetic rates and regularization length scales ($D_\rho, D_S$) consistent with prior computational studies, ensuring smooth morphological transitions that reflect the typical adaptation time scales of human bone.
+
+In contrast, the \textbf{StiffSetup} is designed as a synthetic numerical ``stress test'' to evaluate solver stability under extreme conditions. By significantly narrowing the mechanostat's lazy zone ($\delta_0$) and saturation width ($\kappa_S$), and by accelerating formation/resorption gains ($k_{form}, k_{res}$) by an order of magnitude, we induce a highly stiff, reaction-dominated regime. This configuration generates sharp internal gradients and rapid temporal transients that challenge the convergence of standard fixed-point iterations, thereby serving as a rigorous benchmark for the proposed Anderson-accelerated solver.
+
+\begin{table}[htbp]
+    \centering
+    \caption{Definition of physical parameter sets for numerical experiments. The \textbf{PhysioSetup} corresponds to the validated physiological baseline (based on clinical data), while the \textbf{StiffSetup} represents a numerically challenging benchmark with high nonlinearity, accelerated kinetics, and reduced regularization length scales. Parameters not listed in the "Varying" section are identical in both setups.}
+    \label{tab:param_setup}
+    \small
+    \begin{tabular}{lcccc}
+        \toprule
+        \textbf{Parameter} & \textbf{Symbol} & \textbf{Unit} & \textbf{PhysioSetup} & \textbf{StiffSetup} \\
+        & & & \textit{(Default)} & \textit{(Hard)} \\
+        \midrule
+        \multicolumn{5}{c}{\textbf{I. Varying Parameters (Stress-Test)}} \\
+        \midrule
+        \textit{Stimulus \& Mechanostat} & & & & \\
+        Lazy-zone half-width & $\delta_0$ & -- & $0.10$ & $0.01$ \\
+        Saturation width & $\kappa_S$ & -- & $0.50$ & $0.10$ \\
+        Stimulus diffusivity & $D_S$ & mm$^2$/day & $1.00$ & $0.50$ \\
+        \addlinespace
+        \textit{Density Kinetics} & & & & \\
+        Formation rate & $k_{form}$ & day$^{-1}$ & $0.01$ & $0.20$ \\
+        Resorption rate & $k_{res}$ & day$^{-1}$ & $0.0025$ & $0.05$ \\
+        Density diffusivity & $D_\rho$ & mm$^2$/day & $0.02$ & $0.005$ \\
+        \midrule
+        \multicolumn{5}{c}{\textbf{II. Shared Parameters (Fixed)}} \\
+        \midrule
+        \textit{Elasticity (Zysset-Curnier)} & & & & \\
+        Reference Young's modulus & $E_0$ & MPa & \multicolumn{2}{c}{$7500.0$} \\
+        Poisson's ratio & $\nu_0$ & -- & \multicolumn{2}{c}{$0.3$} \\
+        Stiffness exponents (trab./cort.) & $n_{trab}, n_{cort}$ & -- & \multicolumn{2}{c}{$2.0, \ 1.3$} \\
+        Fabric stiffness exponents & $p_E, p_G$ & -- & \multicolumn{2}{c}{$1.0, \ 1.0$} \\
+        \addlinespace
+        \textit{Density Bounds \& Geometry} & & & & \\
+        Reference density & $\rho_{ref}$ & g/cm$^3$ & \multicolumn{2}{c}{$1.0$} \\
+        Density bounds & $[\rho_{min}, \rho_{max}]$ & g/cm$^3$ & \multicolumn{2}{c}{$[0.1, \ 2.0]$} \\
+        Tissue density & $\rho_{t}$ & g/cm$^3$ & \multicolumn{2}{c}{$2.0$} \\
+        \addlinespace
+        \textit{Stimulus Driver} & & & & \\
+        SED averaging exponent & $p$ & -- & \multicolumn{2}{c}{$4.0$} \\
+        Reference SED & $\psi_{ref}$ & J/g & \multicolumn{2}{c}{$0.01$} \\
+        Time constant & $\tau_S$ & day & \multicolumn{2}{c}{$25.0$} \\
+        Max stimulus magnitude & $S_{max}$ & -- & \multicolumn{2}{c}{$1.0$} \\
+        \addlinespace
+        \textit{Fabric Evolution} & & & & \\
+        Time constant & $\tau_A$ & day & \multicolumn{2}{c}{$50.0$} \\
+        Fabric diffusivity & $D_A$ & mm$^2$/day & \multicolumn{2}{c}{$1.0$} \\
+        Anisotropy bounds & $[m_{min}, m_{max}]$ & -- & \multicolumn{2}{c}{$[0.2, \ 5.0]$} \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\paragraph{Time step size.}
+A conservative time-step choice follows the fastest intrinsic time scales: in \textbf{PhysioSetup} the stimulus and fabric relax over $\tau_S \approx 25\,\mathrm{d}$ and $\tau_A \approx 50\,\mathrm{d}$, so resolving transients suggests $\Delta t \sim 0.05\!-\!0.2\,\tau_S \approx 1\!-\!5\,\mathrm{d}$; density kinetics are typically slower and therefore less restrictive. In \textbf{StiffSetup}, accelerated formation/resorption and a sharper mechanostat imply that density kinetics dominate, so a conservative rule is $\Delta t \sim 0.05\!-\!0.2\min(\rho_{\max}/k_{\mathrm{form}},\,\rho_{\min}/k_{\mathrm{res}})$, often yielding sub-day steps (e.g., $\sim 0.05\!-\!0.2\,\mathrm{d}$). Expected settling to quasi-steady behavior occurs over a few time constants: stimulus $\sim 3\tau_S$ (tens of days), fabric $\sim 3\tau_A$ (order $10^2$ days), and density over a few multiples of its dominant kinetic scale (months in Physio, potentially weeks in Stiff). Note that numerical convergence can still hold for much larger $\Delta t$ because the stimulus is bounded and saturating ($\tanh$, $|S|\le S_{\max}$) and density rates self-limit near $\rho_{\min},\rho_{\max}$; such large steps should be viewed as steady-state accelerators unless verified by step-refinement ($\Delta t$ vs.\ two $\Delta t/2$).
+
+
+The complete numerical configuration used in the reference simulation (corresponding to the \textit{PhysioSetup}) is provided in~repository.

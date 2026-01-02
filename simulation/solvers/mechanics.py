@@ -110,7 +110,7 @@ class MechanicsSolver(BaseLinearSolver):
 
         denom = float(self.cfg.material.rho_cort_min - self.cfg.material.rho_trab_max)
         t = (rho_eff - self.cfg.material.rho_trab_max) / denom
-        w = smoothstep01(t)
+        w = smoothstep01(t, self.smooth_eps)
         k = self.cfg.material.n_trab * (1.0 - w) + self.cfg.material.n_cort * w
 
         return self.cfg.material.E0 * (rho_rel ** k)
@@ -211,7 +211,7 @@ class MechanicsSolver(BaseLinearSolver):
         r1 = 10.0 * tol_iso
 
         t = (r - r0) / (r1 - r0)
-        w = smoothstep01(t)
+        w = smoothstep01(t, self.smooth_eps)
 
         return (1.0 - w) * sigma_iso + w * sigma_aniso
 
