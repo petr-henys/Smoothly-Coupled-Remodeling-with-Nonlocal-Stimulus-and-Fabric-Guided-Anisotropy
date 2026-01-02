@@ -337,6 +337,7 @@ class FixedPointSolver:
                 "aa_restart": aa.get("restart_reason", ""),
                 "aa_limited": aa.get("limited", False),
                 "aa_off": aa.get("aa_off", False),
+                "picard_mode": not use_anderson,  # True = hysteresis switched to Picard
                 "condH": aa.get("condH", 0.0),
                 "contraction": contraction,  # ρ_k = r_k / r_{k-1}
                 "mem_mb": mem_mb,

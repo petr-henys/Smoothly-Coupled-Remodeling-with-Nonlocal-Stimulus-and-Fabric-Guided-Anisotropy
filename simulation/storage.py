@@ -97,8 +97,8 @@ class MetricsStorage:
         "step", "attempt", "iter", "time_days", "proj_res", "aa_step_res",
         "mech_iters", "fab_iters", "stim_iters", "dens_iters",
         "mech_time", "fab_time", "stim_time", "dens_time",
-        "aa_accepted", "aa_off", "restart", "restart_reason", "limited",
-        "condH", "aa_hist", "contraction", "memory_mb",
+        "aa_accepted", "aa_off", "picard_mode", "restart", "restart_reason", "limited",
+        "condH", "aa_hist", "contraction", "fp_stop_reason", "memory_mb",
     ]
 
     def __init__(self, cfg: "Config", comm: MPI.Comm) -> None:
@@ -251,13 +251,15 @@ class MetricsStorage:
                 "stim_time": iter_block_times.get("stim", 0.0),
                 "dens_time": iter_block_times.get("dens", 0.0),
                 "aa_accepted": 1 if rec.get("aa_accepted", True) else 0,
-                "aa_off": 1 if rec.get("aa_off", False) else 0,  # 1=Picard, 0=Anderson
+                "aa_off": 1 if rec.get("aa_off", False) else 0,  # 1=restart used Picard
+                "picard_mode": 1 if rec.get("picard_mode", False) else 0,  # 1=hysteresis Picard mode
                 "restart": 1 if rec.get("aa_restart") else 0,
                 "restart_reason": str(rec.get("aa_restart", "")),
                 "limited": 1 if rec.get("aa_limited") else 0,
                 "condH": rec.get("condH", 0.0),
                 "aa_hist": rec.get("aa_hist", 0),
                 "contraction": rec.get("contraction"),  # rho = r_k / r_{k-1}
+                "fp_stop_reason": str(rec.get("fp_stop_reason", "")),
                 "memory_mb": rec.get("mem_mb", 0.0),
             }
             self._subiters_writer.writerow(subiter_row)

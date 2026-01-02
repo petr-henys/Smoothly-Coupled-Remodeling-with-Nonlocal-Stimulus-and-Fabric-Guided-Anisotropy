@@ -46,14 +46,17 @@ from analysis.plot_utils import (
 # Configuration
 # =============================================================================
 
-DEFAULT_RUN_DIR = Path(".results_box/")
+DEFAULT_RUN_DIR = Path(".stiff_results_box/")
 OUTPUT_FILE = Path("manuscript/images/anderson_diagnostic.png")
 
 # Colors for events
 COLOR_STALL = "#e74c3c"   # Red - stall restart
 COLOR_COND = "#3498db"    # Blue - condition restart / conditioning line
 COLOR_LIMITED = "#f39c12" # Orange - step limiting
+COLOR_PICARD = "#8e44ad"  # Purple - Picard mode (AA off)
 COLOR_RESTART = "#9b59b6" # Purple - general restart (for cumulative plot)
+COLOR_OUTER_STALL = "#d35400"  # Dark orange - outer coupling stall (no_progress)
+COLOR_MAX_SUBITERS = "#7f8c8d" # Gray - max subiters reached
 
 # Color for rejected steps
 COLOR_REJECTED = "#c0392b"  # Dark red
@@ -189,8 +192,10 @@ def plot_convergence(ax: plt.Axes, subiters: pd.DataFrame, config: dict, steps_d
     cmap = plt.cm.viridis
     norm = Normalize(vmin=0, vmax=max(unique_keys - 1, 1))
     
-    # Check if aa_off column exists for Picard/Anderson distinction
-    has_aa_off = "aa_off" in subiters.columns
+    # Check for Picard/Anderson distinction - ONLY use picard_mode (hysteresis), NOT aa_off (restart)
+    # aa_off indicates restart used Picard, not hysteresis mode switch
+    picard_col = "picard_mode" if "picard_mode" in subiters.columns else None
+    has_picard_col = picard_col is not None
 
     for i, (step, attempt) in enumerate(step_attempts):
         if "attempt" in subiters.columns:
@@ -205,16 +210,16 @@ def plot_convergence(ax: plt.Axes, subiters: pd.DataFrame, config: dict, steps_d
         iters = step_data["iter"].values
         res = step_data["proj_res"].values
         
-        if has_aa_off:
+        if has_picard_col:
             # Plot segments with different line styles for Picard vs Anderson
-            aa_off = step_data["aa_off"].astype(bool).values
+            picard_vals = step_data[picard_col].astype(bool).values
             
             # Find contiguous segments of same mode
             j = 0
             while j < len(iters):
-                is_picard = aa_off[j]
+                is_picard = picard_vals[j]
                 seg_start = j
-                while j < len(iters) and aa_off[j] == is_picard:
+                while j < len(iters) and picard_vals[j] == is_picard:
                     j += 1
                 seg_end = j
                 
@@ -230,7 +235,7 @@ def plot_convergence(ax: plt.Axes, subiters: pd.DataFrame, config: dict, steps_d
                     alpha=0.7,
                 )
         else:
-            # No aa_off info, plot as solid line
+            # No picard info, plot as solid line
             ax.semilogy(
                 iters,
                 res,
@@ -363,6 +368,7 @@ def plot_events_unified(ax: plt.Axes, subiters: pd.DataFrame, global_idx: np.nda
     """Unified plot for all events: AA restarts (stall/cond), step limiting, and rejected steps.
     
     Shows cumulative event count with markers for different event types.
+    Includes secondary x-axis showing simulation time.
     """
     n_total = len(subiters)
     
@@ -385,7 +391,62 @@ def plot_events_unified(ax: plt.Axes, subiters: pd.DataFrame, global_idx: np.nda
         for idx in np.where(limited_mask)[0]:
             events.append((idx, "limited", COLOR_LIMITED, "o"))
     
-    # 3. Rejected attempts (all reasons, from steps.csv `reject_reason`)
+    # 3. Fixed-point stop reason events (outer stall, max_subiters)
+    # Try from fp_stop_reason column first (new format)
+    if "fp_stop_reason" in subiters.columns:
+        stop_reasons = subiters["fp_stop_reason"].fillna("").astype(str).values
+        for idx, reason in enumerate(stop_reasons):
+            if reason == "no_progress":
+                events.append((idx, "outer_stall", COLOR_OUTER_STALL, "H"))  # Hexagon
+            elif reason == "max_subiters":
+                events.append((idx, "max_iters", COLOR_MAX_SUBITERS, "8"))  # Octagon
+    elif steps_df is not None and not steps_df.empty:
+        # Fallback: infer from steps.csv for old data format
+        # Mark last iteration of each step that didn't converge
+        steps_copy = steps_df.copy()
+        if "attempt" not in steps_copy.columns:
+            steps_copy["attempt"] = 1
+        
+        for _, row in steps_copy.iterrows():
+            step = int(row.get("step", 0))
+            attempt = int(row.get("attempt", 1))
+            converged = int(row.get("converged", 1))
+            num_subiters = int(row.get("num_subiters", 0))
+            max_subiters_cfg = 25  # Default, could be read from config
+            
+            if converged == 0:  # Step didn't converge
+                # Find last iteration of this step/attempt in subiters
+                if "attempt" in subiters.columns:
+                    step_mask = (subiters["step"].values == step) & (subiters["attempt"].values == attempt)
+                else:
+                    step_mask = subiters["step"].values == step
+                if step_mask.any():
+                    last_idx = np.where(step_mask)[0][-1]
+                    # Determine reason: max_subiters if reached limit
+                    if num_subiters >= max_subiters_cfg:
+                        events.append((last_idx, "max_iters", COLOR_MAX_SUBITERS, "8"))
+    
+    # 4. Picard mode switch events (hysteresis transitions from Anderson to Picard)
+    # Use picard_mode column (new format) or fall back to aa_off (old format)
+    picard_col = "picard_mode" if "picard_mode" in subiters.columns else "aa_off"
+    if picard_col in subiters.columns:
+        picard_mode = subiters[picard_col].astype(bool).values
+        # Detect transitions: picard_mode goes from False (0) to True (1)
+        for idx in range(len(picard_mode)):
+            if picard_mode[idx]:
+                # Check if this is a transition (previous was Anderson or first in step)
+                if idx == 0:
+                    events.append((idx, "picard", COLOR_PICARD, "s"))
+                else:
+                    # Check if same step
+                    same_step = subiters.iloc[idx]["step"] == subiters.iloc[idx-1]["step"]
+                    if "attempt" in subiters.columns:
+                        same_step = same_step and (subiters.iloc[idx]["attempt"] == subiters.iloc[idx-1]["attempt"])
+                    if same_step and not picard_mode[idx - 1]:
+                        # Transition from Anderson to Picard within same step
+                        events.append((idx, "picard", COLOR_PICARD, "s"))
+    
+    # 5. Rejected attempts (all reasons, from steps.csv `reject_reason`)
     if steps_df is not None and not steps_df.empty:
         steps_df = steps_df.copy()
         if "attempt" not in steps_df.columns:
@@ -435,44 +496,103 @@ def plot_events_unified(ax: plt.Axes, subiters: pd.DataFrame, global_idx: np.nda
         ax.plot(global_idx, cum_events, color="#2c3e50", linewidth=PLOT_LINEWIDTH * 0.8,
                 alpha=0.6)
     
-    # Plot markers by type
-    plotted_types = set()
+    # Group events by index to handle overlaps
+    from collections import defaultdict
+    events_by_idx = defaultdict(list)
     for idx, etype, color, marker in events:
-        label = etype if etype not in plotted_types else None
-        scatter_kwargs = {
-            "c": color,
-            "s": 35,
-            "marker": marker,
-            "zorder": 5,
-            "linewidths": 0.5,
-            "label": label,
-        }
-        if marker not in {"x", "+", "|", "_"}:
-            scatter_kwargs["edgecolors"] = "white"
-        ax.scatter([global_idx[idx]], [cum_events[idx]], **scatter_kwargs)
-        plotted_types.add(etype)
+        events_by_idx[idx].append((etype, color, marker))
+    
+    # Calculate vertical offset for overlapping markers (stack above each other)
+    # Each marker needs to be offset by roughly its size in data coordinates
+    y_max = max(len(events), 1)
+    marker_offset_y = y_max * 0.06  # ~6% of y-range per marker
+    
+    # Plot markers by type with vertical offset for overlaps
+    plotted_types = set()
+    for idx, event_list in events_by_idx.items():
+        n_events = len(event_list)
+        
+        for i, (etype, color, marker) in enumerate(event_list):
+            label = etype if etype not in plotted_types else None
+            x_pos = global_idx[idx]
+            # Stack markers vertically: first at base, others above
+            y_pos = cum_events[idx] + i * marker_offset_y
+            
+            scatter_kwargs = {
+                "c": color,
+                "s": 40,  # Marker size
+                "marker": marker,
+                "zorder": 5 + i,  # Higher zorder for stacked markers
+                "linewidths": 0.8,
+                "label": label,
+            }
+            if marker not in {"x", "+", "|", "_"}:
+                scatter_kwargs["edgecolors"] = "white"
+            ax.scatter([x_pos], [y_pos], **scatter_kwargs)
+            plotted_types.add(etype)
     
     # Count summary
     n_stall = sum(1 for e in events if e[1] == "stall")
     n_cond = sum(1 for e in events if e[1] == "cond")
     n_lim = sum(1 for e in events if e[1] == "limited")
+    n_picard = sum(1 for e in events if e[1] == "picard")
+    n_outer_stall = sum(1 for e in events if e[1] == "outer_stall")
+    n_max_iters = sum(1 for e in events if e[1] == "max_iters")
     rej_counts = {}
     for _, etype, _, _ in events:
         if etype.startswith("rej:"):
             rej_counts[etype] = rej_counts.get(etype, 0) + 1
     
-    ax.set_xlim(global_idx.min(), global_idx.max())
-    ax.set_ylim(0, max(len(events) + 1, 1))
+    # Calculate max y considering stacked markers
+    max_stack = max((len(evs) for evs in events_by_idx.values()), default=1)
+    y_top = len(events) + (max_stack - 1) * marker_offset_y + 1
+    
+    # Add padding to x-axis for markers at edges
+    x_range = global_idx.max() - global_idx.min() if len(global_idx) > 1 else 1
+    x_padding = x_range * 0.02  # 2% padding on each side
+    ax.set_xlim(global_idx.min() - x_padding, global_idx.max() + x_padding)
+    ax.set_ylim(0, y_top)
     if events:
         ax.legend(loc="upper left", fontsize=6, framealpha=0.8, ncol=2, frameon=False)
     
     setup_axis_style(ax, xlabel="Global iteration", ylabel="Cumulative events", title="", loglog=False)
+    
+    # Add secondary x-axis with simulation time
+    if "time_days" in subiters.columns:
+        ax2 = ax.twiny()
+        time_vals = subiters["time_days"].values
+        
+        # Map global_idx to time for the secondary axis
+        ax2.set_xlim(
+            time_vals[0] if len(time_vals) > 0 else 0,
+            time_vals[-1] if len(time_vals) > 0 else 1
+        )
+        ax2.set_xlabel("Time [days]", fontsize=8)
+        ax2.tick_params(axis='x', labelsize=7)
+        ax2.grid(False)  # Disable grid for secondary axis
+        
+        # Create tick positions at step boundaries for cleaner display
+        if len(time_vals) > 0:
+            # Get unique times (one per step change)
+            step_times = subiters.groupby("step")["time_days"].first().values
+            if len(step_times) > 10:
+                # Too many steps, use ~5-7 evenly spaced ticks
+                n_ticks = min(7, len(step_times))
+                tick_indices = np.linspace(0, len(step_times) - 1, n_ticks, dtype=int)
+                tick_times = step_times[tick_indices]
+            else:
+                tick_times = step_times
+            ax2.set_xticks(tick_times)
+            ax2.set_xticklabels([f"{t:.0f}" for t in tick_times])
     
     # Build title with counts
     parts = []
     if n_stall: parts.append(f"stall={n_stall}")
     if n_cond: parts.append(f"cond={n_cond}")
     if n_lim: parts.append(f"lim={n_lim}")
+    if n_picard: parts.append(f"picard={n_picard}")
+    if n_outer_stall: parts.append(f"outer_stall={n_outer_stall}")
+    if n_max_iters: parts.append(f"max_iters={n_max_iters}")
     for k in sorted(rej_counts.keys()):
         parts.append(f"{k}={rej_counts[k]}")
     ax.set_title("(f) Cumulative Events", fontweight="bold")

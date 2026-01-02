@@ -38,11 +38,11 @@ def main() -> None:
     comm = MPI.COMM_WORLD
 
     # Load parameters from JSON
-    params = load_default_params("default_params_box.json")
+    params = load_default_params("stiff_params_box.json")
     box = params["box"]
     
     # Modify params as needed
-    params["output"].results_dir = ".results_box"
+    params["output"].results_dir = ".stiff_results_box"
     params["output"].saving_interval = 1
     params["geometry"].fix_tag = BoxMeshBuilder.TAG_BOTTOM
     params["geometry"].load_tag = BoxMeshBuilder.TAG_TOP
