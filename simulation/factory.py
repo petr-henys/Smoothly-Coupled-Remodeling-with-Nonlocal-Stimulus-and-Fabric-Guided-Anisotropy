@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 
 class SolverFactory(Protocol):
-    """Abstract factory for creating solvers."""
+    """Protocol for solver creation (Dependency Injection)."""
 
     def create_mechanics_solver(
         self,

@@ -10,7 +10,7 @@ import ufl
 dtype = PETSc.ScalarType
 
 def build_nullspace(V: FunctionSpace):
-    """Build 6-vector PETSc nullspace for 3D elasticity (rigid-body modes)."""
+    """Constructs rigid-body mode nullspace (3 translations, 3 rotations) for 3D elasticity."""
     bs = V.dofmap.index_map_bs
     length0 = V.dofmap.index_map.size_local
     basis = [la.vector(V.dofmap.index_map, bs=bs, dtype=dtype) for i in range(6)]
@@ -39,7 +39,7 @@ def build_nullspace(V: FunctionSpace):
     return PETSc.NullSpace().create(vectors=basis_petsc)
 
 def build_facetag(m: mesh.Mesh) -> mesh.MeshTags:
-    """Tag unit-cube facets: x=0→1, x=1→2, y=0→3, y=1→4."""
+    """Tags unit cube boundaries for testing (x=0,1, y=0,1)."""
     boundaries = [
         (1, lambda x: np.isclose(x[0], 0)),
         (2, lambda x: np.isclose(x[0], 1)),
@@ -63,7 +63,7 @@ def build_facetag(m: mesh.Mesh) -> mesh.MeshTags:
 def build_dirichlet_bcs(
     V: fem.FunctionSpace, facet_tags: mesh.MeshTags, id_tag: int, value: float = 0.0
 ) -> List[fem.DirichletBC]:
-    """Create homogeneous Dirichlet BCs on tagged facets."""
+    """Creates homogeneous Dirichlet boundary conditions on specified facets."""
     fdim = V.mesh.topology.dim - 1
     facets = facet_tags.find(id_tag)
     bcs = []
@@ -74,7 +74,7 @@ def build_dirichlet_bcs(
     return bcs
 
 def assign(f: fem.Function, v, *, scatter: bool = True) -> None:
-    """Assign value to owned DOFs; scatter_forward() if scatter=True."""
+    """Assigns values to owned DOFs and optionally scatters to ghosts."""
     owned = f.function_space.dofmap.index_map.size_local * f.function_space.dofmap.index_map_bs
     if isinstance(v, fem.Function):
         f.x.array[:owned] = v.x.array[:owned]
@@ -90,12 +90,12 @@ def assign(f: fem.Function, v, *, scatter: bool = True) -> None:
         f.x.scatter_forward()
 
 def get_owned_size(field: fem.Function) -> int:
-    """Return number of locally owned DOFs."""
+    """Returns the number of locally owned degrees of freedom."""
     return int(field.function_space.dofmap.index_map.size_local * field.function_space.dofmap.index_map_bs)
 
 
 def field_stats(field: fem.Function, comm: MPI.Comm) -> Tuple[float, float, float]:
-    """Return global (min, max, mean) of owned DOFs."""
+    """Computes global min, max, and mean of owned DOFs across all ranks."""
     n_owned = get_owned_size(field)
     local_data = field.x.array[:n_owned]
     
@@ -228,7 +228,7 @@ def eigenvalues_sym3(X, *, eps_p: float = 1e-18, eps_r: float = 1e-12, tol: floa
 
 def projectors_sylvester(X, l1, l2, l3, *, eps_d: float = 1e-12, tol: float = 1e-14, tol_deg: float = 1e-8):
     """
-    Spectral projectors for symmetric 3×3 tensor via Sylvester formula, with robust handling of eigenvalue degeneracy.
+    Computes spectral projectors for 3x3 symmetric tensor using Sylvester's formula (robust to degeneracy).
 
     Key behavior (smooth, no hard isotropy switch in the output):
       - isotropic (all three ~ equal): P1=P2=P3=I/3 (via weights -> w_iso≈1)

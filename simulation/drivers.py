@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 
 class StimulusCalculator:
-    """Computes SED (ψ) and fabric tensor (Q) from mechanics solution."""
+    """Computes Strain Energy Density (SED) and fabric tensor from mechanics solution."""
 
     def __init__(self, mech: MechanicsSolver):
         """Initialize with mechanics solver to access state fields."""
@@ -71,7 +71,7 @@ class StimulusCalculator:
 
 
 class GaitDriver:
-    """Multi-load mechanics: solves each case, accumulates cycle-weighted SED and Q̄."""
+    """Drives mechanics solver for multiple load cases and computes averaged stimulus/fabric."""
 
     def __init__(
         self,

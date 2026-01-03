@@ -24,7 +24,7 @@ from simulation.params import (
 
 @dataclass
 class Config:
-    """Simulation configuration (mm, day, MPa, g/cm³). Access via: cfg.material.E0, etc."""
+    """Aggregated simulation configuration and runtime state."""
 
     # Grouped parameter dataclasses
     material: MaterialParams = field(default_factory=MaterialParams)

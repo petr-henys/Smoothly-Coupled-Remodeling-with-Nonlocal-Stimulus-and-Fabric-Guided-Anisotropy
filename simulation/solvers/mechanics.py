@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
 
 class MechanicsSolver(BaseLinearSolver):
-    """Linear elasticity with density/fabric-dependent anisotropic stiffness.
+    """Solves static equilibrium with density-dependent anisotropic stiffness.
 
     Solves the static equilibrium problem:
         -div(σ(u)) = 0     in Ω
@@ -117,6 +117,7 @@ class MechanicsSolver(BaseLinearSolver):
         return self.cfg.material.E0 * (rho_rel ** k)
 
     def sigma(self, u, rho, L: fem.Function | None = None):
+        """Compute stress tensor σ(u, ρ, L) using the coupled constitutive law."""
         eps = self.eps(u)
 
         E_iso = self._E_iso(rho)

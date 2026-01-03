@@ -30,7 +30,7 @@
     "stimulus_D": 0.01,
     "stimulus_S_max": 1.0,
     "stimulus_kappa": 0.4,
-    "stimulus_delta0": 0.01
+    "stimulus_delta0": 0.1
   },
   "fabric": {
     "fabric_tau": 120.0,

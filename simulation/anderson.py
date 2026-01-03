@@ -12,7 +12,7 @@ from simulation.logger import get_logger
 
 
 class Anderson:
-    """Anderson acceleration with adaptive restart and step limiting.
+    """Implements Anderson acceleration (Pulay mixing) with adaptive restart and step limiting.
     
     Pulay (type-II/DIIS) residual-minimization form with Tikhonov regularization.
     Restarts on ill-conditioning or stall. Limits step size to prevent divergence.

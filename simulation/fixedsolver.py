@@ -31,7 +31,7 @@ class _FieldSpec:
 
 
 class FixedPointSolver:
-    """Block Gauss-Seidel solver with optional Anderson acceleration."""
+    """Solves the coupled system using Block Gauss-Seidel with optional Anderson acceleration."""
 
     _TINY: float = 1e-300  # Guard against division by zero
 

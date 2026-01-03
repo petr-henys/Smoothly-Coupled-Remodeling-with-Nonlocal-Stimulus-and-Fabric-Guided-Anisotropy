@@ -26,7 +26,7 @@ class _FieldHistory:
 
 
 class TimeIntegrator:
-    """AB2 predictor + PI controller for adaptive time stepping."""
+    """Implements AB2 predictor and Gustafsson PI controller for adaptive time stepping."""
 
     def __init__(
         self,

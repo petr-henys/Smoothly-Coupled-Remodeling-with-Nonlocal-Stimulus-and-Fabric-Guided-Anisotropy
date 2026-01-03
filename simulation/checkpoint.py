@@ -47,7 +47,7 @@ from simulation.logger import get_logger
 
 
 class CheckpointStorage:
-    """Checkpoint storage using adios4dolfinx for N-to-M restarts.
+    """Manages MPI-independent checkpoints (mesh + functions) using adios4dolfinx.
     
     Writes mesh + functions to a single BP file that can be read
     by any MPI configuration (different number of processes).

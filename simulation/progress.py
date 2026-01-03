@@ -31,7 +31,7 @@ def _is_interactive() -> bool:
 
 
 class ProgressReporter:
-    """Rich progress bar: main task (simulation time) + subtask (coupling iters).
+    """Displays simulation progress (time and coupling iterations) using Rich.
     
     For standalone simulation runs. For sweeps, use SweepProgressReporter instead.
     """

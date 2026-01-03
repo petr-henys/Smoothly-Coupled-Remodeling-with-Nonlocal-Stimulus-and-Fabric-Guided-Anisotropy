@@ -22,7 +22,7 @@ class Level(IntEnum):
 
 
 class Logger:
-    """Rank-0 logger with lazy message evaluation."""
+    """MPI-safe logger that prints on rank 0 and supports file output."""
 
     __slots__ = ("comm", "console_level", "file_level", "name", "prefix", "log_file")
 

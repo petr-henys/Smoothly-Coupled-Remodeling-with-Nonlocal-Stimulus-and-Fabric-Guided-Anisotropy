@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 
 class BlockRegistry:
-    """Collects blocks and auto-discovers their state/output fields."""
+    """Manages coupling blocks and discovers their state/output fields."""
 
     def __init__(self, comm: MPI.Comm, cfg: "Config"):
         self.comm = comm

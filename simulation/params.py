@@ -8,7 +8,7 @@ from typing import Any
 
 @dataclass
 class MaterialParams:
-    """Material law: E(rho) = E0*(rho)^k with k blended trabecular→cortical."""
+    """Material parameters for density-dependent stiffness E(rho) and fabric-based anisotropy."""
 
     # Young's modulus reference [MPa]
     E0: float = 7500.0
@@ -46,7 +46,7 @@ class MaterialParams:
 
 @dataclass
 class DensityParams:
-    """Density evolution: ∂ρ/∂t = D_ρ∇²ρ + formation - resorption."""
+    """Parameters for density evolution (reaction-diffusion) and surface availability."""
 
     # Density bounds [g/cm³]
     rho_min: float = 0.1
@@ -92,7 +92,7 @@ class DensityParams:
 
 @dataclass
 class StimulusParams:
-    """Stimulus evolution: diffusion + decay toward mechanostat drive."""
+    """Parameters for stimulus evolution (diffusion-decay) and mechanostat drive."""
 
     # Power-mean exponent for multi-load SED averaging (1=mean; higher→peak-biased)
     stimulus_power_p: float = 4.0
@@ -138,7 +138,7 @@ class StimulusParams:
 
 @dataclass
 class FabricParams:
-    """Log-fabric tensor L: reaction-diffusion toward L_target(Q̄)."""
+    """Parameters for fabric evolution (L) toward stress-aligned target."""
 
     # Time constant [days]
     fabric_tau: float = 50.0
@@ -184,7 +184,7 @@ class FabricParams:
 
 @dataclass
 class SolverParams:
-    """KSP and fixed-point solver settings."""
+    """Settings for PETSc KSP solvers and Anderson/Picard fixed-point acceleration."""
 
     # PETSc KSP solver type (default MINRES; CG is usually best for SPD operators)
     ksp_type: str = "minres"

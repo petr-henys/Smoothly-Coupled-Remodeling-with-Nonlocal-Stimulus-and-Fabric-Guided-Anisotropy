@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 
 class Remodeller:
-    """MPI-parallel remodeling loop (mechanics → fabric → stimulus → density)."""
+    """Orchestrates the coupled remodeling loop (Mechanics ↔ Fabric ↔ Stimulus ↔ Density)."""
 
     def __init__(
         self,

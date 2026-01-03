@@ -8,7 +8,7 @@ from typing import Any, Dict, List
 
 @dataclass(frozen=True)
 class SweepStats:
-    """Statistics from one CouplingBlock.sweep() call."""
+    """Container for solver block execution statistics."""
 
     label: str
     ksp_iters: int
@@ -73,7 +73,7 @@ class SweepStats:
 
 @dataclass
 class StepSummary:
-    """Aggregated statistics for one timestep (all Picard iterations)."""
+    """Aggregated statistics for a complete time step."""
 
     picard_iters: int
     total_ksp_iters: Dict[str, int]

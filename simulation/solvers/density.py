@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 
 class DensitySolver(BaseLinearSolver):
-    """Density ρ: diffusion + bounded formation/resorption kinetics (implicit Euler).
+    """Solves density evolution (reaction-diffusion) with surface-modulated kinetics.
 
     Solves:
         ρ/dt - D_ρ Δρ + reaction·ρ = ρ_old/dt + k_form·S⁺ + k_res·S⁻

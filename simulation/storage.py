@@ -19,7 +19,7 @@ from simulation.logger import get_logger
 
 
 class FieldStorage:
-    """Manages VTX writers for field output."""
+    """Manages VTX writers for parallel field output (Paraview)."""
 
     __slots__ = ("comm", "logger", "output_dir", "_writers", "_write_counts")
 
@@ -71,7 +71,7 @@ class FieldStorage:
 
 
 class MetricsStorage:
-    """CSV writer for solver performance telemetry (rank 0 only).
+    """Writes solver performance metrics to CSV files (rank 0 only).
     
     Writes two CSV files:
     - steps.csv: One row per timestep attempt (accepted or rejected; aggregated stats)

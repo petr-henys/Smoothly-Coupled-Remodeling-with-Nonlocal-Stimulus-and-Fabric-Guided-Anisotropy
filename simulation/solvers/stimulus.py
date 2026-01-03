@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 
 class StimulusSolver(BaseLinearSolver):
-    """Stimulus S: diffusion + decay with saturating mechanostat drive.
+    """Solves stimulus evolution (diffusion-decay) driven by mechanostat error.
 
     Solves (implicit Euler):
         τ/dt (S - S_old) + S - τ·D ΔS = drive(m)

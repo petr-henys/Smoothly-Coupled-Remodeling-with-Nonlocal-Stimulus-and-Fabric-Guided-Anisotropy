@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 
 class FabricSolver(BaseLinearSolver):
-    """Log-fabric evolution L → L_target(Q̄) with diffusion (implicit Euler).
+    """Solves log-fabric evolution toward stress-aligned target with activity gating.
 
     Solves:
         cA/dt (L - L_old) + cA·act/τ (L - L_target) - cA·D ΔL = 0

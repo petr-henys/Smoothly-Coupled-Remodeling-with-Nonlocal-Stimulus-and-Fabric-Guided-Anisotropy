@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 
 @runtime_checkable
 class CouplingBlock(Protocol):
-    """Interface for blocks in the fixed-point coupling loop.
+    """Protocol defining the interface for solvers in the coupling loop.
 
     Required properties:
     - state_fields / state_fields_old: fields for coupling and time integration

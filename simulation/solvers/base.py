@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 
 class BaseLinearSolver:
-    """Base class for implicit PDE solvers using PETSc KSP.
+    """Abstract base class for PETSc-based linear PDE solvers.
 
     Provides:
     - PETSc matrix/vector management
@@ -114,12 +114,15 @@ class BaseLinearSolver:
             self.ksp.setOperators(self.A)
 
     def assemble_rhs(self) -> None:
+        """Assemble the right-hand side vector b."""
         raise NotImplementedError
 
     def _compile_forms(self) -> None:
+        """Define UFL forms for LHS (a_form) and RHS (L_form)."""
         raise NotImplementedError
 
     def _setup_ksp(self) -> None:
+        """Configure the PETSc KSP solver and preconditioner."""
         raise NotImplementedError
 
     def _compute_extra_stats(self) -> Dict[str, Any]:
