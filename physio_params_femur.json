@@ -28,9 +28,9 @@
     "psi_ref_trab": 0.003,
     "psi_ref_cort": 0.006,
     "stimulus_tau": 10.0,
-    "stimulus_D": 0.1,
+    "stimulus_D": 0.2,
     "stimulus_S_max": 1.0,
-    "stimulus_kappa": 0.4,
+    "stimulus_kappa": 0.5,
     "stimulus_delta0": 0.1
   },
   "fabric": {
@@ -46,8 +46,8 @@
   "solver": {
     "ksp_type": "minres",
     "pc_type": "gamg",
-    "ksp_rtol": 1e-06,
-    "ksp_atol": 1e-07,
+    "ksp_rtol": 1e-08,
+    "ksp_atol": 1e-09,
     "ksp_max_it": 200,
     "ksp_reuse_pc": false,
     "accel_type": "anderson",
