@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import time
 from typing import Any, Dict, List, Tuple, TYPE_CHECKING
 
 import numpy as np
@@ -272,8 +273,10 @@ class MechanicsSolver(BaseLinearSolver):
         }
 
     def solve(self) -> SweepStats:
+        t0 = time.perf_counter()
         self.assemble_rhs()
-        return self._solve()
+        t1 = time.perf_counter()
+        return self._solve(assemble_time=t1 - t0)
 
     # -------------------------------------------------------------------------
     # CouplingBlock protocol

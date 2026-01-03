@@ -14,6 +14,7 @@ class SweepStats:
     ksp_iters: int
     ksp_reason: int
     solve_time: float
+    assemble_time: float = 0.0
     extra: Dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -23,7 +24,8 @@ class SweepStats:
 
     def format_short(self, width: int = 4) -> str:
         """Compact block summary: 'mech  81it  0.57s'."""
-        return f"{self.label:<{width}}  {self.ksp_iters:>3}it  {self.solve_time:.3f}s"
+        total_time = self.solve_time + self.assemble_time
+        return f"{self.label:<{width}}  {self.ksp_iters:>3}it  {total_time:.3f}s"
 
     def format_extra(self) -> str:
         """Format physics-specific extras as ranges: 'a=[0.56, 1.82] p2=[0.01, 0.09]'."""
@@ -64,6 +66,7 @@ class SweepStats:
             "ksp_iters": self.ksp_iters,
             "ksp_reason": self.ksp_reason,
             "solve_time": self.solve_time,
+            "assemble_time": self.assemble_time,
             **self.extra,
         }
 
@@ -103,7 +106,7 @@ class StepSummary:
             for stats in rec.get("block_stats", []):
                 lbl = stats.label
                 ksp_iters[lbl] = ksp_iters.get(lbl, 0) + stats.ksp_iters
-                solve_time[lbl] = solve_time.get(lbl, 0.0) + stats.solve_time
+                solve_time[lbl] = solve_time.get(lbl, 0.0) + stats.solve_time + stats.assemble_time
 
         return cls(
             picard_iters=len(records),

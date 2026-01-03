@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Tuple, TYPE_CHECKING
 
 import basix.ufl
@@ -215,9 +216,11 @@ class FabricSolver(BaseLinearSolver):
         self.n3.x.scatter_forward()
 
     def solve(self) -> SweepStats:
+        t0 = time.perf_counter()
         self.assemble_lhs()
         self.assemble_rhs()
-        stats = self._solve()
+        t1 = time.perf_counter()
+        stats = self._solve(assemble_time=t1 - t0)
         self._symmetrize_L()
         return stats
 

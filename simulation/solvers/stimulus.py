@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Tuple, TYPE_CHECKING
 
 from petsc4py import PETSc
@@ -131,10 +132,12 @@ class StimulusSolver(BaseLinearSolver):
         return (self.S,)
 
     def solve(self) -> SweepStats:
+        t0 = time.perf_counter()
         if float(self.dt_c.value) != float(self.cfg.dt):
             self.assemble_lhs()
         self.assemble_rhs()
-        return self._solve()
+        t1 = time.perf_counter()
+        return self._solve(assemble_time=t1 - t0)
 
     def sweep(self) -> SweepStats:
         return self.solve()

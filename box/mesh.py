@@ -84,7 +84,7 @@ class BoxMeshBuilder:
             self.comm,
             [np.array([0.0, 0.0, 0.0]), np.array([g.Lx, g.Ly, g.Lz])],
             [g.nx, g.ny, g.nz],
-            cell_type=mesh.CellType.tetrahedron,
+            cell_type=mesh.CellType.hexahedron,
             ghost_mode=mesh.GhostMode.shared_facet,
         )
         

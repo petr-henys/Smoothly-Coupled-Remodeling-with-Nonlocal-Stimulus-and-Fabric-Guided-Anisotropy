@@ -125,7 +125,7 @@ class BaseLinearSolver:
     def _compute_extra_stats(self) -> Dict[str, Any]:
         return {}
 
-    def _solve(self) -> SweepStats:
+    def _solve(self, assemble_time: float = 0.0) -> SweepStats:
         t0 = time.perf_counter()
         self.ksp.solve(self.b, self.state.x.petsc_vec)
         self.state.x.scatter_forward()
@@ -145,6 +145,7 @@ class BaseLinearSolver:
             ksp_iters=iters,
             ksp_reason=reason,
             solve_time=t1 - t0,
+            assemble_time=assemble_time,
             extra=extra,
         )
 

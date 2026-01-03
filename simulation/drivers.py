@@ -1,6 +1,7 @@
 """GaitDriver: multi-load mechanics with cycle-weighted power-mean SED."""
 
 from __future__ import annotations
+import time
 from typing import Any, Dict, List, Tuple, TYPE_CHECKING
 
 from dolfinx import fem
@@ -121,11 +122,11 @@ class GaitDriver:
         """Release solver resources."""
         self.mech.destroy()
 
-    def _update_snapshots(self) -> Tuple[int, int, float, Dict[str, Any]]:
+    def _update_snapshots(self) -> Tuple[int, int, float, float, Dict[str, Any]]:
         """Solve all enabled loading cases and update averaged `psi` and `Qbar`.
 
         Returns:
-            Tuple of (n_enabled_cases, avg_ksp_iters, total_solve_time, extra_stats_from_last_solve).
+            Tuple of (n_enabled_cases, avg_ksp_iters, total_solve_time, total_assemble_time, extra_stats_from_last_solve).
         """
         # Zero out accumulated fields (owned DOFs only; single scatter at the end)
         assign(self.psi, 0.0, scatter=False)
@@ -138,6 +139,7 @@ class GaitDriver:
 
         total_iters = 0
         total_time = 0.0
+        total_assemble_time = 0.0
         last_extra: Dict[str, Any] = {}
         n_enabled_cases = 0
 
@@ -156,6 +158,7 @@ class GaitDriver:
             stats = self.mech.solve()
             total_iters += stats.ksp_iters
             total_time += stats.solve_time
+            total_assemble_time += stats.assemble_time
             last_extra = stats.extra
 
             # Compute SED + Q_case for this case
@@ -190,7 +193,7 @@ class GaitDriver:
         extra["ksp_iters_total"] = total_iters
         extra["ksp_iters_avg"] = float(total_iters) / float(n_enabled_cases) if n_enabled_cases > 0 else 0.0
 
-        return n_enabled_cases, avg_ksp_iters, total_time, extra
+        return n_enabled_cases, avg_ksp_iters, total_time, total_assemble_time, extra
 
     def stimulus_field(self) -> fem.Function:
         """Return the averaged `psi` function (DG0 field)."""
@@ -229,12 +232,17 @@ class GaitDriver:
         - Solve each enabled loading case
         - Update averaged psi (DG0)
         """
+        t0 = time.perf_counter()
         self.assemble_lhs()
-        _n_cases, avg_iters, total_time, extra = self._update_snapshots()
+        t1 = time.perf_counter()
+        lhs_assemble_time = t1 - t0
+
+        _n_cases, avg_iters, total_time, total_assemble_time, extra = self._update_snapshots()
         return SweepStats(
             label="mech",
             ksp_iters=avg_iters,
             ksp_reason=int(self.mech.last_reason),
             solve_time=total_time,
+            assemble_time=lhs_assemble_time + total_assemble_time,
             extra=extra,
         )
