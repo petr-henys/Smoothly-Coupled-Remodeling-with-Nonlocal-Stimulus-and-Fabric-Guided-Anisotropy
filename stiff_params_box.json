@@ -12,7 +12,7 @@
   },
   "density": {
     "rho0": 1.0,
-    "rho_min": 0.1,
+    "rho_min": 0.2,
     "rho_max": 2.0,
     "k_rho_form": 0.05,
     "k_rho_resorb": 0.01,
@@ -27,9 +27,9 @@
     "psi_ref_trab":  5e-5,
     "psi_ref_cort": 5e-5,
     "stimulus_tau": 10.0,
-    "stimulus_D": 0.01,
+    "stimulus_D": 0.001,
     "stimulus_S_max": 1.0,
-    "stimulus_kappa": 0.4,
+    "stimulus_kappa": 0.5,
     "stimulus_delta0": 0.1
   },
   "fabric": {
@@ -49,7 +49,7 @@
     "ksp_atol": 1e-07,
     "ksp_max_it": 200,
     "ksp_reuse_pc": false,
-    "accel_type": "anderson",
+    "accel_type": "picard",
     "m": 5,
     "beta": 1.0,
     "lam": 1e-3,
