@@ -21,10 +21,10 @@ if TYPE_CHECKING:
 
 
 class FabricSolver(BaseLinearSolver):
-    """Log-fabric evolution L → L_target(Q̄) (implicit Euler).
+    """Log-fabric evolution L → L_target(Q̄) with diffusion (implicit Euler).
 
     Solves:
-        cA/dt (L - L_old) + cA·act/τ (L - L_target) = 0
+        cA/dt (L - L_old) + cA·act/τ (L - L_target) - cA·D ΔL = 0
 
     The target fabric L_target is computed from the cycle-averaged stress tensor Q̄
     via spectral decomposition. Activity factor 'act' gates evolution when
@@ -40,7 +40,7 @@ class FabricSolver(BaseLinearSolver):
         Qbar: fem.Function,
         config: "Config",
     ):
-        super().__init__(config, L, [], [], smoothing_length=config.fabric.filter_length)
+        super().__init__(config, L, [], [])
         self.L = self.state
         self.L_old = L_old
         self.Qbar = Qbar
@@ -48,6 +48,9 @@ class FabricSolver(BaseLinearSolver):
         self.dt_c = fem.Constant(self.mesh, float(self.cfg.dt))
         self.cA_c = fem.Constant(self.mesh, float(self.cfg.fabric.fabric_cA))
         self.tau_c = fem.Constant(self.mesh, float(self.cfg.fabric.fabric_tau))
+        self.D_c = fem.Constant(self.mesh, float(self.cfg.fabric.fabric_D))
+
+        self._use_diffusion = float(self.D_c.value) > 0.0
 
         # Vector function space for eigenvector output
         P1_vec = basix.ufl.element("Lagrange", self.mesh.basix_cell(), 1, shape=(self.gdim,))
@@ -81,6 +84,7 @@ class FabricSolver(BaseLinearSolver):
         dt = self.dt_c
         cA = self.cA_c
         tau = self.tau_c
+        D = self.D_c
 
         L_trial = ufl.TrialFunction(self.function_space)
         T = ufl.TestFunction(self.function_space)
@@ -90,6 +94,8 @@ class FabricSolver(BaseLinearSolver):
         beta = (cA * act) / tau
 
         a_ufl = (alpha + beta) * ufl.inner(L_trial, T) * self.dx
+        if self._use_diffusion:
+            a_ufl += (cA * D) * ufl.inner(ufl.grad(L_trial), ufl.grad(T)) * self.dx
         self.a_form = fem.form(a_ufl)
 
         L_target = self._L_target_from_Qbar()

@@ -22,7 +22,6 @@ DEFAULT_PARAMS = {
     'rho_cort_min': 1.25,   # Lower bound of cortical zone [g/cm³]
     'rho_min': 0.1,         # Minimum density (clamped) [g/cm³]
     'rho_max': 2.0,         # Maximum density [g/cm³]
-    'rho_ref': 1.0,         # Reference density for scaling [g/cm³]
     'smooth_eps': 1e-6,     # Smoothing parameter
 }
 
@@ -64,13 +63,12 @@ def calculate_E(rho: np.ndarray, **kwargs) -> np.ndarray:
     params = {**DEFAULT_PARAMS, **kwargs}
     
     E0 = params['E0']
-    rho_ref = params['rho_ref']
     rho_min = params['rho_min']
     smooth_eps = params['smooth_eps']
     
     # Effective density
     rho_eff = smooth_max(rho, rho_min, smooth_eps)
-    rho_rel = rho_eff / rho_ref
+    rho_rel = rho_eff
     
     # Blended exponent
     k = calculate_exponent(rho, **kwargs)
@@ -90,12 +88,11 @@ def plot_constitutive_law(ax):
     
     # Pure power laws for comparison
     E0 = DEFAULT_PARAMS['E0']
-    rho_ref = DEFAULT_PARAMS['rho_ref']
     n_trab = DEFAULT_PARAMS['n_trab']
     n_cort = DEFAULT_PARAMS['n_cort']
     
-    E_trab = E0 * (rho / rho_ref) ** n_trab
-    E_cort = E0 * (rho / rho_ref) ** n_cort
+    E_trab = E0 * (rho) ** n_trab
+    E_cort = E0 * (rho) ** n_cort
     
     ax.plot(rho, E_trab / 1000, color=COLORS['orange'], linestyle='--', alpha=0.7, 
             label=f'Trabecular ($n={n_trab}$)')
@@ -226,12 +223,11 @@ def plot_log_log_view(ax):
     
     # Pure power laws
     E0 = DEFAULT_PARAMS['E0']
-    rho_ref = DEFAULT_PARAMS['rho_ref']
     n_trab = DEFAULT_PARAMS['n_trab']
     n_cort = DEFAULT_PARAMS['n_cort']
     
-    E_trab = E0 * (rho / rho_ref) ** n_trab
-    E_cort = E0 * (rho / rho_ref) ** n_cort
+    E_trab = E0 * (rho) ** n_trab
+    E_cort = E0 * (rho) ** n_cort
     
     ax.loglog(rho, E_trab, color=COLORS['orange'], linestyle='--', alpha=0.7,
               label=f'Slope $n={n_trab}$')

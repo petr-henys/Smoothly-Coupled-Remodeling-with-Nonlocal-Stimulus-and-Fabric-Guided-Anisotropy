@@ -15,14 +15,17 @@
 !/README.md
 !/parametrizer.py
 !/postprocessor.py
-!/run_remodeller.py
 !/run_box_model.py
 !/run_convergence_sweep.py
-!/run_anderson_sweep.py
+!/run_anderson_experiment.py
 !/run_femur_model.py
 !/intensity_mapper.py
 !/default_params_box.json
 !/default_params_femur.json
+!/physio_params_box.json
+!/physio_params_femur.json
+!/stiff_params_box.json
+!/stiff_params_femur.json
 
 # Python cache
 __pycache__/

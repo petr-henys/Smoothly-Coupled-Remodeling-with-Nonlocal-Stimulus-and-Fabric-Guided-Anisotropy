@@ -165,7 +165,7 @@ class TestMatrixAssembly:
             # Density solver: positive semi-definite
             rho = Function(Q, name="rho")
             rho_old = Function(Q, name="rho_old"); rho_old.x.array[:] = 0.5; rho_old.x.scatter_forward()
-            psi_field = Function(Q, name="psi"); psi_field.x.array[:] = cfg.stimulus.psi_ref; psi_field.x.scatter_forward()
+            psi_field = Function(Q, name="psi"); psi_field.x.array[:] = cfg.stimulus.psi_ref_trab; psi_field.x.scatter_forward()
             solver = DensitySolver(rho, rho_old, psi_field, cfg)
             solver.setup()  # setup() already calls assemble_lhs()
             
@@ -308,13 +308,13 @@ class TestStimulusSolver:
         S.x.scatter_forward()
         
         # Set psi high enough to trigger formation
-        # m = psi/rho. m_ref = psi_ref/rho_ref.
+        # m = psi/rho. m_ref = psi_ref.
         # We want m > m_ref * (1 + delta0)
         rho_val = 1.0
         rho.x.array[:] = rho_val
         rho.x.scatter_forward()
         
-        m_ref = cfg.stimulus.psi_ref / cfg.density.rho_ref
+        m_ref = cfg.stimulus.psi_ref_trab
         target_m = m_ref * 2.0 # Well above threshold
         psi.x.array[:] = target_m * rho_val
         psi.x.scatter_forward()
@@ -451,7 +451,7 @@ class TestPhysicalSanityChecks:
         
         # Very high stimulus
         psi_field = fem.Function(Q, name="psi")
-        psi_field.x.array[:] = cfg.stimulus.psi_ref * 100.0  # Extreme
+        psi_field.x.array[:] = cfg.stimulus.psi_ref_trab * 100.0  # Extreme
         psi_field.x.scatter_forward()
         
         dens = DensitySolver(rho, rho_old, psi_field, cfg)
@@ -569,7 +569,7 @@ class TestNumericalStability:
         rho_old.x.scatter_forward()
         
         psi_field = fem.Function(Q, name="psi")
-        psi_field.x.array[:] = cfg.stimulus.psi_ref * 2.0
+        psi_field.x.array[:] = cfg.stimulus.psi_ref_trab * 2.0
         psi_field.x.scatter_forward()
         
         dens = DensitySolver(rho, rho_old, psi_field, cfg)

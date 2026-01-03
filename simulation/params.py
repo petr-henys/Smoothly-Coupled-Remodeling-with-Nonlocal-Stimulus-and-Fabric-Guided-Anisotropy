@@ -8,7 +8,7 @@ from typing import Any
 
 @dataclass
 class MaterialParams:
-    """Material law: E(rho) = E0*(rho/rho_ref)^k with k blended trabecular→cortical."""
+    """Material law: E(rho) = E0*(rho)^k with k blended trabecular→cortical."""
 
     # Young's modulus reference [MPa]
     E0: float = 7500.0
@@ -55,17 +55,14 @@ class DensityParams:
     # Initial density [g/cm³]
     rho0: float = 1.0
 
-    # Reference density for nondimensionalization [g/cm³]
-    rho_ref: float = 1.0
-
     # Formation rate gain [g/cm³/day]
     k_rho_form: float = 4
 
     # Resorption rate gain [g/cm³/day]
     k_rho_resorb: float = 2e-02
 
-    # Helmholtz filter smoothing length [mm] (0 = disabled)
-    filter_length: float = 0.0
+    # Diffusion coefficient [mm²/day]
+    D_rho: float = 2e-2
 
     # Tissue density used for a porosity proxy f = 1 - rho/rho_tissue
     rho_tissue: float = 2.0  # Fully mineralized matrix density [g/cm³]
@@ -83,8 +80,8 @@ class DensityParams:
             raise ValueError("rho0 must satisfy rho_min <= rho0 <= rho_max.")
         if self.k_rho_form < 0 or self.k_rho_resorb < 0:
             raise ValueError("k_rho_form and k_rho_resorb must be >= 0.")
-        if self.filter_length < 0:
-            raise ValueError("filter_length must be >= 0.")
+        if self.D_rho < 0:
+            raise ValueError("D_rho must be >= 0 (diffusion coefficient, mm²/day).")
         if self.rho_tissue <= 0:
             raise ValueError("rho_tissue must be > 0 (fully mineralized matrix density).")
         if self.surface_A_min < 0 or self.surface_A_min >= 1.0:
@@ -100,8 +97,11 @@ class StimulusParams:
     # Power-mean exponent for multi-load SED averaging (1=mean; higher→peak-biased)
     stimulus_power_p: float = 4.0
 
-    # Reference strain energy density [MPa]
-    psi_ref: float = 0.01
+    # Reference strain energy density for trabecular bone [MPa]
+    psi_ref_trab: float = 0.01
+
+    # Reference strain energy density for cortical bone [MPa]
+    psi_ref_cort: float = 0.01
 
     # Time constant [days]; τ_S=0 gives quasi-static stimulus
     stimulus_tau: float = 25.0
@@ -120,8 +120,8 @@ class StimulusParams:
 
     def validate(self) -> None:
         """Validate stimulus parameter constraints."""
-        if self.psi_ref <= 0:
-            raise ValueError("Reference value psi_ref must be positive.")
+        if self.psi_ref_trab <= 0 or self.psi_ref_cort <= 0:
+            raise ValueError("Reference values psi_ref_trab and psi_ref_cort must be positive.")
         if self.stimulus_tau < 0:
             raise ValueError("stimulus_tau must be >= 0 (τ_S in days).")
         if self.stimulus_D < 0:
@@ -143,8 +143,8 @@ class FabricParams:
     # Time constant [days]
     fabric_tau: float = 50.0
 
-    # Helmholtz filter smoothing length [mm] (0 = disabled)
-    filter_length: float = 0.0
+    # Diffusion coefficient [mm²/day]
+    fabric_D: float = 1.0
 
     # Coupling strength
     fabric_cA: float = 1.0
@@ -166,8 +166,8 @@ class FabricParams:
         """Validate fabric parameter constraints."""
         if self.fabric_tau <= 0:
             raise ValueError("fabric_tau must be > 0.")
-        if self.filter_length < 0:
-            raise ValueError("filter_length must be >= 0.")
+        if self.fabric_D < 0:
+            raise ValueError("fabric_D must be >= 0.")
         if self.fabric_cA <= 0:
             raise ValueError("fabric_cA must be > 0.")
         if self.fabric_gammaF <= 0:

@@ -83,7 +83,7 @@ class TestAdvancedConstitutiveLaws:
         cfg = Config(
             domain=unit_cube, facet_tags=facet_tags,
             material=MaterialParams(n_trab=2.0, n_cort=1.2, rho_trab_max=0.8, rho_cort_min=1.2, E0=1000.0),
-            density=DensityParams(rho_ref=1.0)
+            density=DensityParams()
         )
         
         P1 = basix.ufl.element("Lagrange", unit_cube.basix_cell(), 1)
@@ -97,7 +97,7 @@ class TestAdvancedConstitutiveLaws:
             
             # Use UFL expression from MechanicsSolver logic
             rho_eff = smooth_max(rho, cfg.density.rho_min, cfg.numerics.smooth_eps)
-            rho_rel = rho_eff / cfg.density.rho_ref
+            rho_rel = rho_eff
 
             t = (rho_eff - cfg.material.rho_trab_max) / (cfg.material.rho_cort_min - cfg.material.rho_trab_max)
             w = ufl.conditional(ufl.le(t, 0.0), 0.0, ufl.conditional(ufl.ge(t, 1.0), 1.0, t))
@@ -120,7 +120,7 @@ class TestAdvancedConstitutiveLaws:
             t = max(0.0, min(1.0, t))
             w = t * t * (3.0 - 2.0 * t)
             k = cfg.material.n_trab * (1.0 - w) + cfg.material.n_cort * w
-            E_expected = cfg.material.E0 * ((rho_val / cfg.density.rho_ref) ** k)
+            E_expected = cfg.material.E0 * ((rho_val) ** k)
             rel_err = abs(E_computed - E_expected) / E_expected
             assert rel_err < 0.01, \
                 f"Power law failed at ρ={rho_val}: E={E_computed:.2f}, expected {E_expected:.2f}"
@@ -144,7 +144,7 @@ class TestAdvancedConstitutiveLaws:
         rho = Function(Q, name="rho")
         rho_old = Function(Q, name="rho_old")
         S_field = Function(Q, name="S")
-        rho_val = cfg.density.rho_ref  # Use reference density for simpler math
+        rho_val = 1.0  # Use reference density for simpler math
         rho_old.x.array[:] = rho_val
         rho_old.x.scatter_forward()
         

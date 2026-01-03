@@ -11,7 +11,7 @@ import ufl
 
 from simulation.solvers.base import BaseLinearSolver
 from simulation.stats import SweepStats
-from simulation.utils import smooth_max, smooth_abs
+from simulation.utils import smooth_max, smooth_abs, smoothstep01
 
 if TYPE_CHECKING:
     from simulation.config import Config
@@ -68,7 +68,16 @@ class StimulusSolver(BaseLinearSolver):
         eps = float(self.cfg.numerics.smooth_eps)
         rho_safe = smooth_max(self.rho, self.cfg.density.rho_min, eps)
         m = self.psi / rho_safe
-        m_ref = float(self.cfg.stimulus.psi_ref) / float(self.cfg.density.rho_ref)
+
+        # Blended reference stimulus
+        denom = float(self.cfg.material.rho_cort_min - self.cfg.material.rho_trab_max)
+        t = (rho_safe - self.cfg.material.rho_trab_max) / denom
+        w = smoothstep01(t, eps)
+        
+        psi_ref_trab = float(self.cfg.stimulus.psi_ref_trab)
+        psi_ref_cort = float(self.cfg.stimulus.psi_ref_cort)
+        m_ref = psi_ref_trab * (1.0 - w) + psi_ref_cort * w
+
         delta = (m - m_ref) / m_ref
         delta_abs = smooth_abs(delta, eps)
 

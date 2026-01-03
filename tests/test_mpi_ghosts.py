@@ -317,7 +317,7 @@ class TestSolverGhostUpdates:
         rho.x.scatter_forward()
         rho_old.x.array[:] = 0.8
         rho_old.x.scatter_forward()
-        psi.x.array[:] = cfg.stimulus.psi_ref * 1.1  # Slightly above reference
+        psi.x.array[:] = cfg.stimulus.psi_ref_trab * 1.1  # Slightly above reference
         psi.x.scatter_forward()
         
         dens = DensitySolver(rho, rho_old, psi, cfg)
@@ -680,7 +680,7 @@ class TestGhostIntegration:
         rho.x.array[:] = 0.8
         rho.x.scatter_forward()
         assign(rho_old, rho)
-        psi.x.array[:] = cfg.stimulus.psi_ref
+        psi.x.array[:] = cfg.stimulus.psi_ref_trab
         psi.x.scatter_forward()
         
         # Setup solvers
@@ -702,7 +702,7 @@ class TestGhostIntegration:
         assert_ghosts_updated(u, rtol=1e-10)
         
         # Update stimulus (simplified - just use constant for test)
-        psi.x.array[:get_owned_size(psi)] = cfg.stimulus.psi_ref * 1.05
+        psi.x.array[:get_owned_size(psi)] = cfg.stimulus.psi_ref_trab * 1.05
         psi.x.scatter_forward()
         
         # Solve density

@@ -106,7 +106,7 @@ class MechanicsSolver(BaseLinearSolver):
 
     def _E_iso(self, rho):
         rho_eff = smooth_max(rho, self.cfg.density.rho_min, self.smooth_eps)
-        rho_rel = rho_eff / self.cfg.density.rho_ref
+        rho_rel = rho_eff
 
         denom = float(self.cfg.material.rho_cort_min - self.cfg.material.rho_trab_max)
         t = (rho_eff - self.cfg.material.rho_trab_max) / denom

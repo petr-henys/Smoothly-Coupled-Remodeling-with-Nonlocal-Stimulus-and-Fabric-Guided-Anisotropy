@@ -39,13 +39,7 @@ class DensitySolver(BaseLinearSolver):
         stimulus: fem.Function,
         config: "Config",
     ):
-        super().__init__(
-            config,
-            rho,
-            [],
-            [],
-            smoothing_length=float(config.density.filter_length),
-        )
+        super().__init__(config, rho, [], [])
         self.rho = self.state
         self.rho_old = rho_old
         self.S = stimulus
@@ -112,6 +106,7 @@ class DensitySolver(BaseLinearSolver):
 
         a_ufl = (
             (self.trial / dt) * self.test * self.dx
+            + self.cfg.density.D_rho * ufl.inner(ufl.grad(self.trial), ufl.grad(self.test)) * self.dx
             + reaction * self.trial * self.test * self.dx
         )
         self.a_form = fem.form(a_ufl)

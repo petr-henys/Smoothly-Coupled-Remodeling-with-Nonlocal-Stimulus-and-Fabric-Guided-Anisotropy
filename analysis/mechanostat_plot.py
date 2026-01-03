@@ -23,8 +23,8 @@ from plot_utils import COLORS, smooth_max, smoothstep01, save_manuscript_figure,
 
 # Default parameters (from StimulusParams, DensityParams, MaterialParams)
 DEFAULT_STIMULUS_PARAMS = {
-    'psi_ref': 0.01,           # Reference SED [MPa]
-    'rho_ref': 1.0,            # Reference density [g/cm³]
+    'psi_ref_trab': 0.01,      # Reference SED trabecular [MPa]
+    'psi_ref_cort': 0.01,      # Reference SED cortical [MPa]
     'stimulus_S_max': 1.0,     # Max stimulus magnitude
     'stimulus_kappa': 0.5,     # Saturation width
     'stimulus_delta0': 0.10,   # Lazy-zone half-width
@@ -48,14 +48,22 @@ DEFAULT_DENSITY_PARAMS = {
 
 def compute_delta(psi: np.ndarray, rho: np.ndarray, **kwargs) -> np.ndarray:
     """Compute normalized deviation δ = (m - m_ref) / m_ref where m = ψ/ρ."""
-    params = {**DEFAULT_STIMULUS_PARAMS, **kwargs}
-    psi_ref = params['psi_ref']
-    rho_ref = params['rho_ref']
+    params = {**DEFAULT_STIMULUS_PARAMS, **DEFAULT_DENSITY_PARAMS, **kwargs}
+    psi_ref_trab = params['psi_ref_trab']
+    psi_ref_cort = params['psi_ref_cort']
+    rho_trab_max = params['rho_trab_max']
+    rho_cort_min = params['rho_cort_min']
     
     eps = 1e-6
     rho_safe = smooth_max(rho, 0.1, eps)
     m = psi / rho_safe
-    m_ref = psi_ref / rho_ref
+    
+    # Blending
+    denom = rho_cort_min - rho_trab_max
+    t = (rho_safe - rho_trab_max) / denom
+    w = smoothstep01(t)
+    m_ref = psi_ref_trab * (1.0 - w) + psi_ref_cort * w
+    
     delta = (m - m_ref) / m_ref
     return delta
 

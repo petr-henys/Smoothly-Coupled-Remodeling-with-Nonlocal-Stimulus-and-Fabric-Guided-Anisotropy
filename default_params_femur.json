@@ -16,7 +16,6 @@
         "rho0": 1.0,
         "rho_min": 0.1,
         "rho_max": 2.0,
-        "rho_ref": 1.0,
         "k_rho_form": 0.01,
         "k_rho_resorb": 0.0025,
         "D_rho": 0.02,
@@ -28,7 +27,8 @@
     
     "stimulus": {
         "stimulus_power_p": 4.0,
-        "psi_ref": 0.01,
+        "psi_ref_trab": 0.01,
+        "psi_ref_cort": 0.01,
         "stimulus_tau": 25.0,
         "stimulus_D": 1.0,
         "stimulus_S_max": 1.0,
@@ -38,7 +38,7 @@
     
     "fabric": {
         "fabric_tau": 50.0,
-        "filter_length": 2.0,
+        "fabric_D": 1.0,
         "fabric_cA": 1.0,
         "fabric_gammaF": 1.0,
         "fabric_epsQ": 1e-12,

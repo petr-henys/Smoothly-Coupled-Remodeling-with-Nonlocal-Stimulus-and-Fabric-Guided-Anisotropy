@@ -97,10 +97,10 @@ S(\cdot,0)=S_0\ \ \text{in }\Omega.
 Here $\tau_S\ge 0$ is the stimulus time constant, $D_S\ge 0$ the stimulus diffusivity, $S_{\max}>0$ a cap on $|S|$, and $\kappa_S>0$ controls the saturation width in the $\tanh$ response. The drive is built from a normalized deviation in density-normalized strain energy,
 \[
 \hat{\psi}(x):=\frac{\psi_{\mathrm{day}}(x)}{\widetilde\rho(x)},\qquad
-\hat{\psi}_{\mathrm{ref}}:=\frac{\psi_{\mathrm{ref}}}{\rho_{\mathrm{ref}}},\qquad
-\delta(x):=\frac{\hat{\psi}(x)-\hat{\psi}_{\mathrm{ref}}}{\hat{\psi}_{\mathrm{ref}}}\,,
+\hat{\psi}_{\mathrm{ref}}(\widetilde{\rho}):=\psi_{\mathrm{ref}}^{\mathrm{trab}}(1-w(\widetilde{\rho})) + \psi_{\mathrm{ref}}^{\mathrm{cort}}w(\widetilde{\rho}),\qquad
+\delta(x):=\frac{\hat{\psi}(x)-\hat{\psi}_{\mathrm{ref}}(\widetilde{\rho})}{\hat{\psi}_{\mathrm{ref}}(\widetilde{\rho})}\,,
 \]
-where $\widetilde\rho$ is the smooth lower clamp \eqref{eq:smooth-max-nd}. To suppress spurious response to very small deviations we apply a smooth lazy-zone gate with half-width $\delta_0\ge 0$ (dimensionless):
+where $\widetilde\rho$ is the smooth lower clamp \eqref{eq:smooth-max-nd} and $w(\widetilde{\rho})$ is the transition function \eqref{eq:variable-exponent}. To suppress spurious response to very small deviations we apply a smooth lazy-zone gate with half-width $\delta_0\ge 0$ (dimensionless):
 \[
 \delta_{\mathrm{eff}} \;:=\;
 \begin{cases}

@@ -462,11 +462,11 @@ if __name__ == "__main__":
     sweep = ParameterSweep(
         params={
             "density.k_rho_form": [0.01, 0.05],
-            "stimulus.psi_ref": [1e-5, 5e-5],
+            "stimulus.psi_ref_trab": [1e-5, 5e-5],
             "time.total_time": [50.0],  # Short runs for testing
         },
         base_output_dir=Path("./sweep_test"),
-        metadata={"description": "Formation rate vs psi_ref sweep"},
+        metadata={"description": "Formation rate vs psi_ref_trab sweep"},
     )
     
     # Create runner with custom box config

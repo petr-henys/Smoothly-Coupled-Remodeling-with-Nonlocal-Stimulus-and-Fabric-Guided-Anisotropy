@@ -192,7 +192,7 @@ class TestConservation:
         rho_old.x.scatter_forward()
         
         # Set positive stimulus (psi > psi_ref) -> drives toward rho_max
-        psi_val = 1.5 * cfg.stimulus.psi_ref
+        psi_val = 1.5 * cfg.stimulus.psi_ref_trab
         psi_field.x.array[:] = psi_val
         psi_field.x.scatter_forward()
         
@@ -237,7 +237,7 @@ class TestConservation:
             psi_field = Function(Q, name="psi")
             
             # S = psi - psi_ref (dimensional).  So psi = psi_ref + S
-            psi_val = cfg.stimulus.psi_ref + stimulus_value
+            psi_val = cfg.stimulus.psi_ref_trab + stimulus_value
             psi_field.x.array[:] = psi_val
             psi_field.x.scatter_forward()
 
@@ -348,7 +348,7 @@ class TestConservationChecks:
         rho_old.x.scatter_forward()
         
         # Strong positive stimulus -> formation (S = 1.0 -> psi = 2 * psi_ref)
-        psi_field.x.array[:] = 2.0 * cfg.stimulus.psi_ref
+        psi_field.x.array[:] = 2.0 * cfg.stimulus.psi_ref_trab
         psi_field.x.scatter_forward()
         
         dens = DensitySolver(rho, rho_old, psi_field, cfg)
