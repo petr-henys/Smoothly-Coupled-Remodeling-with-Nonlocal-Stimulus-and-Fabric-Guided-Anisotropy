@@ -61,9 +61,9 @@ from analysis.plot_utils import (
 # =============================================================================
 
 ANDERSON_PARAM_COLORS = {
-    "m": "#0173B2",       # Blue (history)
-    "beta": "#DE8F05",    # Orange (mixing)
-    "lam": "#029E73",     # Green (regularization)
+    "m": "#4C72B0",       # Steel blue (history)
+    "beta": "#DD8452",    # Coral (mixing)
+    "lam": "#55A868",     # Sage green (regularization)
 }
 ANDERSON_PARAM_LABELS = {
     "m": r"$m$ (history size)",
@@ -380,27 +380,18 @@ def analyze_sweep(
 # Visualization
 # =============================================================================
 
-def _summarize(values: np.ndarray) -> tuple[float, float, float]:
-    """Return (median, q25, q75) for a 1D array."""
-    if values.size == 0:
-        return (np.nan, np.nan, np.nan)
-    q25, med, q75 = np.quantile(values, [0.25, 0.5, 0.75])
-    return float(med), float(q25), float(q75)
-
-
 def create_diagnostic_figure(
     df: pd.DataFrame,
     output_dir: Path,
     metadata: dict[str, Any],
 ) -> None:
-    """Create diagnostic figure for Anderson sweep (1×3 layout).
+    """Create diagnostic figure for Anderson sweep (1×4 row layout).
     
-    Layout:
-      (a) Iterations per step - how many fixed-point iterations needed?
-      (b) Contraction rate - how fast does residual decrease?
-      (c) Condition number - how stable is the Gram matrix?
-    
-    Each panel shows sensitivity to all three Anderson parameters.
+    CMAME-optimized single-row layout:
+      (a) Heatmap: Iterations as f(m, β) - shows interaction and optimal region
+      (b) Box plots: Marginal effect of each parameter on iterations
+      (c) Heatmap: Contraction rate as f(m, β) - convergence quality
+      (d) Stability: Condition number vs history size with λ variations
     
     Args:
         df: DataFrame with Anderson metrics.
@@ -414,173 +405,311 @@ def create_diagnostic_figure(
     beta_vals = sorted(df["beta"].unique())
     lam_vals = sorted(df["lam"].unique())
     
-    # Baselines
-    baseline_m = int(metadata.get("baseline_m", m_vals[len(m_vals) // 2]))
-    baseline_beta = float(metadata.get("baseline_beta", beta_vals[len(beta_vals) // 2]))
-    baseline_lam = float(metadata.get("baseline_lam", lam_vals[len(lam_vals) // 2]))
+    # Find optimal lambda (lowest average iterations)
+    lam_perf = df.groupby("lam")["avg_subiters_per_step"].mean()
+    optimal_lam = lam_perf.idxmin()
     
-    # Create figure with 1×3 layout
-    fig, axes = plt.subplots(1, 3, figsize=(10.0, 3.2))
+    # Subset for heatmaps (fix lambda at optimal)
+    df_lam_opt = df[df["lam"] == optimal_lam]
+    
+    # Get restart_on_cond from metadata (default 1e4)
+    restart_on_cond = float(metadata.get("restart_on_cond", 1e4))
+    
+    # Create figure with 1×4 layout
+    # Using 10.0 x 2.5 to fit 4 plots in a row nicely
+    fig, axes = plt.subplots(1, 4, figsize=(10.0, 2.5))
     
     # =========================================================================
-    # Panel (a): Average Iterations per Step
+    # Panel (a): Heatmap - Iterations as f(m, β)
     # =========================================================================
     ax = axes[0]
-    _plot_parameter_sensitivity(
-        ax, df,
+    _plot_heatmap(
+        ax, df_lam_opt,
+        x_col="m", y_col="beta",
         metric_col="avg_subiters_per_step",
-        param_values={
-            "m": (m_vals, baseline_m),
-            "beta": (beta_vals, baseline_beta),
-            "lam": (lam_vals, baseline_lam),
-        },
-        use_log_x={"lam"},
+        x_vals=m_vals, y_vals=beta_vals,
+        xlabel=r"History $m$",
+        ylabel=r"Mixing $\beta$",
+        title=r"(a) Iterations/step",
+        cmap="cividis_r",  # Modern, perceptually uniform
+        show_values=True,
+        fmt=".1f",
     )
-    setup_axis_style(
-        ax,
-        xlabel="Parameter value / baseline",
-        ylabel="Iterations / step",
-        title="(a) Convergence speed",
-        grid=True,
-    )
-    ax.set_ylim(0, None)
     
     # =========================================================================
-    # Panel (b): Contraction Rate
+    # Panel (b): Box plots - Marginal parameter effects
     # =========================================================================
     ax = axes[1]
-    _plot_parameter_sensitivity(
+    _plot_marginal_boxplots(
         ax, df,
-        metric_col="contraction_median",
-        param_values={
-            "m": (m_vals, baseline_m),
-            "beta": (beta_vals, baseline_beta),
-            "lam": (lam_vals, baseline_lam),
-        },
-        use_log_x={"lam"},
+        metric_col="avg_subiters_per_step",
+        param_cols=["m", "beta", "lam"],
+        ylabel="Iterations/step",
+        title="(b) Parameter sensitivity",
     )
-    setup_axis_style(
-        ax,
-        xlabel="Parameter value / baseline",
-        ylabel=r"Contraction $\rho$",
-        title="(b) Convergence rate",
-        grid=True,
-    )
-    ax.set_ylim(0, 1)
-    ax.axhline(y=1.0, color="red", linestyle=":", linewidth=0.8, alpha=0.6)
     
     # =========================================================================
-    # Panel (c): Condition Number
+    # Panel (c): Heatmap - Contraction rate as f(m, β)
     # =========================================================================
     ax = axes[2]
-    _plot_parameter_sensitivity(
+    _plot_heatmap(
+        ax, df_lam_opt,
+        x_col="m", y_col="beta",
+        metric_col="contraction_median",
+        x_vals=m_vals, y_vals=beta_vals,
+        xlabel=r"History $m$",
+        ylabel=r"Mixing $\beta$",
+        title=r"(c) Contraction $\rho$",
+        cmap="RdYlBu",  # Diverging: red (bad) → blue (good)
+        show_values=True,
+        fmt=".2f",
+        vmin=0.0, vmax=1.0,
+    )
+    
+    # =========================================================================
+    # Panel (d): Line plot - Condition number vs m for different λ
+    # =========================================================================
+    ax = axes[3]
+    _plot_condition_vs_m(
         ax, df,
-        metric_col="cond_median",
-        param_values={
-            "m": (m_vals, baseline_m),
-            "beta": (beta_vals, baseline_beta),
-            "lam": (lam_vals, baseline_lam),
-        },
-        use_log_x={"lam"},
-        log_y=True,
+        m_vals=m_vals, lam_vals=lam_vals,
+        restart_on_cond=restart_on_cond,
     )
     setup_axis_style(
         ax,
-        xlabel="Parameter value / baseline",
+        xlabel=r"History $m$",
         ylabel=r"Condition $\kappa(H)$",
-        title="(c) Numerical stability",
+        title="(d) Numerical stability",
         grid=True,
-    )
-    
-    # Add legend below the plots
-    from matplotlib.lines import Line2D
-    handles = [
-        Line2D([0], [0], color=ANDERSON_PARAM_COLORS["m"], marker="o",
-               linestyle="-", linewidth=PLOT_LINEWIDTH, markersize=5,
-               label=ANDERSON_PARAM_LABELS["m"]),
-        Line2D([0], [0], color=ANDERSON_PARAM_COLORS["beta"], marker="s",
-               linestyle="-", linewidth=PLOT_LINEWIDTH, markersize=5,
-               label=ANDERSON_PARAM_LABELS["beta"]),
-        Line2D([0], [0], color=ANDERSON_PARAM_COLORS["lam"], marker="^",
-               linestyle="-", linewidth=PLOT_LINEWIDTH, markersize=5,
-               label=ANDERSON_PARAM_LABELS["lam"]),
-    ]
-    fig.legend(
-        handles=handles,
-        loc="lower center",
-        ncol=3,
-        frameon=False,
-        bbox_to_anchor=(0.5, -0.02),
     )
     
     plt.tight_layout()
-    fig.subplots_adjust(bottom=0.22)
     
     # Save figures
     save_manuscript_figure(fig, "anderson_sweep", dpi=PUBLICATION_DPI, close=False)
     save_figure(fig, output_dir / "anderson_sweep.png", dpi=PUBLICATION_DPI, close=True)
 
 
-def _plot_parameter_sensitivity(
+def _plot_heatmap(
     ax: plt.Axes,
     df: pd.DataFrame,
+    x_col: str,
+    y_col: str,
     metric_col: str,
-    param_values: dict[str, tuple[list, float]],
-    use_log_x: set[str] | None = None,
-    log_y: bool = False,
+    x_vals: list,
+    y_vals: list,
+    xlabel: str,
+    ylabel: str,
+    title: str,
+    cmap: str = "viridis",
+    show_values: bool = True,
+    fmt: str = ".2f",
+    vmin: float | None = None,
+    vmax: float | None = None,
 ) -> None:
-    """Plot metric sensitivity to each Anderson parameter.
-    
-    For each parameter, varies it while keeping others at baseline.
-    Shows median line (IQR removed - it showed variability due to other
-    parameters, not statistical uncertainty).
+    """Create a heatmap showing metric as f(x, y).
     
     Args:
         ax: Matplotlib axis.
         df: DataFrame with metrics.
-        metric_col: Column name for the metric to plot.
-        param_values: Dict mapping param names to (values, baseline).
-        use_log_x: Set of param names to use log scale for normalization.
-        log_y: Use log scale for y-axis.
+        x_col, y_col: Column names for x and y axes.
+        metric_col: Column name for the metric (color).
+        x_vals, y_vals: Unique values for x and y.
+        xlabel, ylabel, title: Axis labels.
+        cmap: Colormap name.
+        show_values: Annotate cells with values.
+        fmt: Format string for annotations.
+        vmin, vmax: Color scale limits.
     """
-    if use_log_x is None:
-        use_log_x = set()
+    # Pivot to create 2D grid
+    pivot = df.pivot_table(
+        values=metric_col, index=y_col, columns=x_col, aggfunc="mean"
+    )
     
-    for param_name, (values, baseline) in param_values.items():
-        color = ANDERSON_PARAM_COLORS[param_name]
-        marker = ANDERSON_PARAM_MARKERS[param_name]
+    # Ensure proper ordering
+    pivot = pivot.reindex(index=y_vals[::-1], columns=x_vals)
+    
+    # Create heatmap
+    im = ax.imshow(pivot.values, cmap=cmap, aspect="auto", vmin=vmin, vmax=vmax)
+    
+    # Set ticks
+    ax.set_xticks(range(len(x_vals)))
+    ax.set_xticklabels([str(v) for v in x_vals])
+    ax.set_yticks(range(len(y_vals)))
+    ax.set_yticklabels([f"{v:.1f}" for v in reversed(y_vals)])
+    
+    # Labels
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.set_title(title)
+    
+    # Colorbar
+    cbar = plt.colorbar(im, ax=ax, shrink=0.8)
+    cbar.ax.tick_params(labelsize=6)
+    
+    # Annotate cells with values
+    if show_values:
+        for i in range(len(y_vals)):
+            for j in range(len(x_vals)):
+                val = pivot.values[i, j]
+                if not np.isnan(val):
+                    # Choose text color based on background
+                    text_color = "white" if val > pivot.values.mean() else "black"
+                    ax.text(j, i, f"{val:{fmt}}", ha="center", va="center",
+                           fontsize=6, color=text_color)
+    
+    # Mark optimal cell
+    min_idx = np.unravel_index(np.nanargmin(pivot.values), pivot.shape)
+    ax.add_patch(plt.Rectangle(
+        (min_idx[1] - 0.5, min_idx[0] - 0.5), 1, 1,
+        fill=False, edgecolor="red", linewidth=2
+    ))
+
+
+def _plot_marginal_boxplots(
+    ax: plt.Axes,
+    df: pd.DataFrame,
+    metric_col: str,
+    param_cols: list[str],
+    ylabel: str,
+    title: str,
+) -> None:
+    """Create grouped box plots showing marginal effect of each parameter.
+    
+    For each parameter, groups data by that parameter's values and shows
+    the distribution of the metric. This reveals sensitivity to each parameter
+    marginally (averaging over other parameters).
+    
+    Args:
+        ax: Matplotlib axis.
+        df: DataFrame with metrics.
+        metric_col: Column to analyze.
+        param_cols: List of parameter column names.
+        ylabel, title: Axis labels.
+    """
+    import matplotlib.patches as mpatches
+    
+    positions = []
+    labels = []
+    colors = []
+    all_data = []
+    
+    pos = 0
+    for param in param_cols:
+        unique_vals = sorted(df[param].unique())
+        color = ANDERSON_PARAM_COLORS[param]
         
-        # Normalize values by baseline
-        if param_name in use_log_x:
-            # For log-scale params, use log ratio
-            x_normalized = np.log10(np.array(values)) - np.log10(baseline)
-            x_normalized = 10 ** x_normalized  # Back to ratio
-        else:
-            x_normalized = np.array(values) / baseline
+        for val in unique_vals:
+            data = df.loc[df[param] == val, metric_col].values
+            all_data.append(data)
+            positions.append(pos)
+            
+            # Format label based on parameter type
+            if param == "m":
+                labels.append(str(int(val)))
+            elif param == "lam":
+                labels.append(f"{val:.0e}")
+            else:
+                labels.append(f"{val:.1f}")
+            
+            colors.append(color)
+            pos += 1
         
-        # Compute median metric for each parameter value
-        y_med = []
+        pos += 0.5  # Gap between parameter groups
+    
+    # Create box plots
+    bp = ax.boxplot(
+        all_data, positions=positions, widths=0.6, patch_artist=True,
+        medianprops=dict(color="black", linewidth=1.5),
+        flierprops=dict(marker=".", markersize=3, alpha=0.5),
+    )
+    
+    # Color boxes
+    for patch, color in zip(bp["boxes"], colors):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.7)
+    
+    # Set labels
+    ax.set_xticks(positions)
+    ax.set_xticklabels(labels, fontsize=6, rotation=45, ha="right")
+    ax.set_ylabel(ylabel)
+    ax.set_title(title)
+    
+    # Add parameter group labels at top
+    param_centers = []
+    param_labels_display = []
+    idx = 0
+    for param in param_cols:
+        n_vals = len(df[param].unique())
+        center = positions[idx] + (n_vals - 1) / 2
+        param_centers.append(center)
+        param_labels_display.append(ANDERSON_PARAM_LABELS[param])
+        idx += n_vals
+    
+    # Add secondary x-axis for parameter names
+    ax2 = ax.twiny()
+    ax2.set_xlim(ax.get_xlim())
+    ax2.set_xticks(param_centers)
+    ax2.set_xticklabels(param_labels_display, fontsize=7)
+    ax2.tick_params(length=0)
+    
+    # Remove top spine from secondary axis
+    ax2.spines["top"].set_visible(False)
+    ax2.spines["right"].set_visible(False)
+
+
+def _plot_condition_vs_m(
+    ax: plt.Axes,
+    df: pd.DataFrame,
+    m_vals: list,
+    lam_vals: list,
+    restart_on_cond: float = 1e4,
+) -> None:
+    """Plot condition number vs history size for different regularizations.
+    
+    Shows how regularization λ controls conditioning as m increases.
+    
+    Args:
+        ax: Matplotlib axis.
+        df: DataFrame with metrics.
+        m_vals: History size values.
+        lam_vals: Regularization values.
+        restart_on_cond: Threshold for Anderson restart (from config).
+    """
+    from matplotlib.colors import LogNorm
+    import matplotlib.cm as cm
+    
+    # Modern sequential colormap
+    norm = LogNorm(vmin=min(lam_vals), vmax=max(lam_vals))
+    cmap = plt.get_cmap("viridis")
+    
+    for lam in lam_vals:
+        subset = df[df["lam"] == lam]
         
-        for val in values:
-            mask = df[param_name] == val
-            metric_vals = df.loc[mask, metric_col].values
-            med, _, _ = _summarize(metric_vals)
-            y_med.append(med)
+        # Aggregate by m
+        agg = subset.groupby("m")["cond_median"].agg(["mean", "std"]).reset_index()
         
-        y_med = np.array(y_med)
-        
-        # Plot median line with markers
-        ax.plot(
-            x_normalized, y_med,
-            color=color, marker=marker, linestyle="-",
-            linewidth=PLOT_LINEWIDTH, markersize=PLOT_MARKERSIZE + 2,
+        color = cmap(norm(lam))
+        ax.semilogy(
+            agg["m"], agg["mean"],
+            marker="o", color=color, linewidth=PLOT_LINEWIDTH,
+            markersize=PLOT_MARKERSIZE + 1, label=f"$\\lambda={lam:.0e}$",
         )
     
-    # Add vertical line at baseline (x=1)
-    ax.axvline(x=1.0, color="gray", linestyle="--", linewidth=0.8, alpha=0.6)
+    # Add legend
+    ax.legend(fontsize=6, loc="upper left", frameon=False)
     
-    if log_y:
-        ax.set_yscale("log")
+    # Add restart threshold line
+    ax.axhline(
+        y=restart_on_cond, color="#C44E52", linestyle="--",
+        linewidth=1.2, alpha=0.8,
+    )
+    # Label the threshold
+    ax.text(
+        m_vals[0], restart_on_cond * 1.2,
+        r"$\kappa_{\mathrm{restart}}$",
+        fontsize=7, color="#C44E52", va="bottom",
+    )
 
 
 # =============================================================================

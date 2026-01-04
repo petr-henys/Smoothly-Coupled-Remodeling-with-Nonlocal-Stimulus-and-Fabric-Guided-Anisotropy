@@ -561,11 +561,11 @@ def create_diagnostic_figure(
 
     legend_handles = [
         Line2D([0], [0], color="#555555", marker="o", linestyle="-", linewidth=PLOT_LINEWIDTH, markersize=4,
-               label="Roughness ratio (median; IQR shaded)"),
+               label="Roughness ratio (mean)"),
         Line2D([0], [0], color="black", marker="o", linestyle="--", linewidth=PLOT_LINEWIDTH, markersize=3,
-               label="Picard iters/step (median; IQR shaded)"),
+               label="Picard iters/step (mean)"),
         Line2D([0], [0], color="#555555", marker="o", linestyle="", markersize=4, alpha=0.35,
-               label="All runs (scatter)"),
+               label="Individual runs"),
         Line2D([0], [0], color="gray", linestyle="--", linewidth=1.0, alpha=0.8,
                label=r"Baseline ($D=D_{\mathrm{ref}}$)"),
     ]
@@ -591,18 +591,14 @@ def _plot_diffusion_impact_panel(
 ) -> None:
     """Plot marginal impact of a diffusion coefficient on (i) smoothness and (ii) solver cost.
 
-    - Primary axis (left): roughness_ratio (scatter + median + IQR band)
-    - Secondary axis (right): avg_picard_per_step (median + IQR band)
+    - Primary axis (left): roughness_ratio (scatter + mean)
+    - Secondary axis (right): avg_picard_per_step (mean)
     """
     values = sorted(df[param_name].unique())
     factors = np.array([float(v) / baseline for v in values], dtype=float)
 
-    rough_med = np.zeros_like(factors)
-    rough_q25 = np.zeros_like(factors)
-    rough_q75 = np.zeros_like(factors)
-    cost_med = np.zeros_like(factors)
-    cost_q25 = np.zeros_like(factors)
-    cost_q75 = np.zeros_like(factors)
+    rough_mean = np.zeros_like(factors)
+    cost_mean = np.zeros_like(factors)
 
     # Scatter all combinations for this parameter level (jittered in log-x)
     for i, v in enumerate(values):
@@ -611,8 +607,8 @@ def _plot_diffusion_impact_panel(
         rough_vals = subset["roughness_ratio"].to_numpy(dtype=float)
         cost_vals = subset["avg_picard_per_step"].to_numpy(dtype=float)
 
-        rough_med[i], rough_q25[i], rough_q75[i] = _summarize(rough_vals)
-        cost_med[i], cost_q25[i], cost_q75[i] = _summarize(cost_vals)
+        rough_mean[i] = np.mean(rough_vals)
+        cost_mean[i] = np.mean(cost_vals)
 
         # Multiplicative jitter in log space (stable and scale-invariant)
         jitter = 10.0 ** rng.uniform(-0.02, 0.02, size=rough_vals.size)
@@ -621,16 +617,15 @@ def _plot_diffusion_impact_panel(
             rough_vals,
             s=18,
             color=color,
-            alpha=0.25,
+            alpha=0.4,  # Slightly more opaque since we removed the band
             edgecolors="none",
             zorder=2,
         )
 
-    # Median + IQR band (roughness)
-    ax.fill_between(factors, rough_q25, rough_q75, color=color, alpha=0.12, linewidth=0, zorder=1)
+    # Mean line (roughness)
     ax.plot(
         factors,
-        rough_med,
+        rough_mean,
         color=color,
         marker=DIFFUSION_MARKERS.get(param_name, "o"),
         linewidth=PLOT_LINEWIDTH,
@@ -638,12 +633,11 @@ def _plot_diffusion_impact_panel(
         zorder=3,
     )
 
-    # Secondary axis: solver cost (median + IQR)
+    # Secondary axis: solver cost (mean)
     ax2 = ax.twinx()
-    ax2.fill_between(factors, cost_q25, cost_q75, color="black", alpha=0.06, linewidth=0, zorder=1)
     ax2.plot(
         factors,
-        cost_med,
+        cost_mean,
         color="black",
         linestyle="--",
         marker="o",

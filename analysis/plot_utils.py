@@ -24,6 +24,7 @@ MASTER_STYLE = {
     'font.size': 8,           # Default for all text
     'axes.labelsize': 8,      # X/Y axis labels
     'axes.titlesize': 9,      # Subplot titles (slightly larger)
+    'axes.titleweight': 'bold', # Bold titles
     'xtick.labelsize': 7,     # X-axis tick labels
     'ytick.labelsize': 7,     # Y-axis tick labels
     'legend.fontsize': 7,     # Legend text
@@ -192,7 +193,7 @@ def setup_axis_style(
     """
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
-    ax.set_title(title, fontweight="bold")
+    ax.set_title(title)
     
     if loglog:
         ax.set_xscale("log")
