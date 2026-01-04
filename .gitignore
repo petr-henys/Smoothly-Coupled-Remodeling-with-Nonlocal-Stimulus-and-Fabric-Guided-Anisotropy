@@ -28,6 +28,7 @@
 !/stiff_params_femur.json
 !/run_density_comparison.py
 !/run_diffusion_sweep.py
+!/run_fabric_sweep.py
 # Python cache
 __pycache__/
 *.pyc

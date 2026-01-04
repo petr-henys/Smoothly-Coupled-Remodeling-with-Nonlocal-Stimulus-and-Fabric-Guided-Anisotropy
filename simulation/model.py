@@ -10,6 +10,7 @@ from dolfinx import fem
 from dolfinx.fem import Function, functionspace
 
 from simulation.config import Config
+from simulation.conservation import ConservationMonitor
 from simulation.fixedsolver import FixedPointSolver
 from femur.loader import Loader
 from simulation.logger import get_logger
@@ -175,6 +176,15 @@ class Remodeller:
             log_file=self.cfg.log_file,
         )
 
+        # Conservation monitor (tracks mass/energy balance)
+        self.conservation = ConservationMonitor(
+            self.cfg,
+            rho=self.rho,
+            rho_old=self.rho_old,
+            S=self.S,
+            psi=self.driver.psi,  # Cycle-averaged SED from GaitDriver
+        )
+
     def _setup_blocks(self) -> None:
         """Call setup() on all coupling blocks."""
         self.registry.setup_all()
@@ -298,6 +308,9 @@ class Remodeller:
                     next_dt = dt
                     reason = "accepted"
 
+                # Compute conservation metrics (after step, before potential rejection)
+                cons_metrics = self.conservation.compute(dt).to_dict()
+
                 # Write metrics to CSV for ALL steps (accepted and rejected)
                 self.storage.metrics.write_step(
                     step=step_idx + 1,  # Use next step number for this attempt
@@ -309,6 +322,7 @@ class Remodeller:
                     reject_reason=str(reason),
                     error_norm=error,
                     subiter_metrics=metrics.get("subiter_metrics", []),
+                    conservation_metrics=cons_metrics,
                 )
 
                 if accepted:

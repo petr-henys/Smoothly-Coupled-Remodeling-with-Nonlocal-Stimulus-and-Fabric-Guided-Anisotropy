@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 
 class StimulusCalculator:
-    """Computes Strain Energy Density (SED) and fabric tensor from mechanics solution."""
+    """Computes Strain Energy Density (SED), stress, and fabric tensor from mechanics solution."""
 
     def __init__(self, mech: MechanicsSolver):
         """Initialize with mechanics solver to access state fields."""
@@ -29,10 +29,12 @@ class StimulusCalculator:
         # Function spaces for output
         self.V_psi = fem.functionspace(self.mesh, ("DG", 0))
         self.V_Q = fem.functionspace(self.mesh, ("DG", 0, (self.gdim, self.gdim)))
+        self.V_sigma = fem.functionspace(self.mesh, ("DG", 0, (self.gdim, self.gdim)))
 
         # Pre-compile expressions
         self._sed_expr = self._build_sed_expression()
         self._Q_expr = self._build_Q_expression()
+        self._sigma_expr = self._build_sigma_expression()
 
     def compute_sed(self, target: fem.Function) -> None:
         """Compute SED (psi) and interpolate into target function."""
@@ -41,6 +43,10 @@ class StimulusCalculator:
     def compute_Q(self, target: fem.Function) -> None:
         """Compute fabric tensor (Q) and interpolate into target function."""
         target.interpolate(self._Q_expr)
+
+    def compute_sigma(self, target: fem.Function) -> None:
+        """Compute stress tensor (sigma) and interpolate into target function."""
+        target.interpolate(self._sigma_expr)
 
     def _build_sed_expression(self) -> fem.Expression:
         """Build UFL expression for psi = 0.5 * sigma : epsilon (clamped >= 0)."""
@@ -68,6 +74,17 @@ class StimulusCalculator:
         Q_sym = symm(Q)
 
         return fem.Expression(Q_sym, self.V_Q.element.interpolation_points)
+
+    def _build_sigma_expression(self) -> fem.Expression:
+        """Build UFL expression for sigma (DG0 tensor 3×3)."""
+        u = self.mech.u
+        rho = self.mech.rho
+        L = self.mech.L
+
+        sig = self.mech.sigma(u, rho, L)
+        sig_sym = symm(sig)
+
+        return fem.Expression(sig_sym, self.V_sigma.element.interpolation_points)
 
 
 class GaitDriver:
@@ -108,6 +125,11 @@ class GaitDriver:
         self.Qbar = fem.Function(self.V_Q, name="Qbar")
         self._Q_temp = fem.Function(self.V_Q, name="Q_temp")
 
+        # Stress tensor (DG0 tensor 3×3) - cycle-weighted average.
+        self.V_sigma = self.calculator.V_sigma
+        self.sigma = fem.Function(self.V_sigma, name="sigma")
+        self._sigma_temp = fem.Function(self.V_sigma, name="sigma_temp")
+
         self.logger.debug(f"GaitDriver initialized with {len(self.loading_cases)} loading case(s)")
 
     def setup(self) -> None:
@@ -131,8 +153,10 @@ class GaitDriver:
         # Zero out accumulated fields (owned DOFs only; single scatter at the end)
         assign(self.psi, 0.0, scatter=False)
         assign(self.Qbar, 0.0, scatter=False)
+        assign(self.sigma, 0.0, scatter=False)
         n_owned_psi = get_owned_size(self.psi)
         n_owned_Q = get_owned_size(self.Qbar)
+        n_owned_sigma = get_owned_size(self.sigma)
         p = float(self.cfg.stimulus.stimulus_power_p)
         sum_cycles = 0.0
         tiny = 1e-30
@@ -161,9 +185,10 @@ class GaitDriver:
             total_assemble_time += stats.assemble_time
             last_extra = stats.extra
 
-            # Compute SED + Q_case for this case
+            # Compute SED + Q_case + sigma for this case
             self.calculator.compute_sed(self._psi_temp)
             self.calculator.compute_Q(self._Q_temp)
+            self.calculator.compute_sigma(self._sigma_temp)
 
             # Accumulate stimulus as a cycle-weighted power mean:
             #   psi = ( sum_i day_cycles_i * psi_i^p / sum_i day_cycles_i )^(1/p)
@@ -174,6 +199,9 @@ class GaitDriver:
             # Accumulate Qbar as a plain weighted average (no power-mean).
             self.Qbar.x.array[:n_owned_Q] += day_cycles * self._Q_temp.x.array[:n_owned_Q]
 
+            # Accumulate sigma as a plain weighted average.
+            self.sigma.x.array[:n_owned_sigma] += day_cycles * self._sigma_temp.x.array[:n_owned_sigma]
+
         # Finalize: psi = ( sum(day_cycles * psi^p) / sum(day_cycles) )^(1/p)
         if sum_cycles <= tiny:
             raise ValueError("Total day_cycles is zero; cannot compute cycle-weighted stimulus.")
@@ -183,8 +211,12 @@ class GaitDriver:
         # Finalize Qbar average and scatter.
         self.Qbar.x.array[:n_owned_Q] *= 1.0 / max(sum_cycles, tiny)
 
+        # Finalize sigma average.
+        self.sigma.x.array[:n_owned_sigma] *= 1.0 / max(sum_cycles, tiny)
+
         self.psi.x.scatter_forward()
         self.Qbar.x.scatter_forward()
+        self.sigma.x.scatter_forward()
 
         avg_ksp_iters = int(round(total_iters / n_enabled_cases)) if n_enabled_cases > 0 else 0
 
@@ -203,6 +235,10 @@ class GaitDriver:
         """Return averaged `Qbar` (DG0 tensor field)."""
         return self.Qbar
 
+    def sigma_field(self) -> fem.Function:
+        """Return the cycle-averaged stress tensor `sigma` (DG0 tensor field)."""
+        return self.sigma
+
     # -------------------------------------------------------------------------
     # CouplingBlock protocol - GaitDriver produces derived quantities, no state
     # -------------------------------------------------------------------------
@@ -218,11 +254,11 @@ class GaitDriver:
 
     @property
     def output_fields(self) -> Tuple[fem.Function, ...]:
-        """Return psi and Qbar for VTX output."""
-        return (self.psi, self.Qbar)
+        """Return psi, Qbar, and sigma for VTX output."""
+        return (self.psi, self.Qbar, self.sigma)
 
     def post_step_update(self) -> None:
-        """No post-step processing needed for GaitDriver."""
+        """No post-step processing needed - sigma is computed during sweep."""
         pass
 
     def sweep(self) -> SweepStats:

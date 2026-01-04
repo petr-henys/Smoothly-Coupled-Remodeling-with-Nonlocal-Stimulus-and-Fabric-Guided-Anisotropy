@@ -149,11 +149,11 @@ def main() -> None:
     box = params["box"]
     
     # Modify for convergence study
-    params["time"].total_time = 60.0  # Shorter for convergence study
+    params["time"].total_time = 100.0  # Shorter for convergence study
     
     # Define sweep parameters
     N_values = [12, 16, 24, 32]  # Mesh resolutions
-    dt_values = [20.0, 10.0, 5.0, 2.5, 1.25]  # Timesteps [days]
+    dt_values = [25.0, 10.0, 5.0, 2.5, 1.25]  # Timesteps [days]
     
     # Convert to sweep format
     sweep = ParameterSweep(

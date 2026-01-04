@@ -91,6 +91,9 @@ class MetricsStorage:
         "error_norm", "mech_iters", "fab_iters", "stim_iters", "dens_iters",
         "mech_time", "fab_time", "stim_time", "dens_time",
         "max_condH", "aa_rejections", "aa_restarts", "memory_mb",
+        # Conservation metrics
+        "total_mass_g", "mass_rate_g_day", "source_integral_g_day", "mass_balance_error",
+        "total_energy_mJ", "energy_rate_mJ_day", "stimulus_activity",
     ]
 
     SUBITERS_COLUMNS = [
@@ -150,6 +153,7 @@ class MetricsStorage:
         error_norm: float,
         subiter_metrics: List[Dict[str, Any]],
         memory_mb: float = 0.0,
+        conservation_metrics: Optional[Dict[str, float]] = None,
     ) -> None:
         """Write one timestep's metrics to CSV (rank 0 only).
         
@@ -215,6 +219,10 @@ class MetricsStorage:
             "aa_restarts": aa_restarts,
             "memory_mb": mem_peak,
         }
+        
+        # Add conservation metrics if provided
+        if conservation_metrics is not None:
+            step_row.update(conservation_metrics)
 
         if not self._steps_header_written:
             self._steps_writer.writeheader()
