@@ -198,8 +198,8 @@ Equation \eqref{eq:density-strong-nd} uses differentiable kinetics and soft boun
 The local fabric is described by a second-order, symmetric, positive-definite tensor field $\mathbf{A}=\mathbf{A}(x,t)$. To ensure positive definiteness and robustness, we evolve the logarithmic fabric tensor $\mathbf{L} = \ln \mathbf{A}$. The dynamics follow a relaxation--diffusion flow toward a mechanically informed, trace-free logarithmic target $\mathbf{L}_M(\bar{\mathbf{Q}})$ defined below. The strong form on a bounded Lipschitz domain is
 \begin{equation}\label{eq:L-strong-nd}
 \begin{aligned}
-c_A\,\partial_t \mathbf{L} \;-\; c_A D_A\,\Delta \mathbf{L} \;+\; \frac{c_A\,a(\bar{\mathbf{Q}})}{\tau_A}\,\mathbf{L}
-\;=\; \frac{c_A\,a(\bar{\mathbf{Q}})}{\tau_A}\,\mathbf{L}_M(\bar{\mathbf{Q}})\,,
+\partial_t \mathbf{L} \;-\; D_A\,\Delta \mathbf{L} \;+\; \frac{a(\bar{\mathbf{Q}})}{\tau_A}\,\mathbf{L}
+\;=\; \frac{a(\bar{\mathbf{Q}})}{\tau_A}\,\mathbf{L}_M(\bar{\mathbf{Q}})\,,
 \end{aligned}\end{equation}
 supplemented with homogeneous no-flux boundary conditions and an admissible initial state,
 \begin{equation}\label{eq:L-bc-ic-nd}
@@ -207,7 +207,7 @@ supplemented with homogeneous no-flux boundary conditions and an admissible init
 \qquad
 \mathbf{L}(\cdot,0)=\ln(\mathbf{A}_0)\ \ \text{in }\Omega.
 \end{equation}
-Here $D_A\ge 0$ is a diffusion coefficient, $c_A>0$ a capacity (common scaling), and $\tau_A>0$ a relaxation time constant. The activity factor $a(\bar{\mathbf{Q}})\in[0,1]$ suppresses updates under near-isotropic loading; the Laplacian and normal derivative act componentwise on $\mathbf{L}$.
+Here $D_A\ge 0$ is a diffusion coefficient and $\tau_A>0$ a relaxation time constant. The activity factor $a(\bar{\mathbf{Q}})\in[0,1]$ suppresses updates under near-isotropic loading; the Laplacian and normal derivative act componentwise on $\mathbf{L}$.
 
 \paragraph{Target construction from mechanics.}
 For each loading case $i$, the mechanics solve provides $\boldsymbol{\sigma}_i$ and $\boldsymbol{\varepsilon}_i$. To extract \emph{directional} information and remove the hydrostatic contribution we form the symmetric deviatoric-stress outer-product

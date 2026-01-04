@@ -34,11 +34,10 @@ with boundary and initial conditions from \eqref{eq:density-bc-ic-nd}.
 \paragraph{Direction/fabric (Backward--Euler).}
 Discretizing \eqref{eq:L-strong-nd} by Backward--Euler yields the linear relaxation--diffusion update: find $\mathbf{L}^n$ such that
 \begin{equation}\label{eq:be-A}
-c_A\frac{\mathbf{L}^{n}-\mathbf{L}^{n-1}}{\Delta t^n}\;-\;c_A D_A\,\Delta \mathbf{L}^{n}\;+\;\frac{c_A\,a(\bar{\mathbf{Q}}^{n})}{\tau_A}\,\mathbf{L}^{n}
-\;=\;\frac{c_A\,a(\bar{\mathbf{Q}}^{n})}{\tau_A}\,\mathbf{L}_M(\bar{\mathbf{Q}}^{n})\quad\text{in }\Omega,
+\frac{\mathbf{L}^{n}-\mathbf{L}^{n-1}}{\Delta t^n}\;-\;D_A\,\Delta \mathbf{L}^{n}\;+\;\frac{a(\bar{\mathbf{Q}}^{n})}{\tau_A}\,\mathbf{L}^{n}
+\;=\;\frac{a(\bar{\mathbf{Q}}^{n})}{\tau_A}\,\mathbf{L}_M(\bar{\mathbf{Q}}^{n})\quad\text{in }\Omega,
 \end{equation}
 with boundary and initial conditions from \eqref{eq:L-bc-ic-nd}. The Laplacian acts componentwise on $\mathbf{L}$, and for $D_A=0$ the diffusion term is absent.
 
 \paragraph{Coupled solve at time level $t^n$.}
 The submodels are coupled through the mechanics drivers $(\psi_{\mathrm{day}}^n,\bar{\mathbf{Q}}^n)$ and through the density dependence in the stimulus. We obtain $\mathbf{x}^n$ by the block Gauss--Seidel fixed-point scheme described in \S\ref{sec:fp-aa}.
-
