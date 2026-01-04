@@ -128,6 +128,12 @@ class StimulusMetrics:
     psi_std: float
     psi_max: float
     
+    # Mechanostat error signal statistics (delta = (m - m_ref)/m_ref)
+    delta_mean: float
+    delta_std: float
+    delta_q05: float
+    delta_q95: float
+    
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for CSV/JSON export."""
         return {
@@ -152,6 +158,10 @@ class StimulusMetrics:
             "psi_mean": self.psi_mean,
             "psi_std": self.psi_std,
             "psi_max": self.psi_max,
+            "delta_mean": self.delta_mean,
+            "delta_std": self.delta_std,
+            "delta_q05": self.delta_q05,
+            "delta_q95": self.delta_q95,
         }
 
 
@@ -299,6 +309,35 @@ def compute_stimulus_metrics(
     n_local_psi = psi.function_space.dofmap.index_map.size_local
     psi_array = psi.x.array[:n_local_psi]
     
+    # Compute derived signal m = psi / rho
+    # Note: rho and psi might be on different meshes/spaces in general, 
+    # but here we assume compatible arrays or just use global stats.
+    # For safety in this analysis script, we'll use the arrays directly if sizes match,
+    # otherwise we skip the detailed delta calculation or interpolate.
+    
+    delta_stats = {"mean": 0.0, "std": 0.0, "q05": 0.0, "q95": 0.0}
+    
+    if len(rho_array) == len(psi_array):
+        # Avoid division by zero
+        rho_safe = np.maximum(rho_array, 1e-6)
+        m_local = psi_array / rho_safe
+        
+        # Reference signal (simplified: using the trabecular ref from config)
+        psi_ref = float(record.get("stimulus.psi_ref_trab", 0.01))
+        m_ref = psi_ref  # Assuming m_ref ~ psi_ref for rho=1, simplified
+        
+        delta_local = (m_local - m_ref) / m_ref
+        
+        # Gather for stats (this might be heavy for large meshes, but okay for analysis)
+        delta_global = comm.allgather(delta_local)
+        delta_global = np.concatenate(delta_global)
+        
+        if len(delta_global) > 0:
+            delta_stats["mean"] = float(np.mean(delta_global))
+            delta_stats["std"] = float(np.std(delta_global))
+            delta_stats["q05"] = float(np.quantile(delta_global, 0.05))
+            delta_stats["q95"] = float(np.quantile(delta_global, 0.95))
+
     # Get initial density from config
     rho_initial = config.get("density", {}).get("rho0", 1.0)
     
@@ -368,7 +407,7 @@ def compute_stimulus_metrics(
         output_dir=record.get("output_dir", ""),
         kappa=float(record.get("stimulus.stimulus_kappa", 0.0)),
         delta0=float(record.get("stimulus.stimulus_delta0", 0.0)),
-        psi_ref=float(record.get("stimulus.psi_ref_trab", 0.0)),
+        psi_ref=float(record.get("stimulus.psi_ref_trab", 0.01)),
         rho_initial=rho_initial,
         rho_final_mean=rho_mean,
         rho_final_std=rho_std,
@@ -385,6 +424,10 @@ def compute_stimulus_metrics(
         psi_mean=psi_mean,
         psi_std=psi_std,
         psi_max=global_psi_max,
+        delta_mean=delta_stats["mean"],
+        delta_std=delta_stats["std"],
+        delta_q05=delta_stats["q05"],
+        delta_q95=delta_stats["q95"],
     )
 
 
@@ -405,8 +448,9 @@ def analyze_sweep(
         verbose: Print progress.
     
     Returns:
-        DataFrame with stimulus metrics for all runs.
+        DataFrame with metrics for all runs.
     """
+    # Load sweep records
     records = load_stimulus_sweep_records(sweep_dir, comm)
     if not records:
         raise ValueError(f"No sweep records found in {sweep_dir}")
@@ -427,7 +471,10 @@ def analyze_sweep(
             print(f"  [{idx}/{len(records)}] kappa={kappa}, delta0={delta0}, psi_ref={psi_ref}")
         
         try:
-            rho, S, psi, _, config = load_fields_from_checkpoint(run_dir, comm)
+            # Load fields from checkpoint
+            rho, S, psi, domain, config = load_fields_from_checkpoint(run_dir, comm)
+            
+            # Compute metrics
             metrics = compute_stimulus_metrics(rho, S, psi, record, config, comm)
             metrics_list.append(metrics.to_dict())
             
@@ -439,6 +486,11 @@ def analyze_sweep(
             if comm.rank == 0:
                 print(f"    Error: {e}")
             continue
+    
+    # Gather metrics from all ranks (though we only compute on rank 0 effectively if we used bcast, 
+    # but here we are running in parallel so each rank does its part? 
+    # Actually, the loop runs on all ranks, and compute_metrics does reductions.
+    # So metrics_list is populated on all ranks with the same data.)
     
     return pd.DataFrame(metrics_list)
 
@@ -460,195 +512,137 @@ def create_diagnostic_figure(
     output_dir: Path,
     metadata: dict[str, Any],
 ) -> None:
-    """Create diagnostic figure for stimulus sweep (1×3 layout).
+    """Create diagnostic figure for stimulus sweep.
     
-    Layout:
-      (a) Density Change - net bone mass gain/loss from initial
-      (b) Formation/Resorption Balance - fraction of domain in each state
-      (c) Stimulus Activity - standard deviation of S (how active is remodeling?)
-    
-    Each panel shows sensitivity to all three stimulus parameters.
+    Layout (1x3):
+      (a) Density Homeostasis: Density Change vs Psi_ref (grouped by Kappa).
+      (b) Stability: Lazy Fraction vs Delta0 (grouped by Psi_ref).
+      (c) Control Error: Mean Stimulus vs Kappa (grouped by Delta0).
     
     Args:
-        df: DataFrame with stimulus metrics.
+        df: DataFrame with metrics.
         output_dir: Directory to save plots.
         metadata: Sweep metadata.
     """
     apply_style()
     
-    # Get unique parameter values
-    kappa_vals = sorted(df["kappa"].unique())
-    delta0_vals = sorted(df["delta0"].unique())
-    psi_ref_vals = sorted(df["psi_ref"].unique())
-    
-    # Baselines
-    baseline_kappa = float(metadata.get("baseline_kappa", kappa_vals[len(kappa_vals) // 2]))
-    baseline_delta0 = float(metadata.get("baseline_delta0", delta0_vals[len(delta0_vals) // 2]))
-    baseline_psi_ref = float(metadata.get("baseline_psi_ref", psi_ref_vals[len(psi_ref_vals) // 2]))
-    
-    # Create figure with 1×3 layout
-    fig, axes = plt.subplots(1, 3, figsize=(10.0, 3.2))
+    fig, axes = plt.subplots(1, 3, figsize=(15.0, 5.0))
     
     # =========================================================================
-    # Panel (a): Density Change
+    # Panel (a): Density Homeostasis (Targeting)
     # =========================================================================
     ax = axes[0]
-    _plot_parameter_sensitivity(
+    _plot_interaction(
         ax, df,
-        metric_col="density_change_rel",
-        param_values={
-            "kappa": (kappa_vals, baseline_kappa),
-            "delta0": (delta0_vals, baseline_delta0),
-            "psi_ref": (psi_ref_vals, baseline_psi_ref),
-        },
-        use_log_x={"psi_ref"},
+        x_col="psi_ref", y_col="density_change_rel", group_col="kappa",
+        cmap_name="Greens",
+        legend_title=r"$\kappa$",
+        log_x=True,
     )
     setup_axis_style(
         ax,
-        xlabel="Parameter value / baseline",
+        xlabel=r"Reference Signal $\psi_{\mathrm{ref}}$",
         ylabel=r"$\Delta\rho/\rho_0$ [%]",
-        title="(a) Net density change",
+        title="(a) Density Homeostasis",
         grid=True,
     )
-    ax.axhline(y=0, color="gray", linestyle=":", linewidth=0.8, alpha=0.6)
-    # Convert to percentage
-    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{x*100:.1f}'))
+    ax.axhline(0, color="gray", linestyle=":", linewidth=0.8)
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{x*100:.0f}'))
     
     # =========================================================================
-    # Panel (b): Formation/Resorption Balance
+    # Panel (b): Stability (Lazy Zone)
     # =========================================================================
     ax = axes[1]
-    # Plot formation fraction
-    _plot_parameter_sensitivity(
+    _plot_interaction(
         ax, df,
-        metric_col="formation_fraction",
-        param_values={
-            "kappa": (kappa_vals, baseline_kappa),
-            "delta0": (delta0_vals, baseline_delta0),
-            "psi_ref": (psi_ref_vals, baseline_psi_ref),
-        },
-        use_log_x={"psi_ref"},
-        alpha=0.7,
+        x_col="delta0", y_col="lazy_fraction", group_col="psi_ref",
+        cmap_name="Blues",
+        legend_title=r"$\psi_{\mathrm{ref}}$",
+        log_x=True,
     )
     setup_axis_style(
         ax,
-        xlabel="Parameter value / baseline",
-        ylabel="Domain fraction",
-        title="(b) Remodeling balance",
+        xlabel=r"Lazy Zone Width $\delta_0$",
+        ylabel="Lazy Fraction",
+        title="(b) Stability",
         grid=True,
     )
-    ax.set_ylim(0, 1)
-    ax.axhline(y=0.5, color="gray", linestyle=":", linewidth=0.8, alpha=0.6)
+    ax.set_ylim(0, 1.0)
     
     # =========================================================================
-    # Panel (c): Stimulus Activity
+    # Panel (c): Control Error (Drive)
     # =========================================================================
     ax = axes[2]
-    _plot_parameter_sensitivity(
+    _plot_interaction(
         ax, df,
-        metric_col="S_std",
-        param_values={
-            "kappa": (kappa_vals, baseline_kappa),
-            "delta0": (delta0_vals, baseline_delta0),
-            "psi_ref": (psi_ref_vals, baseline_psi_ref),
-        },
-        use_log_x={"psi_ref"},
+        x_col="kappa", y_col="S_mean", group_col="delta0",
+        cmap_name="Oranges",
+        legend_title=r"$\delta_0$",
+        log_x=True,
     )
     setup_axis_style(
         ax,
-        xlabel="Parameter value / baseline",
-        ylabel=r"$\mathrm{std}(S)$",
-        title="(c) Remodeling activity",
+        xlabel=r"Saturation Width $\kappa$",
+        ylabel=r"Mean Stimulus $\bar{S}$",
+        title="(c) Control Drive",
         grid=True,
     )
-    ax.set_ylim(0, None)
-    
-    # Add legend below the plots
-    from matplotlib.lines import Line2D
-    handles = [
-        Line2D([0], [0], color=STIMULUS_PARAM_COLORS["kappa"], marker="o",
-               linestyle="-", linewidth=PLOT_LINEWIDTH, markersize=5,
-               label=STIMULUS_PARAM_LABELS["kappa"]),
-        Line2D([0], [0], color=STIMULUS_PARAM_COLORS["delta0"], marker="s",
-               linestyle="-", linewidth=PLOT_LINEWIDTH, markersize=5,
-               label=STIMULUS_PARAM_LABELS["delta0"]),
-        Line2D([0], [0], color=STIMULUS_PARAM_COLORS["psi_ref"], marker="^",
-               linestyle="-", linewidth=PLOT_LINEWIDTH, markersize=5,
-               label=STIMULUS_PARAM_LABELS["psi_ref"]),
-    ]
-    fig.legend(
-        handles=handles,
-        loc="lower center",
-        ncol=3,
-        frameon=False,
-        bbox_to_anchor=(0.5, -0.02),
-    )
+    ax.axhline(0, color="gray", linestyle=":", linewidth=0.8)
     
     plt.tight_layout()
-    fig.subplots_adjust(bottom=0.22)
     
     # Save figures
     save_manuscript_figure(fig, "stimulus_diagnostic", dpi=PUBLICATION_DPI, close=False)
     save_figure(fig, output_dir / "stimulus_diagnostic.png", dpi=PUBLICATION_DPI, close=True)
 
 
-def _plot_parameter_sensitivity(
+def _plot_interaction(
     ax: plt.Axes,
     df: pd.DataFrame,
-    metric_col: str,
-    param_values: dict[str, tuple[list, float]],
-    use_log_x: set[str] | None = None,
-    alpha: float = 1.0,
+    x_col: str,
+    y_col: str,
+    group_col: str,
+    cmap_name: str,
+    legend_title: str,
+    log_x: bool = False,
 ) -> None:
-    """Plot metric sensitivity to each stimulus parameter.
+    """Plot interaction between two parameters on a metric."""
+    # Get unique values for grouping
+    groups = sorted(df[group_col].unique())
     
-    For each parameter, varies it while keeping others at baseline.
-    Shows median line (IQR removed - it showed variability due to other
-    parameters, not statistical uncertainty).
+    # Generate colors
+    cmap = plt.get_cmap(cmap_name)
+    # Avoid too light colors
+    colors = [cmap(i) for i in np.linspace(0.4, 1.0, len(groups))]
     
-    Args:
-        ax: Matplotlib axis.
-        df: DataFrame with metrics.
-        metric_col: Column name for the metric to plot.
-        param_values: Dict mapping param names to (values, baseline).
-        use_log_x: Set of param names to use log scale for normalization.
-        alpha: Line alpha.
-    """
-    if use_log_x is None:
-        use_log_x = set()
-    
-    for param_name, (values, baseline) in param_values.items():
-        color = STIMULUS_PARAM_COLORS[param_name]
-        marker = STIMULUS_PARAM_MARKERS[param_name]
+    for i, group_val in enumerate(groups):
+        # Filter data
+        mask = np.isclose(df[group_col], group_val, rtol=1e-9)
+        sub_df = df[mask].sort_values(x_col)
         
-        # Normalize values by baseline
-        if param_name in use_log_x:
-            x_normalized = np.log10(np.array(values)) - np.log10(baseline)
-            x_normalized = 10 ** x_normalized
-        else:
-            x_normalized = np.array(values) / baseline
+        # Aggregate if there are multiple points per x (e.g. varying third param)
+        # We plot the mean line
+        grouped = sub_df.groupby(x_col)[y_col].mean()
+        x_vals = grouped.index.values
+        y_vals = grouped.values
         
-        # Compute median metric for each parameter value
-        y_med = []
+        label = f"{group_val:.1g}" if abs(group_val) < 1e-3 or abs(group_val) > 1e3 else f"{group_val:.2g}"
         
-        for val in values:
-            mask = df[param_name] == val
-            metric_vals = df.loc[mask, metric_col].values
-            med, _, _ = _summarize(metric_vals)
-            y_med.append(med)
-        
-        y_med = np.array(y_med)
-        
-        # Plot median line with markers
         ax.plot(
-            x_normalized, y_med,
-            color=color, marker=marker, linestyle="-",
-            linewidth=PLOT_LINEWIDTH, markersize=PLOT_MARKERSIZE + 2,
-            alpha=alpha,
+            x_vals, y_vals,
+            color=colors[i],
+            marker="o",
+            linestyle="-",
+            linewidth=PLOT_LINEWIDTH,
+            markersize=PLOT_MARKERSIZE,
+            label=label,
         )
     
-    # Add vertical line at baseline (x=1)
-    ax.axvline(x=1.0, color="gray", linestyle="--", linewidth=0.8, alpha=0.6)
+    if log_x:
+        ax.set_xscale("log")
+    
+    # Add legend
+    ax.legend(title=legend_title, fontsize=8, title_fontsize=9, frameon=False)
 
 
 # =============================================================================
@@ -714,8 +708,9 @@ def main() -> None:
     if comm.rank == 0:
         print("\nGenerating diagnostic figure...")
         create_diagnostic_figure(df, sweep_dir, metadata)
+        
         print("\nAnalysis complete!")
-        print(f"  - Metrics: {sweep_dir / 'stimulus_metrics.csv'}")
+        print(f"  - Metrics: {metrics_file}")
         print(f"  - Figure: {sweep_dir / 'stimulus_diagnostic.png'}")
 
 
