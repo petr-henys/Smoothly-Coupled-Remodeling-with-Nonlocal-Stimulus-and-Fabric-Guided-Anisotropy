@@ -16,7 +16,7 @@
     "rho_max": 2.0,
     "k_rho_form": 0.01,
     "k_rho_resorb": 0.0025,
-    "D_rho": 0.005,
+    "D_rho": 0.02025,
     "rho_tissue": 2.0,
     "surface_use": true,
     "surface_A_min": 0.02,
@@ -24,17 +24,17 @@
   },
   "stimulus": {
     "stimulus_power_p": 4.0,
-    "psi_ref_trab": 5e-5,
+    "psi_ref_trab":  5e-5,
     "psi_ref_cort": 5e-5,
     "stimulus_tau": 10.0,
-    "stimulus_D": 0.2,
+    "stimulus_D": 0.02250,
     "stimulus_S_max": 1.0,
     "stimulus_kappa": 0.5,
-    "stimulus_delta0": 0.1
+    "stimulus_delta0": 0.2
   },
   "fabric": {
     "fabric_tau": 120.0,
-    "fabric_D": 0.005,
+    "fabric_D": 0.0188,
     "fabric_cA": 1.0,
     "fabric_gammaF": 1.0,
     "fabric_epsQ": 1e-12,
@@ -65,7 +65,7 @@
     "outer_stall_patience": 2,
     "rho_anderson_off": 0.3,
     "rho_anderson_on": 0.7,
-    "rho_anderson_patience": 3
+    "rho_anderson_patience": 4
   },
   "time": {
     "total_time": 500,
@@ -88,7 +88,7 @@
   },
   "output": {
     "saving_interval": 1,
-    "results_dir": ".physio_results_box",
+    "results_dir": ".stiff_results_box",
     "log_file": "simulation.log"
   },
   "geometry": {

@@ -26,7 +26,8 @@
 !/physio_params_femur.json
 !/stiff_params_box.json
 !/stiff_params_femur.json
-
+!/run_density_comparison.py
+!/run_diffusion_sweep.py
 # Python cache
 __pycache__/
 *.pyc

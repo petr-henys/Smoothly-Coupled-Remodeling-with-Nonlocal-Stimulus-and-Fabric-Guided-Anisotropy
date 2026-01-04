@@ -1,79 +1,131 @@
 \section*{Parameter governance}
 \label{sec:parameter-governance}
+
 \paragraph{Units and scaling.}
-We use the unit system: length [mm], time [day], stress/energy [MPa], and density [g/cm$^3$] (see \S\ref{sec:strong-forms-nd}). The stimulus $S$ is dimensionless, the apparent density $\rho$ is in g/cm$^3$, and fabric quantities ($\mathbf{A}$, $\mathbf{L}$) are dimensionless.
+We use the unit system: length [mm], time [day], stress and strain-energy density [MPa], and apparent density [g/cm$^3$] (see \S\ref{sec:strong-forms-nd}).
+The stimulus $S$ is dimensionless, $\rho$ is in g/cm$^3$, and fabric quantities ($\mathbf{A}$, $\mathbf{L}$) are dimensionless.
+The mechanostat is driven by the \emph{specific} strain-energy density $m=\psi/\rho$; in this unit system $m$ is naturally reported in J/g (numerically equal to MPa divided by g/cm$^3$).
 
 \paragraph{Mechanical parameters.}
-Apparent densities in human cancellous bone span roughly $0.05$--$1.1~\mathrm{g/cm^3}$, while cortical bone is commonly reported around $1.7$--$2.0~\mathrm{g/cm^3}$ \cite{Helgason2008,Rho1993}. This motivates bounds $\rho_{\min}$ (numerical floor) and $\rho_{\max}$; in practice $\rho_{\min}$ is primarily a conditioning parameter for the mechanics. For the isotropic baseline, $\nu_0\approx 0.3$ is typical and cortical Young's moduli are on the order of $15$--$25~\mathrm{GPa}$ \cite{Rho1993}. For the density--stiffness scaling in \eqref{eq:zysset-curnier}, adaptive remodeling studies commonly use power-law exponents in the range $n_{\mathrm{trab}}\approx 2$--$3$ for trabecular bone and $n_{\mathrm{cort}}\approx 1$--$2$ for denser tissue \cite{Weinans1992_BehaviorAdaptiveBoneRemodeling,Keller1994_PredictingCompressiveMechanicalBehavior,Helgason2008}. The transition densities $\rho_{\mathrm{trab}}^{\max}$ and $\rho_{\mathrm{cort}}^{\min}$ should bracket the trabecular--cortical overlap so that the blended exponent $k(\widetilde{\rho})$ varies only over a physiologically plausible interval. Finally, the fabric exponents $p_E$ and $p_G$ primarily control how strongly anisotropy is expressed in stiffness; values near $1$ are typical in fabric-based orthotropic scaling \cite{Zysset1995_AlternativeModelAnisotropic}, and $p_E,p_G\in[0.5,2]$ is a conservative range unless a dedicated calibration dataset is available.
+Apparent densities in human cancellous bone span roughly $0.05$--$1.1~\mathrm{g/cm^3}$, while cortical bone is commonly reported around $1.7$--$2.0~\mathrm{g/cm^3}$ \cite{Helgason2008,Rho1993}.
+This motivates bounds $\rho_{\min}$ (numerical floor) and $\rho_{\max}$; in practice $\rho_{\min}$ primarily serves as a conditioning parameter for the mechanics.
+For the isotropic baseline, $\nu_0\approx 0.3$ is typical and cortical Young's moduli are on the order of $15$--$25~\mathrm{GPa}$ \cite{Rho1993}.
+For the density--stiffness scaling in \eqref{eq:zysset-curnier}, adaptive remodeling studies commonly use power-law exponents in the range $n_{\mathrm{trab}}\approx 2$--$3$ for trabecular bone and $n_{\mathrm{cort}}\approx 1$--$2$ for denser tissue \cite{Weinans1992_BehaviorAdaptiveBoneRemodeling,Keller1994_PredictingCompressiveMechanicalBehavior,Helgason2008}.
+The transition densities $\rho_{\mathrm{trab}}^{\max}$ and $\rho_{\mathrm{cort}}^{\min}$ should bracket the trabecular--cortical overlap so that the blended exponent $k(\widetilde{\rho})$ varies only over a physiologically plausible interval.
+Finally, the fabric stiffness exponents $p_E$ and $p_G$ control how strongly anisotropy is expressed in stiffness; values near $1$ are typical in fabric-based orthotropic scaling \cite{Zysset1995_AlternativeModelAnisotropic}, and $p_E,p_G\in[0.5,2]$ is a conservative prior unless a dedicated calibration dataset is available.
 
 \paragraph{Stimulus parameters.}
-Peak physiological strains in load-bearing bone are on the order of $10^{-3}$ to a few $10^{-3}$ (hundreds to a few thousand microstrain) \cite{Turner1998_ThreeRulesBone,Robling2006}. For apparent moduli in the $1$--$20~\mathrm{GPa}$ range this implies strain-energy densities on the order of $10^{-3}$--$10^{-1}~\mathrm{MPa}$ (via $\psi\sim\tfrac12 E\varepsilon^2$), so the reference specific SED values $\psi_{\mathrm{ref}}^{\mathrm{trab}}$ and $\psi_{\mathrm{ref}}^{\mathrm{cort}}$ should be chosen in that ballpark once the loading magnitude and stiffness scaling are fixed. Weinans et al.\ used a reference value $\hat{\psi}_{\mathrm{ref}}=0.25~\mathrm{J/g}$ for energy per mass \cite{Weinans1992_BehaviorAdaptiveBoneRemodeling}, highlighting that these references are ultimately calibration parameters tied to the applied loads. The averaging exponent $p$ in \eqref{eq:stim-psi-nd} controls how strongly $\psi_{\mathrm{day}}$ is peak-biased; $p\in[1,6]$ spans the range from a weighted mean ($p=1$) to a strongly peak-dominated driver. The lazy-zone half-width $\delta_0$ controls the tolerated deviation around the set-point before net formation/resorption; practical values are typically $\delta_0\approx 0.05$--$0.3$. The saturation parameters $(S_{\max},\kappa_S)$ should bound $S$ without clipping physiologically relevant values; $S_{\max}\sim 0.5$--$2$ with $\kappa_S\sim 0.1$--$1$ are robust defaults. For the transport parameters, $\tau_S$ should be short relative to density remodeling (days to a few weeks), and $D_S$ can be chosen to produce a sensing length $\ell_S=\sqrt{\tau_S D_S}$ on the order of $10^{-1}$--$10^{0}~\mathrm{mm}$, depending on the intended degree of nonlocal averaging.
+Peak physiological strains in load-bearing bone are on the order of $10^{-3}$ to a few $10^{-3}$ (hundreds to a few thousand microstrain) \cite{Turner1998_ThreeRulesBone,Robling2006}.
+For apparent moduli in the $1$--$20~\mathrm{GPa}$ range this implies strain-energy densities on the order of $10^{-3}$--$10^{-1}~\mathrm{MPa}$ (via $\psi\sim\tfrac12 E\varepsilon^2$); corresponding specific energies $m=\psi/\rho$ are therefore load-dependent and should be calibrated once the loading magnitude and stiffness scaling are fixed.
+Weinans et al.\ used a reference value $\hat{\psi}_{\mathrm{ref}}=0.25~\mathrm{J/g}$ \cite{Weinans1992_BehaviorAdaptiveBoneRemodeling}, underscoring that the reference values $(\psi_{\mathrm{ref}}^{\mathrm{trab}},\psi_{\mathrm{ref}}^{\mathrm{cort}})$ are ultimately calibration parameters tied to the applied loads.
+The averaging exponent $p$ in \eqref{eq:stim-psi-nd} controls how strongly $\psi_{\mathrm{day}}$ is peak-biased; $p\in[1,6]$ spans the range from a weighted mean ($p=1$) to a strongly peak-dominated driver.
+The lazy-zone half-width $\delta_0$ controls the tolerated deviation around the set-point before net formation/resorption; practical values are typically $\delta_0\approx 0.05$--$0.3$.
+The saturation parameters $(S_{\max},\kappa_S)$ should bound $S$ without clipping physiologically relevant values; $S_{\max}\sim 0.5$--$2$ with $\kappa_S\sim 0.1$--$1$ are robust defaults.
+For the transport parameters, $\tau_S$ should be short relative to density remodeling (days to a few weeks), and $D_S$ can be chosen to produce a sensing length $\ell_S=\sqrt{\tau_S D_S}$ on the order of $10^{-1}$--$10^{0}~\mathrm{mm}$, depending on the intended degree of nonlocal averaging.
 
 \paragraph{Density parameters.}
-Weinans et al.\ reported $\rho_{\max}\approx 1.74~\mathrm{g/cm^3}$ and a near-resorption floor $\rho_{\min}\approx 0.01~\mathrm{g/cm^3}$ in simulation studies \cite{Weinans1992_BehaviorAdaptiveBoneRemodeling}. In practice, larger numerical floors (e.g.\ $\rho_{\min}\gtrsim 0.05$) improve conditioning if very low-density regions cause mechanical ill-conditioning, while keeping $\rho_{\min}$ small is appropriate if complete resorption is part of the intended biology. The kinetic gains $(k_{\mathrm{form}},k_{\mathrm{res}})$ set the remodeling time scale; to represent adult adaptation on the order of months, implied characteristic rates are typically $O(10^{-3}$--$10^{-2})~\mathrm{d^{-1}}$ when $S=O(1)$ \cite{Robling2006}. The diffusion coefficient $D_\rho$ primarily acts as a regularization length scale; choosing $D_\rho$ so that $\ell_\rho=\sqrt{T D_\rho}$ is on the order of $0.5$--$2~\mathrm{mm}$ over a remodeling horizon $T$ (tens to hundreds of days) is generally sufficient to suppress mesh-scale oscillations without over-smoothing. If the surface-availability factor $\alpha_{\mathrm{surf}}(\rho)$ is enabled (cf.\ \eqref{eq:Asurf-nd}), $\alpha_{\min}$ and $a_{v,0}$ should prevent kinetics from freezing at high density while still reflecting reduced available surface in dense tissue \cite{Pivonka2013_InfluenceBoneSurfaceAvailability}.
+Weinans et al.\ reported $\rho_{\max}\approx 1.74~\mathrm{g/cm^3}$ and a near-resorption floor $\rho_{\min}\approx 0.01~\mathrm{g/cm^3}$ in simulation studies \cite{Weinans1992_BehaviorAdaptiveBoneRemodeling}.
+In practice, larger numerical floors (e.g.\ $\rho_{\min}\gtrsim 0.05$) improve conditioning if very low-density regions cause mechanical ill-conditioning, while keeping $\rho_{\min}$ small is appropriate if complete resorption is part of the intended biology.
+The kinetic gains $(k_{\mathrm{form}},k_{\mathrm{res}})$ have units of density per time and set the dominant remodeling time scale; a convenient summary quantity is the characteristic reaction rate $r_{\mathrm{char}}=\max(k_{\mathrm{form}}/\rho_{\max},\,k_{\mathrm{res}}/\rho_{\min})$.
+To represent adult adaptation on the order of months, implied characteristic rates are typically $O(10^{-3}$--$10^{-2})~\mathrm{d^{-1}}$ when $S=O(1)$ \cite{Robling2006}.
+The diffusion coefficient $D_\rho$ primarily acts as a regularization length scale; choosing an effective diffusion length on the order of $0.5$--$2~\mathrm{mm}$ (or a few element sizes) is generally sufficient to suppress mesh-scale oscillations without over-smoothing (see the mesh-based prescription below).
+If the surface-availability factor $\alpha_{\mathrm{surf}}(\rho)$ is enabled (cf.\ \eqref{eq:Asurf-nd}), the minimum activity $\alpha_{\min}$ and the half-saturation scale $S_0$ should prevent kinetics from freezing at high density while still reflecting reduced available surface in dense tissue \cite{Pivonka2013_InfluenceBoneSurfaceAvailability}.
 
 \paragraph{Fabric parameters.}
-Microstructural reorientation is expected to evolve on the remodeling time scale (months) rather than on the loading time scale; consequently $\tau_A\sim 30$--$300~\mathrm{d}$ is a reasonable prior if fabric represents remodeling-driven alignment \cite{Robling2006}. The diffusion coefficient $D_A$ sets a smoothing length $\sqrt{T D_A}$ and can be tuned to the targeted spatial correlation length of anisotropy. The exponent $\gamma_F$ controls how strongly stress-eigenvalue contrasts translate into fabric-eigenvalue ratios; $\gamma_F\in[0.5,2]$ is conservative (with $\gamma_F=1$ a neutral default). The bounds $m_{\min},m_{\max}$ cap admissible anisotropy; the ratio $m_{\max}/m_{\min}$ limits the maximum eigenvalue ratio and should be chosen to avoid numerically extreme stiffness contrasts. Finally, the regularization parameters $\varepsilon_Q$ and $\varepsilon_a$ should be small relative to the scale of $\mathbf{Q}$ so that they only stabilize eigen-decomposition and activity gating near isotropy.
+Microstructural reorientation is expected to evolve on the remodeling time scale (months) rather than on the loading time scale; consequently $\tau_A\sim 30$--$300~\mathrm{d}$ is a reasonable prior if fabric represents remodeling-driven alignment \cite{Robling2006}.
+The diffusion coefficient $D_A$ controls the spatial smoothing of $\mathbf{L}$ and can be tuned to match the targeted correlation length of anisotropy.
+The exponent $\gamma_F$ controls how strongly stress-eigenvalue contrasts translate into fabric-eigenvalue ratios; $\gamma_F\in[0.5,2]$ is conservative (with $\gamma_F=1$ a neutral default).
+The bounds $m_{\min},m_{\max}$ cap admissible anisotropy; the ratio $m_{\max}/m_{\min}$ limits the maximum eigenvalue ratio and should be chosen to avoid numerically extreme stiffness contrasts.
+Finally, the regularization parameters $\varepsilon_Q$ and $\varepsilon_a$ should be small relative to the scale of $\bar{\mathbf{Q}}$ so that they only stabilize eigen-decomposition and activity gating near isotropy.
 
-\subsection{Parameter Sets for Literature-Based Validation and Numerical Benchmarking}
+\subsection*{Parameter sets for validation and benchmarking}
+To assess both physiological plausibility and numerical robustness, we use two parameter configurations for the box benchmarks: the \textit{PhysioSetup} (baseline) and the \textit{StiffSetup} (stress test), summarized in Table~\ref{tab:param_setup}.
+The \textbf{StiffSetup} narrows the mechanostat ($\delta_0,\kappa_S$), accelerates density kinetics ($k_{\mathrm{form}},k_{\mathrm{res}}$), and lowers the density floor $\rho_{\min}$, which induces sharper internal gradients and faster transients that challenge the convergence of fixed-point coupling.
 
-To rigorously assess both the physiological plausibility and the numerical robustness of the proposed framework, we define two distinct parameter configurations: the \textit{PhysioSetup} and the \textit{StiffSetup} (summarized in Table~\ref{tab:param_setup}).
-
-The \textbf{PhysioSetup} represents a baseline physiological state, calibrated according to established values reported in the literature. It employs kinetic rates and regularization length scales ($D_\rho, D_S$) consistent with prior computational studies, ensuring smooth morphological transitions that reflect the typical adaptation time scales of human bone.
-
-In contrast, the \textbf{StiffSetup} is designed as a synthetic numerical ``stress test'' to evaluate solver stability under extreme conditions. By significantly narrowing the mechanostat's lazy zone ($\delta_0$) and saturation width ($\kappa_S$), and by accelerating formation/resorption gains ($k_{form}, k_{res}$) by an order of magnitude, we induce a highly stiff, reaction-dominated regime. This configuration generates sharp internal gradients and rapid temporal transients that challenge the convergence of standard fixed-point iterations, thereby serving as a rigorous benchmark for the proposed Anderson-accelerated solver.
-
-\begin{table}[htbp]
-    \centering
-    \caption{Definition of physical parameter sets for numerical experiments. The \textbf{PhysioSetup} corresponds to the validated physiological baseline (based on clinical data), while the \textbf{StiffSetup} represents a numerically challenging benchmark with high nonlinearity, accelerated kinetics, and reduced regularization length scales. Parameters not listed in the "Varying" section are identical in both setups.}
-    \label{tab:param_setup}
-    \small
-    \begin{tabular}{lcccc}
-        \toprule
-        \textbf{Parameter} & \textbf{Symbol} & \textbf{Unit} & \textbf{PhysioSetup} & \textbf{StiffSetup} \\
-        & & & \textit{(Default)} & \textit{(Hard)} \\
-        \midrule
-        \multicolumn{5}{c}{\textbf{I. Varying Parameters (Stress-Test)}} \\
-        \midrule
-        \textit{Stimulus \& Mechanostat} & & & & \\
-        Lazy-zone half-width & $\delta_0$ & -- & $0.10$ & $0.01$ \\
-        Saturation width & $\kappa_S$ & -- & $0.50$ & $0.10$ \\
-        Stimulus diffusivity & $D_S$ & mm$^2$/day & $1.00$ & $0.50$ \\
-        \addlinespace
-        \textit{Density Kinetics} & & & & \\
-        Formation rate & $k_{form}$ & day$^{-1}$ & $0.01$ & $0.20$ \\
-        Resorption rate & $k_{res}$ & day$^{-1}$ & $0.0025$ & $0.05$ \\
-        Density diffusivity & $D_\rho$ & mm$^2$/day & $0.02$ & $0.005$ \\
-        \midrule
-        \multicolumn{5}{c}{\textbf{II. Shared Parameters (Fixed)}} \\
-        \midrule
-        \textit{Elasticity (Zysset-Curnier)} & & & & \\
-        Reference Young's modulus & $E_0$ & MPa & \multicolumn{2}{c}{$7500.0$} \\
-        Poisson's ratio & $\nu_0$ & -- & \multicolumn{2}{c}{$0.3$} \\
-        Stiffness exponents (trab./cort.) & $n_{trab}, n_{cort}$ & -- & \multicolumn{2}{c}{$2.0, \ 1.3$} \\
-        Fabric stiffness exponents & $p_E, p_G$ & -- & \multicolumn{2}{c}{$1.0, \ 1.0$} \\
-        \addlinespace
-        \textit{Density Bounds \& Geometry} & & & & \\
-        Reference density & $\rho_{ref}$ & g/cm$^3$ & \multicolumn{2}{c}{$1.0$} \\
-        Density bounds & $[\rho_{min}, \rho_{max}]$ & g/cm$^3$ & \multicolumn{2}{c}{$[0.1, \ 2.0]$} \\
-        Tissue density & $\rho_{t}$ & g/cm$^3$ & \multicolumn{2}{c}{$2.0$} \\
-        \addlinespace
-        \textit{Stimulus Driver} & & & & \\
-        SED averaging exponent & $p$ & -- & \multicolumn{2}{c}{$4.0$} \\
-        Reference SED (trab./cort.) & $\psi_{ref}^{trab}, \psi_{ref}^{cort}$ & J/g & \multicolumn{2}{c}{$0.01, \ 0.01$} \\
-        Time constant & $\tau_S$ & day & \multicolumn{2}{c}{$25.0$} \\
-        Max stimulus magnitude & $S_{max}$ & -- & \multicolumn{2}{c}{$1.0$} \\
-        \addlinespace
-        \textit{Fabric Evolution} & & & & \\
-        Time constant & $\tau_A$ & day & \multicolumn{2}{c}{$50.0$} \\
-        Fabric diffusivity & $D_A$ & mm$^2$/day & \multicolumn{2}{c}{$1.0$} \\
-        Anisotropy bounds & $[m_{min}, m_{max}]$ & -- & \multicolumn{2}{c}{$[0.2, \ 5.0]$} \\
-        \bottomrule
-    \end{tabular}
-\end{table}
+\begin{table*}[!htbp]
+  \centering
+  \footnotesize
+  \setlength{\tabcolsep}{4pt}
+  \renewcommand{\arraystretch}{1.15}
+  \caption{Physical parameter sets used in the box numerical experiments: \textbf{PhysioSetup} (baseline) and \textbf{StiffSetup} (stress test). Values are taken from \texttt{physio\_params\_box.json} and \texttt{stiff\_params\_box.json}; parameters not listed under ``I'' are shared.}
+  \label{tab:param_setup}
+  \begin{tabularx}{\textwidth}{@{} >{\raggedright\arraybackslash}X l l r r @{}}
+    \toprule
+    \textbf{Parameter} & \textbf{Symbol} & \textbf{Unit} & \textbf{PhysioSetup} & \textbf{StiffSetup} \\
+    & & & \textit{(Baseline)} & \textit{(Hard)} \\
+    \midrule
+    \multicolumn{5}{c}{\textbf{I. Setup-dependent parameters}} \\
+    \midrule
+    \textit{Stimulus \& mechanostat} & & & & \\
+    Lazy-zone half-width & $\delta_0$ & -- & $0.20$ & $0.10$ \\
+    Saturation width & $\kappa_S$ & -- & $0.50$ & $0.30$ \\
+    \addlinespace
+    \textit{Density evolution} & & & & \\
+    Density floor & $\rho_{\min}$ & g/cm$^3$ & $0.20$ & $0.10$ \\
+    Formation gain & $k_{\mathrm{form}}$ & g/cm$^3$/day & $0.01$ & $0.05$ \\
+    Resorption gain & $k_{\mathrm{res}}$ & g/cm$^3$/day & $0.0025$ & $0.01$ \\
+    \midrule
+    \multicolumn{5}{c}{\textbf{II. Shared parameters}} \\
+    \midrule
+    \textit{Elasticity (Zysset--Curnier)} & & & & \\
+    Reference Young's modulus & $E_0$ & MPa & \multicolumn{2}{c}{$7500$} \\
+    Poisson's ratio & $\nu_0$ & -- & \multicolumn{2}{c}{$0.3$} \\
+    Stiffness exponents (trab./cort.) & $n_{\mathrm{trab}}, n_{\mathrm{cort}}$ & -- & \multicolumn{2}{c}{$2.0, \ 1.3$} \\
+    Transition densities (trab./cort.) & $\rho_{\mathrm{trab}}^{\max}, \rho_{\mathrm{cort}}^{\min}$ & g/cm$^3$ & \multicolumn{2}{c}{$1.0, \ 1.25$} \\
+    Fabric stiffness exponents & $p_E, p_G$ & -- & \multicolumn{2}{c}{$1.0, \ 1.0$} \\
+    \addlinespace
+    \textit{Stimulus transport \& reference} & & & & \\
+    SED averaging exponent & $p$ & -- & \multicolumn{2}{c}{$4.0$} \\
+    Reference specific SED (trab.) & $\psi_{\mathrm{ref}}^{\mathrm{trab}}$ & J/g & \multicolumn{2}{c}{$5\times 10^{-5}$} \\
+    Reference specific SED (cort.) & $\psi_{\mathrm{ref}}^{\mathrm{cort}}$ & J/g & \multicolumn{2}{c}{$5\times 10^{-5}$} \\
+    Time constant & $\tau_S$ & day & \multicolumn{2}{c}{$10$} \\
+    Stimulus diffusivity & $D_S$ & mm$^2$/day & \multicolumn{2}{c}{$0.0225$} \\
+    Max stimulus magnitude & $S_{\max}$ & -- & \multicolumn{2}{c}{$1.0$} \\
+    \addlinespace
+    \textit{Density bounds \& surface availability} & & & & \\
+    Initial density & $\rho_0$ & g/cm$^3$ & \multicolumn{2}{c}{$1.0$} \\
+    Upper density bound & $\rho_{\max}$ & g/cm$^3$ & \multicolumn{2}{c}{$2.0$} \\
+    Density diffusivity & $D_\rho$ & mm$^2$/day & \multicolumn{2}{c}{$0.02025$} \\
+    Tissue density & $\rho_{t}$ & g/cm$^3$ & \multicolumn{2}{c}{$2.0$} \\
+    Surface availability enabled & -- & -- & \multicolumn{2}{c}{yes} \\
+    Minimum activity & $\alpha_{\min}$ & -- & \multicolumn{2}{c}{$0.02$} \\
+    Half-saturation scale & $S_0$ & 1/mm & \multicolumn{2}{c}{$1.0$} \\
+    \addlinespace
+    \textit{Fabric evolution} & & & & \\
+    Time constant & $\tau_A$ & day & \multicolumn{2}{c}{$120$} \\
+    Fabric diffusivity & $D_A$ & mm$^2$/day & \multicolumn{2}{c}{$0.0188$} \\
+    Coupling strength & $c_A$ & -- & \multicolumn{2}{c}{$1.0$} \\
+    Fabric exponent & $\gamma_F$ & -- & \multicolumn{2}{c}{$1.0$} \\
+    Stress regularization & $\varepsilon_Q$ & MPa$^2$ & \multicolumn{2}{c}{$10^{-12}$} \\
+    Activity-gate width & $\varepsilon_a$ & -- & \multicolumn{2}{c}{$10^{-4}$} \\
+    Anisotropy bounds & $[m_{\min}, m_{\max}]$ & -- & \multicolumn{2}{c}{$[0.2, \ 5.0]$} \\
+    \bottomrule
+  \end{tabularx}
+\end{table*}
 
 \paragraph{Time step size.}
-A conservative time-step choice follows the fastest intrinsic time scales: in \textbf{PhysioSetup} the stimulus and fabric relax over $\tau_S \approx 25\,\mathrm{d}$ and $\tau_A \approx 50\,\mathrm{d}$, so resolving transients suggests $\Delta t \sim 0.05\!-\!0.2\,\tau_S \approx 1\!-\!5\,\mathrm{d}$; density kinetics are typically slower and therefore less restrictive. In \textbf{StiffSetup}, accelerated formation/resorption and a sharper mechanostat imply that density kinetics dominate, so a conservative rule is $\Delta t \sim 0.05\!-\!0.2\min(\rho_{\max}/k_{\mathrm{form}},\,\rho_{\min}/k_{\mathrm{res}})$, often yielding sub-day steps (e.g., $\sim 0.05\!-\!0.2\,\mathrm{d}$). Expected settling to quasi-steady behavior occurs over a few time constants: stimulus $\sim 3\tau_S$ (tens of days), fabric $\sim 3\tau_A$ (order $10^2$ days), and density over a few multiples of its dominant kinetic scale (months in Physio, potentially weeks in Stiff). Note that numerical convergence can still hold for much larger $\Delta t$ because the stimulus is bounded and saturating ($\tanh$, $|S|\le S_{\max}$) and density rates self-limit near $\rho_{\min},\rho_{\max}$; such large steps should be viewed as steady-state accelerators unless verified by step-refinement ($\Delta t$ vs.\ two $\Delta t/2$).
+A conservative time-step choice follows the fastest intrinsic time scales: in \textbf{PhysioSetup} the stimulus relaxes over $\tau_S=10~\mathrm{d}$ and fabric over $\tau_A=120~\mathrm{d}$, so resolving stimulus transients suggests $\Delta t \sim 0.05\!-\!0.2\,\tau_S \approx 0.5\!-\!2~\mathrm{d}$; density kinetics are typically slower and therefore less restrictive.
+In \textbf{StiffSetup}, accelerated formation/resorption and a smaller density floor shorten the density time scale, so a conservative bound is
+\[
+\Delta t \sim 0.05\!-\!0.2\min(\rho_{\max}/k_{\mathrm{form}},\,\rho_{\min}/k_{\mathrm{res}}),
+\]
+which is of the same order as $\tau_S$ for the values in Table~\ref{tab:param_setup}.
+Expected settling to quasi-steady behavior occurs over a few time constants: stimulus $\sim 3\tau_S$ (tens of days), fabric $\sim 3\tau_A$ (order $10^2$ days), and density over a few multiples of its dominant kinetic scale (months in Physio, potentially weeks in Stiff).
+Note that numerical convergence can still hold for much larger $\Delta t$ because the stimulus is bounded and saturating ($\tanh$, $|S|\le S_{\max}$) and density rates self-limit near $\rho_{\min},\rho_{\max}$; such large steps should be viewed as steady-state accelerators unless verified by step-refinement ($\Delta t$ vs.\ two $\Delta t/2$).
 
+\paragraph{Regularization diffusivities.}
+Let $h$ denote a characteristic element size (e.g., local mean edge length, or $h=\sqrt[3]{V_e}$ from the element volume). To obtain mesh-insensitive fields and suppress the ``patchwork'' response of purely local adaptive remodeling rules, we prescribe a target regularization length $\ell=\alpha h$ with $\alpha\in[1,2]$ \cite{Weinans1992_BehaviorAdaptiveBoneRemodeling,Peerlings1998,Giorgio2019_MechanicallyDrivenBiological}. Using the intrinsic lengths $\ell_S=\sqrt{\tau_S D_S}$, $\ell_A=\sqrt{D_A\tau_A/a(\bar{\mathbf{Q}})}$ (steady operator), and $\ell_\rho\approx\sqrt{D_\rho/(\Delta t^{-1}+r_{\mathrm{char}})}$ (implicit density update), we set
+\begin{equation}
+D_S=\frac{\ell^2}{\tau_S},\qquad
+D_A=\frac{\ell^2}{\tau_A}\ \ \text{(use $a(\bar{\mathbf{Q}})=1$ for the minimal length)},\qquad
+D_\rho=\ell^2\left(\Delta t^{-1}+r_{\mathrm{char}}\right),
+\end{equation}
+where the conservative (smallest-length) reaction estimate is $r_{\mathrm{char}}=\max\!\left(k_{\mathrm{form}}/\rho_{\max},\,k_{\mathrm{res}}/\rho_{\min}\right)$ evaluated at maximal activity (e.g., $S_\pm\approx 1$ and $\alpha_{\mathrm{surf}}\approx 1$). In the quasi-static regime $\Delta t^{-1}\ll r_{\mathrm{char}}$ this reduces to $D_\rho\approx \ell^2 r_{\mathrm{char}}$.
 
-The complete numerical configuration used in the reference simulation (corresponding to the \textit{PhysioSetup}) is provided in~repository.
+\paragraph{Box benchmark (mesh-based estimate).}
+For the reference box mesh ($10\times 10\times 30$~mm, $n_x=n_y=10$, $n_z=30$) we take $h\approx 1$~mm and choose $\alpha=1.5$, hence $\ell\approx 1.5$~mm.
+With $\tau_S=10$~d and $\tau_A=120$~d, the mesh-based estimates give $D_S=\ell^2/\tau_S\approx 0.225$~mm$^2$/day and $D_A=\ell^2/\tau_A\approx 0.0188$~mm$^2$/day.
+Using $\Delta t=25$~d and a conservative $r_{\mathrm{char}}=0.05~\mathrm{d^{-1}}$ yields $D_\rho\approx \ell^2(\Delta t^{-1}+r_{\mathrm{char}})\approx 0.2025$~mm$^2$/day.
+In the reference configurations we intentionally under-regularize stimulus and density by a factor $0.1$, i.e.\ $D_S=0.0225$~mm$^2$/day and $D_\rho=0.02025$~mm$^2$/day, while keeping $D_A$ unchanged.
+
+The complete numerical configurations used in the reference simulations (including solver tolerances, time-integration settings, and output options) are provided in \path{physio_params_box.json} and \path{physio_params_femur.json} (\textit{PhysioSetup}), and in \path{stiff_params_box.json} and \path{stiff_params_femur.json} (\textit{StiffSetup}).
