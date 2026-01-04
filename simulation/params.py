@@ -146,9 +146,6 @@ class FabricParams:
     # Diffusion coefficient [mm²/day]
     fabric_D: float = 1.0
 
-    # Coupling strength
-    fabric_cA: float = 1.0
-
     # Power-law exponent for fabric eigenvalues
     fabric_gammaF: float = 1.0
 
@@ -168,8 +165,6 @@ class FabricParams:
             raise ValueError("fabric_tau must be > 0.")
         if self.fabric_D < 0:
             raise ValueError("fabric_D must be >= 0.")
-        if self.fabric_cA <= 0:
-            raise ValueError("fabric_cA must be > 0.")
         if self.fabric_gammaF <= 0:
             raise ValueError("fabric_gammaF must be > 0.")
         if self.fabric_epsQ <= 0:

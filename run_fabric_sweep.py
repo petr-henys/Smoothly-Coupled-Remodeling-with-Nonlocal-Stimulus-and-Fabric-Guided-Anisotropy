@@ -1,14 +1,13 @@
-"""Run fabric parameter sweep: varying fabric_tau, fabric_cA, and fabric_gammaF.
+"""Run fabric parameter sweep: varying fabric_tau and fabric_gammaF.
 
 This script runs simulations over a grid of fabric parameter values and saves
 checkpoints (including sigma stress field) for subsequent analysis.
 
 Fabric parameters chosen for sweep (most impactful on fabric evolution):
 - fabric_tau: Time constant [days] - controls adaptation rate
-- fabric_cA: Coupling strength - controls fabric-stress coupling magnitude
 - fabric_gammaF: Power-law exponent - controls eigenvalue scaling
 
-Each parameter has 3 levels: min, baseline, max (3×3×3 = 27 runs).
+Each parameter has 3 levels: min, baseline, max (3×3 = 9 runs).
 
 Usage:
     mpirun -n 4 python run_fabric_sweep.py
@@ -86,12 +85,10 @@ def create_fabric_runner(
         
         # Extract fabric parameters from param_point
         fabric_tau = float(param_point["fabric.fabric_tau"])
-        fabric_cA = float(param_point["fabric.fabric_cA"])
         fabric_gammaF = float(param_point["fabric.fabric_gammaF"])
         
         # Apply parameter overrides
         params["fabric"].fabric_tau = fabric_tau
-        params["fabric"].fabric_cA = fabric_cA
         params["fabric"].fabric_gammaF = fabric_gammaF
         params["output"].results_dir = str(output_path)
         params["geometry"].fix_tag = BoxMeshBuilder.TAG_BOTTOM
@@ -201,14 +198,15 @@ def main() -> None:
     box = params["box"]
     
     # Override for fabric study:
-    # - Shorter simulation time (sufficient to see fabric evolution effects)
-    params["time"].total_time = 200.0  # 200 days
+    # - SHORT simulation time to capture alignment dynamics before full convergence
+    # - With τ values of 30, 120, 480 days, we want to see differences
+    # - At t=30 days: τ=30 → 63% converged, τ=120 → 22%, τ=480 → 6%
+    params["time"].total_time = 30.0  # 30 days - short enough to see τ effects
     params["time"].adaptive_dt = False
-    # Keep default dt_initial from stiff_params (25 days)
+    params["time"].dt_initial = 1.0  # Smaller dt for accuracy
     
     # Baseline fabric values from stiff_params_box.json
     fabric_tau_base = float(params["fabric"].fabric_tau)      # 120.0 days
-    fabric_cA_base = float(params["fabric"].fabric_cA)        # 1.0
     fabric_gammaF_base = float(params["fabric"].fabric_gammaF)  # 1.0
     
     # Define sweep parameters: 3 levels per parameter
@@ -217,11 +215,6 @@ def main() -> None:
     #   Baseline: 120 days
     #   Min: 30 days (4× faster adaptation - very responsive)
     #   Max: 480 days (4× slower adaptation - very sluggish)
-    #
-    # fabric_cA: Coupling strength - controls how strongly fabric aligns with stress
-    #   Baseline: 1.0
-    #   Min: 0.25 (weak coupling - fabric barely responds)
-    #   Max: 4.0 (strong coupling - aggressive fabric alignment)
     #
     # fabric_gammaF: Power-law exponent for eigenvalue scaling
     #   Baseline: 1.0 (linear)
@@ -234,34 +227,25 @@ def main() -> None:
         fabric_tau_base * 4.0,    # 480 days - slow adaptation
     ]
     
-    fabric_cA_values = [
-        fabric_cA_base / 4.0,     # 0.25 - weak coupling
-        fabric_cA_base,           # 1.0 - baseline
-        fabric_cA_base * 4.0,     # 4.0 - strong coupling
-    ]
-    
     fabric_gammaF_values = [
         0.5,                      # Sublinear - softer contrast
         fabric_gammaF_base,       # 1.0 - baseline (linear)
         2.0,                      # Superlinear - sharper contrast
     ]
     
-    # Convert to sweep format
+    # Convert to sweep format (3×3 = 9 runs)
     sweep = ParameterSweep(
         params={
             "fabric.fabric_tau": fabric_tau_values,
-            "fabric.fabric_cA": fabric_cA_values,
             "fabric.fabric_gammaF": fabric_gammaF_values,
         },
         base_output_dir=Path("results/fabric_sweep"),
         metadata={
-            "description": "Fabric parameter sweep: fabric_tau × fabric_cA × fabric_gammaF",
+            "description": "Fabric parameter sweep: fabric_tau × fabric_gammaF",
             "objective": "Study fabric evolution sensitivity to key parameters",
             "baseline_fabric_tau": fabric_tau_base,
-            "baseline_fabric_cA": fabric_cA_base,
             "baseline_fabric_gammaF": fabric_gammaF_base,
             "fabric_tau_values": fabric_tau_values,
-            "fabric_cA_values": fabric_cA_values,
             "fabric_gammaF_values": fabric_gammaF_values,
             "mesh_nx": box["nx"],
             "mesh_ny": box["ny"],
@@ -270,7 +254,6 @@ def main() -> None:
             "dt_days": params["time"].dt_initial,
             "notes": {
                 "fabric_tau": "Time constant [days]: smaller=faster adaptation",
-                "fabric_cA": "Coupling strength: controls fabric-stress alignment magnitude",
                 "fabric_gammaF": "Power-law exponent: controls eigenvalue contrast (0.5=soft, 2.0=sharp)",
             },
         },
@@ -294,13 +277,11 @@ def main() -> None:
         logger.info(f"Baseline from stiff_params_box.json")
         logger.info("-" * 70)
         logger.info(f"Baseline fabric_tau = {fabric_tau_base:.1f} days")
-        logger.info(f"Baseline fabric_cA = {fabric_cA_base:.2f}")
         logger.info(f"Baseline fabric_gammaF = {fabric_gammaF_base:.2f}")
         logger.info("-" * 70)
         logger.info(f"fabric_tau sweep: {[f'{v:.1f}' for v in fabric_tau_values]} days")
-        logger.info(f"fabric_cA sweep: {[f'{v:.2f}' for v in fabric_cA_values]}")
         logger.info(f"fabric_gammaF sweep: {[f'{v:.2f}' for v in fabric_gammaF_values]}")
-        logger.info(f"Total runs: {sweep.total_runs()} (3 × 3 × 3)")
+        logger.info(f"Total runs: {sweep.total_runs()} (3 × 3)")
         logger.info("-" * 70)
         logger.info(f"Mesh: {box['nx']}×{box['ny']}×{box['nz']} on {box['Lx']}×{box['Ly']}×{box['Lz']} mm")
         logger.info(f"Simulation time: {params['time'].total_time} days, dt={params['time'].dt_initial} days")

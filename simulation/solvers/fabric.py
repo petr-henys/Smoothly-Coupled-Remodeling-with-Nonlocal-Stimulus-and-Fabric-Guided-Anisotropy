@@ -25,7 +25,7 @@ class FabricSolver(BaseLinearSolver):
     """Solves log-fabric evolution toward stress-aligned target with activity gating.
 
     Solves:
-        cA/dt (L - L_old) + cA·act/τ (L - L_target) - cA·D ΔL = 0
+        1/dt (L - L_old) + act/τ (L - L_target) - D ΔL = 0
 
     The target fabric L_target is computed from the cycle-averaged stress tensor Q̄
     via spectral decomposition. Activity factor 'act' gates evolution when
@@ -47,7 +47,6 @@ class FabricSolver(BaseLinearSolver):
         self.Qbar = Qbar
 
         self.dt_c = fem.Constant(self.mesh, float(self.cfg.dt))
-        self.cA_c = fem.Constant(self.mesh, float(self.cfg.fabric.fabric_cA))
         self.tau_c = fem.Constant(self.mesh, float(self.cfg.fabric.fabric_tau))
         self.D_c = fem.Constant(self.mesh, float(self.cfg.fabric.fabric_D))
 
@@ -83,20 +82,19 @@ class FabricSolver(BaseLinearSolver):
 
     def _compile_forms(self):
         dt = self.dt_c
-        cA = self.cA_c
         tau = self.tau_c
         D = self.D_c
 
         L_trial = ufl.TrialFunction(self.function_space)
         T = ufl.TestFunction(self.function_space)
 
-        alpha = cA / dt
+        alpha = 1.0 / dt
         act = self._activity_factor()
-        beta = (cA * act) / tau
+        beta = act / tau
 
         a_ufl = (alpha + beta) * ufl.inner(L_trial, T) * self.dx
         if self._use_diffusion:
-            a_ufl += (cA * D) * ufl.inner(ufl.grad(L_trial), ufl.grad(T)) * self.dx
+            a_ufl += D * ufl.inner(ufl.grad(L_trial), ufl.grad(T)) * self.dx
         self.a_form = fem.form(a_ufl)
 
         L_target = self._L_target_from_Qbar()

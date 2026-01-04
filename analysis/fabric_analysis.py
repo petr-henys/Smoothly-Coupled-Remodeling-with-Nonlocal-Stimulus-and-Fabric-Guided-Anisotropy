@@ -1,8 +1,7 @@
 """Fabric parameter sweep analysis: compute anisotropy metrics and generate visualizations.
 
 Loads checkpoints from fabric sweep results, computes fabric-related metrics
-(anisotropy index, stress alignment, eigenvalue ratios), and visualizes parameter
-sensitivity.
+(anisotropy index, eigenvalue ratios), and visualizes parameter sensitivity.
 
 Requires adios4dolfinx: pip install adios4dolfinx
 
@@ -66,17 +65,14 @@ from analysis.plot_utils import (
 
 FABRIC_PARAM_COLORS = {
     "fabric_tau": "#CC78BC",     # Purple (fabric)
-    "fabric_cA": "#0173B2",      # Blue
     "fabric_gammaF": "#029E73",  # Green
 }
 FABRIC_PARAM_LABELS = {
     "fabric_tau": r"$\tau_A$ (time constant)",
-    "fabric_cA": r"$c_A$ (coupling strength)",
     "fabric_gammaF": r"$\gamma_F$ (exponent)",
 }
 FABRIC_PARAM_MARKERS = {
     "fabric_tau": "o",
-    "fabric_cA": "s",
     "fabric_gammaF": "^",
 }
 
@@ -89,10 +85,9 @@ FABRIC_PARAM_MARKERS = {
 class FabricMetrics:
     """Fabric analysis metrics computed from checkpoint data.
     
-    Metrics characterizing fabric tensor L and its relationship to stress:
+    Metrics characterizing fabric tensor L:
     - anisotropy_index: Measures deviation from isotropy (0=isotropic, 1=max anisotropic)
     - eigenvalue_ratio: max(m_i) / min(m_i) where m_i = exp(l_i)
-    - alignment_angle: Angle between L and Qbar principal directions [degrees]
     - fabric_magnitude: ||L||_F (Frobenius norm)
     - qbar_anisotropy: Anisotropy of Qbar (directional signal strength)
     """
@@ -102,7 +97,6 @@ class FabricMetrics:
     
     # Fabric parameters
     fabric_tau: float
-    fabric_cA: float
     fabric_gammaF: float
     
     # Anisotropy metrics (volume-averaged)
@@ -114,10 +108,6 @@ class FabricMetrics:
     eigenvalue_ratio_mean: float    # Mean m_max / m_min
     eigenvalue_ratio_std: float
     eigenvalue_ratio_max: float
-    
-    # Alignment with stress (angle in degrees)
-    alignment_angle_mean: float     # Mean angle
-    alignment_angle_std: float
     
     # Fabric magnitude
     fabric_magnitude_mean: float
@@ -137,7 +127,6 @@ class FabricMetrics:
             "run_hash": self.run_hash,
             "output_dir": self.output_dir,
             "fabric_tau": self.fabric_tau,
-            "fabric_cA": self.fabric_cA,
             "fabric_gammaF": self.fabric_gammaF,
             "anisotropy_index_mean": self.anisotropy_index_mean,
             "anisotropy_index_std": self.anisotropy_index_std,
@@ -145,8 +134,6 @@ class FabricMetrics:
             "eigenvalue_ratio_mean": self.eigenvalue_ratio_mean,
             "eigenvalue_ratio_std": self.eigenvalue_ratio_std,
             "eigenvalue_ratio_max": self.eigenvalue_ratio_max,
-            "alignment_angle_mean": self.alignment_angle_mean,
-            "alignment_angle_std": self.alignment_angle_std,
             "fabric_magnitude_mean": self.fabric_magnitude_mean,
             "fabric_magnitude_std": self.fabric_magnitude_std,
             "qbar_anisotropy_mean": self.qbar_anisotropy_mean,
@@ -181,7 +168,7 @@ def load_fabric_sweep_records(
         df_sweep = pd.read_csv(csv_file)
         # Sort by fabric parameters
         sort_cols = []
-        for col in ["fabric.fabric_tau", "fabric.fabric_cA", "fabric.fabric_gammaF"]:
+        for col in ["fabric.fabric_tau", "fabric.fabric_gammaF"]:
             if col in df_sweep.columns:
                 sort_cols.append(col)
         if sort_cols:
@@ -338,36 +325,6 @@ def compute_eigenvalue_ratio(eigenvalues: np.ndarray) -> np.ndarray:
     return ratio
 
 
-def compute_alignment_angle(
-    L_eigenvectors: np.ndarray,
-    Qbar_eigenvectors: np.ndarray,
-) -> np.ndarray:
-    """Compute alignment angle between L and Qbar principal directions.
-    
-    Uses the principal eigenvector (corresponding to largest eigenvalue).
-    Angle is in [0, 90] degrees (symmetry of eigenvectors).
-    
-    Args:
-        L_eigenvectors: (n, 3, 3) eigenvector matrices for L.
-        Qbar_eigenvectors: (n, 3, 3) eigenvector matrices for Qbar.
-    
-    Returns:
-        Alignment angle in degrees for each point.
-    """
-    # Extract principal eigenvector (last column = largest eigenvalue)
-    v_L = L_eigenvectors[:, :, -1]      # (n, 3)
-    v_Qbar = Qbar_eigenvectors[:, :, -1]  # (n, 3)
-    
-    # Dot product (absolute value due to eigenvector sign ambiguity)
-    dot = np.abs(np.sum(v_L * v_Qbar, axis=1))
-    dot = np.clip(dot, 0.0, 1.0)
-    
-    # Convert to angle in degrees
-    angle = np.degrees(np.arccos(dot))
-    
-    return angle
-
-
 def compute_fabric_metrics(
     L, Qbar, rho,
     record: dict[str, Any],
@@ -384,10 +341,6 @@ def compute_fabric_metrics(
     
     Returns:
         FabricMetrics dataclass.
-        
-    Note:
-        For alignment computation, L is interpolated to DG0 space to match
-        Qbar's cellwise representation.
     """
     from dolfinx import fem
     
@@ -432,43 +385,8 @@ def compute_fabric_metrics(
     # Fabric magnitude (Frobenius norm)
     fabric_mag = np.sqrt(np.sum(L_sym**2, axis=(1, 2)))
     
-    # =========================================================================
-    # Alignment angle: interpolate L to DG0 to match Qbar
-    # =========================================================================
-    # Create DG0 tensor space for L interpolation
-    mesh = L.function_space.mesh
-    gdim = mesh.geometry.dim
-    V_L_dg0 = create_dg0_tensor_space(mesh, gdim)
-    L_dg0 = fem.Function(V_L_dg0, name="L_dg0")
-    
-    # Interpolate L from P1 to DG0
-    L_dg0.interpolate(L)
-    L_dg0.x.scatter_forward()
-    
-    # Get DG0 L array
-    L_dg0_array = get_tensor_array(L_dg0)
-    L_dg0_sym = 0.5 * (L_dg0_array + L_dg0_array.transpose(0, 2, 1))
-    
-    # Symmetrize Qbar
-    Qbar_sym = 0.5 * (Qbar_array + Qbar_array.transpose(0, 2, 1))
-    
-    # Eigendecomposition of both in DG0 space
-    _, L_dg0_eigenvectors = np.linalg.eigh(L_dg0_sym)
-    _, Qbar_eigenvectors = np.linalg.eigh(Qbar_sym)
-    
-    # Alignment angle (now both are cellwise with same ordering)
-    n_align = min(len(L_dg0_eigenvectors), len(Qbar_eigenvectors))
-    if n_align > 0:
-        align_angle = compute_alignment_angle(
-            L_dg0_eigenvectors[:n_align],
-            Qbar_eigenvectors[:n_align],
-        )
-    else:
-        align_angle = np.array([0.0])
-    
     # Compute Qbar anisotropy - measures directional signal strength
-    # If Qbar is nearly isotropic, eigenvectors are numerically unstable
-    # and alignment angle becomes meaningless
+    Qbar_sym = 0.5 * (Qbar_array + Qbar_array.transpose(0, 2, 1))
     Qbar_eigenvalues, _ = np.linalg.eigh(Qbar_sym)
     qbar_anisotropy = compute_anisotropy_index(np.log(np.maximum(Qbar_eigenvalues, 1e-30)))
     
@@ -482,7 +400,6 @@ def compute_fabric_metrics(
     aniso_sum, aniso_sq_sum, aniso_min, aniso_max, aniso_n = local_stats(anisotropy)
     ev_sum, ev_sq_sum, ev_min, ev_max, ev_n = local_stats(ev_ratio)
     mag_sum, mag_sq_sum, _, _, mag_n = local_stats(fabric_mag)
-    align_sum, align_sq_sum, _, _, align_n = local_stats(align_angle)
     qbar_aniso_sum, qbar_aniso_sq_sum, _, _, qbar_aniso_n = local_stats(qbar_anisotropy)
     rho_sum, rho_sq_sum, _, _, rho_n = local_stats(rho_array)
     
@@ -500,10 +417,6 @@ def compute_fabric_metrics(
     global_mag_sum = comm.allreduce(mag_sum, op=MPI.SUM)
     global_mag_sq_sum = comm.allreduce(mag_sq_sum, op=MPI.SUM)
     global_mag_n = comm.allreduce(mag_n, op=MPI.SUM)
-    
-    global_align_sum = comm.allreduce(align_sum, op=MPI.SUM)
-    global_align_sq_sum = comm.allreduce(align_sq_sum, op=MPI.SUM)
-    global_align_n = comm.allreduce(align_n, op=MPI.SUM)
     
     global_rho_sum = comm.allreduce(rho_sum, op=MPI.SUM)
     global_rho_sq_sum = comm.allreduce(rho_sq_sum, op=MPI.SUM)
@@ -524,7 +437,6 @@ def compute_fabric_metrics(
     aniso_mean, aniso_std = mean_std(global_aniso_sum, global_aniso_sq_sum, global_aniso_n)
     ev_mean, ev_std = mean_std(global_ev_sum, global_ev_sq_sum, global_ev_n)
     mag_mean, mag_std = mean_std(global_mag_sum, global_mag_sq_sum, global_mag_n)
-    align_mean, align_std = mean_std(global_align_sum, global_align_sq_sum, global_align_n)
     qbar_aniso_mean, qbar_aniso_std = mean_std(global_qbar_aniso_sum, global_qbar_aniso_sq_sum, global_qbar_aniso_n)
     rho_mean, rho_std = mean_std(global_rho_sum, global_rho_sq_sum, global_rho_n)
     
@@ -532,7 +444,6 @@ def compute_fabric_metrics(
         run_hash=record.get("run_hash", ""),
         output_dir=record.get("output_dir", ""),
         fabric_tau=float(record.get("fabric.fabric_tau", 0.0)),
-        fabric_cA=float(record.get("fabric.fabric_cA", 0.0)),
         fabric_gammaF=float(record.get("fabric.fabric_gammaF", 0.0)),
         anisotropy_index_mean=aniso_mean,
         anisotropy_index_std=aniso_std,
@@ -540,8 +451,6 @@ def compute_fabric_metrics(
         eigenvalue_ratio_mean=ev_mean,
         eigenvalue_ratio_std=ev_std,
         eigenvalue_ratio_max=global_ev_max,
-        alignment_angle_mean=align_mean,
-        alignment_angle_std=align_std,
         fabric_magnitude_mean=mag_mean,
         fabric_magnitude_std=mag_std,
         qbar_anisotropy_mean=qbar_aniso_mean,
@@ -585,9 +494,8 @@ def analyze_sweep(
         
         if verbose and comm.rank == 0:
             tau = record.get("fabric.fabric_tau", "?")
-            cA = record.get("fabric.fabric_cA", "?")
             gammaF = record.get("fabric.fabric_gammaF", "?")
-            print(f"  [{idx}/{len(records)}] tau={tau}, cA={cA}, gammaF={gammaF}")
+            print(f"  [{idx}/{len(records)}] tau={tau}, gammaF={gammaF}")
         
         try:
             L, Qbar, rho, _ = load_fields_from_checkpoint(run_dir, comm)
@@ -630,7 +538,7 @@ def create_diagnostic_figure(
       (b) Eigenvalue Ratio vs parameters - max/min fabric eigenvalue spread
       (c) Alignment Angle vs parameters - how well does fabric align with stress?
     
-    Each panel shows sensitivity to all three fabric parameters.
+    Each panel shows sensitivity to fabric parameters.
     
     Args:
         df: DataFrame with fabric metrics.
@@ -641,16 +549,14 @@ def create_diagnostic_figure(
     
     # Get unique parameter values
     tau_vals = sorted(df["fabric_tau"].unique())
-    cA_vals = sorted(df["fabric_cA"].unique())
     gammaF_vals = sorted(df["fabric_gammaF"].unique())
     
     # Baselines
     baseline_tau = float(metadata.get("baseline_fabric_tau", tau_vals[len(tau_vals) // 2]))
-    baseline_cA = float(metadata.get("baseline_fabric_cA", cA_vals[len(cA_vals) // 2]))
     baseline_gammaF = float(metadata.get("baseline_fabric_gammaF", gammaF_vals[len(gammaF_vals) // 2]))
     
-    # Create figure with 1×3 layout
-    fig, axes = plt.subplots(1, 3, figsize=(10.0, 3.2))
+    # Create figure with 1×2 layout
+    fig, axes = plt.subplots(1, 2, figsize=(7.0, 3.2))
     
     # =========================================================================
     # Panel (a): Anisotropy Index
@@ -661,7 +567,6 @@ def create_diagnostic_figure(
         metric_col="anisotropy_index_mean",
         param_values={
             "fabric_tau": (tau_vals, baseline_tau),
-            "fabric_cA": (cA_vals, baseline_cA),
             "fabric_gammaF": (gammaF_vals, baseline_gammaF),
         },
     )
@@ -683,7 +588,6 @@ def create_diagnostic_figure(
         metric_col="eigenvalue_ratio_mean",
         param_values={
             "fabric_tau": (tau_vals, baseline_tau),
-            "fabric_cA": (cA_vals, baseline_cA),
             "fabric_gammaF": (gammaF_vals, baseline_gammaF),
         },
     )
@@ -696,39 +600,12 @@ def create_diagnostic_figure(
     )
     ax.set_ylim(1, None)
     
-    # =========================================================================
-    # Panel (c): Alignment Angle
-    # =========================================================================
-    ax = axes[2]
-    _plot_parameter_sensitivity(
-        ax, df,
-        metric_col="alignment_angle_mean",
-        param_values={
-            "fabric_tau": (tau_vals, baseline_tau),
-            "fabric_cA": (cA_vals, baseline_cA),
-            "fabric_gammaF": (gammaF_vals, baseline_gammaF),
-        },
-    )
-    setup_axis_style(
-        ax,
-        xlabel="Parameter value / baseline",
-        ylabel="Alignment angle [°]",
-        title="(c) Fabric-stress alignment",
-        grid=True,
-    )
-    # Dynamic ylim to show detail (add 10% margin above max)
-    max_angle = df["alignment_angle_mean"].max()
-    ax.set_ylim(0, max(max_angle * 1.1, 5.0))  # At least 5° to avoid squished plot
-    
     # Add legend below the plots
     from matplotlib.lines import Line2D
     handles = [
         Line2D([0], [0], color=FABRIC_PARAM_COLORS["fabric_tau"], marker="o",
                linestyle="-", linewidth=PLOT_LINEWIDTH, markersize=5,
                label=FABRIC_PARAM_LABELS["fabric_tau"]),
-        Line2D([0], [0], color=FABRIC_PARAM_COLORS["fabric_cA"], marker="s",
-               linestyle="-", linewidth=PLOT_LINEWIDTH, markersize=5,
-               label=FABRIC_PARAM_LABELS["fabric_cA"]),
         Line2D([0], [0], color=FABRIC_PARAM_COLORS["fabric_gammaF"], marker="^",
                linestyle="-", linewidth=PLOT_LINEWIDTH, markersize=5,
                label=FABRIC_PARAM_LABELS["fabric_gammaF"]),
@@ -736,7 +613,7 @@ def create_diagnostic_figure(
     fig.legend(
         handles=handles,
         loc="lower center",
-        ncol=3,
+        ncol=2,
         frameon=False,
         bbox_to_anchor=(0.5, -0.02),
     )
