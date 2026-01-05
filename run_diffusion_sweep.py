@@ -231,7 +231,7 @@ def main() -> None:
     stimulus_D_base = baseline["stimulus_D"]
     fabric_D_base = baseline["fabric_D"]
     
-    # Define sweep parameters: baseline ± one value on each side (factor of ~3)
+    # Define sweep parameters: baseline ± one value on each side (factor of 10)
     # This gives 3 values per parameter: [low, baseline, high]
     factor = 10.
     
