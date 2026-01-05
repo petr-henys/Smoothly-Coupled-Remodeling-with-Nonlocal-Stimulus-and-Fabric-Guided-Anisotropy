@@ -5,10 +5,11 @@ Runs 4 simulations:
     1. Physio + Anderson: Standard config, should converge easily
     2. Physio + Picard: May converge slowly, but should succeed
     3. Stiff + Anderson: Challenging config, AA helps it converge
-    4. Stiff + Picard: Expected to FAIL (hit max_subiters)
+    4. Stiff + Picard: Expected to be non-convergent (hits max_subiters / stalls)
 
-The "stiff" config uses narrow lazy zone (δ₀=0.01), narrow saturation (κ=0.1),
-and faster reaction rates - creating a reaction-dominated regime that breaks Picard.
+The "stiff" config reduces stimulus/density diffusion and increases density kinetics
+relative to PhysioSetup, making the fixed-point coupling map less contractive.
+This is a solver stress test: we use a large fixed timestep (dt=25 days).
 
 Usage:
     mpirun -n 4 python run_anderson_experiment.py
@@ -91,10 +92,33 @@ def run_simulation(comm: MPI.Comm, params_file: str, output_dir: str,
         with Remodeller(cfg, loader=loader, factory=BoxSolverFactory(cfg)) as model:
             with ProgressReporter(comm, cfg.time.total_time, cfg.solver.max_subiters) as reporter:
                 model.simulate(reporter=reporter)
-        
+
+        # Check whether coupling converged on all accepted steps (rank 0 writes steps.csv)
+        comm.Barrier()
+        converged_all = True
+        n_steps = 0
+        n_converged = 0
         if rank == 0:
-            print(f"✓ {run_name} completed")
-        return True
+            import csv
+
+            steps_path = Path(output_dir) / "steps.csv"
+            if steps_path.exists():
+                with steps_path.open("r", encoding="utf-8") as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        if int(row.get("accepted", "1")) != 1:
+                            continue
+                        n_steps += 1
+                        n_converged += int(row.get("converged", "0")) == 1
+                converged_all = (n_steps > 0) and (n_converged == n_steps)
+            else:
+                converged_all = False
+
+            status = "✓" if converged_all else "✗"
+            print(f"{status} {run_name}: converged {n_converged}/{n_steps} accepted steps")
+
+        converged_all = comm.bcast(converged_all, root=0)
+        return bool(converged_all)
         
     except Exception as e:
         if rank == 0:

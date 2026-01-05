@@ -212,6 +212,7 @@ def plot_final_residuals(ax: plt.Axes, runs: list[RunMetrics]) -> None:
     
     # Floor for visibility (1e-14 to avoid machine epsilon issues)
     FLOOR = 1e-14
+    rng = np.random.default_rng(0)
     
     # Strip plot (individual points)
     for i, r in enumerate(valid_runs):
@@ -219,7 +220,7 @@ def plot_final_residuals(ax: plt.Axes, runs: list[RunMetrics]) -> None:
         residuals = np.maximum(r.final_residuals, FLOOR)
         
         # Jitter x positions
-        jitter = np.random.uniform(-0.15, 0.15, len(residuals))
+        jitter = rng.uniform(-0.15, 0.15, len(residuals))
         ax.scatter(positions[i] + jitter, residuals, 
                    c=r.color, alpha=0.6, s=15, edgecolors='none', zorder=3)
         
@@ -245,7 +246,7 @@ def plot_final_residuals(ax: plt.Axes, runs: list[RunMetrics]) -> None:
     ax.set_ylim(bottom=FLOOR * 0.5)  # Set bottom limit
     ax.set_xticks(positions)
     ax.set_xticklabels([r.label for r in valid_runs], rotation=20, ha="right", fontsize=7)
-    setup_axis_style(ax, xlabel="", ylabel="Final residual", title="(a) Final residual", loglog=False)
+    setup_axis_style(ax, xlabel="", ylabel=r"Final residual $r_{\mathrm{Pic}}$", title="(a) Final residual", loglog=False)
 
 
 def plot_convergence_breakdown(ax: plt.Axes, runs: list[RunMetrics]) -> None:
