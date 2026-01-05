@@ -1,7 +1,7 @@
 """Run fabric parameter sweep: varying fabric_tau and fabric_gammaF.
 
 This script runs simulations over a grid of fabric parameter values and saves
-checkpoints (including sigma stress field) for subsequent analysis.
+checkpoints for subsequent analysis (including stress/Qbar and fabric diagnostics).
 
 Fabric parameters chosen for sweep (most impactful on fabric evolution):
 - fabric_tau: Time constant [days] - controls adaptation rate
@@ -18,8 +18,8 @@ Outputs:
     ├── sweep_summary.json
     ├── <hash1>/
     │   ├── config.json
-    │   ├── checkpoint.bp/     <- For analysis (adios4dolfinx), includes sigma
-    │   ├── fields.bp/         <- For visualization (VTXWriter), includes sigma
+    │   ├── checkpoint.bp/     <- For analysis (adios4dolfinx), includes sigma/Qbar/L and fabric diagnostics
+    │   ├── fields.bp/         <- For visualization (VTXWriter), includes sigma/Qbar and fabric outputs
     │   ├── steps.csv          <- Solver metrics per step
     │   └── subiterations.csv  <- Detailed iteration metrics
     ├── <hash2>/
@@ -177,6 +177,15 @@ def create_fabric_runner(
             if Qbar is not None:
                 checkpoint.write_function(Qbar, final_time)
 
+            # Ensure derived fields (e.g. fabric principal directions) are up-to-date.
+            remodeller.registry.post_step_update_all()
+
+            # Fabric diagnostics (principal directions + scalar anisotropy measures).
+            # These are helpful for visualization since (n1,n2,n3) alone carry no scale.
+            fabric = remodeller.fabricsolver
+            for f in (fabric.n1, fabric.n2, fabric.n3, fabric.A_fabric, fabric.m_ratio, fabric.L_mag):
+                checkpoint.write_function(f, final_time)
+
             # Registry state fields (rho, S, L from density/stimulus/fabric solvers)
             state_fields = remodeller.registry.state_fields
             for name in ("rho", "S", "L"):
@@ -286,7 +295,7 @@ def main() -> None:
         logger.info(f"Mesh: {box['nx']}×{box['ny']}×{box['nz']} on {box['Lx']}×{box['Ly']}×{box['Lz']} mm")
         logger.info(f"Simulation time: {params['time'].total_time} days, dt={params['time'].dt_initial} days")
         logger.info(f"Output: {sweep.base_output_dir}")
-        logger.info("Checkpointing: adios4dolfinx (includes sigma stress field)")
+        logger.info("Checkpointing: adios4dolfinx (includes sigma/Qbar/L and fabric diagnostics)")
         logger.info("=" * 70)
     
     # Run sweep

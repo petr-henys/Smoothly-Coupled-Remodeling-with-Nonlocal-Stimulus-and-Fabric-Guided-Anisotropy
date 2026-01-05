@@ -52,6 +52,10 @@ class FabricSolver(BaseLinearSolver):
 
         self._use_diffusion = float(self.D_c.value) > 0.0
 
+        # Scalar space for diagnostics derived from L (anisotropy magnitude, eigenvalue spread, etc.).
+        P1 = basix.ufl.element("Lagrange", self.mesh.basix_cell(), 1)
+        self._V_scalar = functionspace(self.mesh, P1)
+
         # Vector function space for eigenvector output
         P1_vec = basix.ufl.element("Lagrange", self.mesh.basix_cell(), 1, shape=(self.gdim,))
         self._V_vec = functionspace(self.mesh, P1_vec)
@@ -60,6 +64,14 @@ class FabricSolver(BaseLinearSolver):
         self.n1 = Function(self._V_vec, name="n1")
         self.n2 = Function(self._V_vec, name="n2")
         self.n3 = Function(self._V_vec, name="n3")
+
+        # Scalar diagnostics for visualization/post-processing.
+        # - A_fabric: scale-free anisotropy index A in [0, 1] (0 isotropic).
+        # - m_ratio: fabric eigenvalue spread m_max/m_min (m_i = exp(l_i)).
+        # - L_mag: Frobenius norm ||L||_F (trace-free, so dev(L)=L).
+        self.A_fabric = Function(self._V_scalar, name="A_fabric")
+        self.m_ratio = Function(self._V_scalar, name="m_ratio")
+        self.L_mag = Function(self._V_scalar, name="L_mag")
 
     def _activity_factor(self):
         """Smooth activity factor [0, 1] based on directional information in Qbar."""
@@ -184,13 +196,15 @@ class FabricSolver(BaseLinearSolver):
 
     @property
     def output_fields(self) -> Tuple[fem.Function, ...]:
-        return (self.n1, self.n2, self.n3)
+        # Export L itself (for scale) alongside the principal directions.
+        # The direction fields alone are ambiguous near isotropy and lack eigenvalue magnitudes.
+        return (self.L, self.A_fabric, self.m_ratio, self.L_mag, self.n1, self.n2, self.n3)
 
     def post_step_update(self) -> None:
-        self._update_eigenvectors()
+        self._update_diagnostics()
 
-    def _update_eigenvectors(self) -> None:
-        """Extract eigenvectors from L tensor and store in n1, n2, n3 fields."""
+    def _update_diagnostics(self) -> None:
+        """Update principal directions and scalar diagnostics derived from the current L."""
         bs = int(self.function_space.dofmap.index_map_bs)
         n_owned = int(self.function_space.dofmap.index_map.size_local * bs)
         gdim = self.gdim
@@ -201,17 +215,45 @@ class FabricSolver(BaseLinearSolver):
         L_arr = self.L.x.array[:n_owned].reshape(-1, gdim, gdim)
         L_sym = 0.5 * (L_arr + np.swapaxes(L_arr, 1, 2))
 
-        _, eigenvectors = np.linalg.eigh(L_sym)
+        eigenvalues, eigenvectors = np.linalg.eigh(L_sym)
 
         n_owned_v = int(self._V_vec.dofmap.index_map.size_local * self._V_vec.dofmap.index_map_bs)
+        n_owned_s = int(self._V_scalar.dofmap.index_map.size_local * self._V_scalar.dofmap.index_map_bs)
 
-        self.n1.x.array[:n_owned_v] = eigenvectors[:, :, 2].flatten()
-        self.n2.x.array[:n_owned_v] = eigenvectors[:, :, 1].flatten()
-        self.n3.x.array[:n_owned_v] = eigenvectors[:, :, 0].flatten()
+        # np.linalg.eigh returns eigenpairs sorted in ascending eigenvalue order.
+        # Use n1 as the dominant direction (largest eigenvalue), then n2, n3.
+        self.n1.x.array[:n_owned_v] = eigenvectors[:, :, 2].flatten()  # max
+        self.n2.x.array[:n_owned_v] = eigenvectors[:, :, 1].flatten()  # mid
+        self.n3.x.array[:n_owned_v] = eigenvectors[:, :, 0].flatten()  # min
 
         self.n1.x.scatter_forward()
         self.n2.x.scatter_forward()
         self.n3.x.scatter_forward()
+
+        # Scalar diagnostics (defined on the same P1 nodes as L).
+        # Fabric eigenvalues are m_i = exp(l_i) for log-fabric eigenvalues l_i.
+        m = np.exp(eigenvalues)
+        m_mean = np.mean(m, axis=1, keepdims=True)
+        m_dev = m - m_mean
+        norm_dev = np.sqrt(np.sum(m_dev * m_dev, axis=1))
+        norm_m = np.sqrt(np.sum(m * m, axis=1))
+        tiny = 1e-12
+
+        A = np.sqrt(3.0 / 2.0) * norm_dev / np.maximum(norm_m, tiny)
+        A = np.clip(A, 0.0, 1.0)
+
+        m_max = np.max(m, axis=1)
+        m_min = np.min(m, axis=1)
+        ratio = m_max / np.maximum(m_min, tiny)
+
+        mag = np.sqrt(np.sum(L_sym * L_sym, axis=(1, 2)))
+
+        self.A_fabric.x.array[:n_owned_s] = A
+        self.m_ratio.x.array[:n_owned_s] = ratio
+        self.L_mag.x.array[:n_owned_s] = mag
+        self.A_fabric.x.scatter_forward()
+        self.m_ratio.x.scatter_forward()
+        self.L_mag.x.scatter_forward()
 
     def solve(self) -> SweepStats:
         t0 = time.perf_counter()

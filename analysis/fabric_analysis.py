@@ -40,7 +40,10 @@ if str(project_root) not in sys.path:
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from mpi4py import MPI
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover
+    from mpi4py import MPI
 
 
 # =============================================================================
@@ -150,7 +153,7 @@ class FabricMetrics:
 
 def load_fabric_sweep_records(
     base_dir: Path,
-    comm: MPI.Comm,
+    comm,
 ) -> list[dict[str, Any]]:
     """Load fabric sweep CSV records (MPI-aware).
     
@@ -220,7 +223,7 @@ def create_scalar_space(domain):
 
 def load_fields_from_checkpoint(
     run_dir: Path,
-    comm: MPI.Comm,
+    comm,
     final_time: float | None = None,
 ) -> tuple:
     """Load L, Qbar, rho from checkpoint.
@@ -329,7 +332,7 @@ def compute_eigenvalue_ratio(eigenvalues: np.ndarray) -> np.ndarray:
 def compute_fabric_metrics(
     L, Qbar, rho,
     record: dict[str, Any],
-    comm: MPI.Comm,
+    comm,
 ) -> FabricMetrics:
     """Compute fabric metrics from checkpoint fields.
     
@@ -344,6 +347,7 @@ def compute_fabric_metrics(
         FabricMetrics dataclass.
     """
     from dolfinx import fem
+    from mpi4py import MPI
     
     # Scatter forward for ghost consistency
     L.x.scatter_forward()
@@ -467,7 +471,7 @@ def compute_fabric_metrics(
 
 def analyze_sweep(
     sweep_dir: Path,
-    comm: MPI.Comm,
+    comm,
     verbose: bool = True,
 ) -> pd.DataFrame:
     """Analyze all runs in a fabric sweep.
@@ -532,14 +536,14 @@ def create_diagnostic_figure(
     output_dir: Path,
     metadata: dict[str, Any],
 ) -> None:
-    """Create diagnostic figure for fabric sweep (1×3 layout).
+    """Create diagnostic figure for fabric sweep (single-panel).
     
     Layout:
-      (a) Anisotropy Index vs parameters - how anisotropic is the adapted fabric?
-      (b) Eigenvalue Ratio vs parameters - max/min fabric eigenvalue spread
-      (c) Alignment Angle vs parameters - how well does fabric align with stress?
+      Anisotropy Index vs parameters - how anisotropic is the adapted fabric?
     
-    Each panel shows sensitivity to fabric parameters.
+    We intentionally report a single scalar anisotropy measure here because common
+    alternatives (e.g. eigenvalue ratios) are monotone-equivalent under the
+    trace-free log-fabric normalization used in the model.
     
     Args:
         df: DataFrame with fabric metrics.
@@ -556,15 +560,11 @@ def create_diagnostic_figure(
     baseline_tau = float(metadata.get("baseline_fabric_tau", tau_vals[len(tau_vals) // 2]))
     baseline_gammaF = float(metadata.get("baseline_fabric_gammaF", gammaF_vals[len(gammaF_vals) // 2]))
     
-    # Create figure with 1×2 layout
-    # Width = 2/3 of A4 full width to maintain subplot size consistency with 3-column layouts
-    width = FIGSIZE_FULL_WIDTH[0] * (2 / 3)
-    fig, axes = plt.subplots(1, 2, figsize=(width, 3.0))
+    # Create figure (single panel)
+    width = FIGSIZE_FULL_WIDTH[0] * 0.55
+    fig, ax = plt.subplots(1, 1, figsize=(width, 3.0))
     
-    # =========================================================================
-    # Panel (a): Anisotropy Index
-    # =========================================================================
-    ax = axes[0]
+    # Panel: Anisotropy Index
     _plot_parameter_sensitivity(
         ax, df,
         metric_col="anisotropy_index_mean",
@@ -577,31 +577,10 @@ def create_diagnostic_figure(
         ax,
         xlabel="Parameter value / baseline",
         ylabel="Anisotropy index $A$",
-        title="(a) Fabric anisotropy",
+        title="Fabric anisotropy",
         grid=True,
     )
     ax.set_ylim(0, None)
-    
-    # =========================================================================
-    # Panel (b): Eigenvalue Ratio
-    # =========================================================================
-    ax = axes[1]
-    _plot_parameter_sensitivity(
-        ax, df,
-        metric_col="eigenvalue_ratio_mean",
-        param_values={
-            "fabric_tau": (tau_vals, baseline_tau),
-            "fabric_gammaF": (gammaF_vals, baseline_gammaF),
-        },
-    )
-    setup_axis_style(
-        ax,
-        xlabel="Parameter value / baseline",
-        ylabel=r"Eigenvalue ratio $m_{\max}/m_{\min}$",
-        title="(b) Fabric eigenvalue spread",
-        grid=True,
-    )
-    ax.set_ylim(1, None)
     
     # Add legend below the plots
     from matplotlib.lines import Line2D
@@ -682,54 +661,65 @@ def _plot_parameter_sensitivity(
 
 def main() -> None:
     """Run fabric sweep analysis."""
-    comm = MPI.COMM_WORLD
-    
     sweep_dir = Path("results/fabric_sweep")
-    
-    if comm.rank == 0:
-        print("=" * 70)
-        print("FABRIC PARAMETER SWEEP ANALYSIS")
-        print("=" * 70)
-        print(f"Sweep directory: {sweep_dir}")
-    
+
+    print("=" * 70)
+    print("FABRIC PARAMETER SWEEP ANALYSIS")
+    print("=" * 70)
+    print(f"Sweep directory: {sweep_dir}")
+
     if not sweep_dir.exists():
-        if comm.rank == 0:
-            print(f"Error: Sweep directory not found: {sweep_dir}")
-            print("Run the sweep first: mpirun -n 4 python run_fabric_sweep.py")
+        print(f"Error: Sweep directory not found: {sweep_dir}")
+        print("Run the sweep first: mpirun -n 4 python run_fabric_sweep.py")
         return
     
     # Load metadata
     metadata_file = sweep_dir / "sweep_summary.json"
-    if metadata_file.exists() and comm.rank == 0:
+    if metadata_file.exists():
         with open(metadata_file) as f:
-            metadata = json.load(f)
+            sweep_json = json.load(f)
+            metadata = sweep_json.get("metadata", {})
     else:
         metadata = {}
-    metadata = comm.bcast(metadata if comm.rank == 0 else None, root=0)
-    
-    # Analyze sweep
-    if comm.rank == 0:
-        print("\nAnalyzing checkpoint data...")
-    
-    df = analyze_sweep(sweep_dir, comm, verbose=True)
-    
-    if df.empty:
-        if comm.rank == 0:
-            print("No valid runs found!")
-        return
-    
-    # Save metrics CSV
-    if comm.rank == 0:
-        metrics_file = sweep_dir / "fabric_metrics.csv"
-        df.to_csv(metrics_file, index=False)
-        print(f"\nSaved metrics to {metrics_file}")
-    
-    # Create diagnostic figure
-    if comm.rank == 0:
+
+    # Prefer precomputed metrics (plot-only mode does not require MPI/DOLFINx).
+    metrics_file = sweep_dir / "fabric_metrics.csv"
+    if metrics_file.exists():
+        df = pd.read_csv(metrics_file)
+        comm_rank = 0
+        print(f"\nLoaded precomputed metrics: {metrics_file}")
+    else:
+        # Analyze sweep - compute metrics from checkpoints (requires MPI + DOLFINx stack).
+        try:
+            from mpi4py import MPI
+        except ModuleNotFoundError as e:
+            print("Error: mpi4py is required to compute metrics from checkpoints.")
+            print("Either install mpi4py and run via mpirun, or provide precomputed fabric_metrics.csv.")
+            print(f"Details: {e}")
+            return
+
+        comm = MPI.COMM_WORLD
+        comm_rank = comm.rank
+
+        if comm_rank == 0:
+            print("\nComputing fabric metrics from checkpoints...")
+        df = analyze_sweep(sweep_dir, comm, verbose=(comm_rank == 0))
+
+        if df.empty:
+            if comm_rank == 0:
+                print("No valid runs found!")
+            return
+
+        if comm_rank == 0:
+            df.to_csv(metrics_file, index=False)
+            print(f"\nSaved metrics to {metrics_file}")
+
+    # Create diagnostic figure (rank 0 only)
+    if comm_rank == 0:
         print("\nGenerating diagnostic figure...")
         create_diagnostic_figure(df, sweep_dir, metadata)
         print("\nAnalysis complete!")
-        print(f"  - Metrics: {sweep_dir / 'fabric_metrics.csv'}")
+        print(f"  - Metrics: {metrics_file}")
         print(f"  - Figure: {sweep_dir / 'fabric_diagnostic.png'}")
 
 
