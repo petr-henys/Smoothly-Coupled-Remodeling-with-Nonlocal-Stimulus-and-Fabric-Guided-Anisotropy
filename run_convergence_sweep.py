@@ -102,7 +102,6 @@ def create_convergence_runner(
         sim_cfg = create_config(domain, facet_tags, params)
         
         # Create loader and loading cases
-        loader = BoxLoader(domain, facet_tags, load_tag=BoxMeshBuilder.TAG_TOP)
         loading_cases = [get_parabolic_pressure_case(
             pressure=box["pressure"],
             gradient_axis=box["gradient_axis"],
@@ -111,11 +110,12 @@ def create_convergence_runner(
             box_extent=(0.0, box["Lx"]),
             name="parabolic_compression",
         )]
+        loader = BoxLoader(domain, facet_tags, loading_cases=loading_cases)
         
         # Create factory and run
         factory = BoxSolverFactory(sim_cfg)
         
-        with Remodeller(sim_cfg, loader=loader, loading_cases=loading_cases, factory=factory) as remodeller:
+        with Remodeller(sim_cfg, loader=loader, factory=factory) as remodeller:
             # Run simulation with unified sweep reporter
             remodeller.simulate(reporter=reporter)
             
@@ -145,7 +145,7 @@ def main() -> None:
     logger = get_logger(comm, name="ConvergenceSweep")
     
     # Load parameters from JSON
-    params = load_default_params("default_params_box.json")
+    params = load_default_params("stiff_params_box.json")
     box = params["box"]
     
     # Modify for convergence study

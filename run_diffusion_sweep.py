@@ -226,9 +226,10 @@ def main() -> None:
     
     # Compute baseline diffusivities from regularization length formula
     baseline = compute_baseline_diffusivities(params, box)
-    
-    D_rho_base = baseline["D_rho"]
-    stimulus_D_base = baseline["stimulus_D"]
+    # [WARNING] are already decreased in the stiff params - let us narrow the range
+
+    D_rho_base = baseline["D_rho"] * 10
+    stimulus_D_base = baseline["stimulus_D"] * 10
     fabric_D_base = baseline["fabric_D"]
     
     # Define sweep parameters: baseline ± one value on each side (factor of 10)
