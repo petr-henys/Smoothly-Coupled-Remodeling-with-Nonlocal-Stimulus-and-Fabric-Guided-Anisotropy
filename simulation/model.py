@@ -59,6 +59,7 @@ class Remodeller:
 
         self.logger = get_logger(self.comm, name="Remodeller", log_file=self.cfg.log_file)
         self.logger.debug("Initializing Remodeller...")
+        self.logger.info(f"Mean element length h = {self.cfg.mean_element_length:.4f} mm")
 
         self.storage = UnifiedStorage(cfg)
 

@@ -17,7 +17,7 @@
     "rho_max": 2.0,
     "k_rho_form": 0.05,
     "k_rho_resorb": 0.01,
-    "D_rho": 0.01,
+    "D_rho": 0.0373,
     "rho_tissue": 2.0,
     "surface_use": true,
     "surface_A_min": 0.02,
@@ -28,14 +28,14 @@
     "psi_ref_trab": 0.003,
     "psi_ref_cort": 0.008,
     "stimulus_tau": 10.0,
-    "stimulus_D": 0.5,
+    "stimulus_D": 0.0415,
     "stimulus_S_max": 1.0,
     "stimulus_kappa": 0.4,
     "stimulus_delta0": 0.1
   },
   "fabric": {
     "fabric_tau": 120.0,
-    "fabric_D": 0.01,
+    "fabric_D": 0.0346,
 
     "fabric_gammaF": 1.0,
     "fabric_epsQ": 1e-12,

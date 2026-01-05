@@ -314,3 +314,33 @@ def projectors_sylvester(X, l1, l2, l3, *, eps_d: float = 1e-12, tol: float = 1e
     P3_out = w_full * P3_full + w23 * P3_T23 + w12 * P3_T12 + w13 * P3_T13 + w_iso * I3
 
     return symm(P1_out), symm(P2_out), symm(P3_out)
+
+
+def compute_mean_element_length(m: mesh.Mesh) -> float:
+    """Computes the mean element length h = mean(V_e^(1/3))."""
+    # Create DG0 space for cell-wise quantities
+    V_dg = fem.functionspace(m, ("DG", 0))
+
+    # Expression for cell volume
+    vol_expr = fem.Expression(ufl.CellVolume(m), V_dg.element.interpolation_points)
+    vol_fn = fem.Function(V_dg)
+    vol_fn.interpolate(vol_expr)
+
+    # Get owned cell volumes
+    # DG0 dofs correspond one-to-one with cells (usually).
+    map_bs = V_dg.dofmap.index_map_bs
+    num_owned = V_dg.dofmap.index_map.size_local
+
+    # For DG0, block size is 1.
+    local_volumes = vol_fn.x.array[: num_owned * map_bs]
+
+    # Compute local sum of lengths (h ~ V^(1/3))
+    local_h_sum = np.sum(np.cbrt(local_volumes))
+    local_count = local_volumes.size
+
+    # Global reduction
+    comm = m.comm
+    total_h_sum = comm.allreduce(local_h_sum, op=MPI.SUM)
+    total_count = comm.allreduce(local_count, op=MPI.SUM)
+
+    return total_h_sum / total_count if total_count > 0 else 0.0

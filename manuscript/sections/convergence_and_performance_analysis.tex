@@ -1,35 +1,59 @@
 \section{Convergence and Performance Analysis}
 \label{app:convergence}
-\subsection*{Spatio-temporal convergence and performance}
+\subsection*{Coupling convergence and recorded performance}
 
-We verify spatial consistency using field–norm error estimates on nested meshes with non-matching transfer. All quantities are dimensional; averages are normalized by $|\Omega|$.
+All simulations in this section use the partitioned fixed-point solver described in \S\ref{sec:fp-aa}.
+The coupling state is
+\[
+\mathbf{x}=(\mathbf{L},S,\rho),
+\]
+i.e.\ log-fabric $\mathbf{L}$, stimulus $S$, and density $\rho$, packed and mixed in this exact order (fabric $\rightarrow$ stimulus $\rightarrow$ density).
+Within each coupling subiteration we apply a block Gauss--Seidel sweep in the order mechanics $\rightarrow$ fabric $\rightarrow$ stimulus $\rightarrow$ density.
+Mechanics field(s) (e.g.\ displacements) and derived drivers are treated as internal quantities of the mechanics block and are not part of the fixed-point iterate.
+Coupling convergence is measured by the scaled relative Picard residual $r_{\mathrm{Pic}}$ in \eqref{eq:fp-picard-res}, i.e.\ on the coefficient vectors of $(\mathbf{L},S,\rho)$ only.
+
+Performance metrics are logged per timestep attempt (accepted or rejected) to \texttt{steps.csv} and per-subiteration to \texttt{subiterations.csv}.
+For the convergence study we aggregate, over accepted steps, the KSP solve times and KSP iteration counts for the four blocks (mechanics, fabric, stimulus, density), together with peak memory.
+
+\subsection*{Spatio-temporal discretization convergence}
+
+We quantify spatial/temporal consistency using field–norm pair errors on a mesh-refinement sequence (fixed $\Delta t$) and on a fixed mesh (varying $\Delta t$).
+Errors are computed as absolute $L^2$ and $H^1$--seminorms (componentwise for tensors) and evaluated on the finer mesh of each refinement pair using non-matching transfer.
 
 \paragraph{Meshes and notation.}
-Let $\{\mathcal{T}_i\}_{i=1}^L$ be a family of tetrahedral meshes on $\Omega$ obtained by uniform refinement, with characteristic sizes $h_i=1/N_i$ (we report $h_i=1/N_i$ explicitly). On each $\mathcal{T}_i$ we solve the fully coupled problem to a fixed time $T$ with \emph{the same} $\Delta t$ and model parameters; this avoids additional time–discretization bias from remounting left–hand sides. Denote by
+Let $\{\mathcal{T}_i\}_{i=1}^L$ be a family of meshes on $\Omega$ obtained by uniform refinement, with characteristic sizes $h_i$.
+On each $\mathcal{T}_i$ we solve the coupled problem to a fixed time $T$ with \emph{the same} $\Delta t$ and model parameters.
+Denote by
 \[
-\mathbf{u}_i,\quad S_i,\quad \rho_i,\quad \mathbf{A}_i
+\mathbf{L}_i,\quad S_i,\quad \rho_i
 \]
-the discrete fields on level $i$ in their conforming $H^1$ spaces $V_{h_i},Q_{h_i},Q_{h_i},T_{h_i}$. Because the solution can exhibit sharp internal layers (bone/void fronts), we do not assume high regularity.
+the discrete fields on level $i$ in their conforming $H^1$ spaces $T_{h_i},Q_{h_i},Q_{h_i}$.
+For the box benchmark we report a dimensional estimate $h_i \approx L_x/N_i$, where $L_x$ is the box extent and $N_i$ the nominal resolution parameter.
 
 \paragraph{Field–norm pair errors on the finer mesh.}
-For two consecutive levels $(H,h)=(i,i{+}1)$ we evaluate errors on the finer mesh in a \emph{higher–order observation space}. For any field $X\in\{\mathbf{u},S,\rho,\mathbf{A}\}$ we construct $W_{h}^{(X)}$ by raising the polynomial degree by $\Delta p=2$, transfer $X_H$ to $W_{h}^{(X)}$ by non-matching interpolation, and interpolate the fine-field values into the same space. With $\mathcal{I}_{H\to h}$ denoting the non-matching interpolation and $\widetilde X_h$ the interpolated fine solution, the pair error reads
+For two consecutive levels $(H,h)=(i,i{+}1)$ we evaluate errors on the finer mesh in a \emph{higher–order observation space}.
+For any field $X\in\{\mathbf{L},S,\rho\}$ we construct $W_{h}^{(X)}$ by raising the polynomial degree by $\Delta p=2$, transfer $X_H$ to $W_{h}^{(X)}$ by non-matching interpolation, and interpolate $X_h$ into the same space.
+With $\mathcal{I}_{H\to h}$ denoting the non-matching interpolation and $\widetilde X_h$ the interpolated fine solution, the pair error reads
 \[
 e_{H\to h}^{X,\;L^2} \;=\; \big\| \widetilde X_h - \mathcal{I}_{H\to h} X_H \big\|_{L^2(\Omega)},
 \qquad
 e_{H\to h}^{X,\;H^1\text{-semi}} \;=\; \big\| \nabla(\widetilde X_h - \mathcal{I}_{H\to h} X_H) \big\|_{L^2(\Omega)} .
 \]
-Vector/tensor seminorms use the canonical componentwise sum. All integrals are evaluated with sixth-order quadrature on $\mathcal{T}_h$. For a sequence of pairs we obtain $\{(h_{i+1},e_{i\to i+1}^{X,\bullet})\}_{i=1}^{L-1}$ and estimate an experimental order of convergence (EOC) $p$ from the log–log fit
-\[
-\log e \approx p\,\log h + \mathrm{const},\qquad
-p \;=\; \arg\min_{p} \sum_{i} \big(\log e_{i\to i+1}^{X,\bullet} - p\log h_{i+1} - c\big)^2 ,
-\]
-reported for both $L^2$ and $H^1$–semi norms. When only three levels are available, we also quote the two–ratio estimate $p \approx \log(e_{H\to h}/e_{h\to h/2})/\log(r)$ with $r=h_H/h_h$.
+Vector/tensor seminorms use the canonical componentwise sum.
+All integrals are evaluated with sixth-order quadrature on $\mathcal{T}_h$.
+For a sequence of refinement pairs we obtain $\{(h_H,e_{H\to h}^{X,\bullet})\}$, where the error is evaluated on the fine mesh and associated with the coarser mesh-size estimate $h_H$.
+Temporal errors are computed analogously on a fixed mesh by comparing consecutive timesteps and associating each pair error with the coarser step $\Delta t_H$.
+The annotated slopes $p$ in \cref{fig:individual_convergence} are obtained from a log--log linear regression on the available refinement pairs.
 
 \begin{figure}[htbp]
   \centering
   \IfFileExists{images/convergence_plot.png}{%
-    \includegraphics[width=1\linewidth]{images/convergence_plot.png}%
+    \includegraphics[width=0.66\linewidth]{images/convergence_plot.png}%
   }{\fbox{\parbox{1\linewidth}{\centering Missing image: \texttt{images/convergence_plot.png}}}}
-  \caption{Convergence of spatial and temporal errors under mesh and time-step refinement. Solid lines: errors (norms specified in the text). Dotted lines: ideal slopes for $P^1$ elements and the Backward--Euler scheme. Shaded bands show interquartile ranges across regions of interest.}
+  \caption{Discretization convergence and solver performance for the box benchmark.
+  (a) Spatial $L^2$ pair errors for the coupled state fields $(\mathbf{L},S,\rho)$ at fixed $\Delta t$ under mesh refinement.
+  (b) Temporal $L^2$ pair errors at fixed mesh under time-step refinement.
+  (c,d) Aggregated KSP solve time (solid) and KSP iteration counts (dotted) for the four blocks (mechanics, fabric, stimulus, density) versus $h$ and $\Delta t$.
+  Reference lines indicate $O(h)$, $O(h^2)$, and $O(\Delta t)$.}
   \label{fig:individual_convergence}
 \end{figure}

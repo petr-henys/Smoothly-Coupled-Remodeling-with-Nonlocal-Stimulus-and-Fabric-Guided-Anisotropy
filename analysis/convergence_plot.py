@@ -22,12 +22,14 @@ if str(project_root) not in sys.path:
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.ticker import ScalarFormatter, FuncFormatter
 
 from analysis.plot_utils import (
     FIELD_NAMES as _ALL_FIELD_NAMES, FIELD_LABELS, FIELD_COLORS, FIELD_MARKERS, COLORS,
     SUBSOLVER_COLORS, SUBSOLVER_MARKERS, SUBSOLVER_LABELS,
     REFERENCE_COLOR, REFERENCE_ALPHA, REFERENCE_LINESTYLE, REFERENCE_LINEWIDTH,
     FIGSIZE_DOUBLE_COLUMN, PUBLICATION_DPI,
+    FIGSIZE_FULL_WIDTH,
     PLOT_LINEWIDTH, PLOT_MARKERSIZE,
     estimate_convergence_order, add_reference_line, setup_axis_style,
     save_manuscript_figure, print_banner, apply_style,
@@ -124,6 +126,11 @@ def plot_spatial_errors(ax: plt.Axes, spatial_data: dict[str, pd.DataFrame], err
         rf"{title_prefix} ($\Delta t = {dt_value}$ days)",
         loglog=True,
     )
+    
+    # Use scalar formatting for x-axis (avoid 5x10^-1)
+    formatter = FuncFormatter(lambda x, _: f"{x:g}")
+    ax.xaxis.set_major_formatter(formatter)
+    ax.xaxis.set_minor_formatter(formatter)
 
 
 def plot_temporal_errors(ax: plt.Axes, temporal_data: dict[str, pd.DataFrame], error_type: str, N_value: int) -> None:
@@ -177,6 +184,11 @@ def plot_temporal_errors(ax: plt.Axes, temporal_data: dict[str, pd.DataFrame], e
         rf"{title_prefix} ($N = {N_value}$)",
         loglog=True,
     )
+    
+    # Use scalar formatting for x-axis (avoid 5x10^-1)
+    formatter = FuncFormatter(lambda x, _: f"{x:g}")
+    ax.xaxis.set_major_formatter(formatter)
+    ax.xaxis.set_minor_formatter(formatter)
 
 
 def plot_performance(ax: plt.Axes, df: pd.DataFrame, x_col: str, title: str) -> None:
@@ -234,6 +246,11 @@ def plot_performance(ax: plt.Axes, df: pd.DataFrame, x_col: str, title: str) -> 
 
     setup_axis_style(ax, xlabel, "Wall time [s]", title, loglog=True)
     
+    # Use scalar formatting for x-axis (avoid 5x10^-1)
+    formatter = FuncFormatter(lambda x, _: f"{x:g}")
+    ax.xaxis.set_major_formatter(formatter)
+    ax.xaxis.set_minor_formatter(formatter)
+    
     # Store ax2 reference for legend collection
     ax._perf_ax2 = ax2
 
@@ -246,7 +263,9 @@ def create_figure(xlsx: Path, dt_spatial: float, N_temporal: int, out: Path) -> 
     df_tm_perf = load_temporal_perf(xlsx, N_temporal)
 
     # Layout: 3 rows (2 plot rows + 1 legend row) using GridSpec
-    fig = plt.figure(figsize=(FIGSIZE_DOUBLE_COLUMN[0], FIGSIZE_DOUBLE_COLUMN[1] * 1.18))
+    # Width = 2/3 of A4 full width to maintain subplot size consistency with 3-column layouts
+    width = FIGSIZE_FULL_WIDTH[0] * (2 / 3)
+    fig = plt.figure(figsize=(width, FIGSIZE_DOUBLE_COLUMN[1] * 1.18))
     gs = fig.add_gridspec(3, 2, height_ratios=[1, 1, 0.18], hspace=0.35, wspace=0.3)
 
     # Row 0: L2 errors (spatial, temporal)

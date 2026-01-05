@@ -56,6 +56,7 @@ from analysis.plot_utils import (
     PLOT_LINEWIDTH,
     PLOT_MARKERSIZE,
     FIELD_COLORS,
+    FIGSIZE_FULL_WIDTH,
 )
 
 
@@ -556,7 +557,9 @@ def create_diagnostic_figure(
     baseline_gammaF = float(metadata.get("baseline_fabric_gammaF", gammaF_vals[len(gammaF_vals) // 2]))
     
     # Create figure with 1×2 layout
-    fig, axes = plt.subplots(1, 2, figsize=(7.0, 3.2))
+    # Width = 2/3 of A4 full width to maintain subplot size consistency with 3-column layouts
+    width = FIGSIZE_FULL_WIDTH[0] * (2 / 3)
+    fig, axes = plt.subplots(1, 2, figsize=(width, 3.0))
     
     # =========================================================================
     # Panel (a): Anisotropy Index

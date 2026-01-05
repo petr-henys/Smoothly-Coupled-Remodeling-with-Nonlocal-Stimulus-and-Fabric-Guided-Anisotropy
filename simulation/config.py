@@ -8,6 +8,7 @@ from typing import Any
 from dolfinx import mesh
 import ufl
 
+from simulation.utils import compute_mean_element_length
 from simulation.params import (
     MaterialParams,
     DensityParams,
@@ -43,6 +44,7 @@ class Config:
     dx: ufl.Measure | None = field(init=False, default=None, repr=False)
     ds: ufl.Measure | None = field(init=False, default=None, repr=False)
     dt: float = field(init=False, default=1.0)
+    mean_element_length: float = field(init=False, default=0.0)
 
     # -------------------------------------------------------------------------
     # Initialization and validation
@@ -54,6 +56,9 @@ class Config:
 
         # Resolve log_file relative to results_dir.
         self._log_file = str(Path(self.output.results_dir) / self.output.log_file)
+
+        # Compute mean element length
+        self.mean_element_length = compute_mean_element_length(self.domain)
 
         self.validate()
         self._build_measures()
