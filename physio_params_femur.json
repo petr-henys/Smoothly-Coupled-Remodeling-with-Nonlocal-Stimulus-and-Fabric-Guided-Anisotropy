@@ -13,11 +13,11 @@
   },
   "density": {
     "rho0": 1.0,
-    "rho_min": 0.1,
+    "rho_min": 0.2,
     "rho_max": 2.0,
-    "k_rho_form": 0.05,
-    "k_rho_resorb": 0.01,
-    "D_rho": 0.373,
+    "k_rho_form": 0.01,
+    "k_rho_resorb": 0.0025,
+    "D_rho": 0.0373,
     "rho_tissue": 2.0,
     "surface_use": true,
     "surface_A_min": 0.02,
@@ -26,12 +26,12 @@
   "stimulus": {
     "stimulus_power_p": 4.0,
     "psi_ref_trab": 0.003,
-    "psi_ref_cort": 0.006,
+    "psi_ref_cort": 0.008,
     "stimulus_tau": 10.0,
-    "stimulus_D": 0.415,
+    "stimulus_D": 0.0415,
     "stimulus_S_max": 1.0,
     "stimulus_kappa": 0.5,
-    "stimulus_delta0": 0.1
+    "stimulus_delta0": 0.2
   },
   "fabric": {
     "fabric_tau": 120.0,
@@ -69,7 +69,7 @@
   },
   "time": {
     "total_time": 500,
-    "dt_initial": 25.0,
+    "dt_initial": 15.0,
     "adaptive_dt": false,
     "adaptive_rtol": 0.01,
     "adaptive_atol": 0.001,

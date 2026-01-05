@@ -46,7 +46,7 @@ from analysis.plot_utils import (
 # Configuration
 # =============================================================================
 
-DEFAULT_RUN_DIR = Path(".stiff_results_box/")
+DEFAULT_RUN_DIR = Path(".stiff_results_femur/")
 OUTPUT_FILE = Path("manuscript/images/anderson_diagnostic.png")
 
 # Colors for events

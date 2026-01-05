@@ -16,7 +16,7 @@
     "rho_max": 2.0,
     "k_rho_form": 0.01,
     "k_rho_resorb": 0.0025,
-    "D_rho": 0.2025,
+    "D_rho": 0.02025,
     "rho_tissue": 2.0,
     "surface_use": true,
     "surface_A_min": 0.02,
@@ -27,7 +27,7 @@
     "psi_ref_trab":  5e-5,
     "psi_ref_cort": 5e-5,
     "stimulus_tau": 10.0,
-    "stimulus_D": 0.2250,
+    "stimulus_D": 0.02250,
     "stimulus_S_max": 1.0,
     "stimulus_kappa": 0.5,
     "stimulus_delta0": 0.2

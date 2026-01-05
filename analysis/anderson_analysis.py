@@ -391,7 +391,7 @@ def create_diagnostic_figure(
       (a) Heatmap: Iterations as f(m, β) - shows interaction and optimal region
       (b) Box plots: Marginal effect of each parameter on iterations
       (c) Heatmap: Contraction rate as f(m, β) - convergence quality
-      (d) Stability: Condition number vs history size with λ variations
+      (d) Stability: Restarts vs mixing β for different history sizes m
     
     Args:
         df: DataFrame with Anderson metrics.
@@ -411,9 +411,6 @@ def create_diagnostic_figure(
     
     # Subset for heatmaps (fix lambda at optimal)
     df_lam_opt = df[df["lam"] == optimal_lam]
-    
-    # Get restart_on_cond from metadata (default 1e4)
-    restart_on_cond = float(metadata.get("restart_on_cond", 1e4))
     
     # Create figure with 1×4 layout
     # Using 10.0 x 2.5 to fit 4 plots in a row nicely
@@ -467,19 +464,18 @@ def create_diagnostic_figure(
     )
     
     # =========================================================================
-    # Panel (d): Line plot - Condition number vs m for different λ
+    # Panel (d): Line plot - Restarts vs beta for different m
     # =========================================================================
     ax = axes[3]
-    _plot_condition_vs_m(
-        ax, df,
-        m_vals=m_vals, lam_vals=lam_vals,
-        restart_on_cond=restart_on_cond,
+    _plot_restarts_vs_beta(
+        ax, df_lam_opt,
+        beta_vals=beta_vals, m_vals=m_vals,
     )
     setup_axis_style(
         ax,
-        xlabel=r"History $m$",
-        ylabel=r"Condition $\kappa(H)$",
-        title="(d) Numerical stability",
+        xlabel=r"Mixing $\beta$",
+        ylabel="Restarts",
+        title="(d) Stability (Restarts)",
         grid=True,
     )
     
@@ -658,58 +654,43 @@ def _plot_marginal_boxplots(
     ax2.spines["right"].set_visible(False)
 
 
-def _plot_condition_vs_m(
+def _plot_restarts_vs_beta(
     ax: plt.Axes,
     df: pd.DataFrame,
+    beta_vals: list,
     m_vals: list,
-    lam_vals: list,
-    restart_on_cond: float = 1e4,
 ) -> None:
-    """Plot condition number vs history size for different regularizations.
-    
-    Shows how regularization λ controls conditioning as m increases.
+    """Plot number of restarts vs mixing parameter beta for different history sizes m.
     
     Args:
         ax: Matplotlib axis.
-        df: DataFrame with metrics.
+        df: DataFrame with metrics (filtered for optimal lambda).
+        beta_vals: Mixing parameter values.
         m_vals: History size values.
-        lam_vals: Regularization values.
-        restart_on_cond: Threshold for Anderson restart (from config).
     """
-    from matplotlib.colors import LogNorm
-    import matplotlib.cm as cm
+    from matplotlib.colors import Normalize
     
-    # Modern sequential colormap
-    norm = LogNorm(vmin=min(lam_vals), vmax=max(lam_vals))
+    # Color map for m values
     cmap = plt.get_cmap("viridis")
+    norm = Normalize(vmin=min(m_vals), vmax=max(m_vals))
     
-    for lam in lam_vals:
-        subset = df[df["lam"] == lam]
+    for m in m_vals:
+        subset = df[df["m"] == m]
+        if subset.empty:
+            continue
+            
+        # Sort by beta
+        subset = subset.sort_values("beta")
         
-        # Aggregate by m
-        agg = subset.groupby("m")["cond_median"].agg(["mean", "std"]).reset_index()
-        
-        color = cmap(norm(lam))
-        ax.semilogy(
-            agg["m"], agg["mean"],
+        color = cmap(norm(m))
+        ax.plot(
+            subset["beta"], subset["n_restarts"],
             marker="o", color=color, linewidth=PLOT_LINEWIDTH,
-            markersize=PLOT_MARKERSIZE + 1, label=f"$\\lambda={lam:.0e}$",
+            markersize=PLOT_MARKERSIZE, label=f"$m={m}$",
         )
     
     # Add legend
-    ax.legend(fontsize=6, loc="upper left", frameon=False)
-    
-    # Add restart threshold line
-    ax.axhline(
-        y=restart_on_cond, color="#C44E52", linestyle="--",
-        linewidth=1.2, alpha=0.8,
-    )
-    # Label the threshold
-    ax.text(
-        m_vals[0], restart_on_cond * 1.2,
-        r"$\kappa_{\mathrm{restart}}$",
-        fontsize=7, color="#C44E52", va="bottom",
-    )
+    ax.legend(fontsize=6, loc="upper left", frameon=False, title="History $m$")
 
 
 # =============================================================================

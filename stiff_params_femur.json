@@ -70,7 +70,7 @@
   },
   "time": {
     "total_time": 500,
-    "dt_initial": 25.0,
+    "dt_initial": 15.0,
     "adaptive_dt": false,
     "adaptive_rtol": 0.01,
     "adaptive_atol": 0.001,

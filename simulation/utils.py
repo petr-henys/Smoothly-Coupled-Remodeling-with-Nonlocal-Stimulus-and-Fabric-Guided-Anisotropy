@@ -321,10 +321,11 @@ def compute_mean_element_length(m: mesh.Mesh) -> float:
     # Create DG0 space for cell-wise quantities
     V_dg = fem.functionspace(m, ("DG", 0))
 
-    # Expression for cell volume
-    vol_expr = fem.Expression(ufl.CellVolume(m), V_dg.element.interpolation_points)
-    vol_fn = fem.Function(V_dg)
-    vol_fn.interpolate(vol_expr)
+    # Compute cell volumes by assembling 1.0 * dx
+    # This avoids ufl.CellVolume which can fail on some meshes/versions
+    v = ufl.TestFunction(V_dg)
+    L = fem.form(fem.Constant(m, default_scalar_type(1.0)) * v * ufl.dx)
+    b = fem.assemble_vector(L)
 
     # Get owned cell volumes
     # DG0 dofs correspond one-to-one with cells (usually).
@@ -332,7 +333,7 @@ def compute_mean_element_length(m: mesh.Mesh) -> float:
     num_owned = V_dg.dofmap.index_map.size_local
 
     # For DG0, block size is 1.
-    local_volumes = vol_fn.x.array[: num_owned * map_bs]
+    local_volumes = b.array[: num_owned * map_bs]
 
     # Compute local sum of lengths (h ~ V^(1/3))
     local_h_sum = np.sum(np.cbrt(local_volumes))
