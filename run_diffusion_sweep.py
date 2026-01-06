@@ -219,15 +219,13 @@ def main() -> None:
     box = params["box"]
     
     # Override for diffusion study:
-    # - Shorter simulation time (sufficient to show checkerboarding effects)
-    params["time"].total_time = 100.0  # 100 days
     params["time"].adaptive_dt = False
     # Keep default dt_initial from stiff_params (25 days)
     
     # Compute baseline diffusivities from regularization length formula
     baseline = compute_baseline_diffusivities(params, box)
-    # [WARNING] are already decreased in the stiff params - let us narrow the range
 
+    # [WARNING] are already decreased in the stiff params - let us narrow the range
     D_rho_base = baseline["D_rho"] * 10
     stimulus_D_base = baseline["stimulus_D"] * 10
     fabric_D_base = baseline["fabric_D"]

@@ -210,9 +210,6 @@ def main() -> None:
     # - SHORT simulation time to capture alignment dynamics before full convergence
     # - With τ values of 30, 120, 480 days, we want to see differences
     # - At t=30 days: τ=30 → 63% converged, τ=120 → 22%, τ=480 → 6%
-    params["time"].total_time = 30.0  # 30 days - short enough to see τ effects
-    params["time"].adaptive_dt = False
-    params["time"].dt_initial = 1.0  # Smaller dt for accuracy
     
     # Baseline fabric values from stiff_params_box.json
     fabric_tau_base = float(params["fabric"].fabric_tau)      # 120.0 days
