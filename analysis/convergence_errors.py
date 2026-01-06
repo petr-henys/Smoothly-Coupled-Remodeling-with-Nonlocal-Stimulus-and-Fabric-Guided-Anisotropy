@@ -499,7 +499,7 @@ if __name__ == "__main__":
     comm = MPI.COMM_WORLD
     
     base_dir = Path("results/convergence_sweep")
-    output_dir = Path("analysis/convergence_analysis")
+    output_dir = base_dir  # Save xlsx alongside sweep results
     
     if comm.rank == 0:
         print("=" * 80)

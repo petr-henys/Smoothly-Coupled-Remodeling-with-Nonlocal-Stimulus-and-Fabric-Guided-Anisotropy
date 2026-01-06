@@ -1,6 +1,6 @@
 """Extended convergence plot: errors + performance.
 
-Reads `analysis/convergence_analysis/convergence_data.xlsx` produced by
+Reads `results/convergence_sweep/convergence_data.xlsx` produced by
 `analysis/convergence_errors.py`.
 
 Figure layout (2x2):
@@ -28,8 +28,7 @@ from analysis.plot_utils import (
     FIELD_NAMES as _ALL_FIELD_NAMES, FIELD_LABELS, FIELD_COLORS, FIELD_MARKERS, COLORS,
     SUBSOLVER_COLORS, SUBSOLVER_MARKERS, SUBSOLVER_LABELS,
     REFERENCE_COLOR, REFERENCE_ALPHA, REFERENCE_LINESTYLE, REFERENCE_LINEWIDTH,
-    FIGSIZE_DOUBLE_COLUMN, PUBLICATION_DPI,
-    FIGSIZE_FULL_WIDTH,
+    FIGSIZE_TWO_COLUMN, PUBLICATION_DPI,
     PLOT_LINEWIDTH, PLOT_MARKERSIZE,
     estimate_convergence_order, add_reference_line, setup_axis_style,
     save_manuscript_figure, print_banner, apply_style,
@@ -121,7 +120,7 @@ def plot_spatial_errors(ax: plt.Axes, spatial_data: dict[str, pd.DataFrame], err
 
     setup_axis_style(
         ax,
-        r"Mesh size $h$ [mm]",
+        "",  # No xlabel - shared with bottom row
         ylabel,
         rf"{title_prefix} ($\Delta t = {dt_value}$ days)",
         loglog=True,
@@ -179,7 +178,7 @@ def plot_temporal_errors(ax: plt.Axes, temporal_data: dict[str, pd.DataFrame], e
 
     setup_axis_style(
         ax,
-        r"Timestep $\Delta t$ [days]",
+        "",  # No xlabel - shared with bottom row
         ylabel,
         rf"{title_prefix} ($N = {N_value}$)",
         loglog=True,
@@ -234,8 +233,10 @@ def plot_performance(ax: plt.Axes, df: pd.DataFrame, x_col: str, title: str) -> 
             linewidth=PLOT_LINEWIDTH,
         )
 
-    ax2.set_ylabel("KSP iterations")
-    ax2.tick_params(axis="y")
+    # Style secondary y-axis with proper padding to avoid overlap with adjacent subplots
+    ax2.set_ylabel("KSP iters", labelpad=2)
+    ax2.tick_params(axis="y", pad=1, labelsize=6)
+    ax2.yaxis.set_label_coords(1.12, 0.5)  # Move label slightly inward
 
     # Don't add legend here - will be added as unified legend below figure
 
@@ -262,11 +263,22 @@ def create_figure(xlsx: Path, dt_spatial: float, N_temporal: int, out: Path) -> 
     df_sp_perf = load_spatial_perf(xlsx, dt_spatial)
     df_tm_perf = load_temporal_perf(xlsx, N_temporal)
 
-    # Layout: 3 rows (2 plot rows + 1 legend row) using GridSpec
-    # Width = 2/3 of A4 full width to maintain subplot size consistency with 3-column layouts
-    width = FIGSIZE_FULL_WIDTH[0] * (2 / 3)
-    fig = plt.figure(figsize=(width, FIGSIZE_DOUBLE_COLUMN[1] * 1.18))
-    gs = fig.add_gridspec(3, 2, height_ratios=[1, 1, 0.18], hspace=0.35, wspace=0.3)
+    # Layout: 2x2 subplots + legend row using GridSpec
+    # Use FIGSIZE_TWO_COLUMN width (proportionally scaled from 3-column A4 width)
+    # Each subplot should be square: subplot_size = width / 2 (minus spacing)
+    subplot_size = 2.4  # inches per subplot (square)
+    legend_height = 0.5  # inches for legend row
+    fig_width = FIGSIZE_TWO_COLUMN[0]
+    fig_height = 2 * subplot_size + legend_height + 0.8  # 2 rows + legend + spacing
+    
+    fig = plt.figure(figsize=(fig_width, fig_height))
+    # height_ratios: two equal plot rows + small legend row
+    gs = fig.add_gridspec(
+        3, 2, 
+        height_ratios=[1, 1, 0.15], 
+        hspace=0.45,  # vertical spacing between rows (increased for twin axis labels)
+        wspace=0.55,  # horizontal spacing between columns (increased for twin axis labels)
+    )
 
     # Row 0: L2 errors (spatial, temporal)
     ax_err_sp = fig.add_subplot(gs[0, 0])
@@ -338,7 +350,7 @@ def create_figure(xlsx: Path, dt_spatial: float, N_temporal: int, out: Path) -> 
 if __name__ == "__main__":
     apply_style()
     
-    xlsx_file = Path("analysis/convergence_analysis/convergence_data.xlsx")
+    xlsx_file = Path("results/convergence_sweep/convergence_data.xlsx")
     output_file = Path("manuscript/images/convergence_plot.png")
 
     if not xlsx_file.exists():
