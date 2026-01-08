@@ -406,15 +406,15 @@ class TestMultiWallLoading:
             owned_blocks = loader._owned_blocks_per_tag[tag]
             n_owned = int(owned_blocks.size)
 
-            if n_owned == 0:
-                continue
+            # Compute local max_err (0.0 if this rank has no owned DOFs for this tag)
+            local_max_err = 0.0
+            if n_owned > 0:
+                dof_idx = (owned_blocks[:, None] * bs + np.arange(bs, dtype=np.int32)[None, :]).ravel()
+                vals = tfun.x.array[dof_idx].reshape(-1, bs)
+                local_max_err = float(np.max(np.linalg.norm(vals - expected_vec[None, :], axis=1)))
 
-            dof_idx = (owned_blocks[:, None] * bs + np.arange(bs, dtype=np.int32)[None, :]).ravel()
-            vals = tfun.x.array[dof_idx].reshape(-1, bs)
-
-            # All owned surface DOFs on this wall carry the same traction vector
-            max_err = float(np.max(np.linalg.norm(vals - expected_vec[None, :], axis=1)))
-            max_err = MPI.COMM_WORLD.allreduce(max_err, op=MPI.MAX)
+            # All ranks must participate in allreduce to avoid MPI deadlock
+            max_err = MPI.COMM_WORLD.allreduce(local_max_err, op=MPI.MAX)
             assert max_err < 1e-12
         
     def test_pressure_load_spec_validation(self):
