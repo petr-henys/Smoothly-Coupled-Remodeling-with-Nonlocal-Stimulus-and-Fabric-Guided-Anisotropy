@@ -3,13 +3,7 @@
 This script runs simulations over a grid of diffusion parameter values and saves
 checkpoints for subsequent analysis (checkerboarding, solver performance).
 
-Baseline diffusion values are derived from the regularization length formula:
-    ℓ = α·h  with α = 1.5 (target 1.5× element size)
-    D_S = ℓ²/τ_S
-    D_A = ℓ²/τ_A  
-    D_ρ = ℓ²·(Δt⁻¹ + r_char)  where r_char = max(k_form/ρ_max, k_res/ρ_min)
-
-See manuscript/sections/parameter_governance.tex for derivation.
+Baseline diffusion values are taken from stiff_params_box.json.
 
 Usage:
     mpirun -n 4 python run_diffusion_sweep.py
@@ -57,58 +51,6 @@ from simulation.logger import get_logger
 from simulation.model import Remodeller
 from simulation.params import create_config, load_default_params
 from simulation.progress import SweepProgressReporter
-
-
-def compute_baseline_diffusivities(params: dict, box: dict) -> dict[str, float]:
-    """Compute baseline diffusion coefficients from regularization length formula.
-    
-    Uses ℓ = α·h with α = 1.5 (target 1.5× element size).
-    
-    Formulas from manuscript (parameter_governance.tex):
-        D_S = ℓ²/τ_S
-        D_A = ℓ²/τ_A  
-        D_ρ = ℓ²·(Δt⁻¹ + r_char)  where r_char = max(k_form/ρ_max, k_res/ρ_min)
-    
-    Args:
-        params: Parameter dict with density, stimulus, fabric, time groups.
-        box: Box geometry parameters (Lx, nx, etc.)
-    
-    Returns:
-        Dict with baseline D_rho, stimulus_D, fabric_D values.
-    """
-    # Characteristic element size h (assuming uniform mesh)
-    h = box["Lx"] / box["nx"]  # mm
-    
-    # Target regularization length: ℓ = 1.5·h
-    alpha = 1.5
-    ell = alpha * h  # mm
-    ell_sq = ell ** 2  # mm²
-    
-    # Time constants
-    tau_S = float(params["stimulus"].stimulus_tau)  # days
-    tau_A = float(params["fabric"].fabric_tau)      # days
-    dt = float(params["time"].dt_initial)           # days
-    
-    # Reaction characteristic rate
-    k_form = float(params["density"].k_rho_form)
-    k_res = float(params["density"].k_rho_resorb)
-    rho_max = float(params["density"].rho_max)
-    rho_min = float(params["density"].rho_min)
-    r_char = max(k_form / rho_max, k_res / rho_min)  # day⁻¹
-    
-    # Compute baseline diffusivities
-    D_S_baseline = ell_sq / tau_S                    # mm²/day
-    D_A_baseline = ell_sq / tau_A                    # mm²/day
-    D_rho_baseline = ell_sq * (1.0 / dt + r_char)   # mm²/day
-    
-    return {
-        "D_rho": D_rho_baseline,
-        "stimulus_D": D_S_baseline,
-        "fabric_D": D_A_baseline,
-        "ell": ell,
-        "h": h,
-        "r_char": r_char,
-    }
 
 
 def create_diffusion_runner(
@@ -220,15 +162,12 @@ def main() -> None:
     
     # Override for diffusion study:
     params["time"].adaptive_dt = False
-    # Keep default dt_initial from stiff_params (25 days)
     
-    # Compute baseline diffusivities from regularization length formula
-    baseline = compute_baseline_diffusivities(params, box)
-
-    # [WARNING] are already decreased in the stiff params - let us narrow the range
-    D_rho_base = baseline["D_rho"] * 10
-    stimulus_D_base = baseline["stimulus_D"] * 10
-    fabric_D_base = baseline["fabric_D"]
+    # Use baseline diffusivities from loaded params
+    D_rho_base = float(params["density"].D_rho)
+    stimulus_D_base = float(params["stimulus"].stimulus_D)
+    fabric_D_base = float(params["fabric"].fabric_D)
+    h = box["Lx"] / box["nx"]  # element size for logging
     
     # Define sweep parameters: baseline ± one value on each side (factor of 10)
     # This gives 3 values per parameter: [low, baseline, high]
@@ -263,10 +202,7 @@ def main() -> None:
         metadata={
             "description": "Diffusion regularization sweep: D_rho × stimulus_D × fabric_D",
             "objective": "Study checkerboarding prevention vs solver performance",
-            "regularization_length_mm": baseline["ell"],
-            "element_size_mm": baseline["h"],
-            "alpha": 1.5,
-            "r_char": baseline["r_char"],
+            "element_size_mm": h,
             "baseline_D_rho": D_rho_base,
             "baseline_stimulus_D": stimulus_D_base,
             "baseline_fabric_D": fabric_D_base,
@@ -296,24 +232,12 @@ def main() -> None:
         logger.info("=" * 70)
         logger.info("DIFFUSION REGULARIZATION SWEEP")
         logger.info("=" * 70)
-        logger.info(f"Baseline from stiff_params_box.json with ℓ = 1.5·h")
-        logger.info(f"Element size h = {baseline['h']:.3f} mm")
-        logger.info(f"Regularization length ℓ = {baseline['ell']:.3f} mm")
-        logger.info(f"Reaction rate r_char = {baseline['r_char']:.4f} day⁻¹")
-        logger.info("-" * 70)
-        logger.info(f"Baseline D_rho = {D_rho_base:.4f} mm²/day")
-        logger.info(f"Baseline stimulus_D = {stimulus_D_base:.4f} mm²/day")
-        logger.info(f"Baseline fabric_D = {fabric_D_base:.4f} mm²/day")
-        logger.info("-" * 70)
-        logger.info(f"D_rho sweep: {[f'{v:.4f}' for v in D_rho_values]}")
-        logger.info(f"stimulus_D sweep: {[f'{v:.4f}' for v in stimulus_D_values]}")
-        logger.info(f"fabric_D sweep: {[f'{v:.4f}' for v in fabric_D_values]}")
+        logger.info(f"Baseline from stiff_params_box.json, h = {h:.3f} mm")
+        logger.info(f"D_rho: {D_rho_base:.5f} → sweep {[f'{v:.5f}' for v in D_rho_values]}")
+        logger.info(f"stimulus_D: {stimulus_D_base:.5f} → sweep {[f'{v:.5f}' for v in stimulus_D_values]}")
+        logger.info(f"fabric_D: {fabric_D_base:.5f} → sweep {[f'{v:.5f}' for v in fabric_D_values]}")
         logger.info(f"Total runs: {sweep.total_runs()} (3 × 3 × 3)")
-        logger.info("-" * 70)
-        logger.info(f"Mesh: {box['nx']}×{box['ny']}×{box['nz']} on {box['Lx']}×{box['Ly']}×{box['Lz']} mm")
-        logger.info(f"Simulation time: {params['time'].total_time} days, dt={params['time'].dt_initial} days")
-        logger.info(f"Output: {sweep.base_output_dir}")
-        logger.info("Checkpointing: adios4dolfinx")
+        logger.info(f"Mesh: {box['nx']}×{box['ny']}×{box['nz']}, time: {params['time'].total_time} days")
         logger.info("=" * 70)
     
     # Run sweep

@@ -1,7 +1,9 @@
 import numpy as np
 import ants
+from pathlib import Path
 from scipy.spatial import KDTree
 from dolfinx import fem
+from dolfinx.io import VTXWriter
 from mpi4py import MPI
 
 from simulation.logger import get_logger
@@ -130,6 +132,65 @@ def idw(image, mesh, threshold=0., power=2, k_neighbors=8, method='nodes', verbo
     return u
 
 
+def rescale_to_density(intensity: fem.Function, rho_min: float = 0.1, rho_max: float = 2.0) -> fem.Function:
+    """Rescale intensity values linearly to density range [rho_min, rho_max].
+    
+    Args:
+        intensity: DOLFINx function with raw interpolated intensity values.
+        rho_min: Minimum bone density [g/cm³].
+        rho_max: Maximum bone density [g/cm³].
+        
+    Returns:
+        DOLFINx function with rescaled density values.
+    """
+    comm = intensity.function_space.mesh.comm
+    
+    # Get global min/max of intensity
+    local_min = float(intensity.x.array.min()) if len(intensity.x.array) > 0 else np.inf
+    local_max = float(intensity.x.array.max()) if len(intensity.x.array) > 0 else -np.inf
+    
+    global_min = comm.allreduce(local_min, op=MPI.MIN)
+    global_max = comm.allreduce(local_max, op=MPI.MAX)
+    
+    # Create output function
+    rho = fem.Function(intensity.function_space)
+    rho.name = "density"
+    
+    # Linear rescaling: intensity -> [0, 1] -> [rho_min, rho_max]
+    if global_max > global_min:
+        normalized = (intensity.x.array - global_min) / (global_max - global_min)
+        rho.x.array[:] = rho_min + normalized * (rho_max - rho_min)
+    else:
+        # Constant intensity - assign midpoint density
+        rho.x.array[:] = 0.5 * (rho_min + rho_max)
+    
+    return rho
+
+
+def export_vtx(function: fem.Function, output_dir: Path, filename: str = "density") -> None:
+    """Export a DOLFINx function to VTX checkpoint format for ParaView visualization.
+    
+    Args:
+        function: DOLFINx function to export.
+        output_dir: Directory where the VTX files will be saved.
+        filename: Base name for the output file (without extension).
+    """
+    comm = function.function_space.mesh.comm
+    output_dir = Path(output_dir)
+    
+    if comm.rank == 0:
+        output_dir.mkdir(parents=True, exist_ok=True)
+    comm.Barrier()
+    
+    vtx_path = output_dir / f"{filename}.bp"
+    
+    with VTXWriter(comm, vtx_path, [function], engine="BP4") as vtx:
+        vtx.write(0.0)
+    
+    if comm.rank == 0:
+        print(f"Exported VTX checkpoint to: {vtx_path}")
+
+
 if __name__ == "__main__":
 
     from femur import FEBio2Dolfinx, FemurPaths
@@ -137,32 +198,22 @@ if __name__ == "__main__":
     mesh = FEBio2Dolfinx(FemurPaths.FEMUR_MESH_FEB).mesh_dolfinx
     image = ants.image_read('anatomy/raw/proximal_femur/template_new3.nii.gz')
 
+    # Density bounds
+    rho_min = 0.1  # g/cm³
+    rho_max = 2.0  # g/cm³
+
+    # Interpolate CT intensity onto mesh
     interpolated_function = idw(image, mesh, threshold=0.2, power=1, k_neighbors=16, method='centroids')
     
     if mesh.comm.rank == 0:
-        print(f"Interpolation complete. Function range: [{interpolated_function.x.array.min()}, {interpolated_function.x.array.max()}]")
+        print(f"Interpolation complete. Intensity range: [{interpolated_function.x.array.min():.4f}, {interpolated_function.x.array.max():.4f}]")
 
-    # Save as VTK using PyVista
-    import pyvista as pv
-    from dolfinx import plot
-
-    # Create a CG1 function space for topology extraction, as DG0 spaces don't have vertex-based topology
-    V_plot = fem.functionspace(mesh, ("Lagrange", 1))
-    topology, cell_types, geometry = plot.vtk_mesh(V_plot)
-    grid = pv.UnstructuredGrid(topology, cell_types, geometry)
-
-    # Attach data
-    values = interpolated_function.x.array.real
+    # Rescale intensity to density range
+    density_function = rescale_to_density(interpolated_function, rho_min=rho_min, rho_max=rho_max)
     
-    if values.size == grid.n_points:
-        grid.point_data["Intensity"] = values
-    elif values.size == grid.n_cells:
-        grid.cell_data["Intensity"] = values
-    else:
-        if mesh.comm.rank == 0:
-            print(f"Warning: Data size {values.size} does not match grid (Points: {grid.n_points}, Cells: {grid.n_cells})")
+    if mesh.comm.rank == 0:
+        print(f"Density range: [{density_function.x.array.min():.4f}, {density_function.x.array.max():.4f}] g/cm³")
 
-    # Save separate files for each rank to avoid write conflicts
-    filename = f"interpolated_intensity_{mesh.comm.rank:03d}.vtk"
-    grid.save(filename)
-    print(f"Rank {mesh.comm.rank}: Saved {filename}")
+    # Export to VTX checkpoint for ParaView
+    output_dir = Path("results/ct_density")
+    export_vtx(density_function, output_dir, filename="ct_density")

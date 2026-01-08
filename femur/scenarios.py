@@ -133,8 +133,8 @@ def get_standard_gait_cases() -> list[LoadingCase]:
         day_cycles=0.1,
         hip=HipLoadSpec(
             magnitude=2500,
-            alpha_sag=-30.0,
-            alpha_front=30.0,
+            alpha_sag=+30.0,
+            alpha_front=0.0,
             sigma_deg=35.0,
             flip=True,
         ),

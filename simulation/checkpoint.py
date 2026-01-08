@@ -168,7 +168,7 @@ def load_checkpoint_function(
     checkpoint_path: Path | str,
     name: str,
     function_space: fem.FunctionSpace,
-    time: float,
+    time: float | None,
 ) -> fem.Function:
     """Load a function from checkpoint at a specific time.
     
@@ -183,8 +183,33 @@ def load_checkpoint_function(
     """
     checkpoint_path = Path(checkpoint_path)
     func = fem.Function(function_space, name=name)
-    # adios4dolfinx API: read_function(filename, u, ..., time=..., name=...)
-    adx.read_function(checkpoint_path, func, time=time, name=name)
+
+    # adios4dolfinx defaults `time=0.0` if omitted, which is NOT the same as
+    # "latest" and often fails. Therefore we:
+    # - If `time` is None: resolve the latest available time from the BP stream.
+    # - If `time` is provided but missing: fall back to latest.
+    # - If no time information exists at all: fall back to legacy checkpoints.
+    comm = function_space.mesh.comm
+
+    resolved_time: float | None = time
+    if resolved_time is None:
+        times = get_checkpoint_times(checkpoint_path, name, comm)
+        resolved_time = max(times) if times else None
+
+    if resolved_time is not None:
+        try:
+            # adios4dolfinx API: read_function(filename, u, ..., time=..., name=...)
+            adx.read_function(checkpoint_path, func, time=resolved_time, name=name)
+            return func
+        except Exception:
+            # Fall back to latest discoverable time
+            times = get_checkpoint_times(checkpoint_path, name, comm)
+            if times:
+                adx.read_function(checkpoint_path, func, time=max(times), name=name)
+                return func
+
+    # Final fallback: legacy checkpoints (pre-time-dependent writing)
+    adx.read_function(checkpoint_path, func, time=0.0, legacy=True, name=name)
     return func
 
 
@@ -203,19 +228,48 @@ def get_checkpoint_times(
     Returns:
         List of time values.
     """
-    # adios4dolfinx stores time as a variable attribute
-    # This requires reading the ADIOS2 file directly
+    # NOTE:
+    # - Not all checkpoints store explicit time metadata.
+    # - Newer/packaged adios2 Python bindings in some environments do not expose
+    #   `adios2.open` and instead use `adios2.Stream`.
+    #
+    # We therefore try to extract per-step times from variables like
+    # `{name}_time` when available, and otherwise return an empty list.
     import adios2
-    
+
     checkpoint_path = Path(checkpoint_path)
-    
-    times = []
+
+    times: list[float] = []
     if comm.rank == 0:
-        with adios2.open(str(checkpoint_path), "r", comm=MPI.COMM_SELF) as fh:
-            for step in fh:
-                if f"{name}/values" in fh.available_variables():
-                    t = step.read_attribute(f"{name}/time")
-                    times.append(float(t))
-    
+        try:
+            if hasattr(adios2, "Stream"):
+                time_var = f"{name}_time"
+                values_var = f"{name}_values"
+                with adios2.Stream(str(checkpoint_path), "r", MPI.COMM_SELF) as s:
+                    for step in s:
+                        available = step.available_variables() if hasattr(step, "available_variables") else s.available_variables()
+                        if values_var not in available:
+                            continue
+                        if time_var in available:
+                            t = step.read(time_var)
+                            # Usually scalar ndarray; coerce robustly
+                            times.append(float(getattr(t, "item", lambda: t)()))
+            elif hasattr(adios2, "open"):
+                # Legacy API (kept for completeness)
+                with adios2.open(str(checkpoint_path), "r", comm=MPI.COMM_SELF) as fh:
+                    time_attr = f"{name}/time"
+                    values_var = f"{name}/values"
+                    for step in fh:
+                        if values_var in fh.available_variables():
+                            try:
+                                t = step.read_attribute(time_attr)
+                                times.append(float(t))
+                            except Exception:
+                                # No time metadata
+                                pass
+        except Exception:
+            # Treat time extraction as best-effort
+            times = []
+
     times = comm.bcast(times, root=0)
     return times

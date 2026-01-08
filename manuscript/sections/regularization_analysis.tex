@@ -34,7 +34,7 @@ To visualize the marginal effect of each coefficient, we plot the median and int
 \begin{figure}[htbp]
   \centering
   \IfFileExists{images/diffusion_diagnostic.png}{%
-    \includegraphics[width=1\linewidth]{images/diffusion_diagnostic.png}%
+    \includegraphics[width=1.\linewidth]{images/diffusion_diagnostic.png}%
   }{\fbox{\parbox{1\linewidth}{\centering Missing image: \texttt{images/diffusion_diagnostic.png}}}}
   \caption{Effect of diffusion regularization on density-field smoothness and coupling cost in the StiffSetup box benchmark (diffusion sweep).
   Each panel varies one diffusion coefficient by a factor $D/D_{\mathrm{ref}}\in\{0.1,1,10\}$ while marginalizing over the other two coefficients.
@@ -48,3 +48,12 @@ As expected, increasing $D_\rho$ strongly reduces spatial roughness of $\rho$, i
 Stimulus diffusion $D_S$ provides an additional smoothing mechanism through the mechanostat drive and also lowers the roughness metric, although its effect is weaker than that of $D_\rho$ in this benchmark.
 In contrast, varying the fabric diffusivity $D_A$ has little effect on the density roughness metric, consistent with the fact that $D_A$ primarily regularizes the directional field $\mathbf{L}$ rather than the scalar density.
 Across the explored range, diffusion regularization does not increase the coupling subiteration count; the median iteration count is comparable or slightly reduced, suggesting improved contractivity of the coupled map under stronger elliptic regularization.
+
+\begin{figure}[htbp]
+  \centering
+  \IfFileExists{images/diffusion_effect.png}{%
+    \includegraphics[width=0.5\linewidth]{images/diffusion_effect.png}%
+  }{\fbox{\parbox{1\linewidth}{\centering Missing image: \texttt{images/diffusion_effect.png}}}}
+  \caption{}
+  \label{fig:diffusion_effects}
+\end{figure}

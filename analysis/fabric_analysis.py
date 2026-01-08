@@ -587,10 +587,10 @@ def create_diagnostic_figure(
     handles = [
         Line2D([0], [0], color=FABRIC_PARAM_COLORS["fabric_tau"], marker="o",
                linestyle="-", linewidth=PLOT_LINEWIDTH, markersize=5,
-               label=FABRIC_PARAM_LABELS["fabric_tau"]),
+               label=FABRIC_PARAM_LABELS["fabric_tau"] + " (med ± IQR)"),
         Line2D([0], [0], color=FABRIC_PARAM_COLORS["fabric_gammaF"], marker="^",
                linestyle="-", linewidth=PLOT_LINEWIDTH, markersize=5,
-               label=FABRIC_PARAM_LABELS["fabric_gammaF"]),
+               label=FABRIC_PARAM_LABELS["fabric_gammaF"] + " (med ± IQR)"),
     ]
     fig.legend(
         handles=handles,
@@ -617,8 +617,8 @@ def _plot_parameter_sensitivity(
     """Plot metric sensitivity to each fabric parameter.
     
     For each parameter, varies it while keeping others at baseline.
-    Shows median line (IQR removed - it showed variability due to other
-    parameters, not statistical uncertainty).
+    Shows median line and IQR band (displaying variability due to other
+    parameters).
     
     Args:
         ax: Matplotlib axis.
@@ -635,16 +635,23 @@ def _plot_parameter_sensitivity(
         
         # Compute median metric for each parameter value (marginalizing over others)
         y_med = []
+        y_q25 = []
+        y_q75 = []
         
         for val in values:
             mask = df[param_name] == val
             metric_vals = df.loc[mask, metric_col].values
-            med, _, _ = _summarize(metric_vals)
+            med, q25, q75 = _summarize(metric_vals)
             y_med.append(med)
+            y_q25.append(q25)
+            y_q75.append(q75)
         
         y_med = np.array(y_med)
+        y_q25 = np.array(y_q25)
+        y_q75 = np.array(y_q75)
         
-        # Plot median line with markers
+        # Plot median line with markers and IQR band
+        ax.fill_between(x_normalized, y_q25, y_q75, color=color, alpha=0.15, linewidth=0)
         ax.plot(
             x_normalized, y_med,
             color=color, marker=marker, linestyle="-",

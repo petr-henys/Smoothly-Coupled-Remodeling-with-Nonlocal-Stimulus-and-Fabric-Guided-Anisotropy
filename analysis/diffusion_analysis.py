@@ -686,6 +686,10 @@ def generate_report(
     """Generate summary report."""
     report_path = output_dir / "diffusion_report.txt"
     
+    def _safe_fmt(key: str, prec: int) -> str:
+        val = metadata.get(key)
+        return f"{val:.{prec}f}" if isinstance(val, (int, float)) else "?"
+
     with open(report_path, "w") as f:
         f.write("=" * 70 + "\n")
         f.write("DIFFUSION REGULARIZATION SWEEP REPORT\n")
@@ -693,16 +697,16 @@ def generate_report(
         
         f.write("SWEEP CONFIGURATION\n")
         f.write("-" * 40 + "\n")
-        f.write(f"Element size h:        {metadata.get('element_size_mm', '?'):.3f} mm\n")
-        f.write(f"Regularization length: {metadata.get('regularization_length_mm', '?'):.3f} mm\n")
+        f.write(f"Element size h:        {_safe_fmt('element_size_mm', 3)} mm\n")
+        f.write(f"Regularization length: {_safe_fmt('regularization_length_mm', 3)} mm\n")
         f.write(f"Alpha (ℓ/h):           {metadata.get('alpha', 1.5)}\n")
         f.write(f"Total runs:            {len(df)}\n\n")
         
         f.write("BASELINE DIFFUSIVITIES (ℓ = 1.5h)\n")
         f.write("-" * 40 + "\n")
-        f.write(f"D_rho:      {metadata.get('baseline_D_rho', '?'):.4f} mm²/day\n")
-        f.write(f"stimulus_D: {metadata.get('baseline_stimulus_D', '?'):.4f} mm²/day\n")
-        f.write(f"fabric_D:   {metadata.get('baseline_fabric_D', '?'):.4f} mm²/day\n\n")
+        f.write(f"D_rho:      {_safe_fmt('baseline_D_rho', 4)} mm²/day\n")
+        f.write(f"stimulus_D: {_safe_fmt('baseline_stimulus_D', 4)} mm²/day\n")
+        f.write(f"fabric_D:   {_safe_fmt('baseline_fabric_D', 4)} mm²/day\n\n")
         
         f.write("QUALITY METRICS SUMMARY\n")
         f.write("-" * 40 + "\n")

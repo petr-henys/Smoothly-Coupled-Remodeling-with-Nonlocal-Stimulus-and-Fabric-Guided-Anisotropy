@@ -89,7 +89,7 @@
     
     "output": {
         "saving_interval": 1,
-        "results_dir": ".stiff_results_femur",
+        "results_dir": ".physio_results_femur",
         "log_file": "simulation.log"
     },
     
