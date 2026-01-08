@@ -1,0 +1,12 @@
+\section*{Conclusions}
+\label{sec:conclusions}
+
+\paragraph{Summary.}
+We presented a smoothly regularized three-field continuum framework for bone remodeling that couples apparent density adaptation, fabric-guided anisotropy (advanced in log-fabric space), and an explicit nonlocal mechanotransductive stimulus field.
+Two design choices are central to practical robustness: (i) a structure-preserving spectral treatment based on Sylvester projectors smoothly blended to the isotropic and transversely isotropic limits, which keeps fabric-driven orthotropy well-defined across eigenvalue degeneracy; and (ii) diffusive regularization in the stimulus, density, and fabric submodels, which introduces a controllable nonlocal length scale and mitigates mesh-scale artifacts.
+On the numerical side, we showed that a partitioned fully implicit update can be advanced efficiently by a block Gauss--Seidel strategy stabilized by safeguarded Anderson (Pulay/DIIS) acceleration, delivering reliable convergence in regimes where plain Picard iteration fails.
+
+\paragraph{Implications and outlook.}
+The femur case study highlights that reproducing clinically relevant density patterns under a small set of representative daily loads benefits from compartment-aware reference stimuli, while sensitivity analyses confirm that plausible uncertainty in hip-force direction can materially alter both spatial redistribution and global density trajectories.
+These results motivate future work on calibration and uncertainty quantification that jointly treats (i) mechanostat set-points, (ii) nonlocal length scales, and (iii) loading ensembles derived from subject- and activity-specific data.
+From a computational perspective, the smooth constitutive and regularization machinery provides a foundation for gradient-based parameter estimation and model selection, while further scalability will likely require stronger block preconditioning and multilevel solvers for the coupled mechanics--transport subproblems.
