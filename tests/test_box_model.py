@@ -55,7 +55,7 @@ def box_mesh_and_tags(box_geometry) -> tuple:
 
 
 @pytest.fixture
-def box_cfg(box_mesh_and_tags) -> Config:
+def box_cfg(box_mesh_and_tags, shared_tmpdir) -> Config:
     """Create Config for box model tests."""
     domain, facet_tags = box_mesh_and_tags
     return Config(
@@ -75,7 +75,7 @@ def box_cfg(box_mesh_and_tags) -> Config:
             dt_initial=5.0,
         ),
         output=OutputParams(
-            results_dir=".test_box_results",
+            results_dir=str(shared_tmpdir / "box_test_results"),
         ),
     )
 
@@ -537,7 +537,7 @@ class TestBoxModelIntegration:
             # Just verify the simulation ran without error
             assert np.isfinite(rho_final).all(), "Density should remain finite"
 
-    def test_metrics_csv_output(self, box_mesh_and_tags, tmp_path):
+    def test_metrics_csv_output(self, box_mesh_and_tags, shared_tmpdir):
         """Test that metrics CSV files are written during simulation."""
         from simulation.model import Remodeller
         from simulation.config import Config
@@ -547,8 +547,8 @@ class TestBoxModelIntegration:
         domain, facet_tags = box_mesh_and_tags
         comm = MPI.COMM_WORLD
         
-        # Create config with tmp_path as output directory
-        output_dir = tmp_path / "metrics_test"
+        # Create config with shared_tmpdir as output directory
+        output_dir = shared_tmpdir / "metrics_test"
         if comm.rank == 0:
             output_dir.mkdir(parents=True, exist_ok=True)
         comm.Barrier()
