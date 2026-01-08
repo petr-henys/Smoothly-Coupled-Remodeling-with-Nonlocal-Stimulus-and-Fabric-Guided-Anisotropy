@@ -26,9 +26,7 @@ For completeness we also monitor eigenvalue ratios (e.g.\ $m_{\max}/m_{\min}$), 
 
 \begin{figure}[htbp]
   \centering
-  \IfFileExists{images/fabric_diagnostic.png}{%
-    \includegraphics[width=1\linewidth]{images/fabric_diagnostic.png}%
-  }{\fbox{\parbox{1\linewidth}{\centering Missing image: \texttt{images/fabric_diagnostic.png}}}}
+  \safeincludegraphics[width=1\linewidth]{fabric_diagnostic.png}
   \caption{Sensitivity of fabric anisotropy to the key evolution parameters in the stiff box benchmark (fabric sweep).
   We vary the relaxation time $\tau_A$ and the eigenvalue-sharpening exponent $\gamma_F$ in \eqref{eq:L-strong-nd}--\eqref{eq:M-hat-nd} and report the domain-averaged anisotropy index $A$ of the final log-fabric state $\mathbf{L}(\cdot,T)$ ($A=0$ isotropic).
   The horizontal axis reports parameter value relative to the baseline (dashed line).}

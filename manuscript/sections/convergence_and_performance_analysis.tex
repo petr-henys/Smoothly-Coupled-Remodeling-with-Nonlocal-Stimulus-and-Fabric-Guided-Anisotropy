@@ -47,9 +47,7 @@ The annotated slopes $p$ in \cref{fig:individual_convergence} are obtained from 
 
 \begin{figure}[htbp]
   \centering
-  \IfFileExists{images/convergence_plot.png}{%
-    \includegraphics[width=0.66\linewidth]{images/convergence_plot.png}%
-  }{\fbox{\parbox{1\linewidth}{\centering Missing image: \texttt{images/convergence_plot.png}}}}
+  \safeincludegraphics[width=0.66\linewidth]{convergence_plot.png}
   \caption{Discretization convergence and solver performance for the box benchmark.
   (a) Spatial $L^2$ pair errors for the coupled state fields $(\mathbf{L},S,\rho)$ at fixed $\Delta t$ under mesh refinement.
   (b) Temporal $L^2$ pair errors at fixed mesh under time-step refinement.

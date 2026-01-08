@@ -44,9 +44,7 @@ Performance is reported as the cumulative PETSc KSP solve time and KSP iteration
 
   \begin{figure}[htbp]
   \centering
-  \IfFileExists{images/anderson_comparison.png}{%
-    \includegraphics[width=1\linewidth]{images/anderson_comparison.png}%
-  }{\fbox{\parbox{1\linewidth}{\centering Missing image: \texttt{images/anderson_comparison.png}}}}
+  \safeincludegraphics[width=1\linewidth]{anderson_comparison.png}
   \caption{Physio vs.\ stiff coupling in the box benchmark: Anderson acceleration vs.\ pure damped Picard iteration.
   (a) Final coupling residual $r_{\mathrm{Pic}}$ per accepted step (log scale; values below $10^{-14}$ are floored for visibility), with the dashed line marking $\mathrm{tol}=10^{-6}$.
   (b) Total KSP solve time over the full run, stacked by fixed-point stop reason (\texttt{converged}, \texttt{max\_subiters}, \texttt{no\_progress}).
@@ -65,9 +63,7 @@ Figure~\ref{fig:anderson_diagnostic} summarizes these mechanisms on a representa
   
 \begin{figure}[htbp]
   \centering
-  \IfFileExists{images/anderson_diagnostic.png}{%
-    \includegraphics[width=1\linewidth]{images/anderson_diagnostic.png}%
-  }{\fbox{\parbox{1\linewidth}{\centering Missing image: \texttt{images/anderson_diagnostic.png}}}}
+  \safeincludegraphics[width=1\linewidth]{anderson_diagnostic.png}
   \caption{Diagnostic view of the Anderson-accelerated fixed-point solver on a representative stiff run.
   (a) Residual histories $r_{\mathrm{Pic}}$ per step (colored by step index).
   (b) Global residual timeline with an overlaid contraction estimate $\rho_k=r_k/r_{k-1}$.
@@ -84,9 +80,7 @@ We summarize the mean iterations/step, the contraction estimator, and the Gram c
 
 \begin{figure}[htbp]
   \centering
-  \IfFileExists{images/anderson_sweep.png}{%
-    \includegraphics[width=1\linewidth]{images/anderson_sweep.png}%
-  }{\fbox{\parbox{1\linewidth}{\centering Missing image: \texttt{images/anderson_sweep.png}}}}
+  \safeincludegraphics[width=1\linewidth]{anderson_sweep.png}
   \caption{Sensitivity of coupling performance to the Anderson parameters $(m,\beta,\lambda)$ in the stiff box benchmark (parameter sweep).
   (a) Mean subiterations per step as a function of history size $m$ and mixing $\beta$ at the best-performing $\lambda$ among the sampled values; the red box marks the best cell in the sampled grid.
   (b) Marginal distributions of iterations/step when varying $m$, $\beta$, or $\lambda$ (other parameters averaged out).

@@ -33,9 +33,7 @@ To visualize the marginal effect of each coefficient, we plot the median and int
 
 \begin{figure}[htbp]
   \centering
-  \IfFileExists{images/diffusion_diagnostic.png}{%
-    \includegraphics[width=1.\linewidth]{images/diffusion_diagnostic.png}%
-  }{\fbox{\parbox{1\linewidth}{\centering Missing image: \texttt{images/diffusion_diagnostic.png}}}}
+  \safeincludegraphics[width=1.\linewidth]{diffusion_diagnostic.png}
   \caption{Effect of diffusion regularization on density-field smoothness and coupling cost in the StiffSetup box benchmark (diffusion sweep).
   Each panel varies one diffusion coefficient by a factor $D/D_{\mathrm{ref}}\in\{0.1,1,10\}$ while marginalizing over the other two coefficients.
   Solid colored lines show the median roughness measure $\mathcal{R}_\rho$ (shaded: IQR) of the final density field; black dashed lines show the median coupling subiterations per step (shaded: IQR).
@@ -51,9 +49,7 @@ Across the explored range, diffusion regularization does not increase the coupli
 
 \begin{figure}[htbp]
   \centering
-  \IfFileExists{images/diffusion_effect.png}{%
-    \includegraphics[width=0.5\linewidth]{images/diffusion_effect.png}%
-  }{\fbox{\parbox{1\linewidth}{\centering Missing image: \texttt{images/diffusion_effect.png}}}}
+  \safeincludegraphics[width=0.5\linewidth]{diffusion_effect.png}
   \caption{}
   \label{fig:diffusion_effects}
 \end{figure}

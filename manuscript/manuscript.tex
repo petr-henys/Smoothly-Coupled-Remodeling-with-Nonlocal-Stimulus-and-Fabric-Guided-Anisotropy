@@ -42,6 +42,20 @@
 }
 
 \usepackage{cleveref} % volitelně pro \cref
+
+% Robust figure inclusion: works both when compiling from `manuscript/` and
+% from the repository root (e.g., when TEXINPUTS is used).
+\newcommand{\safeincludegraphics}[2][]{%
+  \IfFileExists{images/#2}{%
+    \includegraphics[#1]{images/#2}%
+  }{%
+    \IfFileExists{manuscript/images/#2}{%
+      \includegraphics[#1]{manuscript/images/#2}%
+    }{%
+      \fbox{\parbox{0.95\linewidth}{\centering Missing image: \texttt{\detokenize{#2}}}}%
+    }%
+  }%
+}
 \journal{Computer Methods and Applied Mechanics in Engineering}
 % Make \paragraph run-in headings without the trailing dot
 \titleformat{\paragraph}[runin]{\normalfont\normalsize\bfseries}{\theparagraph}{1em}{}
@@ -105,6 +119,8 @@ Bone remodeling \sep finite element method \sep Backward--Euler \sep Anderson ac
 \input{sections/anisotropy_analysis}
 
 \input{sections/femur_comparison}
+
+\input{sections/alpha_front_analysis}
 
 \input{sections/reproducibility}
 

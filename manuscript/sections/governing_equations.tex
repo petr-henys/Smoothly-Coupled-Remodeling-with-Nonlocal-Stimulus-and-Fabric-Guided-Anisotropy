@@ -75,7 +75,7 @@ Figure \ref{fig:constitutive_law} illustrates the behavior of the density-elasti
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=\textwidth]{images/constitutive_law.png}
+    \safeincludegraphics[width=\textwidth]{constitutive_law.png}
     \caption{Constitutive Law Analysis. (a) Stiffness-density relationship $E(\rho)$ showing the transition from trabecular ($n=2.0$) to cortical ($n=1.3$) behavior. (b) The variable exponent $n(\rho)$. (c, d) Sensitivity of the transition to threshold parameters. (e) Effect of exponent choices on stiffness. (f) The cubic smoothstep function used for interpolation.}
     \label{fig:constitutive_law}
 \end{figure}
@@ -187,9 +187,7 @@ Equation \eqref{eq:density-strong-nd} uses differentiable kinetics and soft boun
 
 \begin{figure}[htbp]
     \centering
-    \IfFileExists{images/mechanostat_law.png}{%
-        \includegraphics[width=\textwidth]{images/mechanostat_law.png}%
-    }{\fbox{\parbox{0.9\linewidth}{\centering Missing image: \texttt{images/mechanostat\_law.png}}}}
+    \safeincludegraphics[width=\textwidth]{mechanostat_law.png}
     \caption{Mechanostat and density kinetics. Top row: stimulus mechanostat drive (lazy zone and saturation). Bottom row: surface-availability factor and bounded formation/resorption rates that keep $\rho$ attracted to $[\rho_{\min},\rho_{\max}]$.}
     \label{fig:mechanostat_law}
 \end{figure}
@@ -236,7 +234,7 @@ with a small dimensionless $\varepsilon_a>0$.
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=\textwidth]{images/anisotropy_law.png}
+    \safeincludegraphics[width=\textwidth]{anisotropy_law.png}
     \caption{Fabric-guided anisotropy. (a) Directional stiffness for representative fabric states. (b,d) Directional diffusivity illustrations correspond to an optional anisotropic-transport extension; in the present model we use isotropic density diffusion $\mathbf{D}_\rho=D_\rho\mathbf{I}$ in \eqref{eq:Drho-nd}. (c,e,f) Stiffness scaling and eigenvalue-space visualizations.}
     \label{fig:anisotropy_law}
 \end{figure}

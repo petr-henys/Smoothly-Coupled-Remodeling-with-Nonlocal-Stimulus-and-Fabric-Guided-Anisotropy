@@ -1,1 +1,79 @@
-\section*{Femur remodeling comparison}
+\section*{Femur prediction Analysis}
+\label{sec:femur-comparison}
+
+\paragraph{Motivation.}
+The proximal femur is a stringent test of coupled mechanics--stimulus--density remodeling because the solution must simultaneously reproduce (i) a thin, high-density cortical shell and (ii) a spatially heterogeneous trabecular core under a small set of representative daily loading cases.
+In a standard mechanostat formulation a single reference stimulus $\psi_{\mathrm{ref}}$ is used throughout the domain \cite{Weinans1992_BehaviorAdaptiveBoneRemodeling,MartinezReina2016_UniquenessBRM}.
+However, experimental and conceptual work suggests that ``set points'' and adaptation thresholds are not universal constants: they may shift with loading history (mechanical usage set-point concept) \cite{Frost1992_SetPointsOsteoporosis}, depend on cellular set-point distributions \cite{Mullender1998_SetPointTrabecularArchitecture}, and can differ between cortical and cancellous compartments \cite{Yang2021_CancellousGreaterThreshold,Schulte2013_LocalMechanicalStimuli}.
+This motivates our compartment-aware reference stimulus $\hat{\psi}_{\mathrm{ref}}(\widetilde\rho)$ in \S\ref{subsec:stim-nd}, which blends trabecular and cortical reference values using the same density-dependent transition $w(\widetilde\rho)$ as the stiffness exponent blend.
+
+\paragraph{Ratio sweep definition.}
+We parameterize the two reference values by their ratio
+\[
+r:=\psi_{\mathrm{ref}}^{\mathrm{cort}}/\psi_{\mathrm{ref}}^{\mathrm{trab}},
+\]
+and, to decouple ``overall'' mechanostat scaling from the cortical--trabecular contrast, we hold the geometric mean $\psi_0:=\sqrt{\psi_{\mathrm{ref}}^{\mathrm{trab}}\psi_{\mathrm{ref}}^{\mathrm{cort}}}$ fixed while sweeping $r$:
+\[
+\psi_{\mathrm{ref}}^{\mathrm{trab}}(r)=\psi_0/\sqrt{r},\qquad
+\psi_{\mathrm{ref}}^{\mathrm{cort}}(r)=\psi_0\sqrt{r}.
+\]
+All runs use the accelerated \textbf{StiffSetup} femur configuration (\texttt{stiff\_params\_femur.json}) over $T=500$ days, with identical loading cases and all other parameters fixed.
+
+\paragraph{Reference density and mapping.}
+As a population reference we use the HFValid-derived template femur density (population average), represented as a volumetric CT image and mapped onto the FE mesh using inverse-distance weighting (IDW) interpolation (\texttt{intensity\_mapper.py}).
+For a consistent comparison with the bounded density model, the mapped CT field is linearly rescaled to $[\rho_{\min},\rho_{\max}]$ (cf.\ \texttt{analysis/psi\_ref\_ratio\_analysis.py}).
+
+\paragraph{Comparison strategy and metrics.}
+We compare predicted densities $\rho_r(\cdot,T)$ against the mapped CT density $\rho_{\mathrm{CT}}$ in three complementary ways:
+\begin{enumerate}
+  \item \textbf{Global agreement:} discrete nodal RMSE/MAE over CG1 degrees of freedom,
+  \[
+  \mathrm{RMSE}(r)=\sqrt{\frac{1}{N}\sum_{j=1}^N\big(\rho_r(x_j,T)-\rho_{\mathrm{CT}}(x_j)\big)^2},\qquad
+  \mathrm{MAE}(r)=\frac{1}{N}\sum_{j=1}^N\big|\rho_r(x_j,T)-\rho_{\mathrm{CT}}(x_j)\big|,
+  \]
+  together with a Pearson correlation as a scale-insensitive summary of spatial pattern agreement.
+  \item \textbf{Compartment-aware error:} the same metrics restricted to CT-defined trabecular and cortical masks,
+  \[
+  \Omega_{\mathrm{trab}}:=\{x:\rho_{\mathrm{CT}}(x)\le \rho_{\mathrm{trab}}^{\max}\},\qquad
+  \Omega_{\mathrm{cort}}:=\{x:\rho_{\mathrm{CT}}(x)\ge \rho_{\mathrm{cort}}^{\min}\},
+  \]
+  using the transition densities from the model (\S\ref{sec:strong-forms-nd}).
+  \item \textbf{Feature preservation (contrast):} the cortical--trabecular density contrast
+  \(
+  C(r):=\bar\rho_{r,\mathrm{cort}}-\bar\rho_{r,\mathrm{trab}},
+  \)
+  compared to the CT contrast $C_{\mathrm{CT}}$ computed on the same masks.
+\end{enumerate}
+In addition, we track the \emph{global} density evolution via the domain-mean density $\bar\rho(t)$ reconstructed from the conserved mass integral (logged as \texttt{total\_mass\_g} in \texttt{steps.csv}), which provides a coarse check of transient behavior and settling time.
+
+\paragraph{Hypothesis and test.}
+We already observe qualitatively that the special case $\psi_{\mathrm{ref}}^{\mathrm{trab}}=\psi_{\mathrm{ref}}^{\mathrm{cort}}$ (i.e.\ $r=1$) suppresses key spatial features in the predicted density distribution.
+We therefore hypothesize that a non-unity ratio $r\neq 1$ is required to reproduce both cortical and trabecular density patterns under the same loads.
+We test this hypothesis by (i) sweeping $r$ at fixed $\psi_0$, (ii) ranking runs by CT agreement metrics and contrast preservation, and (iii) visually confirming differences via distribution plots and (optionally) spatial residuum fields in ParaView.
+
+\begin{figure}[htbp]
+  \centering
+  \safeincludegraphics[width=1\linewidth]{psi_ref_ratio_diagnostic.png}
+  \caption{Effect of the cortical--trabecular reference-stimulus ratio $r=\psi_{\mathrm{ref}}^{\mathrm{cort}}/\psi_{\mathrm{ref}}^{\mathrm{trab}}$ on agreement with the CT-derived population template.
+  Left: nodal RMSE of the final density field (total and compartment-restricted, using CT-defined cortical/trabecular masks).
+  Right: predicted cortical--trabecular contrast $C(r)$ compared to the CT contrast $C_{\mathrm{CT}}$.
+  Generated by \texttt{analysis/psi\_ref\_ratio\_analysis.py}.}
+  \label{fig:psi_ref_ratio_diagnostic}
+\end{figure}
+
+\begin{figure}[htbp]
+  \centering
+  \safeincludegraphics[width=0.7\linewidth]{psi_ref_ratio_histograms.png}
+  \caption{Global density distributions at $T=500$ days for the CT template and selected ratios (default: $r=1$ and the best-RMSE run), illustrating how the ratio controls the overall density spectrum.
+  Generated by \texttt{analysis/psi\_ref\_ratio\_analysis.py}.}
+  \label{fig:psi_ref_ratio_histograms}
+\end{figure}
+
+\begin{figure}[htbp]
+  \centering
+  \safeincludegraphics[width=0.7\linewidth]{psi_ref_ratio_timecourse.png}
+  \caption{Domain-mean density evolution $\bar\rho(t)$ for the ratio sweep, reconstructed from the conserved mass integral (\texttt{steps.csv}).
+  The dashed line shows the CT template volume-mean density mapped to the FE mesh.
+  Generated by \texttt{analysis/psi\_ref\_ratio\_analysis.py}.}
+  \label{fig:psi_ref_ratio_timecourse}
+\end{figure}
