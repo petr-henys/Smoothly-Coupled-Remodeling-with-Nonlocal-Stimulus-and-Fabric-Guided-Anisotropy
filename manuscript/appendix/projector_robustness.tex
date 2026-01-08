@@ -91,16 +91,15 @@ s_{ij}=\frac{\delta^2}{(\lambda_i-\lambda_j)^2+\delta^2},\qquad
 \delta^2 = (\mathrm{tol}_{\mathrm{deg}}^2)\,s^2.
 \end{equation}
 Here, $s_{ij}\approx 0$ for well-separated eigenvalues and $s_{ij}\approx 1$ when $\lambda_i\approx\lambda_j$.
-We define unnormalized nonnegative weights for the anisotropic (full), three TI cases, and isotropy as
+We define nonnegative weights for the anisotropic (full), three TI cases, and isotropy as
 \begin{align}
-\tilde{w}_{\mathrm{full}}&=(1-s_{12})(1-s_{23})(1-s_{13}), \nonumber\\
-\tilde{w}_{12}&=s_{12}(1-s_{23})(1-s_{13}),\quad
-\tilde{w}_{23}=s_{23}(1-s_{12})(1-s_{13}),\quad
-\tilde{w}_{13}=s_{13}(1-s_{12})(1-s_{23}), \nonumber\\
-\tilde{w}_{\mathrm{iso}}&=s_{12}s_{23}s_{13},
+w_{\mathrm{full}}&=(1-s_{12})(1-s_{23})(1-s_{13}), \nonumber\\
+w_{12}&=s_{12}(1-s_{23})(1-s_{13}),\quad
+w_{23}=s_{23}(1-s_{12})(1-s_{13}),\quad
+w_{13}=s_{13}(1-s_{12})(1-s_{23}), \nonumber\\
+w_{\mathrm{iso}}&=1-\bigl(w_{\mathrm{full}}+w_{12}+w_{23}+w_{13}\bigr),
 \end{align}
-and normalize them by $w_r=\tilde{w}_r/\sum_{r}\tilde{w}_r$ (a convex combination).
-The final robust projectors are then obtained as
+so that $w_{\mathrm{full}}+w_{12}+w_{23}+w_{13}+w_{\mathrm{iso}}=1$ (a convex combination). The final robust projectors are then obtained as
 \begin{equation}
 \label{eq:final_blend}
 \mathbf{P}_i

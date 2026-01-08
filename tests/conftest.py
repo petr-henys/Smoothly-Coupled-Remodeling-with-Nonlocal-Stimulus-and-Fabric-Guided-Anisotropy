@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import NamedTuple, Dict
 
@@ -97,9 +98,26 @@ def pytest_configure(config: pytest.Config) -> None:
     """Register markers and silence non-rank-0 output."""
     if MPI is not None:
         comm = MPI.COMM_WORLD
+
+        # Debug controls for MPI runs (helpful when diagnosing hangs under mpirun)
+        # - PYTEST_MPI_DEBUG=1   -> do not silence non-root stdout/stderr
+        # - PYTEST_MPI_TIMEOUT=60 -> periodically dump Python stack traces after N seconds
+        mpi_debug = os.environ.get("PYTEST_MPI_DEBUG", "0").strip() not in ("", "0", "false", "False")
+        timeout_s = os.environ.get("PYTEST_MPI_TIMEOUT", "").strip()
+        if timeout_s:
+            try:
+                import faulthandler
+                timeout = float(timeout_s)
+                if timeout > 0:
+                    # Use stderr (or redirected stderr) to report where we hang.
+                    faulthandler.enable(all_threads=True)
+                    faulthandler.dump_traceback_later(timeout, repeat=True)
+            except Exception:
+                # Never let diagnostics break test collection.
+                pass
         
         # Silence non-root ranks
-        if comm.rank != 0:
+        if comm.rank != 0 and not mpi_debug:
             sys.stdout = sys.stderr = open(os.devnull, 'w')
             
         # Set unique basetemp for each rank to avoid cleanup race conditions
@@ -117,6 +135,50 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line("markers", "integration: integration tests spanning multiple components")
     config.addinivalue_line("markers", "slow: tests that take significant time to complete")
     config.addinivalue_line("markers", "performance: performance benchmarks and profiling tests")
+
+
+def _mpi_rank() -> int | None:
+    if MPI is None:
+        return None
+    try:
+        return int(MPI.COMM_WORLD.rank)
+    except Exception:
+        return None
+
+
+def _mpi_last_test_file() -> Path | None:
+    """Return a per-rank file path used to track last running test.
+
+    This intentionally avoids any MPI collectives so it's safe even if ranks diverge.
+    """
+    r = _mpi_rank()
+    if r is None:
+        return None
+    base_tmp = Path(tempfile.gettempdir()) / f"pytest-mpi-{os.getuid()}" / f"rank-{r}"
+    base_tmp.mkdir(parents=True, exist_ok=True)
+    return base_tmp / "last_test.txt"
+
+
+def pytest_runtest_logstart(nodeid: str, location):
+    """Write the currently starting test to a per-rank breadcrumb file."""
+    p = _mpi_last_test_file()
+    if p is None:
+        return
+    try:
+        p.write_text(f"START {time.time():.3f} {nodeid}\n")
+    except Exception:
+        pass
+
+
+def pytest_runtest_logfinish(nodeid: str, location):
+    """Mark test finished in the per-rank breadcrumb file."""
+    p = _mpi_last_test_file()
+    if p is None:
+        return
+    try:
+        p.write_text(f"FINISH {time.time():.3f} {nodeid}\n")
+    except Exception:
+        pass
 
 
 # Add workspace root to sys.path (where simulation/ folder is located)

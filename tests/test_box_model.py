@@ -55,7 +55,7 @@ def box_mesh_and_tags(box_geometry) -> tuple:
 
 
 @pytest.fixture
-def box_cfg(box_mesh_and_tags, shared_tmpdir) -> Config:
+def box_cfg(box_mesh_and_tags) -> Config:
     """Create Config for box model tests."""
     domain, facet_tags = box_mesh_and_tags
     return Config(
@@ -75,7 +75,7 @@ def box_cfg(box_mesh_and_tags, shared_tmpdir) -> Config:
             dt_initial=5.0,
         ),
         output=OutputParams(
-            results_dir=str(shared_tmpdir / "box_test_results"),
+            results_dir="box_test_results",
         ),
     )
 

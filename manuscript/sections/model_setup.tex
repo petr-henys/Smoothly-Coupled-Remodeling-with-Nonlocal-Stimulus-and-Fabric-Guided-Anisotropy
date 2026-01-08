@@ -85,7 +85,7 @@ Using the calibration in Eq.~\eqref{eq:hfvalid_calibration}, the calibrated dens
 \qquad \mathbf{x}\in\Omega.
 \label{eq:rho_pop}
 \end{equation}
-The resulting pair $\left(I_{\mathrm{pop}},\rho_{\mathrm{pop}}\right)$ represents the average femur morphology and density distribution of the HFValid cohort and is used as the reference (population) femur model in the remainder of this work.
+The resulting pair $\left(I_{\mathrm{pop}},\rho_{\mathrm{pop}}\right)$ represents the average femur morphology and density distribution of the HFValid cohort and is used as the reference (population) femur model in the remainder of this work. For comparisons with the bounded density model, we map $\rho_{\mathrm{pop}}$ to the FE mesh and linearly rescale it to the model interval $[\rho_{\min},\rho_{\max}]$ (see \S\ref{sec:femur-comparison}). This focuses the comparison on spatial patterns rather than absolute calibration.
 
 \subsubsection*{Femur Coordinate System (FCS)}
 We define a right-handed femur coordinate system (FCS) that is consistent with the OrthoLoad convention \cite{OrthoLoadDatabase} and can be constructed robustly from three anatomical landmarks: the femoral head, the lateral epicondyle (LE) and the medial epicondyle (ME). All vectors and points are expressed either in the global (world) coordinate system (superscript $w$) or in the FCS (superscript $\mathrm{FCS}$). The detailed construction procedure is described in the following paragraphs and illustrated in Fig.~\ref{fig:femur_css} and consists of (i) fitting a sphere to the femoral head to determine its centre, (ii) defining orthonormal axes based on the head and distal landmarks, and (iii) providing transformation formulas between world and FCS representations (see, \ref{sec:femur_loading}).
