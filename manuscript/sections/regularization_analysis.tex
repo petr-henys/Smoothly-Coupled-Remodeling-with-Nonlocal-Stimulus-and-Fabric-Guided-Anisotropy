@@ -43,7 +43,7 @@ To visualize the marginal effect of each coefficient, we plot the median and int
 
 \paragraph{Observed trends.}
 Figure~\ref{fig:diffusion_diagnostic} indicates that density diffusion $D_\rho$ is the dominant lever controlling the smoothness of $\rho$, with stimulus diffusion $D_S$ providing weaker additional smoothing through the mechanostat drive and fabric diffusion $D_A$ having little effect on $\rho$ roughness in this benchmark.
-For density-focused analyses, this suggests a hierarchy of influence $D_\rho$ (primary) $>$ $D_S$ (secondary) $>$ $D_A$ (tertiary); implications for parameter governance are discussed in \S\ref{sec:discussion}.
+For the density-roughness metric in this benchmark, this suggests a hierarchy of influence $D_\rho$ (primary) $>$ $D_S$ (secondary) $>$ $D_A$ (tertiary); note that $D_S$ is introduced to model nonlocal mechanotransduction (signal reach) and can be selected on mechanobiological grounds even when its marginal effect on $\rho$ smoothness is weaker than directly regularizing $\rho$ via $D_\rho$ (\S\ref{sec:discussion}).
 Across the explored range, diffusion regularization does not increase the coupling subiteration count; a quantitative interpretation is given in \S\ref{sec:discussion}.
 
 \begin{figure}[htbp]
