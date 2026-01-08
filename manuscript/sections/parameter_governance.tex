@@ -37,7 +37,7 @@ The exponent $\gamma_F$ controls how strongly stress-eigenvalue contrasts transl
 The bounds $m_{\min},m_{\max}$ cap admissible anisotropy; the ratio $m_{\max}/m_{\min}$ limits the maximum eigenvalue ratio and should be chosen to avoid numerically extreme stiffness contrasts.
 Finally, the regularization parameters $\varepsilon_Q$ and $\varepsilon_a$ should be small relative to the scale of $\bar{\mathbf{Q}}$ so that they only stabilize eigen-decomposition and activity gating near isotropy.
 
-\subsection*{Parameter sets for validation and benchmarking}
+\subsection*{Parameter sets for verification and benchmarking}
 To assess both physiological plausibility and numerical robustness, we use two parameter configurations for the box benchmarks: the \textit{PhysioSetup} (baseline) and the \textit{StiffSetup} (stress test), summarized in Table~\ref{tab:param_setup}.
 The \textbf{StiffSetup} narrows the mechanostat ($\delta_0,\kappa_S$), accelerates density kinetics ($k_{\mathrm{form}},k_{\mathrm{res}}$), and lowers the density floor $\rho_{\min}$, which induces sharper internal gradients and faster transients that challenge the convergence of fixed-point coupling.
 
@@ -119,6 +119,10 @@ D_A=\frac{\ell^2}{\tau_A}\ \ \text{(use $a(\bar{\mathbf{Q}})=1$ for the minimal 
 D_\rho=\ell^2\left(\Delta t^{-1}+r_{\mathrm{char}}\right),
 \end{equation}
 where the conservative (smallest-length) reaction estimate is $r_{\mathrm{char}}=\max\!\left(k_{\mathrm{form}}/\rho_{\max},\,k_{\mathrm{res}}/\rho_{\min}\right)$ evaluated at maximal activity (e.g., $S_\pm\approx 1$ and $\alpha_{\mathrm{surf}}\approx 1$). In the quasi-static regime $\Delta t^{-1}\ll r_{\mathrm{char}}$ this reduces to $D_\rho\approx \ell^2 r_{\mathrm{char}}$.
+\emph{Over-parameterization and practical hierarchy.}
+Using three diffusion coefficients $(D_S,D_\rho,D_A)$ provides flexibility but also enlarges the regularization parameter space.
+In the absence of field-specific calibration data, we treat diffusion primarily as a numerical regularizer and use the mesh-based prescription above to collapse the choice to a single length-scale parameter $\alpha$.
+For density-focused studies, \S\ref{sec:regularization-analysis} suggests a practical hierarchy: tune $D_\rho$ first (dominant impact on density smoothness and coupling), then $D_S$ if additional smoothing through the mechanostat is needed, and keep $D_A$ at its mesh-based reference value unless fabric smoothness itself is a target.
 
 \paragraph{Box benchmark.}
 For the reference box mesh ($10\times 10\times 30$~mm, $n_x=n_y=10$, $n_z=30$) we take $h\approx 1$~mm and choose $\alpha=1.5$, hence $\ell\approx 1.5$~mm.
