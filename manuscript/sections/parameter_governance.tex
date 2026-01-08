@@ -2,9 +2,7 @@
 \label{sec:parameter-governance}
 
 \paragraph{Units and scaling.}
-We use the unit system: length [mm], time [day], stress and strain-energy density [MPa], and apparent density [g/cm$^3$] (see \S\ref{sec:strong-forms-nd}).
-The stimulus $S$ is dimensionless, $\rho$ is in g/cm$^3$, and fabric quantities ($\mathbf{A}$, $\mathbf{L}$) are dimensionless.
-The mechanostat is driven by the \emph{specific} strain-energy density $m=\psi/\rho$; in this unit system $m$ is naturally reported in J/g (numerically equal to MPa divided by g/cm$^3$).
+We use the unit system defined in \S\ref{sec:strong-forms-nd}.
 
 \paragraph{Mechanical parameters.}
 Apparent densities in human cancellous bone span roughly $0.05$--$1.1~\mathrm{g/cm^3}$, while cortical bone is commonly reported around $1.7$--$2.0~\mathrm{g/cm^3}$ \cite{Helgason2008,Rho1993}.
@@ -15,6 +13,7 @@ The transition densities $\rho_{\mathrm{trab}}^{\max}$ and $\rho_{\mathrm{cort}}
 Finally, the fabric stiffness exponents $p_E$ and $p_G$ control how strongly anisotropy is expressed in stiffness; values near $1$ are typical in fabric-based orthotropic scaling \cite{Zysset1995_AlternativeModelAnisotropic}, and $p_E,p_G\in[0.5,2]$ is a conservative prior unless a dedicated calibration dataset is available.
 
 \paragraph{Stimulus parameters.}
+The mechanostat is driven by the \emph{specific} strain-energy density $m=\psi/\rho$; in this unit system $m$ is naturally reported in J/g (numerically equal to MPa divided by g/cm$^3$).
 Peak physiological strains in load-bearing bone are on the order of hundreds to a few thousand microstrain \cite{Turner1998_ThreeRulesBone,Robling2006}.
 For apparent moduli in the $1$--$20~\mathrm{GPa}$ range this implies strain-energy densities on the order of $10^{-3}$--$10^{-1}~\mathrm{MPa}$ (via $\psi\sim\tfrac12 E\varepsilon^2$); corresponding specific energies $m=\psi/\rho$ are therefore load-dependent and should be calibrated once the loading magnitude and stiffness scaling are fixed.
 Weinans et al.\ underscored that the reference values $(\psi_{\mathrm{ref}}^{\mathrm{trab}},\psi_{\mathrm{ref}}^{\mathrm{cort}})$ are ultimately calibration parameters tied to the applied loads.

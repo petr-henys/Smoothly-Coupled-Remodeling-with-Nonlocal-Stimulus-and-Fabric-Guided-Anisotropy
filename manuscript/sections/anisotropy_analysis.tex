@@ -7,7 +7,7 @@ To verify that the anisotropy submodel behaves as intended and to quantify param
 Here ``reorientation'' refers to changes of the structural tensor field driven by remodeling (formation/resorption), not to a rigid rotation of material points.
 
 \paragraph{Sweep setup (box benchmark).}
-We use the StiffSetup box configuration under a parabolic compression load (mesh $10\times 10\times 30$~mm, $n_x=n_y=10$, $n_z=30$) with fixed time step $\Delta t=1~\mathrm{d}$ and a short horizon $T=30~\mathrm{d}$.
+We reuse the box benchmark setup of \S\ref{sec:regularization-analysis}, but run with fixed time step $\Delta t=1~\mathrm{d}$ and a short horizon $T=30~\mathrm{d}$.
 Adaptive time stepping is disabled and all parameters other than $\tau_A$ and $\gamma_F$ are held fixed.
 To probe alignment dynamics, the initial $\mathbf{L}(\cdot,0)$ is chosen as a reproducible random symmetric, trace-free field, ensuring it is not trivially aligned with the mechanically induced target.
 We sweep $\tau_A\in\{30,120,480\}$~days (baseline: $120$~days) and $\gamma_F\in\{0.5,1,2\}$ (baseline: $1$), yielding $3\times 3=9$ runs.

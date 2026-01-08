@@ -42,10 +42,8 @@ To visualize the marginal effect of each coefficient, we plot the median and int
 \end{figure}
 
 \paragraph{Observed trends.}
-As expected, increasing $D_\rho$ strongly reduces spatial roughness of $\rho$, indicating suppression of mesh-scale oscillations.
-Stimulus diffusion $D_S$ provides an additional smoothing mechanism through the mechanostat drive and also lowers the roughness metric, although its effect is weaker than that of $D_\rho$ in this benchmark.
-In contrast, varying the fabric diffusivity $D_A$ has little effect on the density roughness metric, consistent with the fact that $D_A$ primarily regularizes the directional field $\mathbf{L}$ rather than the scalar density.
-Across the explored range, diffusion regularization does not increase the coupling subiteration count; the median iteration count is comparable or slightly reduced, suggesting improved contractivity of the coupled map under stronger elliptic regularization.
+Figure~\ref{fig:diffusion_diagnostic} indicates that density diffusion $D_\rho$ is the dominant lever controlling the smoothness of $\rho$, with stimulus diffusion $D_S$ providing weaker additional smoothing through the mechanostat drive and fabric diffusion $D_A$ having little effect on $\rho$ roughness in this benchmark.
+Across the explored range, diffusion regularization does not increase the coupling subiteration count; a quantitative interpretation is given in \S\ref{sec:discussion}.
 
 \begin{figure}[htbp]
   \centering
