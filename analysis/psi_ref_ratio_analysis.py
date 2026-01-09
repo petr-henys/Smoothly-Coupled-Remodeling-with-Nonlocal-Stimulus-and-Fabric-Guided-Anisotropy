@@ -41,7 +41,7 @@ project_root = Path(__file__).resolve().parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from intensity_mapper import idw
+from morpho_mapper import idw
 from simulation.checkpoint import load_checkpoint_mesh, load_checkpoint_function
 from simulation.logger import get_logger
 from simulation.params import load_default_params

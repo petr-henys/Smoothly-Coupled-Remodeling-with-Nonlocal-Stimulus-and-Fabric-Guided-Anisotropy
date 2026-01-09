@@ -100,7 +100,7 @@ Here $\tau_S\ge 0$ is the stimulus time constant, $D_S\ge 0$ the stimulus diffus
 \hat{\psi}_{\mathrm{ref}}(\widetilde{\rho}):=\psi_{\mathrm{ref}}^{\mathrm{trab}}(1-w(\widetilde{\rho})) + \psi_{\mathrm{ref}}^{\mathrm{cort}}w(\widetilde{\rho}),\qquad
 \delta(x):=\frac{\hat{\psi}(x)-\hat{\psi}_{\mathrm{ref}}(\widetilde{\rho})}{\hat{\psi}_{\mathrm{ref}}(\widetilde{\rho})}\,,
 \]
-where $\widetilde\rho$ is the smooth lower clamp \eqref{eq:smooth-max-nd} and $w(\widetilde{\rho})$ is the transition function \eqref{eq:variable-exponent}. To suppress spurious response to very small deviations we apply a smooth lazy-zone gate with half-width $\delta_0\ge 0$ (dimensionless):
+where $\widetilde\rho$ is the smooth lower clamp \eqref{eq:smooth-max-nd} and $w(\widetilde{\rho})$ is the transition function \eqref{eq:variable-exponent}. To suppress spurious response to very small deviations we apply a smooth lazy-zone gate with threshold scale $\delta_0\ge 0$ (dimensionless):
 \[
 \delta_{\mathrm{eff}} \;:=\;
 \begin{cases}
@@ -109,6 +109,7 @@ where $\widetilde\rho$ is the smooth lower clamp \eqref{eq:smooth-max-nd} and $w
 \end{cases}
 \]
 Here $\delta_{\mathrm{abs}}:=|\delta|_\varepsilon=\sqrt{\delta^2+\varepsilon^2}-\varepsilon$ is a smooth absolute value (dimensionless), consistent with the global smoothing width $\varepsilon$.
+This choice acts as a smooth dead-zone-like gate: $\delta_{\mathrm{eff}}$ is strongly attenuated for $|\delta|\lesssim \delta_0$ and approaches $\delta$ for $|\delta|\gg \delta_0$.
 The mechanical drive $\psi_{\mathrm{day}}$ is constructed as a cycle-weighted power mean of the local strain energy density (SED) across a discrete set of loading cases:
 \begin{equation}\label{eq:stim-psi-nd}
 \psi_{\mathrm{day}}(x) \;=\;
@@ -243,4 +244,4 @@ with a small dimensionless $\varepsilon_a>0$.
 Figure \ref{fig:anisotropy_law} visualizes how the log-fabric state biases directional stiffness. The relaxation term in \eqref{eq:L-strong-nd} drives $\mathbf{L}$ toward the mechanically informed target $\mathbf{L}_M(\bar{\mathbf{Q}})$ while diffusion regularizes spatial oscillations; the log-Euclidean representation ensures $\mathbf{A}=\exp(\mathbf{L})\in\mathbb{S}^{3}_{++}$ by construction. The log-space normalization in \eqref{eq:M-hat-nd} enforces $\mathrm{tr}\,\mathbf{L}_M=0$ (unit determinant for $\exp(\mathbf{L}_M)$), so the target acts on anisotropy (eigenvalue ratios) rather than isotropic scaling. In the constitutive evaluation, isotropic scaling is removed by working with eigenvalue ratios (deviatoric part of $\mathbf{L}$) and bounding them by the same $m_{\min},m_{\max}$ used in \eqref{eq:M-hat-nd}.
 
 \paragraph{Regularization parameters and defaults.}
-We use a single global smoothing width $\varepsilon$ for the soft clamps in \eqref{eq:smooth-max-nd} and \eqref{eq:smooth-splits-nd}. The stimulus mechanostat uses a dimensionless lazy-zone half-width $\delta_0$ and saturation width $\kappa_S$ in \eqref{eq:stim-strong-nd}. The fabric target uses $\varepsilon_Q$ and eigenvalue-ratio bounds $[m_{\min},m_{\max}]$ in \eqref{eq:M-hat-nd}, and the activity factor uses $\varepsilon_a$ to smoothly gate near-isotropic loading. These choices avoid hard projections while keeping the subproblems well-conditioned in practice.
+We use a single global smoothing width $\varepsilon$ for the soft clamps in \eqref{eq:smooth-max-nd} and \eqref{eq:smooth-splits-nd}. The stimulus mechanostat uses a dimensionless lazy-zone threshold scale $\delta_0$ and saturation width $\kappa_S$ in \eqref{eq:stim-strong-nd}. The fabric target uses $\varepsilon_Q$ and eigenvalue-ratio bounds $[m_{\min},m_{\max}]$ in \eqref{eq:M-hat-nd}, and the activity factor uses $\varepsilon_a$ to smoothly gate near-isotropic loading. These choices avoid hard projections while keeping the subproblems well-conditioned in practice.

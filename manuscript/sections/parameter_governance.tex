@@ -20,7 +20,7 @@ In the box benchmark parameter sets (Table~\ref{tab:param_setup}), the applied l
 The femur configurations use separate reference values of order $10^{-3}$--$10^{-2}$~J/g, i.e.\ closer to the estimate above under the chosen load model.
 Weinans et al.\ underscored that the reference values $(\psi_{\mathrm{ref}}^{\mathrm{trab}},\psi_{\mathrm{ref}}^{\mathrm{cort}})$ are ultimately calibration parameters tied to the applied loads.
 The averaging exponent $p$ in \eqref{eq:stim-psi-nd} controls how strongly $\psi_{\mathrm{day}}$ is peak-biased; $p\in[1,6]$ spans the range from a weighted mean ($p=1$) to a strongly peak-dominated driver.
-The lazy-zone half-width $\delta_0$ controls the tolerated deviation around the set-point before net formation/resorption; practical values are typically $\delta_0\approx 0.05$--$0.3$.
+The lazy-zone threshold scale $\delta_0$ controls the deviation range over which the mechanostat drive is strongly suppressed (smooth dead zone); practical values are typically $\delta_0\approx 0.05$--$0.3$.
 The saturation parameters $(S_{\max},\kappa_S)$ should bound $S$ without clipping physiologically relevant values; $S_{\max}\sim 0.5$--$2$ with $\kappa_S\sim 0.1$--$1$ are robust defaults.
 For the transport parameters, $\tau_S$ should be short relative to density remodeling (days to a few weeks), and $D_S$ can be chosen to produce a sensing length $\ell_S=\sqrt{\tau_S D_S}$ on the order of $10^{-1}$--$10^{0}~\mathrm{mm}$, depending on the intended degree of nonlocal averaging.
 
@@ -58,7 +58,7 @@ The \textbf{StiffSetup} narrows the mechanostat ($\delta_0,\kappa_S$), accelerat
     \multicolumn{5}{c}{\textbf{I. Setup-dependent parameters}} \\
     \midrule
     \textit{Stimulus \& mechanostat} & & & & \\
-    Lazy-zone half-width & $\delta_0$ & -- & $0.20$ & $0.10$ \\
+    Lazy-zone threshold scale & $\delta_0$ & -- & $0.20$ & $0.10$ \\
     Saturation width & $\kappa_S$ & -- & $0.50$ & $0.30$ \\
     Stimulus diffusivity & $D_S$ & mm$^2$/day & $0.225$ & $0.0225$ \\
     \addlinespace
