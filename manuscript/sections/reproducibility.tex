@@ -23,7 +23,15 @@ Adding a new field to the staggered scheme requires only (i) defining the new \t
 \paragraph{Parallel execution and scaling.}
 All simulations are MPI-parallel and require no shared-memory assumptions.
 For parameter studies we additionally support concurrent execution of multiple independent runs by splitting \texttt{MPI\_COMM\_WORLD} into subcommunicators (see \texttt{parametrizer.py}), enabling both strong scaling (single large run) and throughput scaling (many runs in parallel).
-To document parallel performance, the Zenodo archive includes a simple weak-scaling benchmark script and raw timing data for representative solver components (see \texttt{run\_weak\_scaling.py} and \texttt{analysis/weak\_scaling\_plot.py}); this benchmark is designed to be runnable on a workstation (few ranks) and on HPC systems (many ranks) without code changes.
+To document parallel performance, we include a strong scaling benchmark on the stiff femur case study (see \texttt{run\_weak\_scaling.py}).
+Executing the fully coupled solver on this representative mesh (approx.~75k elements, 40k mechanics DOFs) demonstrates super-linear scaling up to 2 cores and maintains 56\% efficiency at 8 cores (speedup $4.45\times$), confirming that the partitioned solver effectively utilizes workstation-level parallelism even for moderate problem sizes (\cref{fig:strong_scaling}).
+
+\begin{figure}[htbp]
+    \centering
+    \safeincludegraphics[width=0.6\linewidth]{strong_scaling.png}
+    \caption{Strong scaling of the coupled bone remodeling solver on the stiff femur configuration ($N_{\mathrm{cells}}\approx 75\mathrm{k}$, $N_{\mathrm{dofs}}^{\mathrm{mech}}\approx 40\mathrm{k}$). The solver achieves super-linear speedup at 2 cores (likely due to cache effects) and scales with reasonable efficiency up to 8 cores despite the relatively small problem size per core.}
+    \label{fig:strong_scaling}
+\end{figure}
 
 \paragraph{Verification.}
 Core infrastructure (time integration, MPI-consistent diagnostics, I/O) is covered by automated tests in \texttt{tests/} runnable via \texttt{pytest} (serial or under MPI).

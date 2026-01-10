@@ -1,25 +1,7 @@
 """Parameter sweep framework for bone remodeling simulations.
 
-Supports:
-- Dot-notation parameter paths (e.g., "material.E0", "density.k_rho_form")
-- Cartesian product sweeps with hash-based output directories
-- Integration with run_box_model/run_model via Config patching
-- MPI-aware execution with progress tracking
-
-Example usage:
-    from parametrizer import ParameterSweep, Parametrizer, run_box_simulation
-
-    sweep = ParameterSweep(
-        params={
-            "material.E0": [5000.0, 7500.0, 10000.0],
-            "density.k_rho_form": [0.01, 0.05, 0.1],
-            "time.total_time": [100.0],
-        },
-        base_output_dir=Path("./sweep_results"),
-    )
-    
-    parametrizer = Parametrizer(sweep, run_box_simulation, MPI.COMM_WORLD)
-    parametrizer.run()
+Supports dot-notation paths (e.g., 'material.E0'), Cartesian sweeps with
+hash-based output directories, and MPI-aware execution.
 """
 
 from __future__ import annotations

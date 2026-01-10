@@ -1,3 +1,8 @@
+"""Post-processing utilities for loading simulation results.
+
+Provides SimulationLoader (single run) and SweepLoader (parameter sweeps).
+"""
+
 from __future__ import annotations
 
 import json
@@ -14,7 +19,7 @@ from simulation.logger import get_logger
 
 
 class SimulationLoader:
-    """Load one run directory (config, metrics, and checkpoint fields; MPI-safe)."""
+    """MPI-safe loader for config, metrics, and checkpoint fields from one run."""
     
     __slots__ = (
         "output_dir", "comm", "logger", "_config", "_run_summary",
@@ -392,20 +397,7 @@ class SimulationLoader:
 # ============================================================================
 
 class SweepLoader:
-    """Load and analyze multiple runs from a parametrizer sweep.
-    
-    Provides access to all runs in a sweep directory with filtering by
-    parameter values.
-    
-    Usage:
-        sweep = SweepLoader("results/anderson_sweep", comm)
-        
-        # Get all runs with specific parameters
-        picard_runs = sweep.filter_runs(accel_type="picard")
-        
-        # Load specific run
-        loader = sweep.get_loader("111159cb")
-    """
+    """Load and filter runs from a parametrizer sweep directory."""
     
     __slots__ = ("base_dir", "comm", "logger", "_summary_df", "_loaders")
     

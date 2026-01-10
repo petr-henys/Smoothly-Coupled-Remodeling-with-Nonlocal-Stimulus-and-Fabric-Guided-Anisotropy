@@ -32,7 +32,6 @@ Post-processing:
 from __future__ import annotations
 
 import copy
-import shutil
 from pathlib import Path
 
 import numpy as np
@@ -51,11 +50,11 @@ from box import (
     BoxMeshBuilder,
     get_parabolic_pressure_case,
 )
-from simulation.checkpoint import CheckpointStorage
 from simulation.logger import get_logger
 from simulation.model import Remodeller
 from simulation.params import create_config, load_default_params
 from simulation.progress import SweepProgressReporter
+from sweep_utils import clean_output_dir, reset_reporter, write_standard_checkpoint
 
 
 def create_fabric_runner(
@@ -94,13 +93,7 @@ def create_fabric_runner(
         params["geometry"].fix_tag = BoxMeshBuilder.TAG_BOTTOM
         params["geometry"].load_tag = BoxMeshBuilder.TAG_TOP
         
-        total_time = params["time"].total_time
-        
-        # Update reporter with correct total_time for this run
-        if reporter is not None:
-            if reporter.progress is not None and reporter.main_task_id is not None:
-                reporter.progress.reset(reporter.main_task_id)
-                reporter.progress.update(reporter.main_task_id, total=total_time)
+        reset_reporter(reporter, params["time"].total_time)
         
         # Create mesh using default resolution from box params
         geometry = BoxGeometry(
@@ -158,41 +151,19 @@ def create_fabric_runner(
             # Run simulation with unified sweep reporter
             remodeller.simulate(reporter=reporter)
             
-            # Write final checkpoint for analysis
-            checkpoint = CheckpointStorage(sim_cfg)
-            final_time = sim_cfg.time.total_time
-
-            # Mechanics: psi (cycle-weighted SED average over all loading cases)
-            psi = remodeller.driver.stimulus_field()
-            if psi is not None:
-                checkpoint.write_function(psi, final_time)
-
-            # Stress tensor (sigma) - computed in post_step_update
-            sigma = remodeller.driver.sigma_field()
-            if sigma is not None:
-                checkpoint.write_function(sigma, final_time)
-
-            # Qbar (stress-stress product for fabric alignment)
-            Qbar = remodeller.driver.Qbar_field()
-            if Qbar is not None:
-                checkpoint.write_function(Qbar, final_time)
-
-            # Ensure derived fields (e.g. fabric principal directions) are up-to-date.
+            # Ensure derived fields (fabric principal directions) are up-to-date
             remodeller.registry.post_step_update_all()
-
-            # Fabric diagnostics (principal directions + scalar anisotropy measures).
-            # These are helpful for visualization since (n1,n2,n3) alone carry no scale.
+            
+            # Fabric sweep needs extra diagnostics
             fabric = remodeller.fabricsolver
-            for f in (fabric.n1, fabric.n2, fabric.n3, fabric.A_fabric, fabric.m_ratio, fabric.L_mag):
-                checkpoint.write_function(f, final_time)
-
-            # Registry state fields (rho, S, L from density/stimulus/fabric solvers)
-            state_fields = remodeller.registry.state_fields
-            for name in ("rho", "S", "L"):
-                f = state_fields.get(name)
-                if f is not None:
-                    checkpoint.write_function(f, final_time)
-            checkpoint.close()
+            fabric_extras = [fabric.n1, fabric.n2, fabric.n3, 
+                           fabric.A_fabric, fabric.m_ratio, fabric.L_mag]
+            write_standard_checkpoint(
+                sim_cfg, remodeller,
+                include_sigma=True,
+                include_Qbar=True,
+                extra_fields=fabric_extras,
+            )
     
     return runner
 
@@ -265,12 +236,7 @@ def main() -> None:
         },
     )
     
-    # Clean output directory before new computation
-    if comm.rank == 0:
-        if sweep.base_output_dir.exists():
-            logger.info(f"Cleaning output directory: {sweep.base_output_dir}")
-            shutil.rmtree(sweep.base_output_dir)
-    comm.Barrier()
+    clean_output_dir(sweep.base_output_dir, comm, logger)
     
     # Create runner
     runner = create_fabric_runner(params, box)

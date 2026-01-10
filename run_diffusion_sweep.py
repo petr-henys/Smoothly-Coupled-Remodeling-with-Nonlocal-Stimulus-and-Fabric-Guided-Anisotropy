@@ -28,7 +28,6 @@ Post-processing:
 from __future__ import annotations
 
 import copy
-import shutil
 from pathlib import Path
 
 from mpi4py import MPI
@@ -46,11 +45,11 @@ from box import (
     BoxMeshBuilder,
     get_parabolic_pressure_case,
 )
-from simulation.checkpoint import CheckpointStorage
 from simulation.logger import get_logger
 from simulation.model import Remodeller
 from simulation.params import create_config, load_default_params
 from simulation.progress import SweepProgressReporter
+from sweep_utils import clean_output_dir, reset_reporter, write_standard_checkpoint
 
 
 def create_diffusion_runner(
@@ -91,13 +90,7 @@ def create_diffusion_runner(
         params["geometry"].fix_tag = BoxMeshBuilder.TAG_BOTTOM
         params["geometry"].load_tag = BoxMeshBuilder.TAG_TOP
         
-        total_time = params["time"].total_time
-        
-        # Update reporter with correct total_time for this run
-        if reporter is not None:
-            if reporter.progress is not None and reporter.main_task_id is not None:
-                reporter.progress.reset(reporter.main_task_id)
-                reporter.progress.update(reporter.main_task_id, total=total_time)
+        reset_reporter(reporter, params["time"].total_time)
         
         # Create mesh using default resolution from box params
         geometry = BoxGeometry(
@@ -128,25 +121,8 @@ def create_diffusion_runner(
         factory = BoxSolverFactory(sim_cfg)
         
         with Remodeller(sim_cfg, loader=loader, factory=factory) as remodeller:
-            # Run simulation with unified sweep reporter
             remodeller.simulate(reporter=reporter)
-            
-            # Write final checkpoint for analysis
-            checkpoint = CheckpointStorage(sim_cfg)
-            final_time = sim_cfg.time.total_time
-
-            # Mechanics: psi (cycle-weighted SED average over all loading cases)
-            psi = remodeller.driver.stimulus_field()
-            if psi is not None:
-                checkpoint.write_function(psi, final_time)
-
-            # Registry state fields (rho, S, L from density/stimulus/fabric solvers)
-            state_fields = remodeller.registry.state_fields
-            for name in ("rho", "S", "L"):
-                f = state_fields.get(name)
-                if f is not None:
-                    checkpoint.write_function(f, final_time)
-            checkpoint.close()
+            write_standard_checkpoint(sim_cfg, remodeller)
     
     return runner
 
@@ -217,12 +193,7 @@ def main() -> None:
         },
     )
     
-    # Clean output directory before new computation
-    if comm.rank == 0:
-        if sweep.base_output_dir.exists():
-            logger.info(f"Cleaning output directory: {sweep.base_output_dir}")
-            shutil.rmtree(sweep.base_output_dir)
-    comm.Barrier()
+    clean_output_dir(sweep.base_output_dir, comm, logger)
     
     # Create runner
     runner = create_diffusion_runner(params, box)

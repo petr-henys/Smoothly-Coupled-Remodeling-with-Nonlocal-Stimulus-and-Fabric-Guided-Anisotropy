@@ -130,6 +130,15 @@ SUBSOLVER_MARKERS = {
     "fab": FIELD_MARKERS["L"],
 }
 
+# General-purpose color palette for multi-line plots (conservation, etc.)
+COLOR_PALETTE = {
+    "primary": "#0173B2",    # Blue
+    "secondary": "#DE8F05",  # Orange
+    "tertiary": "#029E73",   # Green
+    "accent": "#CC78BC",     # Purple
+    "highlight": "#D55E00",  # Vermilion
+}
+
 # Timestep styling (performance/Anderson plots): grayscale for print.
 DT_COLORS = {
     6.25: "#000000",   # Black

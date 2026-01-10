@@ -1,10 +1,10 @@
-"""Plot weak-scaling results produced by `run_weak_scaling.py`.
+"""Plot scaling results produced by `run_weak_scaling.py`.
 
 Reads:
-  results/weak_scaling/weak_scaling.csv
+  results/scaling_stiff/scaling.csv
 
 Writes:
-  manuscript/images/weak_scaling.png
+  manuscript/images/strong_scaling.png
 """
 
 from __future__ import annotations
@@ -33,10 +33,10 @@ from analysis.plot_utils import (
 
 def _load_csv(csv_path: Path) -> pd.DataFrame:
     if not csv_path.exists():
-        raise FileNotFoundError(f"Missing weak-scaling CSV: {csv_path}")
+        raise FileNotFoundError(f"Missing scaling CSV: {csv_path}")
     df = pd.read_csv(csv_path)
     if df.empty:
-        raise ValueError(f"Weak-scaling CSV is empty: {csv_path}")
+        raise ValueError(f"Scaling CSV is empty: {csv_path}")
     return df
 
 
@@ -44,64 +44,73 @@ def main() -> None:
     apply_style()
 
     project_root = Path(__file__).resolve().parent.parent
-    csv_path = project_root / "results" / "weak_scaling" / "weak_scaling.csv"
+    csv_path = project_root / "results" / "scaling_stiff" / "scaling.csv"
     df = _load_csv(csv_path)
 
-    required = {"problem", "ranks", "t_solve_s"}
+    # Use 't_avg_step_s'
+    required = {"ranks", "t_avg_step_s"}
     missing = required - set(df.columns)
     if missing:
         raise ValueError(f"CSV missing columns: {sorted(missing)}")
 
-    # Aggregate repeats: median time per rank and problem.
+    # Aggregate repeats: median time per rank
     df["ranks"] = df["ranks"].astype(int)
     grouped = (
-        df.groupby(["problem", "ranks"], as_index=False)
-        .agg(t_solve_s=("t_solve_s", "median"))
-        .sort_values(["problem", "ranks"])
+        df.groupby("ranks", as_index=False)
+        .agg(t_solve_s=("t_avg_step_s", "median"))
+        .sort_values("ranks")
     )
 
-    problems = list(grouped["problem"].unique())
-    ncols = 2 if len(problems) > 1 else 1
-    fig, axes = plt.subplots(1, ncols, figsize=FIGSIZE_SINGLE_COLUMN if ncols == 1 else (7.5, 2.8))
-    axes = np.atleast_1d(axes)
+    ranks = grouped["ranks"].to_numpy(dtype=int)
+    times = grouped["t_solve_s"].to_numpy(dtype=float)
 
-    for ax, problem in zip(axes, problems, strict=False):
-        sub = grouped[grouped["problem"] == problem].sort_values("ranks")
-        x = sub["ranks"].to_numpy(dtype=int)
-        t = sub["t_solve_s"].to_numpy(dtype=float)
+    if ranks.size == 0:
+        print("No data found.")
+        return
 
-        if x.size == 0:
-            continue
+    # Base values (rank 1)
+    t1 = times[0]
+    r1 = ranks[0] # Should be 1, but handle generic base
+    
+    # Ideal time for strong scaling: T(N) = T(1) * (1/N)
+    ideal_times = t1 * (float(r1) / ranks)
+    
+    # Efficiency: E(N) = T(1) / (N * T(N))
+    efficiency = (t1 / (ranks / float(r1))) / times
 
-        # Normalize by the smallest rank count in the series (weak-scaling efficiency).
-        t0 = float(t[0])
-        eff = t0 / t
+    fig, ax = plt.subplots(figsize=FIGSIZE_SINGLE_COLUMN)
 
-        ax2 = ax.twinx()
-        ax.plot(x, t, marker="o", color=COLORS["blue"], label="Solve time")
-        ax2.plot(x, eff, marker="s", color=COLORS["orange"], linestyle="--", label="Efficiency")
+    # Left axis: Time
+    ax.loglog(ranks, times, marker="o", color=COLORS["blue"], label="Measured time", linewidth=1.5)
+    ax.loglog(ranks, ideal_times, linestyle="--", color="gray", label="Ideal strong scaling", linewidth=1.0)
+    
+    ax.set_xticks(ranks)
+    ax.get_xaxis().set_major_formatter(FuncFormatter(lambda val, _: f"{int(val)}"))
+    ax.minorticks_off()
 
-        ax.set_xscale("log", base=2)
-        ax.set_xticks(x)
-        ax.get_xaxis().set_major_formatter(FuncFormatter(lambda val, _: f"{int(val)}"))
+    setup_axis_style(
+        ax,
+        xlabel="MPI ranks",
+        ylabel="Wall time per step [s]",
+        title="Strong Scaling (Stiff Femur)",
+        loglog=True,
+    )
 
-        setup_axis_style(
-            ax,
-            xlabel="MPI ranks",
-            ylabel="Wall time per solve [s]",
-            title=f"Weak scaling ({problem})",
-            loglog=False,
-        )
-        ax2.set_ylabel("Weak-scaling efficiency")
-        ax2.set_ylim(0.0, 1.05)
+    # Right axis: Efficiency
+    ax2 = ax.twinx()
+    ax2.plot(ranks, efficiency, marker="s", color=COLORS["orange"], linestyle="-.", label="Efficiency")
+    ax2.set_ylabel("Parallel Efficiency")
+    ax2.set_ylim(0.0, 1.2)
+    ax2.axhline(1.0, color="gray", linestyle=":", linewidth=0.5)
 
-        # Unified legend (combine both axes).
-        h1, l1 = ax.get_legend_handles_labels()
-        h2, l2 = ax2.get_legend_handles_labels()
-        ax.legend(h1 + h2, l1 + l2, loc="upper left")
+    # Unified legend
+    h1, l1 = ax.get_legend_handles_labels()
+    h2, l2 = ax2.get_legend_handles_labels()
+    ax.legend(h1 + h2, l1 + l2, loc="center right", fontsize=8)
 
     fig.tight_layout()
-    save_manuscript_figure(fig, "weak_scaling", dpi=PUBLICATION_DPI)
+    save_manuscript_figure(fig, "strong_scaling", dpi=PUBLICATION_DPI)
+    print("Generated manuscript/images/strong_scaling.png")
 
 
 if __name__ == "__main__":
