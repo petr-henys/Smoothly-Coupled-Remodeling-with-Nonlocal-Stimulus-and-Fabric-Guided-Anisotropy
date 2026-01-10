@@ -22,9 +22,11 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter
 
 from analysis.plot_utils import (
-    FIGSIZE_SINGLE_COLUMN,
     PUBLICATION_DPI,
     COLORS,
+    PLOT_LINEWIDTH,
+    PLOT_MARKERSIZE,
+    LEGEND_FONTSIZE,
     apply_style,
     save_manuscript_figure,
     setup_axis_style,
@@ -78,11 +80,14 @@ def main() -> None:
     # Efficiency: E(N) = T(1) / (N * T(N))
     efficiency = (t1 / (ranks / float(r1))) / times
 
-    fig, ax = plt.subplots(figsize=FIGSIZE_SINGLE_COLUMN)
+    # Single standalone plot with dual y-axis
+    fig, ax = plt.subplots(figsize=(4.5, 3.5))
 
     # Left axis: Time
-    ax.loglog(ranks, times, marker="o", color=COLORS["blue"], label="Measured time", linewidth=1.5)
-    ax.loglog(ranks, ideal_times, linestyle="--", color="gray", label="Ideal strong scaling", linewidth=1.0)
+    ax.loglog(ranks, times, marker="o", color=COLORS["blue"], 
+              label="Measured time", linewidth=PLOT_LINEWIDTH, markersize=PLOT_MARKERSIZE)
+    ax.loglog(ranks, ideal_times, linestyle="--", color="gray", 
+              label="Ideal strong scaling", linewidth=PLOT_LINEWIDTH * 0.8)
     
     ax.set_xticks(ranks)
     ax.get_xaxis().set_major_formatter(FuncFormatter(lambda val, _: f"{int(val)}"))
@@ -96,21 +101,22 @@ def main() -> None:
         loglog=True,
     )
 
-    # Right axis: Efficiency
+    # Right axis: Efficiency - need to enable right spine for twinx
     ax2 = ax.twinx()
-    ax2.plot(ranks, efficiency, marker="s", color=COLORS["orange"], linestyle="-.", label="Efficiency")
+    ax2.spines['right'].set_visible(True)
+    ax2.plot(ranks, efficiency, marker="s", color=COLORS["orange"], linestyle="-.", 
+             label="Efficiency", linewidth=PLOT_LINEWIDTH, markersize=PLOT_MARKERSIZE)
     ax2.set_ylabel("Parallel Efficiency")
     ax2.set_ylim(0.0, 1.2)
     ax2.axhline(1.0, color="gray", linestyle=":", linewidth=0.5)
 
-    # Unified legend
+    # Unified legend with consistent styling
     h1, l1 = ax.get_legend_handles_labels()
     h2, l2 = ax2.get_legend_handles_labels()
-    ax.legend(h1 + h2, l1 + l2, loc="upper right")
+    ax.legend(h1 + h2, l1 + l2, loc="upper right", fontsize=LEGEND_FONTSIZE, frameon=False)
 
     fig.tight_layout()
     save_manuscript_figure(fig, "strong_scaling", dpi=PUBLICATION_DPI)
-    print("Generated manuscript/images/strong_scaling.png")
 
 
 if __name__ == "__main__":
