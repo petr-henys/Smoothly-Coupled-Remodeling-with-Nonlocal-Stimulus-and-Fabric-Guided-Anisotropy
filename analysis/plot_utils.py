@@ -74,7 +74,7 @@ def apply_style() -> None:
 
 # Figure size presets for CMAME (A4 paper).
 # Base: FULL_WIDTH (8.0") for 3 subplots per row → ~2.4" per subplot (with spacing)
-FIGSIZE_SINGLE_COLUMN = (3.5, 2.8)      # Single column width
+FIGSIZE_SINGLE_COLUMN = (2.75, 2.2)      # Single column width (approx 1/3 A4 width)
 FIGSIZE_DOUBLE_COLUMN = (8.0, 6.0)      # Double column width (larger for readability)
 FIGSIZE_FULL_WIDTH = (8.0, 6.0)         # Full A4 width (3 subplots per row)
 FIGSIZE_TWO_COLUMN = (5.5, 6.0)         # 2 subplots per row: 8.0 * (2/3) + padding for labels

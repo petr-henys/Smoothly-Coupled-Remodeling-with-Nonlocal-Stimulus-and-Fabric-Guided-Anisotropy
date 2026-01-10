@@ -106,7 +106,7 @@ def main() -> None:
     # Unified legend
     h1, l1 = ax.get_legend_handles_labels()
     h2, l2 = ax2.get_legend_handles_labels()
-    ax.legend(h1 + h2, l1 + l2, loc="center right", fontsize=8)
+    ax.legend(h1 + h2, l1 + l2, loc="upper right")
 
     fig.tight_layout()
     save_manuscript_figure(fig, "strong_scaling", dpi=PUBLICATION_DPI)
