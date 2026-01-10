@@ -27,7 +27,6 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import ants
 from mpi4py import MPI
 
 import matplotlib
@@ -41,12 +40,18 @@ project_root = Path(__file__).resolve().parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from morpho_mapper import idw
+from morpho_mapper import rescale_to_density
 from simulation.checkpoint import load_checkpoint_mesh, load_checkpoint_function
 from simulation.logger import get_logger
 from simulation.params import load_default_params
 
-from analysis.plot_utils import apply_style, PUBLICATION_DPI, save_manuscript_figure
+from analysis.plot_utils import (
+    apply_style,
+    PUBLICATION_DPI,
+    save_manuscript_figure,
+    PLOT_LINEWIDTH,
+    PLOT_MARKERSIZE,
+)
 
 
 # -----------------------------------------------------------------------------
@@ -56,17 +61,12 @@ from analysis.plot_utils import apply_style, PUBLICATION_DPI, save_manuscript_fi
 SWEEP_DIR = project_root / "results/psi_ref_ratio_sweep"
 SUMMARY_JSON = SWEEP_DIR / "sweep_summary.json"
 
-# CT population template used elsewhere in the project
-CT_IMAGE_PATH = project_root / "anatomy/raw/proximal_femur/template_new3.nii.gz"
+POP_STATS_CHECKPOINT = project_root / "results/ct_density/population_stats_checkpoint.bp"
 
 # Parameter file (used for density bounds and trab/cort transition thresholds)
 PARAMS_FILE = "stiff_params_femur.json"
 
-# IDW interpolation parameters (keep consistent with analysis/density_comparison_plot.py)
-IDW_THRESHOLD = 0.2
-IDW_POWER = 1
-IDW_K_NEIGHBORS = 16
-CT_SMOOTHING_SIGMA_MM = 1.5
+# Cohort stats are precomputed by morpho_mapper.py; no CT template used here.
 
 # CT-based compartment masks (using the same transition densities as the model)
 USE_CT_MASKS_FROM_PARAMS = True
@@ -81,6 +81,11 @@ class RunMetrics:
     mae_total: float
     corr_total: float
 
+    rmse_total_lo: float
+    rmse_total_hi: float
+    corr_total_lo: float
+    corr_total_hi: float
+
     rmse_trab: float
     rmse_cort: float
 
@@ -90,6 +95,8 @@ class RunMetrics:
     mean_model_cort: float
 
     contrast_ct: float
+    contrast_ct_lo: float
+    contrast_ct_hi: float
     contrast_model: float
     contrast_error: float
 
@@ -104,6 +111,10 @@ class RunMetrics:
             "rmse_total": self.rmse_total,
             "mae_total": self.mae_total,
             "corr_total": self.corr_total,
+            "rmse_total_lo": self.rmse_total_lo,
+            "rmse_total_hi": self.rmse_total_hi,
+            "corr_total_lo": self.corr_total_lo,
+            "corr_total_hi": self.corr_total_hi,
             "rmse_trab": self.rmse_trab,
             "rmse_cort": self.rmse_cort,
             "mean_ct_trab": self.mean_ct_trab,
@@ -111,6 +122,8 @@ class RunMetrics:
             "mean_model_trab": self.mean_model_trab,
             "mean_model_cort": self.mean_model_cort,
             "contrast_ct": self.contrast_ct,
+            "contrast_ct_lo": self.contrast_ct_lo,
+            "contrast_ct_hi": self.contrast_ct_hi,
             "contrast_model": self.contrast_model,
             "contrast_error": self.contrast_error,
             "n_total": self.n_total,
@@ -193,6 +206,39 @@ def _global_rmse_mae_corr(
     return rmse, mae, corr
 
 
+def _global_rmse_interval_band(
+    x_local: np.ndarray,
+    y_lo_local: np.ndarray,
+    y_hi_local: np.ndarray,
+    comm: MPI.Comm,
+) -> tuple[float, float]:
+    """RMSE envelope over pointwise interval reference [y_lo, y_hi]."""
+    if x_local.shape != y_lo_local.shape or x_local.shape != y_hi_local.shape:
+        raise ValueError("x_local, y_lo_local, y_hi_local must have the same shape")
+
+    lo = np.minimum(y_lo_local, y_hi_local)
+    hi = np.maximum(y_lo_local, y_hi_local)
+
+    inside = (x_local >= lo) & (x_local <= hi)
+    d_lo = np.abs(x_local - lo)
+    d_hi = np.abs(x_local - hi)
+
+    d_min = np.where(inside, 0.0, np.minimum(d_lo, d_hi))
+    d_max = np.maximum(d_lo, d_hi)
+
+    sse_min_local = float(np.dot(d_min, d_min))
+    sse_max_local = float(np.dot(d_max, d_max))
+    n_local = int(x_local.size)
+
+    sse_min = comm.allreduce(sse_min_local, op=MPI.SUM)
+    sse_max = comm.allreduce(sse_max_local, op=MPI.SUM)
+    n = comm.allreduce(n_local, op=MPI.SUM)
+    if n <= 0:
+        return float("nan"), float("nan")
+
+    return float(np.sqrt(sse_min / n)), float(np.sqrt(sse_max / n))
+
+
 def _load_ct_density(
     mesh,
     rho_min: float,
@@ -200,43 +246,38 @@ def _load_ct_density(
     comm: MPI.Comm,
     logger,
 ) -> Any:
-    if comm.rank == 0:
-        logger.info(f"Loading CT template: {CT_IMAGE_PATH}")
-    image = ants.image_read(str(CT_IMAGE_PATH))
-    if CT_SMOOTHING_SIGMA_MM > 0:
-        if comm.rank == 0:
-            logger.info(f"CT smoothing sigma={CT_SMOOTHING_SIGMA_MM} mm")
-        image = ants.smooth_image(image, CT_SMOOTHING_SIGMA_MM)
-
-    ct = idw(
-        image,
-        mesh,
-        threshold=IDW_THRESHOLD,
-        power=IDW_POWER,
-        k_neighbors=IDW_K_NEIGHBORS,
-        method="nodes",
-        verbose=(comm.rank == 0),
-    )
-    ct.name = "rho_ct"
-
-    # Normalize to [rho_min, rho_max] globally (consistent across MPI ranks)
-    vals = ct.x.array
-    local_min = float(vals.min()) if vals.size else float("inf")
-    local_max = float(vals.max()) if vals.size else float("-inf")
-    global_min = comm.allreduce(local_min, op=MPI.MIN)
-    global_max = comm.allreduce(local_max, op=MPI.MAX)
+    if not POP_STATS_CHECKPOINT.exists():
+        raise FileNotFoundError(
+            f"Population stats checkpoint not found: {POP_STATS_CHECKPOINT}. "
+            "Run morpho_mapper.py to generate cohort stats first."
+        )
 
     if comm.rank == 0:
-        logger.info(f"CT raw range: [{global_min:.4f}, {global_max:.4f}]")
-        logger.info(f"Rescaling CT to [{rho_min:.3f}, {rho_max:.3f}] g/cm^3")
+        logger.info(f"Loading cohort intensity stats from {POP_STATS_CHECKPOINT}")
 
-    if global_max - global_min > 1e-12:
-        normalized = (vals - global_min) / (global_max - global_min)
-        ct.x.array[:] = rho_min + normalized * (rho_max - rho_min)
-    else:
-        ct.x.array[:] = 0.5 * (rho_min + rho_max)
-    ct.x.scatter_forward()
-    return ct
+    from dolfinx import fem
+
+    V = fem.functionspace(mesh, ("Lagrange", 1))
+    I_mean = load_checkpoint_function(POP_STATS_CHECKPOINT, "I_mean", V, time=0.0)
+    I_lo = load_checkpoint_function(POP_STATS_CHECKPOINT, "I_mean_minus_2sigma", V, time=0.0)
+    I_hi = load_checkpoint_function(POP_STATS_CHECKPOINT, "I_mean_plus_2sigma", V, time=0.0)
+
+    n_owned = _owned_dofs(I_mean)
+    i_local = I_mean.x.array[:n_owned]
+    i_min = float(comm.allreduce(float(i_local.min()), op=MPI.MIN))
+    i_max = float(comm.allreduce(float(i_local.max()), op=MPI.MAX))
+
+    rho_ct_mean = rescale_to_density(I_mean, rho_min=rho_min, rho_max=rho_max, intensity_min=i_min, intensity_max=i_max)
+    rho_ct_lo = rescale_to_density(I_lo, rho_min=rho_min, rho_max=rho_max, intensity_min=i_min, intensity_max=i_max)
+    rho_ct_hi = rescale_to_density(I_hi, rho_min=rho_min, rho_max=rho_max, intensity_min=i_min, intensity_max=i_max)
+
+    rho_ct_mean.name = "rho_ct_mean"
+    rho_ct_lo.name = "rho_ct_mean_minus_2sigma"
+    rho_ct_hi.name = "rho_ct_mean_plus_2sigma"
+    rho_ct_mean.x.scatter_forward()
+    rho_ct_lo.x.scatter_forward()
+    rho_ct_hi.x.scatter_forward()
+    return rho_ct_mean, rho_ct_lo, rho_ct_hi
 
 
 def _load_sweep_runs(comm: MPI.Comm, logger) -> list[dict[str, Any]]:
@@ -252,103 +293,89 @@ def _load_sweep_runs(comm: MPI.Comm, logger) -> list[dict[str, Any]]:
     return comm.bcast(runs_sorted, root=0)
 
 
-def _plot_metrics(metrics: list[RunMetrics], out_dir: Path) -> None:
+def _plot_combined_analysis(
+    metrics: list[RunMetrics],
+    mean_rho_by_ratio: dict[float, tuple[np.ndarray, np.ndarray]],
+    ct_mean_rho: float,
+    ct_mean_rho_lo: float,
+    ct_mean_rho_hi: float,
+    out_dir: Path,
+) -> None:
     apply_style()
 
     ratios = np.array([m.psi_ref_ratio for m in metrics], dtype=float)
     rmse_total = np.array([m.rmse_total for m in metrics], dtype=float)
+    rmse_total_lo = np.array([m.rmse_total_lo for m in metrics], dtype=float)
+    rmse_total_hi = np.array([m.rmse_total_hi for m in metrics], dtype=float)
     rmse_trab = np.array([m.rmse_trab for m in metrics], dtype=float)
     rmse_cort = np.array([m.rmse_cort for m in metrics], dtype=float)
 
     contrast_model = np.array([m.contrast_model for m in metrics], dtype=float)
     contrast_ct = np.array([m.contrast_ct for m in metrics], dtype=float)
+    contrast_ct_lo = np.array([m.contrast_ct_lo for m in metrics], dtype=float)
+    contrast_ct_hi = np.array([m.contrast_ct_hi for m in metrics], dtype=float)
 
-    fig, axes = plt.subplots(1, 2, figsize=(8.0, 3.0))
+    # Use 2 subplots layout
+    fig = plt.figure(figsize=(7.5, 3.2))
+    gs = fig.add_gridspec(1, 2, wspace=0.3)
 
-    ax = axes[0]
-    ax.plot(ratios, rmse_total, marker="o", label="RMSE (total)")
-    ax.plot(ratios, rmse_trab, marker="s", label="RMSE (trab mask)")
-    ax.plot(ratios, rmse_cort, marker="^", label="RMSE (cort mask)")
-    ax.set_xlabel(r"$r=\psi_{\mathrm{ref}}^{\mathrm{cort}}/\psi_{\mathrm{ref}}^{\mathrm{trab}}$")
-    ax.set_ylabel(r"RMSE in $\rho$ [g/cm$^3$]")
-    ax.set_title("Spatial agreement vs CT")
-    ax.legend()
+    # 1. RMSE (Spatial Agreement)
+    ax1 = fig.add_subplot(gs[0, 0])
+    ax1.plot(ratios, rmse_total, marker="o", label="RMSE (total)", linewidth=PLOT_LINEWIDTH, markersize=PLOT_MARKERSIZE)
+    if rmse_total_lo.size and rmse_total_hi.size:
+        lo = np.minimum(rmse_total_lo, rmse_total_hi)
+        hi = np.maximum(rmse_total_lo, rmse_total_hi)
+        ax1.fill_between(ratios, lo, hi, color="C0", alpha=0.15, label=r"RMSE vs CT $\pm 2\sigma$")
+    ax1.plot(ratios, rmse_trab, marker="s", label="RMSE (trab mask)", linewidth=PLOT_LINEWIDTH, markersize=PLOT_MARKERSIZE)
+    ax1.plot(ratios, rmse_cort, marker="^", label="RMSE (cort mask)", linewidth=PLOT_LINEWIDTH, markersize=PLOT_MARKERSIZE)
+    ax1.set_xlabel(r"$r=\psi_{\mathrm{ref}}^{\mathrm{cort}}/\psi_{\mathrm{ref}}^{\mathrm{trab}}$")
+    ax1.set_ylabel(r"RMSE in $\rho$ [g/cm$^3$]")
+    ax1.set_title("Spatial agreement")
+    ax1.legend()
 
-    ax = axes[1]
-    ax.plot(ratios, contrast_model, marker="o", label=r"Model $\bar\rho_{\mathrm{cort}}-\bar\rho_{\mathrm{trab}}$")
-    ax.axhline(float(contrast_ct[0]) if contrast_ct.size else 0.0, color="black", linestyle="--",
-               label=r"CT $\bar\rho_{\mathrm{cort}}-\bar\rho_{\mathrm{trab}}$")
-    ax.set_xlabel(r"$r=\psi_{\mathrm{ref}}^{\mathrm{cort}}/\psi_{\mathrm{ref}}^{\mathrm{trab}}$")
-    ax.set_ylabel(r"Contrast [g/cm$^3$]")
-    ax.set_title("Cortical–trabecular contrast")
-    ax.legend()
+    # 2. Timecourse (Global Density Evolution)
+    ax3 = fig.add_subplot(gs[0, 1])
+    ratios_sorted = sorted(mean_rho_by_ratio.keys())
+
+    colors = []
+    sm = None
+    if ratios_sorted:
+        from matplotlib.cm import ScalarMappable
+        from matplotlib.colors import Normalize
+
+        vmin = float(min(ratios_sorted))
+        vmax = float(max(ratios_sorted))
+        norm = Normalize(vmin=vmin, vmax=vmax)
+        cmap = plt.cm.viridis
+        sm = ScalarMappable(norm=norm, cmap=cmap)
+        colors = [sm.to_rgba(float(r)) for r in ratios_sorted]
+
+    if colors:
+        for c, r in zip(colors, ratios_sorted):
+            t, rho_bar = mean_rho_by_ratio[r]
+            ax3.plot(t, rho_bar, color=c, linewidth=PLOT_LINEWIDTH)
+    else:
+        # Fallback if no ratios (should not happen)
+        for r in ratios_sorted:
+            t, rho_bar = mean_rho_by_ratio[r]
+            ax3.plot(t, rho_bar, linewidth=PLOT_LINEWIDTH, label=f"r={r:g}")
+
+    ax3.axhspan(ct_mean_rho_lo, ct_mean_rho_hi, color="black", alpha=0.12, label=r"CT $\pm 2\sigma$")
+    ax3.axhline(ct_mean_rho, color="black", linestyle="--", linewidth=PLOT_LINEWIDTH, label="CT mean")
+    ax3.set_xlabel("Time [day]")
+    ax3.set_ylabel(r"Mean density $\bar\rho$ [g/cm$^3$]")
+    ax3.set_title("Global density evolution")
+    
+    if sm:
+        cbar = fig.colorbar(sm, ax=ax3, aspect=20, pad=0.05)
+        cbar.set_label(r"$r$")
+    
+    ax3.legend(loc="best", fontsize=7)
 
     plt.tight_layout()
-    save_manuscript_figure(fig, "psi_ref_ratio_diagnostic", dpi=PUBLICATION_DPI, close=False)
+    save_manuscript_figure(fig, "psi_ref_ratio_analysis", dpi=PUBLICATION_DPI, close=False)
     out_dir.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_dir / "psi_ref_ratio_diagnostic.png", dpi=PUBLICATION_DPI, bbox_inches="tight", pad_inches=0.05)
-    plt.close(fig)
-
-
-def _plot_histograms(
-    bin_edges: np.ndarray,
-    ct_counts: np.ndarray,
-    model_counts_by_ratio: dict[float, np.ndarray],
-    out_dir: Path,
-    ratios_to_plot: list[float],
-) -> None:
-    apply_style()
-    fig, ax = plt.subplots(1, 1, figsize=(4.5, 3.0))
-
-    bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
-    bin_width = float(bin_edges[1] - bin_edges[0]) if bin_edges.size > 1 else 1.0
-
-    ct_density = ct_counts / max(ct_counts.sum() * bin_width, 1e-12)
-    ax.plot(bin_centers, ct_density, color="black", linewidth=1.2, label="CT")
-
-    for r in ratios_to_plot:
-        counts = model_counts_by_ratio.get(r)
-        if counts is None:
-            continue
-        dens = counts / max(counts.sum() * bin_width, 1e-12)
-        ax.plot(bin_centers, dens, linewidth=1.0, label=f"model r={r:g}")
-
-    ax.set_xlabel(r"Density $\rho$ [g/cm$^3$]")
-    ax.set_ylabel("Probability density")
-    ax.set_title("Density distributions (final state)")
-    ax.legend()
-    plt.tight_layout()
-
-    save_manuscript_figure(fig, "psi_ref_ratio_histograms", dpi=PUBLICATION_DPI, close=False)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_dir / "psi_ref_ratio_histograms.png", dpi=PUBLICATION_DPI, bbox_inches="tight", pad_inches=0.05)
-    plt.close(fig)
-
-
-def _plot_timecourses(
-    mean_rho_by_ratio: dict[float, tuple[np.ndarray, np.ndarray]],
-    ct_mean_rho: float,
-    out_dir: Path,
-) -> None:
-    """Plot domain-mean density vs time for each ratio (rank 0)."""
-    apply_style()
-    fig, ax = plt.subplots(1, 1, figsize=(4.8, 3.0))
-
-    ratios = sorted(mean_rho_by_ratio.keys())
-    for r in ratios:
-        t, rho_bar = mean_rho_by_ratio[r]
-        ax.plot(t, rho_bar, linewidth=1.0, label=f"r={r:g}")
-
-    ax.axhline(ct_mean_rho, color="black", linestyle="--", linewidth=1.0, label="CT mean")
-    ax.set_xlabel("Time [day]")
-    ax.set_ylabel(r"Mean density $\bar\rho$ [g/cm$^3$]")
-    ax.set_title("Global density evolution")
-    ax.legend(ncol=2)
-    plt.tight_layout()
-
-    save_manuscript_figure(fig, "psi_ref_ratio_timecourse", dpi=PUBLICATION_DPI, close=False)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_dir / "psi_ref_ratio_timecourse.png", dpi=PUBLICATION_DPI, bbox_inches="tight", pad_inches=0.05)
+    fig.savefig(out_dir / "psi_ref_ratio_analysis.png", dpi=PUBLICATION_DPI, bbox_inches="tight", pad_inches=0.05)
     plt.close(fig)
 
 
@@ -386,11 +413,13 @@ def main() -> None:
         if comm.rank == 0:
             raise RuntimeError(f"Failed to create CG1 space: {e}") from e
 
-    # Load CT onto mesh once
-    ct_func = _load_ct_density(mesh, rho_min=rho_min, rho_max=rho_max, comm=comm, logger=logger)
+    # Load cohort mean density (and mean±2σ bounds) once
+    ct_func, ct_lo_func, ct_hi_func = _load_ct_density(mesh, rho_min=rho_min, rho_max=rho_max, comm=comm, logger=logger)
 
     # CT domain-mean density (volume-weighted), used for time-course comparison
     ct_mean_rho_vol = float("nan")
+    ct_mean_rho_vol_lo = float("nan")
+    ct_mean_rho_vol_hi = float("nan")
     volume_mm3 = float("nan")
     try:
         import ufl
@@ -402,13 +431,21 @@ def main() -> None:
         volume_mm3 = vol
         ct_int = fem.assemble_scalar(fem.form(ct_func * dx))
         ct_int = float(comm.allreduce(ct_int, op=MPI.SUM))
+        ct_int_lo = fem.assemble_scalar(fem.form(ct_lo_func * dx))
+        ct_int_lo = float(comm.allreduce(ct_int_lo, op=MPI.SUM))
+        ct_int_hi = fem.assemble_scalar(fem.form(ct_hi_func * dx))
+        ct_int_hi = float(comm.allreduce(ct_int_hi, op=MPI.SUM))
         ct_mean_rho_vol = float(ct_int / vol) if vol > 0 else float("nan")
+        ct_mean_rho_vol_lo = float(ct_int_lo / vol) if vol > 0 else float("nan")
+        ct_mean_rho_vol_hi = float(ct_int_hi / vol) if vol > 0 else float("nan")
     except Exception as e:
         if comm.rank == 0:
             logger.warning(f"Failed to compute CT volume-mean density: {e}")
 
     n_owned = _owned_dofs(ct_func)
     ct_vals_local = ct_func.x.array[:n_owned].copy()
+    ct_vals_lo_local = ct_lo_func.x.array[:n_owned].copy()
+    ct_vals_hi_local = ct_hi_func.x.array[:n_owned].copy()
 
     # CT-based compartment masks (fixed across all runs)
     if USE_CT_MASKS_FROM_PARAMS:
@@ -431,16 +468,16 @@ def main() -> None:
     mean_ct_cort = _global_mean(ct_vals_local[cort_mask_local], comm) if n_cort else float("nan")
     contrast_ct = mean_ct_cort - mean_ct_trab
 
+    mean_ct_trab_lo = _global_mean(ct_vals_lo_local[trab_mask_local], comm) if n_trab else float("nan")
+    mean_ct_trab_hi = _global_mean(ct_vals_hi_local[trab_mask_local], comm) if n_trab else float("nan")
+    mean_ct_cort_lo = _global_mean(ct_vals_lo_local[cort_mask_local], comm) if n_cort else float("nan")
+    mean_ct_cort_hi = _global_mean(ct_vals_hi_local[cort_mask_local], comm) if n_cort else float("nan")
+    contrast_ct_lo = mean_ct_cort_lo - mean_ct_trab_lo
+    contrast_ct_hi = mean_ct_cort_hi - mean_ct_trab_hi
+
     # Compute metrics per run
     metrics: list[RunMetrics] = []
-    model_counts_by_ratio: dict[float, np.ndarray] = {}
     mean_rho_time_by_ratio: dict[float, tuple[np.ndarray, np.ndarray]] = {}
-
-    # Histogram bins (global fixed range)
-    bin_edges = np.linspace(rho_min, rho_max, 61)
-    ct_counts_local, _ = np.histogram(ct_vals_local, bins=bin_edges)
-    ct_counts = np.zeros_like(ct_counts_local)
-    comm.Allreduce(ct_counts_local, ct_counts, op=MPI.SUM)
 
     for run in runs:
         ratio = float(run["psi_ref_ratio"])
@@ -456,6 +493,14 @@ def main() -> None:
         rho_vals_local = rho.x.array[:n_owned].copy()
 
         rmse_total, mae_total, corr_total = _global_rmse_mae_corr(rho_vals_local, ct_vals_local, comm)
+        rmse_band_lo, rmse_band_hi = _global_rmse_interval_band(
+            rho_vals_local, ct_vals_lo_local, ct_vals_hi_local, comm
+        )
+
+        _, _, corr_lo = _global_rmse_mae_corr(rho_vals_local, ct_vals_lo_local, comm)
+        _, _, corr_hi = _global_rmse_mae_corr(rho_vals_local, ct_vals_hi_local, comm)
+        corr_band_lo = float(min(corr_lo, corr_hi))
+        corr_band_hi = float(max(corr_lo, corr_hi))
 
         rmse_trab = (
             _global_rmse_mae_corr(rho_vals_local[trab_mask_local], ct_vals_local[trab_mask_local], comm)[0]
@@ -479,6 +524,10 @@ def main() -> None:
                 rmse_total=rmse_total,
                 mae_total=mae_total,
                 corr_total=corr_total,
+                rmse_total_lo=rmse_band_lo,
+                rmse_total_hi=rmse_band_hi,
+                corr_total_lo=corr_band_lo,
+                corr_total_hi=corr_band_hi,
                 rmse_trab=rmse_trab,
                 rmse_cort=rmse_cort,
                 mean_ct_trab=mean_ct_trab,
@@ -486,6 +535,8 @@ def main() -> None:
                 mean_model_trab=mean_model_trab,
                 mean_model_cort=mean_model_cort,
                 contrast_ct=contrast_ct,
+                contrast_ct_lo=contrast_ct_lo,
+                contrast_ct_hi=contrast_ct_hi,
                 contrast_model=contrast_model,
                 contrast_error=float(contrast_model - contrast_ct),
                 n_total=n_total,
@@ -493,12 +544,6 @@ def main() -> None:
                 n_cort=n_cort,
             )
         )
-
-        # Global histogram counts for this ratio (for rank-0 plotting)
-        model_counts_local, _ = np.histogram(rho_vals_local, bins=bin_edges)
-        model_counts = np.zeros_like(model_counts_local)
-        comm.Allreduce(model_counts_local, model_counts, op=MPI.SUM)
-        model_counts_by_ratio[ratio] = model_counts
 
         # Time course (rank 0 only): mean density from steps.csv (volume-weighted)
         if comm.rank == 0:
@@ -552,26 +597,15 @@ def main() -> None:
         logger.info(f"Wrote metrics: {metrics_csv}")
 
         # Plots (rank 0)
-        _plot_metrics(metrics, out_dir=SWEEP_DIR)
-
-        # Histogram plot: CT + r=1 + best-RMSE
-        ratios_available = [m.psi_ref_ratio for m in metrics]
-        ratios_to_plot: list[float] = []
-        if 1.0 in ratios_available:
-            ratios_to_plot.append(1.0)
-        best = min(metrics, key=lambda m: m.rmse_total)
-        if best.psi_ref_ratio not in ratios_to_plot:
-            ratios_to_plot.append(best.psi_ref_ratio)
-        _plot_histograms(
-            bin_edges=bin_edges,
-            ct_counts=ct_counts,
-            model_counts_by_ratio=model_counts_by_ratio,
-            out_dir=SWEEP_DIR,
-            ratios_to_plot=ratios_to_plot,
-        )
-
         if mean_rho_time_by_ratio:
-            _plot_timecourses(mean_rho_time_by_ratio, ct_mean_rho=ct_mean_rho_vol, out_dir=SWEEP_DIR)
+            _plot_combined_analysis(
+                metrics=metrics,
+                mean_rho_by_ratio=mean_rho_time_by_ratio,
+                ct_mean_rho=ct_mean_rho_vol,
+                ct_mean_rho_lo=ct_mean_rho_vol_lo,
+                ct_mean_rho_hi=ct_mean_rho_vol_hi,
+                out_dir=SWEEP_DIR,
+            )
 
     comm.Barrier()
 

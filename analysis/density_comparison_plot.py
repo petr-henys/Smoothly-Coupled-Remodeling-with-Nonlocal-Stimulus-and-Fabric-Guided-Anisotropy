@@ -11,7 +11,6 @@ import sys
 import json
 from pathlib import Path
 import numpy as np
-import ants
 from mpi4py import MPI
 import matplotlib
 matplotlib.use('Agg')
@@ -25,7 +24,7 @@ project_root = Path(__file__).resolve().parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from morpho_mapper import idw
+from morpho_mapper import rescale_to_density
 from simulation.checkpoint import load_checkpoint_mesh, load_checkpoint_function
 from simulation.logger import get_logger
 from simulation.params import load_default_params
@@ -33,14 +32,10 @@ from simulation.params import load_default_params
 # Configuration
 OUTPUT_DIR = project_root / "results/density_comparison"
 CHECKPOINT_PATH = OUTPUT_DIR / "checkpoint.bp"
-CT_IMAGE_PATH = project_root / "anatomy/raw/proximal_femur/template_new3.nii.gz"
 PARAMS_FILE = "stiff_params_femur.json"
 
-# IDW interpolation parameters
-IDW_THRESHOLD = 0.2
-IDW_POWER = 1
-IDW_K_NEIGHBORS = 16
-CT_SMOOTHING_SIGMA = 1.5  # Gaussian smoothing sigma in mm (0 = disabled)
+# Cohort intensity statistics checkpoint (written by morpho_mapper.py)
+POP_STATS_CHECKPOINT = project_root / "results/ct_density/population_stats_checkpoint.bp"
 
 
 def load_from_checkpoint(
@@ -102,77 +97,59 @@ def load_from_checkpoint(
     return rho, mesh, rho_min, rho_max
 
 
-def load_ct_density(
+def load_population_density_band(
     mesh: mesh.Mesh,
     rho_min: float,
     rho_max: float,
-    image_path: str | Path,
-    sigma: float = CT_SMOOTHING_SIGMA,
+    checkpoint_path: Path = POP_STATS_CHECKPOINT,
     verbose: bool = True,
-) -> fem.Function:
-    """Load and interpolate CT density onto mesh, normalized to [rho_min, rho_max]."""
+) -> tuple[fem.Function, fem.Function, fem.Function]:
+    """Load cohort mean intensity (I_mean) and mean±2σ bounds, rescaled to density."""
     comm = mesh.comm
     logger = get_logger(comm, name="DensityAnalysis")
-    
-    if comm.rank == 0 and verbose:
-        logger.info(f"Loading CT image: {image_path}")
-        logger.info(f"Normalizing to rho_min={rho_min:.4f}, rho_max={rho_max:.4f}")
-    
-    # Load CT image
-    image = ants.image_read(str(image_path))
 
-    # Apply Gaussian smoothing if requested
-    if sigma > 0:
-        if comm.rank == 0 and verbose:
-            logger.info(f"Smoothing CT image with sigma={sigma} mm")
-        image = ants.smooth_image(image, sigma)
-    
-    # Interpolate onto mesh using IDW (CG1 for comparison with model)
-    ct_func = idw(
-        image, mesh,
-        threshold=IDW_THRESHOLD,
-        power=IDW_POWER,
-        k_neighbors=IDW_K_NEIGHBORS,
-        method='nodes',  # CG1 space
-        verbose=verbose,
-    )
-    ct_func.name = "rho_ct"
-    
-    # Normalize CT values to [rho_min, rho_max] from config
-    local_vals = ct_func.x.array.copy()
-    
-    # Global min/max for consistent normalization across MPI ranks
-    local_min = local_vals.min() if local_vals.size > 0 else np.inf
-    local_max = local_vals.max() if local_vals.size > 0 else -np.inf
-    
-    global_min = comm.allreduce(local_min, op=MPI.MIN)
-    global_max = comm.allreduce(local_max, op=MPI.MAX)
-    
+    if not checkpoint_path.exists():
+        raise FileNotFoundError(
+            f"Population stats checkpoint not found: {checkpoint_path}. "
+            "Run morpho_mapper.py to generate cohort stats first."
+        )
+
+    cell_name = mesh.topology.cell_name()
+    element = basix.ufl.element("Lagrange", cell_name, 1)
+    Q = fem.functionspace(mesh, element)
+
     if comm.rank == 0 and verbose:
-        logger.info(f"CT raw range: [{global_min:.4f}, {global_max:.4f}]")
-    
-    # Linear scaling from [global_min, global_max] to [rho_min, rho_max]
-    if global_max - global_min > 1e-10:
-        normalized = (local_vals - global_min) / (global_max - global_min)
-        ct_func.x.array[:] = rho_min + normalized * (rho_max - rho_min)
-    else:
-        # Constant CT image - use midpoint
-        ct_func.x.array[:] = (rho_min + rho_max) / 2
-    
-    ct_func.x.scatter_forward()
-    
-    if comm.rank == 0 and verbose:
-        # Verify actual range after normalization
-        actual_min = comm.allreduce(ct_func.x.array.min(), op=MPI.MIN)
-        actual_max = comm.allreduce(ct_func.x.array.max(), op=MPI.MAX)
-        logger.info(f"CT normalized range: [{actual_min:.4f}, {actual_max:.4f}]")
-    
-    return ct_func
+        logger.info(f"Loading cohort intensity stats from {checkpoint_path}")
+
+    I_mean = load_checkpoint_function(checkpoint_path, "I_mean", Q, time=0.0)
+    I_lo = load_checkpoint_function(checkpoint_path, "I_mean_minus_2sigma", Q, time=0.0)
+    I_hi = load_checkpoint_function(checkpoint_path, "I_mean_plus_2sigma", Q, time=0.0)
+
+    dofmap = Q.dofmap
+    n_owned = dofmap.index_map.size_local * dofmap.index_map_bs
+    i_local = I_mean.x.array[:n_owned]
+    i_min = float(comm.allreduce(float(i_local.min()), op=MPI.MIN))
+    i_max = float(comm.allreduce(float(i_local.max()), op=MPI.MAX))
+
+    rho_ct_mean = rescale_to_density(I_mean, rho_min=rho_min, rho_max=rho_max, intensity_min=i_min, intensity_max=i_max)
+    rho_ct_lo = rescale_to_density(I_lo, rho_min=rho_min, rho_max=rho_max, intensity_min=i_min, intensity_max=i_max)
+    rho_ct_hi = rescale_to_density(I_hi, rho_min=rho_min, rho_max=rho_max, intensity_min=i_min, intensity_max=i_max)
+
+    rho_ct_mean.name = "rho_ct_mean"
+    rho_ct_lo.name = "rho_ct_mean_minus_2sigma"
+    rho_ct_hi.name = "rho_ct_mean_plus_2sigma"
+    rho_ct_mean.x.scatter_forward()
+    rho_ct_lo.x.scatter_forward()
+    rho_ct_hi.x.scatter_forward()
+
+    return rho_ct_mean, rho_ct_lo, rho_ct_hi
 
 
 def compute_histogram_data(
     model_rho: fem.Function,
     ct_rho: fem.Function,
+    ct_rho_lo: fem.Function | None = None,
+    ct_rho_hi: fem.Function | None = None,
     n_bins: int = 50,
     rho_range: tuple[float, float] | None = None,
 ) -> dict:
@@ -185,6 +162,8 @@ def compute_histogram_data(
     
     model_vals = model_rho.x.array[:n_owned].copy()
     ct_vals = ct_rho.x.array[:n_owned].copy()
+    ct_vals_lo = ct_rho_lo.x.array[:n_owned].copy() if ct_rho_lo is not None else None
+    ct_vals_hi = ct_rho_hi.x.array[:n_owned].copy() if ct_rho_hi is not None else None
     
     # Determine histogram range
     if rho_range is None:
@@ -200,31 +179,48 @@ def compute_histogram_data(
     
     model_hist, _ = np.histogram(model_vals, bins=bin_edges)
     ct_hist, _ = np.histogram(ct_vals, bins=bin_edges)
+    ct_lo_hist = None
+    ct_hi_hist = None
+    if ct_vals_lo is not None and ct_vals_hi is not None:
+        ct_lo_hist, _ = np.histogram(ct_vals_lo, bins=bin_edges)
+        ct_hi_hist, _ = np.histogram(ct_vals_hi, bins=bin_edges)
     
     # Sum histograms across all ranks
     global_model_hist = np.zeros_like(model_hist)
     global_ct_hist = np.zeros_like(ct_hist)
+    global_ct_lo_hist = np.zeros_like(ct_hist) if ct_lo_hist is not None else None
+    global_ct_hi_hist = np.zeros_like(ct_hist) if ct_hi_hist is not None else None
     
     comm.Allreduce(model_hist, global_model_hist, op=MPI.SUM)
     comm.Allreduce(ct_hist, global_ct_hist, op=MPI.SUM)
+    if ct_lo_hist is not None and global_ct_lo_hist is not None:
+        comm.Allreduce(ct_lo_hist, global_ct_lo_hist, op=MPI.SUM)
+    if ct_hi_hist is not None and global_ct_hi_hist is not None:
+        comm.Allreduce(ct_hi_hist, global_ct_hi_hist, op=MPI.SUM)
     
     # Compute statistics
     local_model_sum = model_vals.sum()
     local_model_sq = (model_vals ** 2).sum()
     local_ct_sum = ct_vals.sum()
     local_ct_sq = (ct_vals ** 2).sum()
+    local_ct_lo_sum = float(ct_vals_lo.sum()) if ct_vals_lo is not None else 0.0
+    local_ct_hi_sum = float(ct_vals_hi.sum()) if ct_vals_hi is not None else 0.0
     local_n = len(model_vals)
     
     global_model_sum = comm.allreduce(local_model_sum, op=MPI.SUM)
     global_model_sq = comm.allreduce(local_model_sq, op=MPI.SUM)
     global_ct_sum = comm.allreduce(local_ct_sum, op=MPI.SUM)
     global_ct_sq = comm.allreduce(local_ct_sq, op=MPI.SUM)
+    global_ct_lo_sum = comm.allreduce(local_ct_lo_sum, op=MPI.SUM)
+    global_ct_hi_sum = comm.allreduce(local_ct_hi_sum, op=MPI.SUM)
     global_n = comm.allreduce(local_n, op=MPI.SUM)
     
     model_mean = global_model_sum / global_n if global_n > 0 else 0.0
     model_std = np.sqrt(global_model_sq / global_n - model_mean ** 2) if global_n > 0 else 0.0
     ct_mean = global_ct_sum / global_n if global_n > 0 else 0.0
     ct_std = np.sqrt(global_ct_sq / global_n - ct_mean ** 2) if global_n > 0 else 0.0
+    ct_mean_lo = global_ct_lo_sum / global_n if (global_n > 0 and ct_vals_lo is not None) else float("nan")
+    ct_mean_hi = global_ct_hi_sum / global_n if (global_n > 0 and ct_vals_hi is not None) else float("nan")
     
     # Residuum statistics
     residuum = model_vals - ct_vals
@@ -245,10 +241,14 @@ def compute_histogram_data(
         "bin_centers": ((bin_edges[:-1] + bin_edges[1:]) / 2).tolist(),
         "model_hist": global_model_hist.tolist(),
         "ct_hist": global_ct_hist.tolist(),
+        "ct_lo_hist": global_ct_lo_hist.tolist() if global_ct_lo_hist is not None else None,
+        "ct_hi_hist": global_ct_hi_hist.tolist() if global_ct_hi_hist is not None else None,
         "model_mean": float(model_mean),
         "model_std": float(model_std),
         "ct_mean": float(ct_mean),
         "ct_std": float(ct_std),
+        "ct_mean_lo": float(ct_mean_lo) if np.isfinite(ct_mean_lo) else None,
+        "ct_mean_hi": float(ct_mean_hi) if np.isfinite(ct_mean_hi) else None,
         "residuum_mean": float(res_mean),
         "residuum_rmse": float(res_rmse),
         "residuum_mae": float(res_mae),
@@ -265,17 +265,28 @@ def plot_histograms(
     bin_centers = np.array(hist_data["bin_centers"])
     model_hist = np.array(hist_data["model_hist"])
     ct_hist = np.array(hist_data["ct_hist"])
+    ct_lo_hist = np.array(hist_data["ct_lo_hist"]) if hist_data.get("ct_lo_hist") is not None else None
+    ct_hi_hist = np.array(hist_data["ct_hi_hist"]) if hist_data.get("ct_hi_hist") is not None else None
     
     # Normalize to density (area = 1)
     bin_width = bin_centers[1] - bin_centers[0] if len(bin_centers) > 1 else 1.0
     model_density = model_hist / (model_hist.sum() * bin_width) if model_hist.sum() > 0 else model_hist
     ct_density = ct_hist / (ct_hist.sum() * bin_width) if ct_hist.sum() > 0 else ct_hist
+    ct_lo_density = None
+    ct_hi_density = None
+    if ct_lo_hist is not None and ct_hi_hist is not None and ct_lo_hist.sum() > 0 and ct_hi_hist.sum() > 0:
+        ct_lo_density = ct_lo_hist / (ct_lo_hist.sum() * bin_width)
+        ct_hi_density = ct_hi_hist / (ct_hi_hist.sum() * bin_width)
     
     fig, axes = plt.subplots(1, 2, figsize=figsize)
     
     # Left: Histograms
     ax1 = axes[0]
     ax1.fill_between(bin_centers, model_density, alpha=0.5, label="Model", color="C0", step="mid")
+    if ct_lo_density is not None and ct_hi_density is not None:
+        lo = np.minimum(ct_lo_density, ct_hi_density)
+        hi = np.maximum(ct_lo_density, ct_hi_density)
+        ax1.fill_between(bin_centers, lo, hi, alpha=0.25, label=r"CT mean $\pm 2\sigma$", color="C1", step="mid")
     ax1.fill_between(bin_centers, ct_density, alpha=0.5, label="CT (normalized)", color="C1", step="mid")
     ax1.set_xlabel(r"Density $\rho$ [g/cm³]")
     ax1.set_ylabel("Probability density")
@@ -284,9 +295,12 @@ def plot_histograms(
     ax1.grid(True, alpha=0.3)
     
     # Add statistics text
+    ct_band = ""
+    if hist_data.get("ct_mean_lo") is not None and hist_data.get("ct_mean_hi") is not None:
+        ct_band = f"  [μ−2σ={hist_data['ct_mean_lo']:.3f}, μ+2σ={hist_data['ct_mean_hi']:.3f}]"
     stats_text = (
         f"Model: μ={hist_data['model_mean']:.3f}, σ={hist_data['model_std']:.3f}\n"
-        f"CT:    μ={hist_data['ct_mean']:.3f}, σ={hist_data['ct_std']:.3f}\n"
+        f"CT:    μ={hist_data['ct_mean']:.3f}, σ={hist_data['ct_std']:.3f}{ct_band}\n"
         f"RMSE:  {hist_data['residuum_rmse']:.4f}\n"
         f"MAE:   {hist_data['residuum_mae']:.4f}"
     )
@@ -376,20 +390,20 @@ def main() -> None:
         logger.info("DENSITY COMPARISON ANALYSIS")
         logger.info("=" * 60)
         logger.info(f"Checkpoint: {CHECKPOINT_PATH}")
-        logger.info(f"CT image:   {CT_IMAGE_PATH}")
+        logger.info(f"Population stats: {POP_STATS_CHECKPOINT}")
         logger.info(f"Output:     {OUTPUT_DIR}")
     
     # Step 1: Load model density from checkpoint
     model_rho, mesh, rho_min, rho_max = load_from_checkpoint(CHECKPOINT_PATH, PARAMS_FILE)
     
-    # Step 2: Load CT density
-    ct_rho = load_ct_density(mesh, rho_min, rho_max, CT_IMAGE_PATH)
+    # Step 2: Load cohort mean density (and mean±2σ bounds)
+    ct_rho, ct_rho_lo, ct_rho_hi = load_population_density_band(mesh, rho_min, rho_max)
     
     # Step 3: Compute histogram data
     if comm.rank == 0:
         logger.info("Computing histogram statistics...")
     
-    hist_data = compute_histogram_data(model_rho, ct_rho, n_bins=50)
+    hist_data = compute_histogram_data(model_rho, ct_rho, ct_rho_lo=ct_rho_lo, ct_rho_hi=ct_rho_hi, n_bins=50)
     
     # Step 4: Plot histograms (rank 0 only)
     if comm.rank == 0:
