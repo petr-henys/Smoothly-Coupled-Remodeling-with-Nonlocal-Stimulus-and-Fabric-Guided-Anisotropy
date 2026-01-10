@@ -25,32 +25,25 @@ For a consistent comparison with the bounded density model, the mapped CT field 
 Because the reference is a population template mapped and rescaled to the FE mesh (not subject-specific longitudinal ground truth), the comparisons below are used as diagnostic similarity measures for robustness and relative trends across model variants rather than as clinical validation.
 
 \paragraph{Comparison strategy and metrics.}
-We compare the final simulated density fields $\rho_r(\cdot,T)$ to the mapped CT reference $\rho_{\mathrm{CT}}$ in three complementary ways:
-\begin{enumerate}
-  \item \textbf{Global similarity:} discrete nodal RMSE/MAE over CG1 degrees of freedom,
-  \[
-  \mathrm{RMSE}(r)=\sqrt{\frac{1}{N}\sum_{j=1}^N\big(\rho_r(x_j,T)-\rho_{\mathrm{CT}}(x_j)\big)^2},\qquad
-  \mathrm{MAE}(r)=\frac{1}{N}\sum_{j=1}^N\big|\rho_r(x_j,T)-\rho_{\mathrm{CT}}(x_j)\big|,
-  \]
-  together with a Pearson correlation as a scale-insensitive summary of spatial pattern similarity.
-  \item \textbf{Compartment-restricted similarity:} the same metrics restricted to CT-defined trabecular and cortical masks,
-  \[
-  \Omega_{\mathrm{trab}}:=\{x:\rho_{\mathrm{CT}}(x)\le \rho_{\mathrm{trab}}^{\max}\},\qquad
-  \Omega_{\mathrm{cort}}:=\{x:\rho_{\mathrm{CT}}(x)\ge \rho_{\mathrm{cort}}^{\min}\},
-  \]
-  using the transition densities from the model (\S\ref{sec:strong-forms-nd}).
-  \item \textbf{Feature preservation (contrast):} the cortical--trabecular density contrast
-  \(
-  C(r):=\bar\rho_{r,\mathrm{cort}}-\bar\rho_{r,\mathrm{trab}},
-  \)
-  compared to the CT contrast $C_{\mathrm{CT}}$ computed on the same masks.
-\end{enumerate}
-In addition, we track the \emph{global} density evolution via the domain-mean density $\bar\rho(t)$ reconstructed from the conserved mass integral (logged as \texttt{total\_mass\_g} in \texttt{steps.csv}), which provides a coarse check of transient behavior and settling time.
+We compare the final simulated density fields $\rho_r(\cdot,T)$ to the mapped CT reference $\rho_{\mathrm{CT}}$ using both global and compartment-restricted similarity measures.
+First, we compute the discrete nodal RMSE and MAE over all CG1 degrees of freedom,
+\[
+\mathrm{RMSE}(r)=\sqrt{\frac{1}{N}\sum_{j=1}^N\big(\rho_r(x_j,T)-\rho_{\mathrm{CT}}(x_j)\big)^2},\qquad
+\mathrm{MAE}(r)=\frac{1}{N}\sum_{j=1}^N\big|\rho_r(x_j,T)-\rho_{\mathrm{CT}}(x_j)\big|,
+\]
+supplemented by a Pearson correlation to assess spatial pattern matching independent of absolute scale.
+Second, to quantify performance in distinct anatomical zones, we evaluate the same metrics restricted to CT-defined trabecular and cortical masks,
+\[
+\Omega_{\mathrm{trab}}:=\{x:\rho_{\mathrm{CT}}(x)\le \rho_{\mathrm{trab}}^{\max}\},\qquad
+\Omega_{\mathrm{cort}}:=\{x:\rho_{\mathrm{CT}}(x)\ge \rho_{\mathrm{cort}}^{\min}\},
+\]
+where the thresholds follow the transition densities defined in \S\ref{sec:strong-forms-nd}.
+In addition, we track the global density evolution via the domain-mean density $\bar\rho(t)$ reconstructed from the conserved mass integral (logged as \texttt{total\_mass\_g} in \texttt{steps.csv}), which provides a coarse check of transient behavior and settling time.
 
 \paragraph{Hypothesis and test.}
 We already observe qualitatively that the special case $\psi_{\mathrm{ref}}^{\mathrm{trab}}=\psi_{\mathrm{ref}}^{\mathrm{cort}}$ (i.e.\ $r=1$) suppresses key spatial features in the simulated density distribution.
-We therefore hypothesize that a non-unity ratio $r\neq 1$ is required to recover anatomically plausible cortical--trabecular contrast and to improve similarity to the population-template reference under the same loads.
-We test this hypothesis by (i) sweeping $r$ at fixed $\psi_0$, (ii) ranking runs by similarity-to-template metrics and contrast preservation, and (iii) visually confirming differences via distribution plots and (optionally) spatial residuum fields in ParaView.
+We therefore hypothesize that a non-unity ratio $r\neq 1$ is required to recover anatomically plausible density distributions and to improve similarity to the population-template reference under the same loads.
+We test this hypothesis by sweeping $r$ at fixed $\psi_0$, ranking runs by similarity-to-template metrics, and visually confirming differences via distribution plots and spatial residuum fields.
 
 \begin{figure}[htbp]
   \centering
