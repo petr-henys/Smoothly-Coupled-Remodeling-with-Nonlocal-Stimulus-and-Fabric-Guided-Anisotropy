@@ -152,7 +152,8 @@ class ConservationMonitor:
         # Surface availability A(ρ) (replicated from DensitySolver)
         if bool(self.cfg.density.surface_use):
             rho_tissue = float(self.cfg.density.rho_tissue)
-            f_raw = 1.0 - (self.rho / rho_tissue)
+            # Use rho_old to match DensitySolver linearization
+            f_raw = 1.0 - (self.rho_old / rho_tissue)
             f = smooth_max(smooth_max(f_raw, 0.0, eps), 0.0, eps) # Clamp f >= 0
             # Note: smooth_clamp(f,0,1) matches density.py better but let's be close enough.
             
@@ -174,7 +175,7 @@ class ConservationMonitor:
             denom = max(rho_cort_min - rho_trab_max, 1e-12)
             # Use same smoothstep01 logic if possible, otherwise manual cubic
             from simulation.utils import smoothstep01
-            t = (self.rho - rho_trab_max) / denom
+            t = (self.rho_old - rho_trab_max) / denom
             w_cort = smoothstep01(t, eps)
 
             S_v = (1.0 - w_cort) * S_trab + w_cort * S_cort
@@ -236,9 +237,10 @@ class ConservationMonitor:
         else:
             energy_rate = 0.0
         
-        # Mass balance error: |dM/dt - source| / scale
-        # This should be small if the discretization is consistent
-        scale = max(abs(mass_rate), abs(source), 1e-12)
+        # Mass balance error: |dM/dt - source| / M
+        # Normalized by total mass to represent error relative to system size.
+        # This avoids artificial error spikes when rates -> 0 (steady state).
+        scale = max(mass, 1e-9)
         mass_balance_error = abs(mass_rate - source) / scale
         
         # Update cached values

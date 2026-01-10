@@ -298,6 +298,9 @@ class Remodeller:
             owns_reporter = True
 
         try:
+            # Initialize conservation baseline (mass_prev) before first step
+            self.conservation.get_initial_metrics()
+
             while t < total_time:
                 if t + dt > total_time:
                     dt = total_time - t

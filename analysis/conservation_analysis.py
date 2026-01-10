@@ -118,7 +118,12 @@ def create_conservation_figure(
     mass = df["total_mass_g"].values
     mass_rate = df["mass_rate_g_day"].values
     source = df["source_integral_g_day"].values
-    balance_error = df["mass_balance_error"].values if "mass_balance_error" in df.columns else None
+    
+    # Recompute balance error (normalized by total mass)
+    # This represents the spurious mass generation rate as a fraction of system mass.
+    scale = np.maximum(mass, 1e-9)
+    balance_error = np.abs(mass_rate - source) / scale
+    
     energy = df["total_energy_mJ"].values if "total_energy_mJ" in df.columns else None
     
     # Initial mass for relative change
@@ -134,7 +139,7 @@ def create_conservation_figure(
     
     # Primary axis: absolute mass
     color1 = COLOR_PALETTE["primary"]
-    ax.plot(time, mass, color=color1, linewidth=PLOT_LINEWIDTH, label="$M(t)$")
+    line1, = ax.plot(time, mass, color=color1, linewidth=PLOT_LINEWIDTH, label="$M(t)$")
     ax.set_xlabel("Time [days]")
     ax.set_ylabel("Total mass $M$ [g]", color=color1)
     ax.tick_params(axis="y", labelcolor=color1)
@@ -143,10 +148,15 @@ def create_conservation_figure(
     ax2 = ax.twinx()
     color2 = COLOR_PALETTE["secondary"]
     rel_change = (mass - M0) / M0 * 100  # Percentage
-    ax2.plot(time, rel_change, color=color2, linewidth=PLOT_LINEWIDTH, 
-             linestyle="--", alpha=0.7, label=r"$\Delta M/M_0$")
+    line2, = ax2.plot(time, rel_change, color=color2, linewidth=PLOT_LINEWIDTH, 
+             linestyle="--", alpha=0.8, label=r"$\Delta M/M_0$")
     ax2.set_ylabel(r"Relative change $\Delta M/M_0$ [\%]", color=color2)
     ax2.tick_params(axis="y", labelcolor=color2)
+    
+    # Combined legend
+    lines = [line1, line2]
+    labels = [l.get_label() for l in lines]
+    ax.legend(lines, labels, loc="best", fontsize=8)
     
     ax.set_title("(a) Total bone mass", fontsize=10)
     ax.grid(True, alpha=0.3)
@@ -157,24 +167,43 @@ def create_conservation_figure(
     ax = axes[1]
     
     # Plot dM/dt and source term
-    ax.plot(time, mass_rate, color=COLOR_PALETTE["primary"], 
+    # Use distinct styles: Rate = solid thick, Source = dashed/dotted
+    color_rate = "#2c3e50" # Dark blue/grey
+    color_src = "#e67e22"  # Orange
+    
+    l1, = ax.plot(time, mass_rate, color=color_rate, 
             linewidth=PLOT_LINEWIDTH, label=r"$dM/dt$")
-    ax.plot(time, source, color=COLOR_PALETTE["tertiary"], 
+    l2, = ax.plot(time, source, color=color_src, 
             linewidth=PLOT_LINEWIDTH, linestyle="--", label="Source $Q$")
     
-    # Add balance error on secondary axis if available
-    if balance_error is not None:
-        ax3 = ax.twinx()
-        ax3.fill_between(time, 0, balance_error * 100, 
-                         color="red", alpha=0.2, label="Balance error")
-        ax3.set_ylabel("Balance error [%]", color="red", fontsize=8)
-        ax3.tick_params(axis="y", labelcolor="red", labelsize=7)
-        ax3.set_ylim(0, max(balance_error.max() * 100 * 1.5, 1.0))
-    
-    ax.axhline(y=0, color="gray", linestyle=":", linewidth=0.8, alpha=0.6)
     ax.set_xlabel("Time [days]")
     ax.set_ylabel("Mass rate [g/day]")
-    ax.legend(loc="upper right", fontsize=8)
+    
+    # Add balance error on secondary axis
+    if balance_error is not None:
+        ax3 = ax.twinx()
+        color_err = "#c0392b" # Red
+        # Scale to % for readability
+        err_pct = balance_error * 100
+        # Use line + fill for error to make it visible even if small
+        l3, = ax3.plot(time, err_pct, color=color_err, linewidth=0.5, alpha=0.5, label="Error")
+        ax3.fill_between(time, 0, err_pct, color=color_err, alpha=0.15)
+        
+        ax3.set_ylabel("Balance error [% $M$/day]", color=color_err, fontsize=9)
+        ax3.tick_params(axis="y", labelcolor=color_err, labelsize=8)
+        # Auto-scale but ensure 0 is included
+        # If error is huge (e.g. 100%), let it show. If tiny (1e-6), let it show.
+        ymin, ymax = ax3.get_ylim()
+        ax3.set_ylim(0, max(ymax, 1e-6))
+        
+        # Combined legend
+        lines = [l1, l2, l3]
+        labels = [l.get_label() for l in lines]
+        ax.legend(lines, labels, loc="upper right", fontsize=7)
+    else:
+        ax.legend(loc="upper right", fontsize=8)
+    
+    ax.axhline(y=0, color="gray", linestyle=":", linewidth=0.8, alpha=0.6)
     ax.set_title("(b) Mass balance", fontsize=10)
     ax.grid(True, alpha=0.3)
     
@@ -183,19 +212,30 @@ def create_conservation_figure(
     # =========================================================================
     ax = axes[2]
     
+    color_w = COLOR_PALETTE["accent"] # Green/Teal
+    color_rate = "#8e44ad" # Purple
+    
     if energy is not None and len(energy) > 0:
-        ax.plot(time, energy, color=COLOR_PALETTE["accent"], 
+        l1, = ax.plot(time, energy, color=color_w, 
                 linewidth=PLOT_LINEWIDTH, label="$W(t)$")
-        ax.set_ylabel("Strain energy $W$ [mJ]")
+        ax.set_ylabel("Strain energy $W$ [mJ]", color=color_w)
+        ax.tick_params(axis="y", labelcolor=color_w)
         
         # Add energy rate on secondary axis
         energy_rate = df["energy_rate_mJ_day"].values if "energy_rate_mJ_day" in df.columns else None
         if energy_rate is not None:
             ax4 = ax.twinx()
-            ax4.plot(time, energy_rate, color=COLOR_PALETTE["secondary"], 
-                     linewidth=PLOT_LINEWIDTH * 0.7, linestyle=":", alpha=0.7)
-            ax4.set_ylabel("Energy rate [mJ/day]", fontsize=8)
-            ax4.tick_params(axis="y", labelsize=7)
+            l2, = ax4.plot(time, energy_rate, color=color_rate, 
+                     linewidth=PLOT_LINEWIDTH * 0.8, linestyle="--", alpha=0.8, label=r"$dW/dt$")
+            ax4.set_ylabel("Energy rate [mJ/day]", color=color_rate, fontsize=9)
+            ax4.tick_params(axis="y", labelcolor=color_rate, labelsize=8)
+            
+            # Legend
+            lines = [l1, l2]
+            labels = [l.get_label() for l in lines]
+            ax.legend(lines, labels, loc="best", fontsize=8)
+        else:
+            ax.legend(loc="best", fontsize=8)
     else:
         ax.text(0.5, 0.5, "Energy data\nnot available", 
                 ha="center", va="center", transform=ax.transAxes,
@@ -220,7 +260,12 @@ def create_mass_balance_summary(df: pd.DataFrame) -> dict[str, float]:
         Dictionary with mass balance metrics.
     """
     mass = df["total_mass_g"].values
-    balance_error = df["mass_balance_error"].values if "mass_balance_error" in df.columns else None
+    
+    # Recompute balance error (same logic as in plot)
+    mass_rate = df["mass_rate_g_day"].values
+    source = df["source_integral_g_day"].values
+    scale = np.maximum(mass, 1e-9)
+    balance_error = np.abs(mass_rate - source) / scale
     
     summary = {
         "M_initial_g": float(mass[0]) if len(mass) > 0 else 0.0,
@@ -229,10 +274,9 @@ def create_mass_balance_summary(df: pd.DataFrame) -> dict[str, float]:
         "M_change_percent": float((mass[-1] - mass[0]) / mass[0] * 100) if len(mass) > 0 and mass[0] > 0 else 0.0,
     }
     
-    if balance_error is not None:
-        summary["balance_error_mean"] = float(np.mean(balance_error))
-        summary["balance_error_max"] = float(np.max(balance_error))
-        summary["balance_error_p95"] = float(np.percentile(balance_error, 95))
+    summary["balance_error_mean"] = float(np.mean(balance_error))
+    summary["balance_error_max"] = float(np.max(balance_error))
+    summary["balance_error_p95"] = float(np.percentile(balance_error, 95))
     
     return summary
 
@@ -240,22 +284,31 @@ def create_mass_balance_summary(df: pd.DataFrame) -> dict[str, float]:
 def main() -> None:
     """Run conservation analysis on default simulation results."""
     # Default paths - adjust as needed
-    run_dirs = [
-        Path("results/box_physio"),
-        Path("results/box_stiff"),
-        Path(".physio_results_box"),
-        Path(".stiff_results_box"),
-    ]
+    # Map run directory -> output name suffix
+    run_dirs = {
+        Path(".physio_results_box"): "box_physio",
+        Path(".stiff_results_box"): "box_stiff",
+        Path("results/box_physio"): "box_physio", # Fallback
+        Path("results/box_stiff"): "box_stiff",   # Fallback
+    }
     
+    output_base = Path("manuscript/images")
+    output_base.mkdir(parents=True, exist_ok=True)
+
     print("=" * 60)
     print("CONSERVATION ANALYSIS")
     print("=" * 60)
     
-    for run_dir in run_dirs:
+    processed = set()
+
+    for run_dir, run_name in run_dirs.items():
         if not run_dir.exists():
             continue
-            
-        print(f"\nAnalyzing: {run_dir}")
+        
+        if run_name in processed:
+            continue
+
+        print(f"\nAnalyzing: {run_dir} -> {run_name}")
         
         try:
             df = load_steps_data(run_dir)
@@ -275,8 +328,9 @@ def main() -> None:
                   f"max={summary['balance_error_max']:.2e}")
         
         # Generate figure
-        output_path = run_dir / "conservation_diagnostic.png"
+        output_path = output_base / f"conservation_diagnostic_{run_name}.png"
         create_conservation_figure(df, config, output_path)
+        processed.add(run_name)
     
     print("\nDone!")
 
