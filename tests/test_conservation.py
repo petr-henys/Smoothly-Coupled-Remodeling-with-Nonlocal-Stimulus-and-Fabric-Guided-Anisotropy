@@ -21,7 +21,7 @@ def make_unit_cube(comm=MPI.COMM_WORLD, n=6):
 # =============================================================================
 
 class TestThermodynamics:
-    """Test energy dissipation and thermodynamic consistency."""
+    """Test strain energy positivity and linear-elastic energy balance."""
     
     @pytest.mark.parametrize("unit_cube", [6], indirect=True)
     def test_strain_energy_positivity(self, unit_cube, facet_tags):

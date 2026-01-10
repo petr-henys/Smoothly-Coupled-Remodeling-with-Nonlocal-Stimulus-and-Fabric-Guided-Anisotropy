@@ -26,7 +26,13 @@ if TYPE_CHECKING:
 
 
 class Remodeller:
-    """Orchestrates the coupled remodeling loop (Mechanics ↔ Fabric ↔ Stimulus ↔ Density)."""
+    """Orchestrates the coupled remodeling loop (Mechanics ↔ Fabric ↔ Stimulus ↔ Density).
+    
+    Architecture:
+      - Fixed-point iteration (Block Gauss-Seidel) for strong coupling.
+      - Anderson acceleration for convergence speedup.
+      - Adaptive time stepping (PI controller) based on coupling error.
+    """
 
     def __init__(
         self,
@@ -108,6 +114,7 @@ class Remodeller:
         assign(self.rho, self.cfg.density.rho0)
         assign(self.rho_old, self.cfg.density.rho0)  # Must match rho initial value
 
+        # Fabric L (log-conformation tensor). L=0 implies exp(L)=I (isotropic).
         self.L = Function(self.T, name="L")
         self.L_old = Function(self.T, name="L_old")
         assign(self.L, 0.0)

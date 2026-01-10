@@ -21,10 +21,12 @@ if TYPE_CHECKING:
 class StimulusSolver(BaseLinearSolver):
     """Solves stimulus evolution (diffusion-decay) driven by mechanostat error.
 
-    Solves (implicit Euler):
-        τ/dt (S - S_old) + S - τ·D ΔS = drive(m)
+    Equation:
+        τ·dS/dt + S - div(τ·D·grad(S)) = Drive(m)
 
-    where drive = S_max · tanh((m - m_ref)/m_ref / κ) with optional lazy-zone.
+    - Drive: S_max · tanh(err / κ) [Sigmoidal response]
+    - Error: err = (m - m_ref)/m_ref [Relative signal error]
+    - Lazy zone: Smoothly gated near zero error.
     """
 
     _label = "stim"
@@ -70,7 +72,7 @@ class StimulusSolver(BaseLinearSolver):
         rho_safe = smooth_max(self.rho, self.cfg.density.rho_min, eps)
         m = self.psi / rho_safe
 
-        # Blended reference stimulus
+        # Blended reference stimulus (trabecular vs cortical)
         denom = float(self.cfg.material.rho_cort_min - self.cfg.material.rho_trab_max)
         t = (rho_safe - self.cfg.material.rho_trab_max) / denom
         w = smoothstep01(t, eps)

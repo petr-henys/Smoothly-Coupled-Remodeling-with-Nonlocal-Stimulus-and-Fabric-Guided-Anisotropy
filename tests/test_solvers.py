@@ -1,13 +1,5 @@
 #!/usr/bin/env python3
-"""
-Tests for solver internals, matrix properties, numerical utilities, and physical sanity.
-
-Tests:
-- Matrix assembly correctness (SPD properties)
-- Solver statistics tracking
-- Physical sanity: no NaN/Inf, positive quantities stay positive
-- Numerical stability under edge cases
-"""
+"""Tests for solver matrix assembly, SPD properties, and numerical stability."""
 
 import pytest
 import numpy as np

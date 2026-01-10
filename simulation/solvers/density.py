@@ -21,14 +21,12 @@ if TYPE_CHECKING:
 class DensitySolver(BaseLinearSolver):
     """Solves density evolution (reaction-diffusion) with surface-modulated kinetics.
 
-    Solves:
-        ρ/dt - D_ρ Δρ + reaction·ρ = ρ_old/dt + k_form·S⁺ + k_res·S⁻
+    Equation:
+        dρ/dt - div(D·grad(ρ)) = Source(S) - Sink(S)·ρ
 
-    The reaction term ensures bounds are attracting:
-    - Formation vanishes as ρ → ρ_max
-    - Resorption vanishes as ρ → ρ_min
-
-    Surface availability A(ρ) modulates kinetics based on vascular porosity.
+    Features:
+    - Bounded formation/resorption kinetics (vanish at ρ_max/ρ_min).
+    - Surface availability A(ρ) based on specific surface area (Martin's relation).
     """
 
     _label = "dens"
@@ -63,7 +61,7 @@ class DensitySolver(BaseLinearSolver):
             rho_trab_max = float(self.cfg.material.rho_trab_max)
             rho_cort_min = float(self.cfg.material.rho_cort_min)
 
-            # Trabecular (Martin-type) specific surface
+            # Trabecular specific surface (Martin, 1984, porosity f polynomial)
             S_trab = (
                 32.3 * f
                 - 93.9 * f**2
@@ -72,7 +70,7 @@ class DensitySolver(BaseLinearSolver):
                 + 28.8 * f**5
             )
 
-            # Cortical proxy
+            # Cortical proxy (cylindrical pores: Sv ~ sqrt(f))
             f_tr = max(1.0 - rho_trab_max / rho_t, 1e-6)
             S_trab_tr = (
                 32.3 * f_tr

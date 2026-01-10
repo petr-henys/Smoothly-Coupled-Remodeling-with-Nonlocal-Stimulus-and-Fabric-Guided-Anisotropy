@@ -1,10 +1,4 @@
-"""Tests for box model components.
-
-Verifies:
-- Box mesh creation and facet tagging
-- Pressure loader functionality
-- Integration with Remodeller (smoke test)
-"""
+"""Tests for box model: mesh creation, facet tagging, pressure loader, Remodeller integration."""
 
 from __future__ import annotations
 

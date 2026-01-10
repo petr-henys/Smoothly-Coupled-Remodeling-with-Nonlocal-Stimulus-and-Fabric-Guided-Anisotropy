@@ -1,14 +1,4 @@
-"""
-Tests for storage module (FieldStorage, UnifiedStorage).
-
-Tests:
-- Directory creation (collective MPI operation)
-- VTX writer registration and lifecycle
-- Field write operations (displacement, scalars, tensors)
-- Error handling (permission denied, disk full simulation)
-- MPI collective safety
-- Context manager behavior
-"""
+"""Tests for FieldStorage/UnifiedStorage: VTX writes, MPI safety, context manager."""
 
 import pytest
 import numpy as np

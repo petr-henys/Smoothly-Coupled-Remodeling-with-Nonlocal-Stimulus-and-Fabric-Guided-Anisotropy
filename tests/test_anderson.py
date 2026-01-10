@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""
-Basic unit tests for Anderson acceleration implementation.
-
-NOTE: Comprehensive performance tests are in test_anderson_performance.py.
-This file contains only fundamental unit tests for Anderson class API.
-"""
+"""Unit tests for Anderson acceleration API (see test_anderson_performance.py for benchmarks)."""
 
 import pytest
 import numpy as np

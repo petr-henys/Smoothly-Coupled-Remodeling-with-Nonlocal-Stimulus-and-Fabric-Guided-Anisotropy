@@ -133,7 +133,9 @@ def compute_surface_availability(rho: np.ndarray, **kwargs) -> np.ndarray:
 def compute_density_rate(S: np.ndarray, rho: float, **kwargs) -> tuple:
     """Compute ∂ρ/∂t from stimulus and current density.
     
-    Rate = k_form · A · S₊ · (1 - ρ/ρ_max) - k_res · A · S₋ · (1 - ρ/ρ_min)
+    Rate = k_form · A · S₊ · (1 - ρ/ρ_max) + k_res · A · S₋ · (1 - ρ/ρ_min)
+    
+    Note: (1 - ρ/ρ_min) is negative for ρ > ρ_min, so the second term provides resorption.
     """
     params = {**DEFAULT_DENSITY_PARAMS, **kwargs}
     k_form = params['k_rho_form']
@@ -151,11 +153,11 @@ def compute_density_rate(S: np.ndarray, rho: float, **kwargs) -> tuple:
     S_neg = smooth_max(-S, 0.0, eps)
     
     # Formation and resorption rates
-    formation = k_form * A * S_pos * (1.0 - rho / rho_max)
-    resorption = k_res * A * S_neg * (1.0 - rho / rho_min)
+    formation_term = k_form * A * S_pos * (1.0 - rho / rho_max)
+    resorption_term = k_res * A * S_neg * (1.0 - rho / rho_min) # Generally negative
     
-    d_rho = formation - resorption
-    return d_rho, formation, resorption, S_pos, S_neg
+    d_rho = formation_term + resorption_term
+    return d_rho, formation_term, resorption_term, S_pos, S_neg
 
 
 # =============================================================================
@@ -288,10 +290,11 @@ def plot_rate_components(ax):
     S = np.linspace(-1.0, 1.0, 500)
     rho = 0.7
     
-    d_rho, formation, resorption, S_pos, S_neg = compute_density_rate(S, rho)
+    d_rho, term_form, term_res, S_pos, S_neg = compute_density_rate(S, rho)
     
-    ax.plot(S, formation * 1000, color=COLORS['teal'], linewidth=2, label='Formation')
-    ax.plot(S, -resorption * 1000, color=COLORS['red'], linewidth=2, label='Resorption')
+    ax.plot(S, term_form * 1000, color=COLORS['teal'], linewidth=2, label='Formation')
+    # term_res is negative, plot it directly to show it's resorption (negative rate)
+    ax.plot(S, term_res * 1000, color=COLORS['red'], linewidth=2, label='Resorption')
     ax.plot(S, d_rho * 1000, color=COLORS['blue'], linewidth=2.5, linestyle='--', label='Net rate')
     
     ax.axhline(0, color='black', linewidth=0.5)

@@ -1,9 +1,4 @@
-"""
-Tests for TimeIntegrator.
-
-Includes comprehensive tests demonstrating that adaptive time stepping
-requires fewer steps and less computation than fixed time stepping.
-"""
+"""Tests for TimeIntegrator: AB2 predictor, PI controller, adaptive vs fixed stepping."""
 
 import pytest
 import numpy as np

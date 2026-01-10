@@ -1,14 +1,4 @@
-"""
-Pytest configuration and shared fixtures/utilities for the test suite.
-
-Responsibilities:
-- Auto-restart with MPI if running serial (for VS Code Test Explorer)
-- Ensure project root is importable (adjust sys.path once)
-- Silence stdout/stderr on non-root MPI ranks to avoid duplicated output
-- Provide deterministic randomness across tests
-- Provide common mesh/config/function-space/field fixtures to reduce duplication
-- Provide fixtures for femur-specific testing (geometry, gait data, FEBio parsing)
-"""
+"""Pytest configuration: MPI auto-restart, shared fixtures, tolerance presets."""
 
 from __future__ import annotations
 
@@ -60,9 +50,8 @@ TINY_MESH_SIZE = 2               # Minimal mesh (may have empty ranks)
 
 # Tolerance presets
 class TolerancePresets:
-    """Standard tolerance configurations for different test types."""
+    """Standard tolerance configurations for correctness, smoke, and benchmark tests."""
     
-    # VERIFICATION-GRADE (default for correctness tests)
     STANDARD = {
         'coupling_tol': 5e-8,
         'ksp_rtol': 5e-10,
@@ -70,7 +59,6 @@ class TolerancePresets:
         'max_subiters': 60,
     }
     
-    # SMOKE TESTS (fast, relaxed)
     SMOKE = {
         'coupling_tol': 5e-4,
         'ksp_rtol': 5e-7,
@@ -78,7 +66,6 @@ class TolerancePresets:
         'max_subiters': 12,
     }
     
-    # PERFORMANCE BENCHMARKS (realistic)
     BENCHMARK = {
         'coupling_tol': 5e-6,
         'ksp_rtol': 5e-9,
@@ -86,11 +73,10 @@ class TolerancePresets:
         'max_subiters': 40,
     }
     
-    # NUMERICAL TEST TOLERANCES
     ABS_TOL = 1e-12
     REL_TOL = 1e-5
-    GEOMETRIC_TOL = 1e-6  # For geometric operations
-    FORCE_TOL = 1e-1  # For force equilibrium checks (Newtons)
+    GEOMETRIC_TOL = 1e-6
+    FORCE_TOL = 1e-1  # Newtons
 
 # =============================================================================
 

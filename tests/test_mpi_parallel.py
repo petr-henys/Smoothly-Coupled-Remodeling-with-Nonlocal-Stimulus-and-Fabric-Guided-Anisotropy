@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""
-MPI parallelism tests.
-
-Tests ghost cell updates, domain decomposition, collective operations, I/O, and parallel solver behavior.
-"""
+"""MPI parallelism tests: ghosts, decomposition, collectives, parallel I/O."""
 
 import pytest
 pytestmark = [pytest.mark.integration, pytest.mark.slow, pytest.mark.performance]

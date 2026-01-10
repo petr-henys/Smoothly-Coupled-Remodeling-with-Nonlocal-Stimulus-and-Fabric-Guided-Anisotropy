@@ -280,14 +280,17 @@ def plot_log_fabric_space(ax):
     # Example points
     ax.scatter([0], [0], color=COLORS['grey'], s=80, zorder=5, label='Isotropic')
     
-    # Uniaxial: l1 = l2 = ln(0.5), l3 = ln(4) ≈ 1.39
+    # Uniaxial: l1 = ln(4), l2 = l3 = ln(0.5) => l1 > l2=l3 (prolate)
     r = 0.5
-    l_uni = np.log(r)
-    ax.scatter([l_uni], [l_uni], color=COLORS['blue'], s=80, zorder=5, label='Uniaxial (aligned)')
+    l_small = np.log(r)      # -0.693
+    l_large = np.log(1.0/(r*r)) # 1.386
+    # Plot l1 vs l2. Since l1 is large, this will be on the right.
+    # l2 = l_small
+    ax.scatter([l_large], [l_small], color=COLORS['blue'], s=80, zorder=5, label='Uniaxial (prolate)')
     
-    # Biaxial: l1 = l2 = ln(2), l3 = ln(0.25)
+    # Biaxial: l1 = l2 = ln(2), l3 = ln(0.25) => l1=l2 > l3 (oblate)
     l_bi = np.log(2.0)
-    ax.scatter([l_bi], [l_bi], color=COLORS['magenta'], s=80, zorder=5, label='Biaxial (planar)')
+    ax.scatter([l_bi], [l_bi], color=COLORS['magenta'], s=80, zorder=5, label='Biaxial (oblate)')
     
     ax.set_title(r'(f) Log-Fabric Space ($l_1 + l_2 + l_3 = 0$)', loc='left', fontweight='bold')
     ax.set_xlabel(r'$l_1 = \ln(m_1)$')

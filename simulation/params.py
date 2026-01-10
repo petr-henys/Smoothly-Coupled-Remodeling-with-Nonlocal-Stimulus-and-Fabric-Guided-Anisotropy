@@ -16,17 +16,19 @@ class MaterialParams:
     # Poisson's ratio (isotropic)
     nu0: float = 0.3
 
-    # Power-law exponent for trabecular bone
+    # Power-law exponent for trabecular bone stiffness
     n_trab: float = 2.0
 
-    # Power-law exponent for cortical bone
+    # Power-law exponent for cortical bone stiffness
     n_cort: float = 1.3
 
-    # Transition zone: trabecular → cortical [g/cm³]
+    # Density threshold: trabecular → transition [g/cm³]
     rho_trab_max: float = 1.0
+    
+    # Density threshold: transition → cortical [g/cm³]
     rho_cort_min: float = 1.25
 
-    # Anisotropy stiffness exponents (fabric-based)
+    # Anisotropy stiffness exponents (fabric-dependent: E_i ~ m_i^pE)
     stiff_pE: float = 1.0  # Axial modulus exponent
     stiff_pG: float = 1.0  # Shear modulus exponent
 
@@ -55,22 +57,22 @@ class DensityParams:
     # Initial density [g/cm³]
     rho0: float = 1.0
 
-    # Formation rate gain [g/cm³/day]
+    # Formation rate constant [g/cm³/day]
     k_rho_form: float = 4
 
-    # Resorption rate gain [g/cm³/day]
+    # Resorption rate constant [g/cm³/day]
     k_rho_resorb: float = 2e-02
 
     # Diffusion coefficient [mm²/day]
     D_rho: float = 2e-2
 
-    # Tissue density used for a porosity proxy f = 1 - rho/rho_tissue
-    rho_tissue: float = 2.0  # Fully mineralized matrix density [g/cm³]
+    # Fully mineralized matrix density (used for porosity f = 1 - rho/rho_tissue) [g/cm³]
+    rho_tissue: float = 2.0
 
     # Surface availability scaling
     surface_use: bool = True
-    surface_A_min: float = 0.02  # Residual remodeling activity as ρ → ρ_tissue
-    surface_S0: float = 1.0      # Specific-surface scale [1/mm] (half-saturation at S_v=S0)
+    surface_A_min: float = 0.02  # Minimum remodeling activity at saturation (fv -> 0)
+    surface_S0: float = 1.0      # Specific-surface half-saturation constant [1/mm]
 
     def validate(self) -> None:
         """Validate density parameter constraints."""
@@ -94,25 +96,25 @@ class DensityParams:
 class StimulusParams:
     """Parameters for stimulus evolution (diffusion-decay) and mechanostat drive."""
 
-    # Power-mean exponent for multi-load SED averaging (1=mean; higher→peak-biased)
+    # Exponent for Lp-norm spatial averaging (1=mean; higher→peak-biased)
     stimulus_power_p: float = 4.0
 
-    # Reference strain energy density for trabecular bone [MPa]
+    # Reference SED for trabecular bone [MPa]
     psi_ref_trab: float = 0.01
 
-    # Reference strain energy density for cortical bone [MPa]
+    # Reference SED for cortical bone [MPa]
     psi_ref_cort: float = 0.01
 
-    # Time constant [days]; τ_S=0 gives quasi-static stimulus
+    # Stimulus memory time constant [days] (0 = quasi-static)
     stimulus_tau: float = 25.0
 
     # Diffusion coefficient [mm²/day]
     stimulus_D: float = 1.0
 
-    # Maximum stimulus magnitude (dimensionless)
+    # Maximum stimulus magnitude (dimensionless cap)
     stimulus_S_max: float = 1.0
 
-    # Saturation width in tanh (dimensionless)
+    # Sigmoid saturation width (dimensionless)
     stimulus_kappa: float = 0.5
 
     # Lazy-zone half-width (dimensionless)
@@ -140,22 +142,22 @@ class StimulusParams:
 class FabricParams:
     """Parameters for fabric evolution (L) toward stress-aligned target."""
 
-    # Time constant [days]
+    # Characteristic time constant [days]
     fabric_tau: float = 50.0
 
     # Diffusion coefficient [mm²/day]
     fabric_D: float = 1.0
 
-    # Power-law exponent for fabric eigenvalues
+    # Stress-to-fabric power-law exponent (m_i ~ sigma_i^gamma)
     fabric_gammaF: float = 1.0
 
-    # Regularization for Q̄ eigenvalue computation [MPa²] (added as epsQ * I to Q̄)
+    # Regularization for strictly positive definite stress tensor [MPa]
     fabric_epsQ: float = 1e-12
 
-    # Activity-gate width for near-isotropic loading (dimensionless)
+    # Anisotropy threshold for remodeling activation (dimensionless)
     fabric_aniso_eps: float = 1e-4
 
-    # Eigenvalue ratio bounds
+    # Eigenvalue ratio bounds (m_max/m_min)
     fabric_m_min: float = 0.2
     fabric_m_max: float = 5.0
 

@@ -1,12 +1,4 @@
-"""
-Tests for CheckpointStorage (adios4dolfinx).
-
-Tests:
-- Checkpoint directory creation
-- Mesh writing/reading
-- Function writing/reading
-- Consistency of data after round-trip
-"""
+"""Tests for CheckpointStorage: mesh/function write/read round-trip with adios4dolfinx."""
 
 import pytest
 import numpy as np

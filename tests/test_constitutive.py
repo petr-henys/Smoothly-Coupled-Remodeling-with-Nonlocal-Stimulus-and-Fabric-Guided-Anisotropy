@@ -74,7 +74,7 @@ class TestConstitutiveLaw:
 # =============================================================================
 
 class TestAdvancedConstitutiveLaws:
-    """Test density-elasticity relationship and density evolution."""
+    """Test dual-power-law E(ρ) and density evolution rate."""
 
     @pytest.mark.parametrize("unit_cube", [6], indirect=True)
     def test_power_law_stiffness(self, unit_cube, facet_tags):

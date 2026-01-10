@@ -138,9 +138,9 @@ class ConservationMonitor:
         S_abs = ufl.sqrt(self.S**2 + eps**2)  # Smooth |S|
         self._stim_abs_form = fem.form(S_abs * dx)
         
-        # Source term (from density equation)
-        # Formation: k_form * S⁺ * (1 - ρ/ρ_max)
-        # Resorption: k_res * S⁻ * (1 - ρ/ρ_min) [but this is negative contribution]
+        # Source term: A(ρ) * [ k_form * S⁺ * (1 - ρ/ρ_max) + k_res * S⁻ * (1 - ρ/ρ_min) ]
+        # Note: (1 - ρ/ρ_min) is negative for ρ > ρ_min, providing the resorption (decay).
+        
         rho_min = float(self.cfg.density.rho_min)
         rho_max = float(self.cfg.density.rho_max)
         k_form = float(self.cfg.density.k_rho_form)
@@ -149,14 +149,48 @@ class ConservationMonitor:
         S_pos = smooth_max(self.S, 0.0, eps)
         S_neg = smooth_max(-self.S, 0.0, eps)
         
-        # Net source = formation - resorption (both are positive contributions)
-        # Formation adds mass, resorption removes mass
-        formation_rate = k_form * S_pos * (1.0 - self.rho / rho_max)
-        resorption_rate = k_res * S_neg * (1.0 - self.rho / rho_min)
+        # Surface availability A(ρ) (replicated from DensitySolver)
+        if bool(self.cfg.density.surface_use):
+            rho_tissue = float(self.cfg.density.rho_tissue)
+            f_raw = 1.0 - (self.rho / rho_tissue)
+            f = smooth_max(smooth_max(f_raw, 0.0, eps), 0.0, eps) # Clamp f >= 0
+            # Note: smooth_clamp(f,0,1) matches density.py better but let's be close enough.
+            
+            rho_trab_max = float(self.cfg.material.rho_trab_max)
+            rho_cort_min = float(self.cfg.material.rho_cort_min)
+
+            # Trabecular specific surface
+            S_trab = (32.3 * f - 93.9 * f**2 + 134.0 * f**3 
+                      - 101.0 * f**4 + 28.8 * f**5)
+
+            # Cortical proxy
+            f_tr = max(1.0 - rho_trab_max / rho_tissue, 1e-6)
+            S_trab_tr = (32.3 * f_tr - 93.9 * f_tr**2 + 134.0 * f_tr**3 
+                         - 101.0 * f_tr**4 + 28.8 * f_tr**5)
+            surface_cort_scale = S_trab_tr / (f_tr**0.5)
+            S_cort = surface_cort_scale * ufl.sqrt(f + eps)
+
+            # Blend
+            denom = max(rho_cort_min - rho_trab_max, 1e-12)
+            # Use same smoothstep01 logic if possible, otherwise manual cubic
+            from simulation.utils import smoothstep01
+            t = (self.rho - rho_trab_max) / denom
+            w_cort = smoothstep01(t, eps)
+
+            S_v = (1.0 - w_cort) * S_trab + w_cort * S_cort
+            S_v = smooth_max(S_v, 0.0, eps)
+
+            A_min = float(self.cfg.density.surface_A_min)
+            S0 = float(self.cfg.density.surface_S0)
+            A_surf = A_min + (1.0 - A_min) * (S_v / (S_v + S0))
+        else:
+            A_surf = 1.0
         
-        # Net source (positive = mass gain, negative = mass loss)
-        # Note: resorption term is subtracted because S⁻ drives mass removal
-        net_source = formation_rate - resorption_rate
+        # Net source (Note: sum of terms; signs are intrinsic to the terms)
+        term_form = k_form * S_pos * (1.0 - self.rho / rho_max)
+        term_res = k_res * S_neg * (1.0 - self.rho / rho_min)
+        
+        net_source = A_surf * (term_form + term_res)
         self._source_form = fem.form(net_source * dx)
     
     def _assemble_scalar(self, form: fem.Form) -> float:

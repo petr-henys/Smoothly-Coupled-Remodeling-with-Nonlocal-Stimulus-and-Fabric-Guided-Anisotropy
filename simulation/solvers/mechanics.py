@@ -32,14 +32,9 @@ if TYPE_CHECKING:
 class MechanicsSolver(BaseLinearSolver):
     """Solves static equilibrium with density-dependent anisotropic stiffness.
 
-    Solves the static equilibrium problem:
-        -div(σ(u)) = 0     in Ω
-        u = 0               on Γ_D
-        σ·n = t             on Γ_N
-
-    The stress σ depends on:
-    - Local density ρ (power-law E(ρ))
-    - Log-fabric tensor L (anisotropic stiffness via eigenvalue decomposition)
+    - Equation: -div(σ) = 0
+    - Constitutive law: σ(ε) depends on density ρ and fabric L.
+    - Formulation: Linear elasticity with spatially varying orthotropy.
     """
 
     _label = "mech"
@@ -169,7 +164,8 @@ class MechanicsSolver(BaseLinearSolver):
         G23 = G_iso * ((a2_hat * a3_hat) ** (0.5 * pG))
         G31 = G_iso * ((a3_hat * a1_hat) ** (0.5 * pG))
 
-        # Normal part via closed-form inverse
+        # Orthotropic normal stress (Zysset-Curnier form)
+        # s_i = (E_i/(1+nu)) * e_i + (nu/((1+nu)(1-2nu))) * sqrt(E_i) * sum(sqrt(E_k)*e_k)
         nu = nu0
         a = 1.0 / (1.0 + nu)
         b = nu / ((1.0 + nu) * (1.0 - 2.0 * nu))
@@ -189,6 +185,8 @@ class MechanicsSolver(BaseLinearSolver):
 
         sigma_normal = s1 * P1 + s2 * P2 + s3 * P3
 
+        # Shear stress (in principal fabric frame)
+        # G_ij = G0 * (a_i * a_j)^(pG/2)
         def _P_eps_P(A, B):
             return ufl.dot(A, ufl.dot(eps, B))
 

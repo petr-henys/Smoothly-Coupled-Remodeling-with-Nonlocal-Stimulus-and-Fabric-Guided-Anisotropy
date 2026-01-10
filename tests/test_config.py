@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""
-Tests for configuration validation and bounds checking.
-"""
+"""Tests for Config parameter validation and bounds checking."""
 
 import pytest
 from simulation.config import Config

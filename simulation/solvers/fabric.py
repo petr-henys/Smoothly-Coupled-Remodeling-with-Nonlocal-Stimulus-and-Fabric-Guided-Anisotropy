@@ -24,12 +24,11 @@ if TYPE_CHECKING:
 class FabricSolver(BaseLinearSolver):
     """Solves log-fabric evolution toward stress-aligned target with activity gating.
 
-    Solves:
-        1/dt (L - L_old) + act/τ (L - L_target) - D ΔL = 0
+    Equation:
+        dL/dt + (act/τ)·(L - L_target) - div(D·grad(L)) = 0
 
-    The target fabric L_target is computed from the cycle-averaged stress tensor Q̄
-    via spectral decomposition. Activity factor 'act' gates evolution when
-    directional information is weak.
+    - L_target: Traceless tensor derived from cycle-averaged stress Q̄.
+    - act: Activity gate function (0 for isotropic stress, 1 for anisotropic).
     """
 
     _label = "fab"
@@ -140,7 +139,8 @@ class FabricSolver(BaseLinearSolver):
         m2 = clamp(a2**gammaF, m_min, m_max, float(self.cfg.numerics.smooth_eps))
         m3 = clamp(a3**gammaF, m_min, m_max, float(self.cfg.numerics.smooth_eps))
 
-        # Normalize in log-space so tr(L_target)=0 exactly
+        # Normalize in log-space so tr(L_target)=0 exactly.
+        # This ensures det(exp(L_target)) = 1 (volume preserving fabric).
         lnm1 = ufl.ln(m1)
         lnm2 = ufl.ln(m2)
         lnm3 = ufl.ln(m3)

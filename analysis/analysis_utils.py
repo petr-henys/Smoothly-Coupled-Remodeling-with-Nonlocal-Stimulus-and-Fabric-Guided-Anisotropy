@@ -35,7 +35,8 @@ import adios4dolfinx as adx
 QUADRATURE_DEGREE = 6
 
 # Raise evaluation-space polynomial degree by this amount
-ERROR_SPACE_RAISE = 2  # P1 -> P3 by default
+# (e.g., P1 field -> P3 error space to capture difference accurately)
+ERROR_SPACE_RAISE = 2
 
 
 # ============================================================================
@@ -190,10 +191,11 @@ def compute_l2_h1_errors(
     field_fine: fem.Function,
     domain_fine: mesh.Mesh,
 ) -> Tuple[float, float]:
-    """L2 and H1-seminorm of difference on the fine mesh.
+    """Compute L2 and H1-seminorm errors of coarse solution vs fine reference.
 
-    Builds a higher-order evaluation space on ``domain_fine`` matching the
-    value shape of ``field_fine`` for accurate integration.
+    Strategy:
+    1. Interpolate coarse solution onto a high-order space on the fine mesh.
+    2. Integrate (u_coarse - u_fine)^2 using high-degree quadrature.
     """
     V_fine = field_fine.function_space
     ufl_el = V_fine.ufl_element()

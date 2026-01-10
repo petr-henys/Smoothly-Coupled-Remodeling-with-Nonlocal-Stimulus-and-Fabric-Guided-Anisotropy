@@ -130,25 +130,25 @@ def collect_dirichlet_dofs(bcs, n_owned: int) -> np.ndarray:
     return np.unique(np.concatenate(chunks))
 
 def smooth_abs(x, eps=1e-4):
-    """C¹ approximation of |x|."""
+    """C¹ smooth approximation of |x|: sqrt(x² + ε²) - ε."""
     return ufl.sqrt(x**2 + eps**2) - eps
 
 def smooth_plus(x, eps=1e-4):
-    """C¹ approximation of max(x, 0)."""
+    """C¹ smooth approximation of max(x, 0)."""
     return 0.5 * (x + smooth_abs(x, eps))
 
 def smooth_max(x, y, eps=1e-4):
-    """C¹ approximation of max(x, y)."""
+    """C¹ smooth approximation of max(x, y)."""
     return 0.5 * (x + y + smooth_abs(x - y, eps))
 
 
 def smooth_min(x, y, eps=1e-4):
-    """C¹ approximation of min(x, y)."""
+    """C¹ smooth approximation of min(x, y)."""
     return 0.5 * (x + y - smooth_abs(x - y, eps))
 
 
 def smooth_clamp(x, min_val, max_val, eps=1e-4):
-    """C¹ approximation of clamp(x, min_val, max_val)."""
+    """C¹ smooth approximation of clamp(x, min, max)."""
     return smooth_min(smooth_max(x, min_val, eps), max_val, eps)
 
 
@@ -197,7 +197,7 @@ def symm(X):
 
 
 def eigenvalues_sym3(X, *, eps_p: float = 1e-18, eps_r: float = 1e-12, tol: float = 1e-14):
-    """Eigenvalues of symmetric 3×3 tensor via invariant formula."""
+    """Eigenvalues of symmetric 3×3 tensor via analytical formula (Cardano/Viète)."""
     Xs = symm(X)
     I = ufl.Identity(3)
 
@@ -205,7 +205,7 @@ def eigenvalues_sym3(X, *, eps_p: float = 1e-18, eps_r: float = 1e-12, tol: floa
     B = Xs - q * I
 
     p2 = ufl.tr(ufl.dot(B, B)) / 6.0
-    # Scale-aware isotropy detection (relative to tensor magnitude)
+    # Scale-aware isotropy detection (relative to tensor magnitude squared)
     scale2 = ufl.max_value(q * q + p2, 1.0)
     iso = ufl.lt(p2, tol * scale2)
 
@@ -228,13 +228,12 @@ def eigenvalues_sym3(X, *, eps_p: float = 1e-18, eps_r: float = 1e-12, tol: floa
 
 def projectors_sylvester(X, l1, l2, l3, *, eps_d: float = 1e-12, tol: float = 1e-14, tol_deg: float = 1e-8):
     """
-    Computes spectral projectors for 3x3 symmetric tensor using Sylvester's formula (robust to degeneracy).
-
-    Key behavior (smooth, no hard isotropy switch in the output):
-      - isotropic (all three ~ equal): P1=P2=P3=I/3 (via weights -> w_iso≈1)
-      - transversely isotropic (any pair ~ equal): the two projectors in the degenerate subspace are set to 0.5*(I-P_unique)
-        so the split is stable and basis-invariant.
-      - fully anisotropic: standard Sylvester projectors, with a small correction that enforces P1+P2+P3 = I.
+    Computes spectral projectors for 3x3 symmetric tensor using Sylvester's formula.
+    
+    Features:
+      - Weighted blend of projectors to handle eigenvalue near-degeneracy smoothly.
+      - Isotropic limit: P1=P2=P3=I/3.
+      - Transversely isotropic limit: Unique projector + 0.5(I-P_unique).
     """
     Xs = symm(X)
     I = ufl.Identity(3)

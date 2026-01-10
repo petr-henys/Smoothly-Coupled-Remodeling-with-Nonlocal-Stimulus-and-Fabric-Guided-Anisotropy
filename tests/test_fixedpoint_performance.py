@@ -1,12 +1,5 @@
 #!/usr/bin/env python3
-"""
-Integration tests for Anderson acceleration within the full FixedPointSolver.
-
-These tests use the actual solver infrastructure to demonstrate:
-1. Anderson acceleration reduces subiterations in coupled PDEs
-2. Safeguarding improves robustness on stiff remodeling problems
-3. Performance metrics are correctly tracked
-"""
+"""Integration tests for Anderson acceleration in FixedPointSolver."""
 
 import pytest
 import numpy as np

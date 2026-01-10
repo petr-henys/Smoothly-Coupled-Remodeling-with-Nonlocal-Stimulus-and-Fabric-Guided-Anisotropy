@@ -798,9 +798,9 @@ def plot_residual_timeline(
     res = subiters["proj_res"].values
 
     ax.semilogy(global_idx, res, color="#34495e", linewidth=PLOT_LINEWIDTH * 0.8, 
-                alpha=0.8, label="Picard res")
+                alpha=0.8, label="Residual")
 
-    # Mark step boundaries and optionally show wRMS
+    # Mark step boundaries
     step_arr = subiters["step"].values
     if "attempt" in subiters.columns:
         attempt_arr = subiters["attempt"].values
@@ -810,29 +810,6 @@ def plot_residual_timeline(
         changes = np.diff(step_arr) != 0
     step_changes = np.where(changes)[0] + 1
     step_changes = np.concatenate([[0], step_changes])
-    
-    # Plot wRMS error from steps data as background bars
-    if steps is not None and "error_norm" in steps.columns and len(step_changes) > 0:
-        # Map step number to global_idx range and error_norm
-        for i, sc_start in enumerate(step_changes):
-            sc_end = step_changes[i + 1] if i + 1 < len(step_changes) else len(global_idx)
-            step_num = step_arr[sc_start]
-            
-            # Find matching step in steps DataFrame
-            if attempt_arr is not None and "attempt" in steps.columns:
-                attempt_num = int(attempt_arr[sc_start])
-                step_row = steps[(steps["step"] == step_num) & (steps["attempt"] == attempt_num)]
-            else:
-                step_row = steps[steps["step"] == step_num]
-            if len(step_row) > 0:
-                err = step_row["error_norm"].values[0]
-                if err > 0 and np.isfinite(err):
-                    # Draw horizontal bar at error level (label only first one for legend)
-                    lbl = "wRMS err" if i == 0 else None
-                    ax.axhspan(err * 0.8, err * 1.2, 
-                               xmin=(global_idx[sc_start] - global_idx[0]) / max(global_idx[-1] - global_idx[0], 1),
-                               xmax=(global_idx[sc_end - 1] - global_idx[0]) / max(global_idx[-1] - global_idx[0], 1),
-                               alpha=0.15, color="#e67e22", zorder=0, label=lbl)
     
     # Vertical lines at step boundaries (skip first)
     for sc in step_changes[1:]:
@@ -884,7 +861,7 @@ def plot_residual_timeline(
             rho_max = min(np.percentile(step_rho_avg, 95) * 1.2, 2.0)
             ax2.set_ylim(0, max(rho_max, 1.1))
     
-    setup_axis_style(ax, xlabel="Global iteration", ylabel="Residual", title="(b) Residual timeline", loglog=False)
+    setup_axis_style(ax, xlabel="Global iteration", ylabel=r"Residual Norm ($L^2$)", title="(b) Residual timeline", loglog=False)
     ax.legend(loc="upper right", fontsize=6, framealpha=0.8, frameon=False)
 
 

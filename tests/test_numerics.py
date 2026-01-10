@@ -14,7 +14,7 @@ def make_unit_cube(comm=MPI.COMM_WORLD, n=6):
     return mesh.create_unit_cube(comm, n, n, n)
 
 class TestNumerics:
-    """Rigorous numerical tests for conservation, symmetry, and stability."""
+    """Rigorous numerical tests: mass balance, stress symmetry, stiffness positivity."""
 
     @pytest.mark.parametrize("unit_cube", [4], indirect=True)
     def test_density_mass_balance_equation(self, unit_cube, facet_tags):

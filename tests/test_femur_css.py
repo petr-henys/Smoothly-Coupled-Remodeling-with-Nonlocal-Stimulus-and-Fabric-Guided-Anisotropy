@@ -1,7 +1,4 @@
-"""Tests for `simulation.femur_css` (Femur anatomical CSS utilities).
-
-Split out from `test_gaitloader.py` for clarity.
-"""
+"""Tests for FemurCSS: anatomical coordinate system, head fitting, JSON loading."""
 
 import json
 import tempfile

@@ -1,12 +1,5 @@
 #!/usr/bin/env python3
-"""
-MPI ghost cell consistency tests.
-
-Tests ghost/halo cell synchronization, partition interface values,
-and correct data flow across MPI boundaries.
-
-Run with: mpirun -n 4 pytest tests/test_mpi_ghosts.py -v
-"""
+"""MPI ghost cell tests: synchronization, partition interfaces, cross-rank data flow."""
 
 import pytest
 import numpy as np

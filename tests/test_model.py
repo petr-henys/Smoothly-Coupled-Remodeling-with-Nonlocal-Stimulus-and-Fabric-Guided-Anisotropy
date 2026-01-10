@@ -1,12 +1,4 @@
-"""Comprehensive tests for simulation.model.Remodeller with physics validation.
-
-Tests verify:
-1. Proper initialization and field setup
-2. Mechanics solver produces non-zero displacements under load
-3. Stimulus field responds to mechanical energy
-4. Density evolution follows stimulus-driven remodeling
-5. Energy balance and conservation properties
-"""
+"""Integration tests for Remodeller: field setup, physics coupling, energy balance."""
 
 import pytest
 import numpy as np
