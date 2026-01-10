@@ -40,7 +40,7 @@ HFValid provides subject-specific calibration coefficients based on European Spi
 with coefficients $(a_i,b_i)$ provided for each subject $i$.
 
 \paragraph{Population (template) femur.}
-From the HFValid cohort we derived a population-average femur geometry and density distribution (``population femur'') by spatial normalization and unbiased template estimation. The processing followed the methodology described by Heny\v{s} and Kucha\v{r} \cite{Henys2025_BoneDatDatabase}, which combines global alignment (rigid + affine) with a diffeomorphic deformable registration (SyN, ANTs) \cite{Avants2008_SymmetricDiffeomorphicRegistration,Avants2011_ANTsSimilarityMetrics}.
+From the HFValid cohort we derived a population-average femur geometry and density distribution (``population femur'') by spatial normalization and unbiased template estimation. Additionally, we mapped the densities of all patients to the template and determined the mean value and $\pm 2\sigma$ range for the density field, ensuring reasonable statistics for further comparison. The processing followed the methodology described by Heny\v{s} and Kucha\v{r} \cite{Henys2025_BoneDatDatabase}, which combines global alignment (rigid + affine) with a diffeomorphic deformable registration (SyN, ANTs) \cite{Avants2008_SymmetricDiffeomorphicRegistration,Avants2011_ANTsSimilarityMetrics}.
 
 Let $I_i:\Omega_i\rightarrow\mathbb{R}$ denote the subject CT image (HU) and let $\Omega$ denote the current template domain. For each subject we estimate a composite transformation
 \begin{equation}
