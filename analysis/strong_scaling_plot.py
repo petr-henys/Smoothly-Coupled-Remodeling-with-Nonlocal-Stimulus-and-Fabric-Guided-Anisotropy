@@ -19,7 +19,7 @@ if str(project_root) not in sys.path:
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from matplotlib.ticker import FuncFormatter
+from matplotlib.ticker import FuncFormatter, NullFormatter, NullLocator
 
 from analysis.plot_utils import (
     PUBLICATION_DPI,
@@ -85,21 +85,22 @@ def main() -> None:
 
     # Left axis: Time
     ax.loglog(ranks, times, marker="o", color=COLORS["blue"], 
-              label="Measured time", linewidth=PLOT_LINEWIDTH, markersize=PLOT_MARKERSIZE)
+              label="Measured coupled step", linewidth=PLOT_LINEWIDTH, markersize=PLOT_MARKERSIZE)
     ax.loglog(ranks, ideal_times, linestyle="--", color="gray", 
               label="Ideal strong scaling", linewidth=PLOT_LINEWIDTH * 0.8)
     
-    ax.set_xticks(ranks)
-    ax.get_xaxis().set_major_formatter(FuncFormatter(lambda val, _: f"{int(val)}"))
-    ax.minorticks_off()
-
     setup_axis_style(
         ax,
         xlabel="MPI ranks",
-        ylabel="Wall time per step [s]",
+        ylabel="Wall time per global step [s]",
         title="Strong Scaling (Stiff Femur)",
         loglog=True,
     )
+
+    ax.set_xticks(ranks)
+    ax.get_xaxis().set_major_formatter(FuncFormatter(lambda val, _: f"{int(val)}"))
+    ax.get_xaxis().set_minor_locator(NullLocator())
+    ax.get_xaxis().set_minor_formatter(NullFormatter())
 
     # Right axis: Efficiency - need to enable right spine for twinx
     ax2 = ax.twinx()

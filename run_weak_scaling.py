@@ -10,8 +10,7 @@ Usage:
     mpirun -n 4 python run_weak_scaling.py
 
 Outputs:
-    results/scaling/scaling.csv
-    results/scaling/scaling_meta.json
+    results/scaling_stiff/scaling.csv
 """
 
 from __future__ import annotations
@@ -51,6 +50,9 @@ class BenchmarkResult:
     cells_global: int
     dofs_dens: int
     dofs_mech: int
+    dofs_stim: int
+    dofs_fabric: int
+    dofs_total: int
     steps_measured: int
     t_avg_step_s: float
     t_setup_s: float
@@ -82,9 +84,65 @@ def _mkdir_mpi(path: Path, comm: MPI.Comm) -> None:
 
 def _write_csv_row(path: Path, row: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = list(row.keys())
+
+    def _rewrite_with_new_header(existing_fieldnames: list[str]) -> None:
+        with open(path, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            existing_rows = list(reader)
+
+        # Best-effort backfill of newly introduced DOF columns.
+        for existing_row in existing_rows:
+            if "dofs_stim" not in existing_row or existing_row["dofs_stim"] == "":
+                existing_row["dofs_stim"] = existing_row.get("dofs_dens", "")
+
+            try:
+                dofs_dens = int(existing_row.get("dofs_dens", ""))
+                dofs_mech = int(existing_row.get("dofs_mech", ""))
+            except (TypeError, ValueError):
+                dofs_dens = 0
+                dofs_mech = 0
+
+            gdim = 0
+            if dofs_dens > 0 and dofs_mech % dofs_dens == 0:
+                gdim = dofs_mech // dofs_dens
+
+            if "dofs_fabric" not in existing_row or existing_row["dofs_fabric"] == "":
+                existing_row["dofs_fabric"] = str(dofs_dens * gdim * gdim) if gdim else ""
+
+            if "dofs_total" not in existing_row or existing_row["dofs_total"] == "":
+                try:
+                    dofs_stim = int(existing_row.get("dofs_stim", ""))
+                    dofs_fabric = int(existing_row.get("dofs_fabric", ""))
+                except (TypeError, ValueError):
+                    dofs_stim = 0
+                    dofs_fabric = 0
+                existing_row["dofs_total"] = str(dofs_mech + dofs_dens + dofs_stim + dofs_fabric)
+
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            for existing_row in existing_rows:
+                writer.writerow({k: existing_row.get(k, "") for k in fieldnames})
+
+    if path.exists():
+        with open(path, newline="", encoding="utf-8") as f:
+            reader = csv.reader(f)
+            existing_fieldnames = next(reader, [])
+
+        if existing_fieldnames != fieldnames:
+            if set(existing_fieldnames).issubset(fieldnames):
+                _rewrite_with_new_header(existing_fieldnames)
+            else:
+                raise ValueError(
+                    f"Existing CSV header does not match expected schema: {path}\n"
+                    f"  existing: {existing_fieldnames}\n"
+                    f"  expected: {fieldnames}"
+                )
+
     exists = path.exists()
     with open(path, "a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=list(row.keys()))
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
         if not exists:
             writer.writeheader()
         writer.writerow(row)
@@ -94,7 +152,7 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--config", type=str, default="stiff_params_femur.json", help="Parameter file.")
     p.add_argument("--steps", type=int, default=2, help="Number of time steps to measure.")
-    p.add_argument("--outdir", type=str, default="results/scaling", help="Output directory.")
+    p.add_argument("--outdir", type=str, default="results/scaling_stiff", help="Output directory.")
     return p.parse_args()
 
 
@@ -146,14 +204,23 @@ def main() -> None:
     cells_global = mesh.topology.index_map(tdim).size_global
     
     # Estimate DOFs (approximated, as actual FunctionSpaces are inside Solver)
-    # Density is scalar P1, Mech is vector P1
+    # Density/stimulus are scalar P1, Mech is vector P1, Fabric is tensor P1.
+    gdim = mesh.geometry.dim
     n_nodes = mesh.topology.index_map(0).size_global
     dofs_dens = n_nodes
-    dofs_mech = n_nodes * 3
+    dofs_mech = n_nodes * gdim
+    dofs_stim = n_nodes
+    dofs_fabric = n_nodes * gdim * gdim
+    dofs_total = dofs_mech + dofs_dens + dofs_stim + dofs_fabric
 
     if rank == 0:
         print(f"Setup complete in {t_setup:.2f}s")
-        print(f"Mesh: {cells_global} cells, ~{dofs_mech} mech DOFs")
+        print(
+            "Mesh:"
+            f" {cells_global} cells,"
+            f" ~{dofs_total} DOFs total"
+            f" (u:{dofs_mech}, rho:{dofs_dens}, S:{dofs_stim}, L:{dofs_fabric})"
+        )
         print(f"Running {args.steps} steps...")
 
     # 2. Run Benchmark
@@ -181,6 +248,9 @@ def main() -> None:
         cells_global=cells_global,
         dofs_dens=dofs_dens,
         dofs_mech=dofs_mech,
+        dofs_stim=dofs_stim,
+        dofs_fabric=dofs_fabric,
+        dofs_total=dofs_total,
         steps_measured=args.steps,
         t_avg_step_s=avg_step_time,
         t_setup_s=t_setup,
