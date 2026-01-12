@@ -17,7 +17,7 @@ The knee reference point is defined as the midpoint of the epicondylar landmarks
 \mathbf{e}_x &= \mathbf{e}_y \times \mathbf{e}_z,
 \label{eq:fcs_axes}
 \end{align}
-which guarantees an orthonormal, right-handed basis (the implementation explicitly checks $\det(\mathbf{Q})=+1$). Here, $\mathbf{e}_y$ approximates the mechanical axis (knee-to-head), $\mathbf{e}_z$ approximates the mediolateral axis (epicondylar line projected orthogonal to $\mathbf{e}_y$), and $\mathbf{e}_x$ completes the system.
+which guarantees an orthonormal, right-handed basis ($\det(\mathbf{Q})=+1$). Here, $\mathbf{e}_y$ approximates the mechanical axis (knee-to-head), $\mathbf{e}_z$ approximates the mediolateral axis (epicondylar line projected orthogonal to $\mathbf{e}_y$), and $\mathbf{e}_x$ completes the system.
 
 \paragraph{Transformations.}
 We define the rotation matrix with FCS unit vectors as rows,
@@ -50,7 +50,7 @@ and enforcing $\lVert\mathbf{F}^{\mathrm{FCS}}\rVert=F$, which yields
 \end{bmatrix}.
 \label{eq:force_from_angles}
 \end{equation}
-The corresponding world-space vector is obtained by Eq.~\eqref{eq:fcs_vector_transform}. A sign flag (\texttt{flip}) is used to enforce the intended physical direction (e.g., compressive hip joint reaction acting \emph{into} the femoral head versus tensile muscle pull).
+The corresponding world-space vector is obtained by Eq.~\eqref{eq:fcs_vector_transform}. A sign flag is used to enforce the intended physical direction (e.g., compressive hip joint reaction acting \emph{into} the femoral head versus tensile muscle pull).
 
 \paragraph{Hip joint traction on the femoral head.}
 The hip joint reaction is modelled as a Gaussian traction patch on the femoral head. Let $\hat{\mathbf{f}}_h^w=\mathbf{F}_h^w/\lVert\mathbf{F}_h^w\rVert$ be the unit direction and $\mathbf{O}$ the head centre. The patch centre is determined by tracing a ray from $\mathbf{O}$ along $\hat{\mathbf{f}}_h^w$ until it intersects the femoral surface; the first hit defines the contact point $\mathbf{x}_{c,h}^w$ (approximated by the nearest surface-element centre).
@@ -70,7 +70,7 @@ where $\sigma_h = R_h\,(\sigma_{\deg}\pi/180)$ converts the prescribed angular w
 \label{eq:hip_resultant_condition}
 \end{equation}
 
-In the discrete implementation on the triangulated surface, Eq.~\eqref{eq:hip_resultant_condition} is enforced via area-weighted normalisation. For surface elements (cells) $e$ with areas $\mathrm{Area}_e$ and centres $\mathbf{x}_e$, we compute weights
+In the discrete setting on the triangulated surface, Eq.~\eqref{eq:hip_resultant_condition} is enforced via area-weighted normalisation. For surface elements (cells) $e$ with areas $\mathrm{Area}_e$ and centres $\mathbf{x}_e$, we compute weights
 \begin{equation}
 \omega_e=\exp\!\left(-\frac{\lVert \mathbf{x}_e^{\mathrm{FCS}}-\mathbf{x}_{c,h}^{\mathrm{FCS}}\rVert^2}{2\sigma_h^2}\right),
 \end{equation}
@@ -79,7 +79,7 @@ and set the (cell-wise) traction vectors to
 \mathbf{t}_{h,e} = s_h\,\frac{F_h\,\omega_e}{\sum_{e'} \omega_{e'}\,\mathrm{Area}_{e'}}\,\hat{\mathbf{f}}_h^w,
 \label{eq:hip_discrete_traction}
 \end{equation}
-where $s_h\in\{-1,+1\}$ encodes the \texttt{flip} convention. By construction, $\sum_e \mathbf{t}_{h,e}\,\mathrm{Area}_e=s_h\,\mathbf{F}_h^w$.
+where $s_h\in\{-1,+1\}$ encodes this sign convention. By construction, $\sum_e \mathbf{t}_{h,e}\,\mathrm{Area}_e=s_h\,\mathbf{F}_h^w$.
 
 \paragraph{Muscle tractions around attachment curves.}
 Each muscle $k$ is represented by an attachment curve $\mathcal{C}_k$ on the proximal femur, reconstructed from user-defined points and smoothed by a B-spline curve fit. The muscle resultant direction $\hat{\mathbf{f}}_k^w$ is defined from Eq.~\eqref{eq:force_from_angles}. The distance of a surface point to the attachment curve is
@@ -91,7 +91,7 @@ The corresponding (continuous) traction field is
 \mathbf{t}_k(\mathbf{x})=\lambda_k\,\exp\!\left(-\frac{d_k(\mathbf{x})^2}{2\sigma_k^2}\right)\,\hat{\mathbf{f}}_k^w,
 \label{eq:muscle_traction_continuous}
 \end{equation}
-with prescribed width $\sigma_k$ (mm) and normalisation $\lambda_k$ such that $\int_{\Gamma_{\mathrm{load}}}\mathbf{t}_k\,\mathrm{d}A=\mathbf{F}_k^w$ (up to the \texttt{flip} sign). Numerically, $d_k$ is evaluated by nearest-neighbour queries to a dense sampling of the B-spline curve; weights are additionally scaled by local curve segment lengths to avoid sensitivity to the sampling density.
+with prescribed width $\sigma_k$ (mm) and normalisation $\lambda_k$ such that $\int_{\Gamma_{\mathrm{load}}}\mathbf{t}_k\,\mathrm{d}A=\mathbf{F}_k^w$ (up to the sign convention). In the discrete setting, $d_k$ is evaluated by nearest-neighbour queries to a dense sampling of the B-spline curve; weights are additionally scaled by local curve segment lengths to avoid sensitivity to the sampling density.
 
 \paragraph{Superposition and mapping to the FE boundary.}
 For a given loading case, the total applied traction is the linear superposition

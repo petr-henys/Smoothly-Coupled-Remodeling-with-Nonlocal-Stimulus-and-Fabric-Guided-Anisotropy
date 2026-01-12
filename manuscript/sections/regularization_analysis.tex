@@ -28,7 +28,7 @@ For each run, we load the final density $\rho(\cdot,T)$ from the checkpoint and 
 \mathcal{R}_\rho=\frac{\|\nabla\rho\|_{L^2}}{\bar{\rho}\sqrt{|\Omega|}},
 \]
 where $\bar{\rho}$ is the domain mean.
-Coupling cost is quantified by the number of fixed-point subiterations per accepted time step (logged as \texttt{num\_subiters}).
+Coupling cost is quantified by the number of fixed-point subiterations per accepted time step.
 To visualize the marginal effect of each coefficient, we plot the median and interquartile range (IQR) across all runs that share the same $D/D_{\mathrm{ref}}$ for the coefficient in question.
 
 \begin{figure}[htbp]

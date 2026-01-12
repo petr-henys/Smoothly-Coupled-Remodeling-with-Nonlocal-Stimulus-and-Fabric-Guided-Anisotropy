@@ -1,29 +1,25 @@
-\section*{Reproducibility, implementation and data availability}
+\section*{Reproducibility and data availability}
 \label{sec:reproducibility}
 
 \paragraph{Code and data availability.}
 The complete source code and post-processing scripts used in this work are hosted on GitHub at \url{https://github.com/USERNAME/REPOSITORY} and permanently archived on Zenodo at \url{https://doi.org/10.5281/zenodo.XXXXXXX}.
-The Zenodo record corresponds to the exact version used for this manuscript (release tag and commit hash recorded in the archive metadata) and includes (i) all JSON parameter files, (ii) the anatomy- and gait-related inputs required for the femur case study, and (iii) the raw simulation outputs from which the figures were generated.
-The repository is organized so that every simulation run is self-describing: it writes a complete \texttt{config.json} snapshot, rank-0 logs, and machine-readable CSV metrics (\texttt{steps.csv}, \texttt{subiterations.csv}) into the output directory together with the field data.
+The Zenodo record corresponds to the exact version used for this manuscript (release tag and commit hash recorded in the archive metadata) and includes (i) all parameter files, (ii) the anatomy- and gait-related inputs required for the femur case study, and (iii) the raw simulation outputs from which the figures were generated.
+The repository is organized so that every simulation run is self-describing: each run stores a complete configuration snapshot, logs, and machine-readable metrics in the output directory together with the field data.
 
 \paragraph{Software stack and execution.}
-The solver is implemented in Python on top of FEniCSx/dolfinx and PETSc, and all PDE blocks are solved in distributed memory via MPI.
-Field output is written collectively using the ADIOS2-backed VTX format (\texttt{*.bp}) for scalable parallel I/O and restart/checkpointing.
-A minimal end-to-end example is the box benchmark, which can be run as
-\texttt{mpirun -n 4 python run\_box\_model.py},
-producing a self-contained results directory (including \texttt{config.json} and all logs/outputs).
-All parameter sweeps and figure-generation scripts used in the manuscript are provided in the repository (see \texttt{run\_*.py} and \texttt{analysis/*.py}).
+The solver is designed for distributed-memory parallel execution and writes field output in a scalable parallel format suitable for large meshes and restart.
+A minimal end-to-end example is the box benchmark, which runs out of the box and produces a self-contained results directory.
+All parameter sweeps and figure-generation pipelines used in the manuscript are provided in the repository.
 
 \paragraph{Modular staggered architecture and extensibility.}
 The coupled problem is advanced by a partitioned block Gauss--Seidel scheme (mechanics $\rightarrow$ fabric $\rightarrow$ stimulus $\rightarrow$ density; \S\ref{sec:fp-aa}).
-In the implementation, each subproblem is encapsulated as an independent \emph{coupling block} exposing its state and output fields (see \texttt{simulation/protocols.py} and \texttt{simulation/registry.py}).
-Blocks are registered in \texttt{simulation/model.py}; the fixed-point solver, time integrator, I/O, and diagnostics operate on the registry and therefore remain agnostic to the specific set of fields.
-Adding a new field to the staggered scheme requires only (i) defining the new \texttt{dolfinx.fem.Function} and its ``old'' counterpart, (ii) implementing one additional block that advances it, and (iii) registering the block in the desired Gauss--Seidel order; the rest of the workflow (time stepping, logging, output) is discovered automatically from the registry.
+Each subproblem is encapsulated as an independent \emph{coupling block} exposing its state and output fields; the fixed-point solver, time integrator, I/O, and diagnostics operate on a registry of these blocks and therefore remain agnostic to the specific set of fields.
+Adding a new field to the staggered scheme requires only (i) defining its state variable (and its previous-time counterpart), (ii) implementing one additional block that advances it, and (iii) registering the block in the desired Gauss--Seidel order.
 
 \paragraph{Parallel execution and scaling.}
 All simulations are MPI-parallel and require no shared-memory assumptions.
-For parameter studies we additionally support concurrent execution of multiple independent runs by splitting \texttt{MPI\_COMM\_WORLD} into subcommunicators (see \texttt{parametrizer.py}), enabling both strong scaling (single large run) and throughput scaling (many runs in parallel).
-To document parallel performance, we include a strong scaling benchmark on the stiff femur case study (see \texttt{run\_weak\_scaling.py}).
+For parameter studies we additionally support concurrent execution of multiple independent runs by splitting the available MPI ranks into subcommunicators, enabling both strong scaling (single large run) and throughput scaling (many runs in parallel).
+To document parallel performance, we include a strong scaling benchmark on the stiff femur case study.
 We measure the wall-clock time per \emph{global} time step of the fully coupled multiphysics solve, including all four staggered blocks (mechanics, fabric, stimulus, density) and their fixed-point coupling iterations.
 On this representative mesh ($N_{\mathrm{cells}}\approx 75\mathrm{k}$; see caption for DOF breakdown) the solver shows a slight super-linear speedup from 1 to 2 MPI ranks (likely due to cache effects) and maintains 56\% parallel efficiency at 8 ranks (speedup $4.45\times$), despite the modest problem size per rank (\cref{fig:strong_scaling}).
 
@@ -35,4 +31,4 @@ On this representative mesh ($N_{\mathrm{cells}}\approx 75\mathrm{k}$; see capti
 \end{figure}
 
 \paragraph{Verification.}
-Core infrastructure (time integration, MPI-consistent diagnostics, I/O) is covered by automated tests in \texttt{tests/} runnable via \texttt{pytest} (serial or under MPI).
+Core infrastructure (time integration, MPI-consistent diagnostics, I/O) is covered by automated regression tests (serial or under MPI).

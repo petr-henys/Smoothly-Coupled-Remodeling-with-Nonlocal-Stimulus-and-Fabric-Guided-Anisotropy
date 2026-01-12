@@ -10,9 +10,9 @@ We compare two parameter regimes:
 \textbf{PhysioSetup} (well-conditioned, more regularized) and \textbf{StiffSetup} (more challenging coupling via reduced stimulus/density diffusion and faster density kinetics).
 For each setup we run (i) a pure damped Picard iteration (no Anderson) and (ii) Anderson-accelerated mixing with the parameters in Table~\ref{tab:anderson-params}.
 
-The primary convergence indicator is the coupling residual $r_{\mathrm{Pic}}$ (reported as \texttt{proj\_res} in the logs), defined by \eqref{eq:fp-picard-res} and evaluated on the coupled state $(\mathbf{L},S,\rho)$.
+The primary convergence indicator is the coupling residual $r_{\mathrm{Pic}}$, defined by \eqref{eq:fp-picard-res} and evaluated on the coupled state $(\mathbf{L},S,\rho)$.
 For diagnostics we also use the per-iteration contraction estimate $\rho_k:=r_k/r_{k-1}$ and the condition number of the regularized Gram matrix (see \S\ref{sec:fp-aa}).
-Performance is reported as the cumulative PETSc KSP solve time and KSP iterations aggregated over the four blocks (mechanics, fabric, stimulus, density); see \texttt{steps.csv} and \texttt{subiterations.csv}.
+Performance is reported as the cumulative linear-solver time and iteration counts aggregated over the four blocks (mechanics, fabric, stimulus, density).
 
 \begin{table}[htbp]
   \centering
@@ -47,17 +47,17 @@ Performance is reported as the cumulative PETSc KSP solve time and KSP iteration
   \safeincludegraphics[width=1\linewidth]{anderson_comparison.png}
   \caption{Physio vs.\ stiff coupling in the box benchmark: Anderson acceleration vs.\ pure damped Picard iteration.
   (a) Final coupling residual $r_{\mathrm{Pic}}$ per accepted step (log scale; values below $10^{-14}$ are floored for visibility), with the dashed line marking $\mathrm{tol}=10^{-6}$.
-  (b) Total KSP solve time over the full run, stacked by fixed-point stop reason (\texttt{converged}, \texttt{max\_subiters}, \texttt{no\_progress}).
+  (b) Total linear-solver time over the full run, stacked by fixed-point termination reason (converged to tolerance, reached the subiteration limit, insufficient progress).
   (c) Representative residual histories: for each configuration we plot the step that required the most subiterations.}
   \label{fig:anderson_comparison}
 \end{figure}
 \paragraph{Observed robustness trends.}
 Figure~\ref{fig:anderson_comparison} highlights two qualitatively different regimes.
 In \textbf{PhysioSetup}, the coupling is sufficiently contractive that both Picard and Anderson-accelerated iterations converge rapidly to $\mathrm{tol}$, and the total solve times are similar.
-In \textbf{StiffSetup}, the reduced regularization and faster kinetics substantially weaken contractivity, and pure Picard typically fails to satisfy the coupling tolerance within $K_{\max}$ subiterations (stop reasons \texttt{max\_subiters}/\texttt{no\_progress}), wasting substantial KSP work while leaving a large final residual.
+In \textbf{StiffSetup}, the reduced regularization and faster kinetics substantially weaken contractivity, and pure Picard typically fails to satisfy the coupling tolerance within $K_{\max}$ subiterations (termination by subiteration limit or insufficient progress), wasting substantial linear-solver work while leaving a large final residual.
 Anderson mixing restores practical robustness by stabilizing the fixed-point iteration and driving the residual to the prescribed tolerance in the same configuration.
 \paragraph{Event-driven safeguards and diagnostic run.}
-The implementation augments classical Anderson (Pulay/DIIS) mixing with safeguards that are essential in large-scale, strongly coupled runs:
+We augment classical Anderson (Pulay/DIIS) mixing with safeguards that are essential in large-scale, strongly coupled runs:
 adaptive restarts under stall or ill-conditioning, a step limiter that caps the Anderson update relative to the underlying Picard step, and a hysteresis-based switch that temporarily disables Anderson when the observed contraction is already strong (\S\ref{sec:fp-aa}).
 Figure~\ref{fig:anderson_diagnostic} summarizes these mechanisms on a representative StiffSetup run via (i) per-step convergence curves, (ii) global timelines of the residual and contraction, (iii) evolution of the effective history size, (iv) Gram-matrix conditioning, and (v) cumulative event counts (restarts, limiting, Picard-mode switches, and step-level stop reasons).
   
@@ -70,7 +70,7 @@ Figure~\ref{fig:anderson_diagnostic} summarizes these mechanisms on a representa
   (c) Time-step and subiteration counts.
   (d) Effective Anderson history size.
   (e) Conditioning $\kappa(H)$ of the regularized Gram matrix with the restart threshold.
-  (f) Cumulative events: stall/conditioning restarts, step limiting, Picard-mode switches, and step-level stop reasons (\texttt{max\_subiters}, \texttt{no\_progress}).}
+  (f) Cumulative events: stall/conditioning restarts, step limiting, Picard-mode switches, and step-level termination reasons (subiteration limit, insufficient progress).}
   \label{fig:anderson_diagnostic}
 \end{figure}
 

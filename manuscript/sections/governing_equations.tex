@@ -14,7 +14,7 @@ Some intermediate expressions used in purely numerical subroutines (notably clos
 \[
 \operatorname{clip}(x,a,b):=\min\{\max\{x,a\},b\},
 \]
-implemented as pointwise \texttt{min\_value}/\texttt{max\_value} in UFL. We intentionally keep these guards sharp to guarantee domain safety.
+implemented as sharp pointwise min/max operations. We intentionally keep these guards sharp to guarantee domain safety.
 
 \paragraph{Units and scaling.}
 We use the unit system: length [mm], time [day], stress/energy [MPa], and density [g/cm$^3$]. The stimulus $S$ is dimensionless, the apparent density $\rho$ is in g/cm$^3$, and fabric quantities ($\mathbf{A}$, $\mathbf{L}$) are dimensionless. The boundary partition is $\partial\Omega=\Gamma_D\cup\Gamma_N$ with outward unit normal $\mathbf{n}$.
@@ -242,6 +242,3 @@ with a small dimensionless $\varepsilon_a>0$.
 
 \paragraph{Quantitative analysis and biological interpretation.}
 Figure \ref{fig:anisotropy_law} visualizes how the log-fabric state biases directional stiffness. The relaxation term in \eqref{eq:L-strong-nd} drives $\mathbf{L}$ toward the mechanically informed target $\mathbf{L}_M(\bar{\mathbf{Q}})$ while diffusion regularizes spatial oscillations; the log-Euclidean representation ensures $\mathbf{A}=\exp(\mathbf{L})\in\mathbb{S}^{3}_{++}$ by construction. The log-space normalization in \eqref{eq:M-hat-nd} enforces $\mathrm{tr}\,\mathbf{L}_M=0$ (unit determinant for $\exp(\mathbf{L}_M)$), so the target acts on anisotropy (eigenvalue ratios) rather than isotropic scaling. In the constitutive evaluation, isotropic scaling is removed by working with eigenvalue ratios (deviatoric part of $\mathbf{L}$) and bounding them by the same $m_{\min},m_{\max}$ used in \eqref{eq:M-hat-nd}.
-
-\paragraph{Regularization parameters and defaults.}
-We use a single global smoothing width $\varepsilon$ for the soft clamps in \eqref{eq:smooth-max-nd} and \eqref{eq:smooth-splits-nd}. The stimulus mechanostat uses a dimensionless lazy-zone threshold scale $\delta_0$ and saturation width $\kappa_S$ in \eqref{eq:stim-strong-nd}. The fabric target uses $\varepsilon_Q$ and eigenvalue-ratio bounds $[m_{\min},m_{\max}]$ in \eqref{eq:M-hat-nd}, and the activity factor uses $\varepsilon_a$ to smoothly gate near-isotropic loading. These choices avoid hard projections while keeping the subproblems well-conditioned in practice.

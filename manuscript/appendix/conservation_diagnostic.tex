@@ -11,7 +11,7 @@ where the error is normalized by the total system mass $M(t)$ to quantify the sp
 \begin{figure}[htbp]
     \centering
     \safeincludegraphics[width=\linewidth]{conservation_diagnostic_box_physio.png}
-    \caption{Conservation diagnostic for the physiological benchmark case (\texttt{box\_physio}).
+    \caption{Conservation diagnostic for the physiological benchmark case.
     (a) Evolution of total bone mass $M(t)$ (solid) and relative change $\Delta M/M_0$ (dashed).
     (b) Mass balance check: instantaneous mass rate $dM/dt$ (solid) matches the integrated source term (dashed). The normalized balance error (red, right axis) remains negligible ($\sim 10^{-7}\%\,M/\text{day}$), confirming discrete conservation.
     (c) Strain energy evolution $W(t)$, showing smooth convergence to a homeostatic state.}
@@ -21,7 +21,7 @@ where the error is normalized by the total system mass $M(t)$ to quantify the sp
 \begin{figure}[htbp]
     \centering
     \safeincludegraphics[width=\linewidth]{conservation_diagnostic_box_stiff.png}
-    \caption{Conservation diagnostic for the stiffened benchmark case (\texttt{box\_stiff}).
+    \caption{Conservation diagnostic for the stiffened benchmark case.
     The system exhibits a significant mass reduction ($\sim 17\%$) as it adapts to the stiffer material parameters.
     Despite larger transients, the mass balance error (b) remains effectively zero ($\sim 10^{-7}\%\,M/\text{day}$), demonstrating the robustness of the implicit coupling scheme even under large remodeling rates.}
     \label{fig:conservation-stiff}

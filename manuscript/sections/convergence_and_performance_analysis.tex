@@ -12,8 +12,8 @@ Within each coupling subiteration we apply a block Gauss--Seidel sweep in the or
 Mechanics field(s) (e.g.\ displacements) and derived drivers are treated as internal quantities of the mechanics block and are not part of the fixed-point iterate.
 Coupling convergence is measured by the scaled relative Picard residual $r_{\mathrm{Pic}}$ in \eqref{eq:fp-picard-res}, i.e.\ on the coefficient vectors of $(\mathbf{L},S,\rho)$ only.
 
-Performance metrics are logged per timestep attempt (accepted or rejected) to \texttt{steps.csv} and per-subiteration to \texttt{subiterations.csv}.
-For the convergence study we aggregate, over accepted steps, the KSP solve times and KSP iteration counts for the four blocks (mechanics, fabric, stimulus, density), together with peak memory.
+Performance metrics are recorded per time-step attempt (accepted or rejected) and per coupling subiteration.
+For the convergence study we aggregate, over accepted steps, the linear-solver times and iteration counts for the four blocks (mechanics, fabric, stimulus, density), together with peak memory.
 
 \subsection*{Spatio-temporal discretization convergence}
 
@@ -51,7 +51,7 @@ The annotated slopes $p$ in \cref{fig:individual_convergence} are obtained from 
   \caption{Discretization convergence and solver performance for the box benchmark.
   (a) Spatial $L^2$ pair errors for the coupled state fields $(\mathbf{L},S,\rho)$ at fixed $\Delta t$ under mesh refinement.
   (b) Temporal $L^2$ pair errors at fixed mesh under time-step refinement.
-  (c,d) Aggregated KSP solve time (solid) and KSP iteration counts (dotted) for the four blocks (mechanics, fabric, stimulus, density) versus $h$ and $\Delta t$.
+  (c,d) Aggregated linear-solver time (solid) and iteration counts (dotted) for the four blocks (mechanics, fabric, stimulus, density) versus $h$ and $\Delta t$.
   Reference lines indicate $O(h)$, $O(h^2)$, and $O(\Delta t)$.}
   \label{fig:individual_convergence}
 \end{figure}

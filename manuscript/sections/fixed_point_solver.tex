@@ -5,17 +5,16 @@ We describe the nonlinear solver used to obtain the coupled remodeling state at 
 $\mathbf{x}^n=(\mathbf{L}^n,S^n,\rho^n)$, where $\mathbf{L}$ is the logarithmic fabric tensor, $S$ is the remodeling stimulus, and $\rho$ is the apparent density.
 The mechanics unknown(s) (e.g.\ displacements) are treated as dependent variables inside the block subsolves and are not part of the fixed-point state unless explicitly included among the coupling state fields.
 
-The implementation operates on the coefficient vectors of the coupling state fields as provided by the ordered list of coupling blocks. Let $\{x_i\}_{i=1}^{M}$ denote the (global) coefficient vectors of the distinct state fields (duplicates across blocks are removed by identity), with global owned sizes $N_i$ (sum of owned DOFs across MPI ranks). On each rank we work with the concatenation of the owned pieces, but all inner products and norms are \emph{global}:
-for distributed vectors $a,b$ (represented by their owned pieces on each rank),
+We represent each coupling state field by its vector of degrees of freedom. Let $\{x_i\}_{i=1}^{M}$ denote the coefficient vectors of the distinct state fields, with lengths $N_i$. We use the standard Euclidean inner product and norm:
 \[
-\langle a,b\rangle \;:=\; \sum_{\text{ranks}} a_{\text{(rank)}}^{\mathsf{T}}\, b_{\text{(rank)}}, 
+\langle a,b\rangle \;:=\; a^{\mathsf{T}} b,
 \qquad 
 \|a\| \;:=\; \sqrt{\langle a,a\rangle}.
 \]
 
-A fixed diagonal scaling is introduced once per time level to nondimensionalize the coupled state and to make the residual measure comparable across fields. Define the global RMS of a field vector $v_i$ by
+A fixed diagonal scaling is introduced once per time level to nondimensionalize the coupled state and to make the residual measure comparable across fields. Define the RMS of a field vector $v_i$ by
 \[
-\mathrm{RMS}(v_i)\;:=\;\sqrt{\frac{1}{N_i}\,\sum_{\text{ranks}}\|v_{i,\text{(rank)}}\|_2^2}.
+\mathrm{RMS}(v_i)\;:=\;\frac{\|v_i\|_2}{\sqrt{N_i}}.
 \]
 Let $\varepsilon_{\mathrm{FP}}:=10^{-300}$. After the first Gauss--Seidel sweep (see below), the per-field scales are fixed as
 \begin{equation}\label{eq:fp-scales}
@@ -62,7 +61,7 @@ All convergence and switching decisions use the scaled vectors $\widetilde{\math
 \[
 \Delta^{(k+1)} := \widetilde{\mathbf{x}}_{\mathrm{raw}}^{(k+1)}-\widetilde{\mathbf{x}}^{(k)}.
 \]
-The implementation measures the (scaled) relative Picard residual via a guarded ``relative step'':
+We measure the (scaled) relative Picard residual via a guarded ``relative step'':
 \begin{equation}\label{eq:fp-picard-res}
 r_{\mathrm{Pic}}^{(k+1)} \;:=\;
 \begin{cases}
@@ -97,14 +96,14 @@ Whenever Anderson is inactive, the update is the damped Picard step in scaled co
 with damping $\beta\in(0,1]$.
 
 \paragraph{Pulay mixing (type II; DIIS form).}
-When Pulay mixing is active, the implementation uses a residual-minimization accelerator in the sense of Pulay's DIIS \cite{Pulay1980_ConvergenceAcceleration}, in the ``type II'' (update-form) presentation common in the Anderson-acceleration literature \cite{Walker2011_AndersonAcceleration}.
+When Pulay mixing is active, we use a residual-minimization accelerator in the sense of Pulay's DIIS \cite{Pulay1980_ConvergenceAcceleration}, in the ``type II'' (update-form) presentation common in the Anderson-acceleration literature \cite{Walker2011_AndersonAcceleration}.
 All operations below are performed on the \emph{scaled} vectors.
 
 At fixed-point iteration $k$ we form the current Picard residual in scaled coordinates,
 \[
 \widetilde{r}^{(k+1)} := \widetilde{\mathbf{x}}_{\mathrm{raw}}^{(k+1)}-\widetilde{\mathbf{x}}^{(k)}.
 \]
-The Anderson data structure stores a bounded history of pairs $\{(\widetilde{\mathbf{x}}^{(j)},\widetilde{r}^{(j+1)})\}$; specifically, it appends the \emph{current} pair $(\widetilde{\mathbf{x}}^{(k)},\widetilde{r}^{(k+1)})$ each call and retains at most $m+1$ pairs (with $m$ the configured history depth). Let $p$ denote the number of stored pairs after appending (thus $1\le p\le m+1$), ordered from oldest to newest, and denote the stored residuals and iterates by
+We store a bounded history of pairs $\{(\widetilde{\mathbf{x}}^{(j)},\widetilde{r}^{(j+1)})\}$ and retain at most $m{+}1$ pairs (with $m$ the history depth). Let $p$ denote the number of stored pairs (thus $1\le p\le m{+}1$), ordered from oldest to newest, and denote the stored residuals and iterates by
 \[
 \{(\widetilde{\mathbf{x}}^{[1]},\widetilde{r}^{[1]}),\dots,(\widetilde{\mathbf{x}}^{[p]},\widetilde{r}^{[p]})\},
 \]
@@ -138,7 +137,7 @@ Equivalently, letting $\mathbf{1}$ be the all-ones vector, we solve
 provided that $\mathbf{1}^{\mathsf{T}}y$ is finite and $|\mathbf{1}^{\mathsf{T}}y|\ge \varepsilon_{\mathrm{AA}}$; otherwise $\alpha$ is set to the uniform weights $\alpha_j=1/p$.
 
 \paragraph{Robust linear solve (eigendecomposition fallback).}
-If the direct solve for $y$ fails, the implementation falls back to an eigendecomposition of $H+\lambda_{\mathrm{eff}}I$:
+If the direct solve for $y$ fails, we fall back to an eigendecomposition of $H+\lambda_{\mathrm{eff}}I$:
 \[
 H+\lambda_{\mathrm{eff}}I = V\,\mathrm{diag}(\mu)\,V^{\mathsf{T}}.
 \]
@@ -166,7 +165,7 @@ The accelerated iterate is formed as an affine combination of damped Picard upda
 When $p<2$ (i.e.\ after a reset or when only one pair is available), this reduces to the current damped Picard step.
 
 \paragraph{Step limiting and restarts.}
-To prevent overshooting, the implementation optionally limits the Anderson step relative to the current Picard step.
+To prevent overshooting, we optionally limit the Anderson step relative to the current Picard step.
 Let the current Picard step size (in scaled coordinates) be
 \[
 r_{\mathrm{step}}^{(k+1)} := \mathrm{RelStep}_{\varepsilon_{\mathrm{AA}}}\!\Big(\widetilde{\mathbf{x}}^{(k)},\ \widetilde{\mathbf{x}}_{\mathrm{raw}}^{(k+1)};\ \widetilde{\mathbf{x}}_{\mathrm{raw}}^{(k+1)}\Big),
@@ -213,13 +212,13 @@ If $\mathrm{cond}(H+\lambda_{\mathrm{eff}}I)$ is finite and $\mathrm{cond}(H+\la
 
 A scheduled restart sets an internal ``pending reset'' flag; the history is actually cleared at the \emph{start} of the next Anderson call (before appending the next pair).
 
-\paragraph{Stopping, early abort, and logging.}
+\paragraph{Stopping and early abort.}
 We stop as soon as the coupling tolerance is met:
 if $r_{\mathrm{Pic}}^{(k+1)}\le \mathrm{tol}$, we set the next iterate to the \emph{raw} Gauss--Seidel image,
 \[
 \widetilde{\mathbf{x}}^{(k+1)} := \widetilde{\mathbf{x}}_{\mathrm{raw}}^{(k+1)},
 \]
-writes it back to the physical fields (inverse scaling), and terminates.
+accept it, and terminate.
 
 If the tolerance is not met, the iteration proceeds until a maximum number of fixed-point subiterations $N_{\max}$ is reached. Additionally, to avoid wasting iterations when the residual stagnates we use an optional ``outer stall'' early-abort criterion: fix a window length $W\in\mathbb{N}$, a minimum relative drop $\delta\in(0,1)$, and a patience parameter $P\in\mathbb{N}$. Maintain the rolling window of the last $W$ Picard residuals. Once the window is full (i.e.\ for residual index $\ell=k+1$ with $\ell\ge W$), define
 \[
@@ -232,13 +231,9 @@ If $r_{\mathrm{first}}$ and $r_{\mathrm{best}}$ are finite and $r_{\mathrm{first
 \]
 otherwise the outer-stall counter is reset to $0$. If $\Delta_{\mathrm{rel}}<\delta$, the counter is incremented; otherwise it is reset to $0$. The iteration is terminated early once the counter reaches $P$.
 
-Per-subiteration diagnostics include the Picard residual $r_{\mathrm{Pic}}^{(k+1)}$, the contraction ratio $r_{\mathrm{contr}}^{(k+1)}$ when defined, whether Anderson was active, and (when Anderson is active) the computed $\mathrm{cond}(H+\lambda_{\mathrm{eff}}I)$, whether the step was limited, and the restart reason string (if any) scheduled for the next call.
+For diagnostics, we monitor the Picard residual $r_{\mathrm{Pic}}^{(k+1)}$, the contraction ratio $r_{\mathrm{contr}}^{(k+1)}$ when defined, and (when Anderson is active) the conditioning $\mathrm{cond}(H+\lambda_{\mathrm{eff}}I)$ and whether step limiting/restarts were triggered.
 
-\paragraph{Well-posedness of subsolves.}
-At each evaluation of $\mathcal{G}$ the four subproblems are uniformly elliptic (for fixed arguments) and admit unique solutions in the chosen finite-dimensional spaces: (i) mechanics has a coercive bilinear form by the density floor and $\nu\in(-1,\tfrac12)$, (ii) stimulus is SPD by $(\tau_S/\Delta t^n+1)$ with $D_S\ge0$, (iii) density is SPD by $(1/\Delta t^n)+\alpha_{\mathrm{surf}}(\rho^{n-1})\big(k_{\mathrm{form}}S_+/\rho_{\max}+k_{\mathrm{res}}S_-/\rho_{\min}\big)\ge 1/\Delta t^n$ together with $\mathbf{D}_\rho=D_\rho\mathbf{I}$, and (iv) fabric is SPD by $(1/\Delta t^n)+a(\bar{\mathbf{Q}})/\tau_A>0$ with $D_A\ge 0$. Thus each application of $\mathcal{G}$ is well-defined.
-
-\paragraph{Convergence discussion.}
-On bounded sets where the smooth gates/clamps are Lipschitz, $\mathcal{G}$ is locally Lipschitz. If the induced modulus $L<1$, the Gauss--Seidel iteration is linearly convergent in the Picard metric \eqref{eq:fp-picard-res}. The Pulay/DIIS update \eqref{eq:aa-update} acts as a multisecant extrapolation and can reduce the number of subiterations in practice. Robustness is promoted by the step limiter \eqref{eq:aa-step-limit} and by adaptive history restarts triggered by stall or ill-conditioning of the regularized Gram system.
+The Gauss--Seidel iteration is linearly convergent in the Picard metric \eqref{eq:fp-picard-res}. The Pulay/DIIS update \eqref{eq:aa-update} acts as a multisecant extrapolation and can reduce the number of subiterations in practice. Robustness is promoted by the step limiter \eqref{eq:aa-step-limit} and by adaptive history restarts triggered by stall or ill-conditioning of the regularized Gram system.
 
 \paragraph{Algorithm (per time level $t^n$).}
 \begin{enumerate}
@@ -255,8 +250,8 @@ On bounded sets where the smooth gates/clamps are Lipschitz, $\mathcal{G}$ is lo
       \item If Anderson is inactive, perform the damped Picard update \eqref{eq:picard-damped}.
       \item If Anderson is active, compute $\widetilde{\mathbf{x}}_{\mathrm{AA}}^{(k+1)}$ via \eqref{eq:aa-update}, apply step limiting \eqref{eq:aa-step-limit} if needed, and obtain $\widetilde{\mathbf{x}}^{(k+1)}$; schedule restarts as described in ``Step limiting and restarts'' (executed on the next Anderson call).
     \end{itemize}
-    \item Apply the inverse scaling to write $\mathbf{x}^{(k+1)}$ back to the physical field coefficients and synchronize ghost values.
-    \item Update the outer-stall window and abort early if the criterion in ``Stopping, early abort, and logging'' triggers.
+    \item Apply the inverse scaling to write $\mathbf{x}^{(k+1)}$ back to the physical field coefficients.
+    \item Update the outer-stall window and abort early if the criterion in ``Stopping and early abort'' triggers.
   \end{enumerate}
   \item If convergence was not reached and no early abort was triggered, terminate after $N_{\max}$ iterations.
 \end{enumerate}
