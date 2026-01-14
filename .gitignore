@@ -4,7 +4,7 @@
 # Allow specific directories
 !/simulation/
 !/tests/
-!/manuscript/
+#!/manuscript/
 !/analysis/
 !/box/
 !/femur/
@@ -32,6 +32,11 @@
 !/run_stimulus_sweep.py
 !/run_anderson_sweep.py
 !/run_weak_scaling.py
+!/run_alpha_front_sweep.py
+!/run_psi_ref_ratio_sweep.py
+!/morpho_mapper.py
+!/database.py
+!/sweep_utils.py
 # Python cache
 __pycache__/
 *.pyc
