@@ -4,7 +4,6 @@
 # Allow specific directories
 !/simulation/
 !/tests/
-#!/manuscript/
 !/analysis/
 !/box/
 !/femur/
