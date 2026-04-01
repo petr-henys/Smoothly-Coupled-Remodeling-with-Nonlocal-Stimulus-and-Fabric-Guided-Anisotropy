@@ -7,6 +7,7 @@ The Zenodo record corresponds to the exact version used for this manuscript (rel
 The repository is organized so that every simulation run is self-describing: each run stores a complete configuration snapshot, logs, and machine-readable metrics in the output directory together with the field data.
 
 \paragraph{Software stack and execution.}
+\rev{The solver is implemented in Python~3.10 on top of DOLFINx~0.10.0 (the FEniCSx finite element library), with PETSc~3.22 for distributed linear algebra, mpi4py for inter-process communication, and Basix~0.10.0 for finite element tabulation.}
 The solver is designed for distributed-memory parallel execution and writes field output in a scalable parallel format suitable for large meshes and restart.
 A minimal end-to-end example is the box benchmark, which runs out of the box and produces a self-contained results directory.
 All parameter sweeps and figure-generation pipelines used in the manuscript are provided in the repository.
@@ -26,7 +27,7 @@ On this representative mesh ($N_{\mathrm{cells}}\approx 75\mathrm{k}$; see capti
 \begin{figure}[htbp]
     \centering
     \safeincludegraphics[width=0.6\linewidth]{strong_scaling.png}
-    \caption{Strong scaling of the fully coupled bone remodeling solver (mechanics + fabric + stimulus + density) on the stiff femur configuration ($N_{\mathrm{cells}}\approx 75\mathrm{k}$, $N_{\mathrm{dofs}}^{u}\approx 40\mathrm{k}$, $N_{\mathrm{dofs}}^{\rho}\approx 13\mathrm{k}$, $N_{\mathrm{dofs}}^{S}\approx 13\mathrm{k}$, $N_{\mathrm{dofs}}^{L}\approx 121\mathrm{k}$). Wall time is measured per global time step; the dashed line indicates ideal scaling $T(N)=T(1)/N$ and efficiency is $E(N)=T(1)/(N\,T(N))$.}
+    \caption{Strong scaling of the fully coupled bone remodeling solver (mechanics + fabric + stimulus + density) on the stiff femur configuration ($N_{\mathrm{cells}}\approx 75\mathrm{k}$, $N_{\mathrm{dofs}}^{u}\approx 40\mathrm{k}$, $N_{\mathrm{dofs}}^{\rho}\approx 13\mathrm{k}$, $N_{\mathrm{dofs}}^{S}\approx 13\mathrm{k}$, $N_{\mathrm{dofs}}^{L}\approx 121\mathrm{k}$). Wall time is measured per global time step; the dashed line indicates ideal scaling $T(N)=T(1)/N$ and efficiency is $E(N)=T(1)/(N\,T(N))$. \rev{All timings were obtained on a workstation with an AMD Ryzen 9 7950X (16 cores / 32 threads, 4.5\,GHz base) and 128\,GB DDR5 RAM, running Ubuntu 22.04 with DOLFINx~0.10.0 and PETSc~3.22.}}
     \label{fig:strong_scaling}
 \end{figure}
 

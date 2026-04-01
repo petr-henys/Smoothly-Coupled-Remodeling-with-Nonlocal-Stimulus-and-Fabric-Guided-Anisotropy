@@ -1,90 +1,15 @@
-# Ignore everything by default
-/*
+# Folders starting with a dot (e.g. .conda, .venv)
+.**/
 
-# Allow specific directories
-!/simulation/
-!/tests/
-!/analysis/
-!/box/
-!/femur/
-!/poster/
-
-
-# Allow root-level files
-!/.gitignore
-!/README.md
-!/parametrizer.py
-!/postprocessor.py
-!/run_box_model.py
-!/run_convergence_sweep.py
-!/run_anderson_experiment.py
-!/run_femur_model.py
-!/intensity_mapper.py
-!/default_params_box.json
-!/default_params_femur.json
-!/physio_params_box.json
-!/physio_params_femur.json
-!/stiff_params_box.json
-!/stiff_params_femur.json
-!/run_density_comparison.py
-!/run_diffusion_sweep.py
-!/run_fabric_sweep.py
-!/run_stimulus_sweep.py
-!/run_anderson_sweep.py
-!/run_weak_scaling.py
-!/run_alpha_front_sweep.py
-!/run_psi_ref_ratio_sweep.py
-!/morpho_mapper.py
-!/database.py
-!/sweep_utils.py
-# Python cache
+# Python bytecode cache
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
 
-# Virtual environments
-.conda/
-venv/
-env/
-ENV/
-
-# Results and data
+# Specific folders
 results/
-*/data/
-*.npz
-*.h5
-*.xdmf
+anatomy/
+notes/
+old/
+poster/
+presentation/
 
-# LaTeX
-*.aux
-*.bbl
-*.blg
-*.fdb_latexmk
-*.fls
-*.log
-*.out
-*.synctex.gz
-*.toc
-*.spl
-*.pdf
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# Compiled extensions
-*.so
-
-# System files
-.DS_Store
-Thumbs.db
-
-# Distribution / packaging
-build/
-dist/
-*.egg-info/
+*pdf

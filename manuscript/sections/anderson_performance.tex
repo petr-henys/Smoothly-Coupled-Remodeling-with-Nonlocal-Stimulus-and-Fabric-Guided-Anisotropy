@@ -11,7 +11,7 @@ We compare two parameter regimes:
 For each setup we run (i) a pure damped Picard iteration (no Anderson) and (ii) Anderson-accelerated mixing with the parameters in Table~\ref{tab:anderson-params}.
 
 The primary convergence indicator is the coupling residual $r_{\mathrm{Pic}}$, defined by \eqref{eq:fp-picard-res} and evaluated on the coupled state $(\mathbf{L},S,\rho)$.
-For diagnostics we also use the per-iteration contraction estimate $\rho_k:=r_k/r_{k-1}$ and the condition number of the regularized Gram matrix (see \S\ref{sec:fp-aa}).
+For diagnostics we also use the per-iteration contraction estimate $\rev{q}_k:=r_k/r_{k-1}$ and the condition number of the regularized Gram matrix (see \S\ref{sec:fp-aa}).
 Performance is reported as the cumulative linear-solver time and iteration counts aggregated over the four blocks (mechanics, fabric, stimulus, density).
 
 \begin{table}[htbp]
@@ -35,9 +35,9 @@ Performance is reported as the cumulative linear-solver time and iteration count
     $W$ & Outer-stall window & 4 \\
     $\delta_{\min}$ & Outer-stall minimum relative drop & 0.05 \\
     $P_{\mathrm{outer}}$ & Outer-stall patience & 2 \\
-    $\rho_{\mathrm{off}}$ & Anderson deactivation threshold & 0.3 \\
-    $\rho_{\mathrm{on}}$ & Anderson activation threshold & 0.7 \\
-    $P_{\rho}$ & Anderson switch patience & 4 \\
+    $\rev{q}_{\mathrm{off}}$ & Anderson deactivation threshold & 0.3 \\
+    $\rev{q}_{\mathrm{on}}$ & Anderson activation threshold & 0.7 \\
+    $P_{\rev{q}}$ & Anderson switch patience & 4 \\
     \bottomrule
   \end{tabular}
 \end{table}
@@ -66,7 +66,7 @@ Figure~\ref{fig:anderson_diagnostic} summarizes these mechanisms on a representa
   \safeincludegraphics[width=1\linewidth]{anderson_diagnostic.png}
   \caption{Diagnostic view of the Anderson-accelerated fixed-point solver on a representative stiff run.
   (a) Residual histories $r_{\mathrm{Pic}}$ per step (colored by step index).
-  (b) Global residual timeline with an overlaid contraction estimate $\rho_k=r_k/r_{k-1}$.
+  (b) Global residual timeline with an overlaid contraction estimate $\rev{q}_k=r_k/r_{k-1}$.
   (c) Time-step and subiteration counts.
   (d) Effective Anderson history size.
   (e) Conditioning $\kappa(H)$ of the regularized Gram matrix with the restart threshold.
@@ -84,7 +84,7 @@ We summarize the mean iterations/step, the contraction estimator, and the Gram c
   \caption{Sensitivity of coupling performance to the Anderson parameters $(m,\beta,\lambda)$ in the stiff box benchmark (parameter sweep).
   (a) Mean subiterations per step as a function of history size $m$ and mixing $\beta$ at the best-performing $\lambda$ among the sampled values; the red box marks the best cell in the sampled grid.
   (b) Marginal distributions of iterations/step when varying $m$, $\beta$, or $\lambda$ (other parameters averaged out).
-  (c) Median contraction $\rho$ as a function of $(m,\beta)$ at the same $\lambda$ as in (a) (smaller is better).
+  (c) Median contraction $\rev{q}$ as a function of $(m,\beta)$ at the same $\lambda$ as in (a) (smaller is better).
   (d) Median Gram conditioning $\kappa(H)$ versus $m$ for each $\lambda$, with the restart threshold $\kappa_{\max}$ indicated.}
   \label{fig:anderson_sweep}
 \end{figure}

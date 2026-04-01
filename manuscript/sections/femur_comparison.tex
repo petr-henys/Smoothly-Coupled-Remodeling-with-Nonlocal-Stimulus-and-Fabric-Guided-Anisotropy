@@ -32,6 +32,7 @@ First, we compute the discrete nodal RMSE and MAE over all CG1 degrees of freedo
 \mathrm{MAE}(r)=\frac{1}{N}\sum_{j=1}^N\big|\rho_r(x_j,T)-\rho_{\mathrm{CT}}(x_j)\big|,
 \]
 supplemented by a Pearson correlation to assess spatial pattern matching independent of absolute scale.
+\rev{Note that the population-template density field is derived from $N=101$ subjects whose inter-individual variability ($\pm 2\sigma$ band) is of comparable magnitude to the RMSE values reported below; the metrics therefore characterize proximity to the population mean rather than prediction error in a strict sense.}
 Second, to quantify performance in distinct anatomical zones, we evaluate the same metrics restricted to CT-defined trabecular and cortical masks,
 \[
 \Omega_{\mathrm{trab}}:=\{x:\rho_{\mathrm{CT}}(x)\le \rho_{\mathrm{trab}}^{\max}\},\qquad

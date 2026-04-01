@@ -1,0 +1,385 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{amsmath,amssymb}
+\usepackage{parskip}
+
+% ── Colours ──────────────────────────────────────────────────────────
+\definecolor{reviewerblue}{RGB}{0,51,153}
+\definecolor{responseblack}{RGB}{0,0,0}
+\definecolor{changegreen}{RGB}{0,100,0}
+
+% ── Environments ─────────────────────────────────────────────────────
+\newcounter{reviewer}
+\newcounter{comment}[reviewer]
+
+\newcommand{\reviewer}[1]{%
+  \refstepcounter{reviewer}%
+  \setcounter{comment}{0}%
+  \section*{Reviewer~\thereviewer}%
+  {\color{reviewerblue}\itshape #1}%
+  \bigskip
+}
+
+\newcommand{\revcomment}[1]{%
+  \refstepcounter{comment}%
+  \subsection*{Comment~\thereviewer.\thecomment}%
+  {\color{reviewerblue}\itshape #1}%
+  \medskip
+}
+
+\newcommand{\response}{%
+  \par\noindent\textbf{Response:}\par\noindent\color{responseblack}%
+}
+
+\newcommand{\change}{%
+  \par\noindent{\color{changegreen}\textbf{Change in manuscript:}}\par\noindent\color{changegreen}%
+}
+
+% ══════════════════════════════════════════════════════════════════════
+\begin{document}
+
+\begin{center}
+  {\LARGE\bfseries Point-by-Point Response to Reviewers}\\[0.8em]
+  {\large Manuscript submitted to\\
+  \emph{Computer Methods in Applied Mechanics and Engineering}}\\[1.5em]
+  \today
+\end{center}
+
+\bigskip
+\noindent
+We thank the reviewers for their careful reading and constructive comments. Below we address each point individually. Reviewer comments are typeset in {\color{reviewerblue}\textit{blue italics}}; our responses follow in black text and changes to the manuscript are indicated in {\color{changegreen}green}.
+
+% ======================================================================
+%                         REVIEWER 1
+% ======================================================================
+\reviewer{The contribution is well written and addresses an important topic that fits to the remit of the journal. The work is carefully presented and in sufficient detail so as to be of benefit to the community. The authors have carefully addressed any concerns I might have had. Although the contribution is lengthy, this seems justifiable. I recommend publication subject to addressing the concerns below.}
+
+% ----------------------------------------------------------------------
+\revcomment{The contribution would benefit from a box summary of all key equations and parameters.}
+
+\response
+We agree that a consolidated reference is helpful given the number of symbols. We have added a Nomenclature table (new Section ``Nomenclature'' before ``Governing equations'') listing all primary state variables, constitutive parameters, solver quantities, geometry/loading symbols, diffusion lengths, and smooth operators with their units and brief descriptions.
+
+\change
+Added new section ``Nomenclature'' with a \texttt{longtable} of all key symbols (highlighted in blue).
+
+% ----------------------------------------------------------------------
+\revcomment{The links provided to the source code do not work. Can these please be fixed prior to publication?}
+
+\response
+We apologise for the broken links. The repository was private during review; it has now been made public and the URLs have been verified. We will ensure the final accepted version contains working links.
+
+\change
+Repository links updated and tested (Reproducibility section).
+
+% ----------------------------------------------------------------------
+\revcomment{Line numbering would help reviewing. Furthermore, the style used makes it hard to differentiate sections and subsections.}
+
+\response
+Line numbering has been enabled throughout the revised manuscript using the \texttt{lineno} package. We have retained the \texttt{elsarticle} section formatting to comply with the CMAME template, but we hope that line numbering will facilitate the remaining review process.
+
+\change
+Uncommented \verb|\linenumbers| in the preamble; line numbers now appear on every page.
+
+% ----------------------------------------------------------------------
+\revcomment{The displacement is first introduced as a scalar $u$. Please correct to bold font.}
+
+\response
+Corrected. Both occurrences of the displacement in the Introduction now use bold notation $\mathbf{u}$.
+
+\change
+Introduction: ``$u$'' $\to$ ``$\mathbf{u}$'' (two instances, highlighted in blue).
+
+% ----------------------------------------------------------------------
+\revcomment{It's not clear to me where spatial strain gradients (i.e., higher-order kinematics) are captures in your model. Please make this clear. I understand spatial non-locality entering via the diffusion-reaction equations.}
+
+\response
+The reviewer is correct: the mechanical submodel uses standard (first-order) small-strain kinematics and does not include explicit strain gradients or higher-order continuum effects. Spatial non-locality enters the coupled system exclusively through the diffusion terms in the stimulus, density, and fabric PDEs. We have added a clarifying paragraph in the Introduction making this distinction explicit.
+
+\change
+Introduction: added paragraph clarifying that the framework does not employ strain-gradient or higher-order kinematics, and that spatial non-locality is introduced solely through the diffusion--reaction submodels (highlighted in blue).
+
+% ----------------------------------------------------------------------
+\revcomment{Introduction -- the line containing ``do not obviate the need'' is confusing.}
+
+\response
+We agree the phrasing was awkward. The sentence has been reworded for clarity.
+
+\change
+Introduction: ``do not obviate the need to resolve'' $\to$ ``and, by themselves, do not remove the need for resolving'' (highlighted in blue).
+
+% ----------------------------------------------------------------------
+\revcomment{Define TV in BV/TV.}
+
+\response
+Corrected.
+
+\change
+Introduction: ``(BV/TV)'' $\to$ ``(BV/TV, i.e.\ bone volume over total volume)'' (highlighted in blue).
+
+% ----------------------------------------------------------------------
+\revcomment{Define a mechanical index (paragraph 1 of the introduction).}
+
+\response
+We have expanded the phrase ``algebraic mechanical index'' with an inline definition.
+
+\change
+Introduction: added parenthetical definition of the mechanical index as a scalar summary of the local mechanical state (e.g.\ strain energy density) (highlighted in blue).
+
+% ----------------------------------------------------------------------
+\revcomment{Please make clear the contribution and novelty beyond the numerics -- if any.}
+
+\response
+Beyond the numerical solver contributions (Sylvester projectors, Anderson-accelerated coupling), the modelling contribution lies in the compartment-aware reference stimulus formulation that blends trabecular and cortical mechanostat set-points via a density-dependent transition. This is a modelling decision, not a numerical artifact, and is shown in the femur case study to have a direct impact on the predicted density distribution. We have expanded the Novelty and Contribution section to make this explicit.
+
+\change
+Section ``Novelty and Contribution'': added paragraph highlighting the compartment-aware reference stimulus as a modelling contribution distinct from the numerical framework (highlighted in blue).
+
+% ----------------------------------------------------------------------
+\revcomment{Check the formatting of references to the appendix.}
+
+\response
+Corrected. Two appendix cross-references in ``Models and datasets'' used bare \verb|\ref{}| without the ``Appendix'' prefix; they now include it.
+
+\change
+Model Setup section: ``(see, \verb|\ref{sec:femur_loading}|)'' $\to$ ``(see Appendix~\verb|\ref{sec:femur_loading}|)'' (two instances, highlighted in blue).
+
+
+% ======================================================================
+%                         REVIEWER 2
+% ======================================================================
+\reviewer{The paper proposes a three-field continuum framework for bone remodeling coupling apparent density, logarithmic fabric tensor, and a nonlocal mechanotransductive stimulus field. The central numerical contributions are: (i) a Sylvester-projector-based spectral treatment that is robust across eigenvalue degeneracy, and (ii) a block Gauss-Seidel fixed-point solver stabilized by safeguarded Anderson (Pulay/DIIS) acceleration. The framework is verified on box benchmarks and demonstrated on a population-CT-derived proximal femur case study with sensitivity analyses. The paper addresses open challenges in computational bone remodeling (mesh sensitivity, eigenvalue degeneracy in fabric-guided orthotropy, and convergence of strongly coupled multiphysics updates). The technical content is generally sound. However, several issues require major revision before the manuscript is suitable for publication in CMAME. These mainly concern: the physical justification of the diffusion-reaction stimulus model; the validation strategy and the claims made about the femur case study; the completeness of the literature review.}
+
+% ── Stimulus PDE (physical justification) ────────────────────────────
+
+\revcomment{The stimulus PDE (Eq.~7) is presented primarily on computational grounds. The connection to osteocyte lacuno-canalicular network (LCN) transport is mentioned in the Introduction but is not developed into a quantitative argument. Specifically:
+\begin{itemize}[nosep]
+\item The diffusion length $\ell_S = \sqrt{\tau_S D_S}$ is set by a mesh-based prescription ($\ell = \alpha h$) with no independent physiological estimate. The osteocyte spacing in the LCN is on the order of 20--50\,$\mu$m, while the FE element size $h$ is on the order of 1\,mm. The authors should justify why a mesh-dependent $\ell_S$ is an appropriate proxy for LCN-scale signaling, or acknowledge explicitly that $D_S$ is a phenomenological regularization parameter with no direct physiological interpretation at this scale.
+\item The tanh-saturating mechanostat drive (Eq.~7, right-hand side) is motivated qualitatively but without reference to data that constrain the saturation width $\kappa_S$ or the lazy-zone threshold $\delta_0$. The sensitivity to these parameters is not explored.
+\item The statement that positive values correspond to net formation drive and negative values to net resorption drive is a modelling assumption that conflates the biological stimulus with the net remodeling outcome. This simplification should be acknowledged explicitly.
+\end{itemize}}
+
+\response
+We thank the reviewer for this important point. We have revised the stimulus description in three ways:
+
+\begin{enumerate}[nosep]
+\item We now state explicitly that $D_S$ is a phenomenological regularization parameter whose mesh-based prescription $\ell_S=\alpha h$ provides mesh-insensitive predictions but does not directly represent LCN-scale transport. The paragraph also acknowledges that the mesh-based length scale ($\sim$1\,mm) is orders of magnitude larger than osteocyte spacing ($\sim$20--50\,$\mu$m) and that relating $\ell_S$ to microstructural length scales remains an open problem.
+\item We have added a remark that $\kappa_S$ and $\delta_0$ are calibration/sensitivity parameters whose experimental constraints are currently lacking, and that a dedicated sensitivity analysis is deferred to future work.
+\item We now explicitly state the sign convention of $S$ as a modelling assumption that maps the biological stimulus onto a signed remodeling drive, and acknowledge that this conflates the mechanotransductive signal with the net formation/resorption outcome.
+\end{enumerate}
+
+\change
+``Governing equations'', Stimulus submodel:
+\begin{itemize}[nosep]
+\item Added sign-convention disclaimer paragraph (highlighted in blue).
+\item After the stimulus quantitative analysis: added paragraph acknowledging $D_S$ as a phenomenological parameter, discussing the mesh-based prescription of $\ell_S$, and noting the sensitivity caveat for $\kappa_S$ and $\delta_0$ (highlighted in blue).
+\end{itemize}
+
+% ── Validation strategy ──────────────────────────────────────────────
+
+\revcomment{As regards the validation strategy and claims about the femur case study, the following aspects should be clarified:
+\begin{itemize}[nosep]
+\item The population-template CT reference is a spatial average of 101 subjects. Comparing a single simulation to this average conflates subject-level variability with model error. The RMSE values reported (0.55--0.61\,g/cm$^3$ against a $\rho$ range of approximately 0.2--2.0\,g/cm$^3$) should be contextualized against the $\pm 2\sigma$ inter-subject variability of the template, which is provided in the HFValid dataset but not discussed.
+\item The hip-force direction sensitivity analysis shows that $\Delta\alpha_{\mathrm{front}} \approx \pm 15^\circ$ changes RMSE by approximately 0.01\,g/cm$^3$ and Pearson correlation by approximately 0.10. These are not compared against the inter-subject variability of the loading itself ($7^\circ$--$13^\circ$ in the frontal plane). A formal comparison of these ranges is necessary to support the conclusions drawn.
+\item The claim that a non-unity ratio $r \neq 1$ is required to recover anatomically plausible density distributions is illustrated for a specific load ensemble and population template. The generalizability of the suggested optimal $r \approx 3$ is not established and the language should be moderated accordingly.
+\end{itemize}}
+
+\response
+We agree with all three points and have revised the manuscript accordingly:
+
+\begin{enumerate}[nosep]
+\item We have added explicit context comparing the RMSE values to the HFValid inter-subject $\pm 2\sigma$ band. In the Discussion, we now state that the RMSE of 0.55--0.61\,g/cm$^{3}$ is of a magnitude comparable to the inter-subject variability (0.3--0.5\,g/cm$^{3}$ in trabecular regions, up to 0.8\,g/cm$^{3}$ in the cortical shell), so that the predictions lie within the population envelope. In the Femur comparison section, a note clarifies that the $\pm2\sigma$ band is of comparable magnitude to the reported RMSE.
+\item In the frontal-angle sweep section, we have added a paragraph formally comparing the RMSE spread over the $40^\circ$ sweep range against the HFValid inter-subject variability band, concluding that load-direction uncertainty is a relevant but not dominant source of mismatch.
+\item The language around $r\approx 3$ has been moderated. We now state that this value is specific to the current population template, load ensemble, and parameter set and should not be interpreted as a universal optimum. The coarse discrete sweep does not resolve the sensitivity surface finely enough to claim a sharp optimum; the qualitative point is that $r>1$ is needed for cortical shell maintenance.
+\end{enumerate}
+
+\change
+\begin{itemize}[nosep]
+\item Discussion, ``Interpretation of femur case study'': added RMSE vs.\ $\pm2\sigma$ context paragraph (blue); moderated $r\approx 3$ language (blue).
+\item ``Femur case study'', comparison strategy: added note on $\pm2\sigma$ magnitude relative to RMSE (blue).
+\item ``Sensitivity to hip force direction'': added ``Comparison with inter-subject variability'' paragraph (blue).
+\end{itemize}
+
+% ── Convergence analysis ─────────────────────────────────────────────
+
+\revcomment{Authors propose a convergence analysis. Nevertheless, the following aspects should be clarified about pair-error methodology and slope interpretation:
+\begin{itemize}[nosep]
+\item With only 3--4 refinement levels, regression slopes carry large uncertainty. Confidence intervals should be reported, or claims restricted to `consistent with first/second-order behavior'.
+\item The fully coupled convergence behavior is not tested against a problem with a known analytical solution. At minimum, a manufactured solution test for one scalar subproblem should be included.
+\end{itemize}}
+
+\response
+\begin{enumerate}[nosep]
+\item We have added an explicit caveat in the convergence section: ``Because only 3--4 refinement levels are available, the regression slopes carry substantial uncertainty; accordingly, the reported values should be interpreted as consistent with first- or second-order convergence behavior rather than as precise rate measurements.'' Adding formal confidence intervals for a 2--3 degree-of-freedom regression would produce wide bands of limited utility; we believe the softened language adequately conveys the uncertainty.
+\item A manufactured-solution test for the fully coupled system is a valuable suggestion but requires careful construction (analytic source terms, coupled boundary data) that is beyond the scope of this revision. The individual subproblems (linear elasticity, reaction--diffusion) use standard CG1 elements for which textbook convergence is well established; the pair-error study verifies that the \emph{coupled} system preserves this behavior under refinement. We have added this rationale to the text and note the manufactured-solution approach as a direction for future work.
+\end{enumerate}
+
+\change
+``Convergence and performance analysis'': added uncertainty caveat for regression slopes (highlighted in blue). Discussion, ``Limitations and outlook'': manufactured-solution verification noted as future work direction.
+
+% ── Sylvester-projector robustness ───────────────────────────────────
+
+\revcomment{Aspects to be clarified about robustness of the Sylvester-projector construction near degeneracy:
+\begin{itemize}[nosep]
+\item The smooth regime blending (Eq.~A.9) introduces a parameter $\mathrm{tol}_{\mathrm{deg}}$ whose effect on stress tensor continuity and on convergence of the staggered solver should be demonstrated quantitatively on a benchmark approaching transverse isotropy.
+\item The assertion that the robust construction prevents spurious oscillations in the coupled fixed-point residual is not supported by a numerical experiment. A comparison with and without the robust construction in a near-degenerate case would substantially strengthen this section.
+\end{itemize}}
+
+\response
+We acknowledge that a head-to-head numerical comparison (robust vs.\ na\"ive eigensolver) approaching transverse isotropy would strengthen the Sylvester-projector discussion. However, conducting such an experiment requires a controlled benchmark in which the fabric tensor is driven through near-degenerate regimes while monitoring the coupled residual, which constitutes substantial additional work. In the current manuscript, the Sylvester-projector plot (Figure in Appendix~A) already demonstrates smooth, continuous projector fields across the full anisotropy spectrum including the isotropic and TI limits; and the box benchmark results in the ``Regularization analysis'' section show stable convergence under parameter regimes that produce near-isotropic fabric states.
+
+We accept the reviewer's point that a more targeted ablation study would be valuable and have added a note in the Discussion (Limitations and outlook) acknowledging that a quantitative comparison of projector strategies near degeneracy is deferred to future work.
+
+For $\mathrm{tol}_{\mathrm{deg}}$: the transition tolerance controls the blending width between the distinct-eigenvalue Sylvester formula and the TI/isotropic fallbacks. At the default value ($10^{-4}$), the blending zone is narrow enough to be invisible in the stress response yet wide enough to avoid eigenvector-flip discontinuities. We have added a brief remark on this in the appendix.
+
+\change
+This comment requires new computations (ablation benchmark) for a complete resolution; the current revision adds a brief remark in the Sylvester-projector appendix on $\mathrm{tol}_{\mathrm{deg}}$ and acknowledges the ablation study as future work in the Discussion.
+
+% ── Literature review completeness ───────────────────────────────────
+
+\revcomment{The scientific framework of the paper is not completely traced with reference to the actual state of the art in computational biomechanics of bone tissue. In detail, addressing several core components of the proposed approach and results, a more comprehensive trace of actual scientific scenarios should be discussed and cited appropriately. Specifically, three main thematic areas can be referred to: (i) multiscale constitutive modeling and fabric-elasticity hierarchies in bone (Sections `Mechanical submodel' and `Direction submodel'); (ii) fabric and fiber evolution laws in biological tissues (Section `Direction submodel'); (iii) image-based and CT-based finite-element modeling of the proximal femur, including compartment-specific material assignment and population-level variability (Section `Femur case study' and Appendix~C).}
+
+\response
+We thank the reviewer for identifying these gaps. We have substantially expanded the literature coverage across all three thematic areas. Ten new references have been added to the bibliography covering: (i) hierarchical elasto-damage models of cortical bone and osteon-level mechanics; (ii) constrained-mixture approaches to fabric/fiber evolution; and (iii) CT-based FE methodology, cortical assignment, patient-specific approaches, bilateral variability, and CT segmentation for the proximal femur. The citations are distributed across the Introduction, Governing Equations, Model Setup, and Discussion sections with brief contextual sentences.
+
+\change
+\begin{itemize}[nosep]
+\item Bibliography: 10 new entries added (Vasta et al.\ 2023, Gizzi et al.\ 2022a, 2022b, Taddei et al.\ 2020, Falcinelli et al.\ 2020, Erani et al.\ 2019, Taddei et al.\ 2019, Schileo et al.\ 2024, Schileo et al.\ 2015, Aldieri et al.\ 2024).
+\item Introduction: added paragraph contextualizing the present approach with respect to osteon-level constitutive hierarchies, damage-based constitutive models, constrained-mixture fabric evolution, patient-specific CT-based FE approaches, and refined CT-based assessment of femoral mechanical competence (all citations in blue).
+\item Model Setup (Femur, Dataset): added references to CT-based FE methodology, CT segmentation benchmarks, and bilateral variability studies (blue).
+\item Discussion (Limitations): added references to cortical assignment and refined CT-based assessment (blue).
+\end{itemize}
+
+% ── (i) & (ii) Constitutive hierarchies and fabric evolution ────────
+
+\revcomment{(i) \& (ii) -- The framework in Section `Governing equations' follows the structure of fabric-density coupled remodeling pioneered by Cowin and extended by Zysset-Curnier (both cited) but ignores a body of work that addresses the same modeling challenges (including multiscale constitutive derivations and damage mechanics of cortical bone) in finite-element settings. In particular:
+\begin{itemize}[nosep]
+\item The manuscript does not account for the mechanical description of the bone constitutive response as depending on tissue multiscale arrangement. Specifically, in this context, a dominant contribution is associated to the mechanics of osteons, whose elasto-damage response is directly relevant to the theoretical underpinning of the fabric-elasticity relationships adopted in Section `Mechanical submodel'. It is suggested that the authors briefly address this aspect in the Introduction and Discussion, in the context of the current literature on constitutive hierarchies from micro- to apparent-scale bone mechanics (see, e.g., doi: 10.1016/j.jmps.2022.104962).
+\item The manuscript does not account for damage-based constitutive approaches to bone mechanics (and, since the specific `Femur case study', to femur mechanics), which are however relevant to the physical motivation of the density floor $\rho_{\min}$ and of the bounded resorption kinetics introduced in Section `Density submodel'. There, and in Section `Femur case study', such an aspect should be addressed in the context of the current literature on continuum damage mechanics of bone (see, e.g., doi: 10.1016/j.euromechsol.2022.104538).
+\item The adopted modeling strategy does not account for constrained mixture and homogenization-based approaches to the evolution of fiber and fabric distributions in biological tissues, which are however relevant to the log-fabric evolution law formulated in Section `Direction (fabric) submodel' (see Eq.~16). Accordingly, Authors should briefly address this aspect in Section `Direction submodel' and in the Discussion, in the context of the current literature on fabric evolution in soft and hard biological tissues (see, e.g., doi: 10.1016/j.jmps.2023.105491).
+\end{itemize}}
+
+\response
+All three points are now addressed:
+
+\begin{enumerate}[nosep]
+\item \textbf{Osteon-level constitutive hierarchies:} In the Introduction, we now acknowledge that the present apparent-level constitutive model does not resolve osteonal microstructure, and cite hierarchical elasto-damage models of cortical bone (Gizzi et al., JMPS 2022) as providing the theoretical underpinning for the fabric-elasticity relationships used here.
+\item \textbf{Damage-based approaches:} We cite the continuum damage formulation for femoral mechanics (Gizzi et al., EJMS-A 2022) as motivating the bounded resorption kinetics and density floor $\rho_{\min}$.
+\item \textbf{Constrained-mixture fabric evolution:} We cite constrained-mixture and homogenization-based approaches (Vasta et al., JMPS 2023) as a complementary micro-to-macro perspective relevant to the phenomenological log-fabric evolution law.
+\end{enumerate}
+
+\change
+Introduction: added paragraph citing Gizzi et al.\ (2022a, 2022b) and Vasta et al.\ (2023) with contextual sentences explaining the relevance of each to the present framework (highlighted in blue).
+
+% ── (iii) CT-based FE modeling of the proximal femur ─────────────────
+
+\revcomment{(iii) -- The femur case study uses CT-based density mapping and population-template geometry. Adopted methodological steps should be critically compared with available benchmarks in literature. Specifically:
+\begin{itemize}[nosep]
+\item In Section `Femur' (Dataset and normalization) and Appendix~C reference should be made to image-based finite-element methodologies for the human femur that employ comparable CT-based material assignment and mesh generation approaches (see, e.g., doi: 10.1080/10255842.2020.1789863).
+\item In Section `Femur case study' (Ratio sweep) and Discussion, Authors should address the importance of accurate cortical bone material assignment for FE strain prediction at the proximal femur, as directly relevant to the compartment-aware reference stimulus $\hat{\psi}_{\mathrm{ref}}(\rho_e)$ introduced in `Femur case study' and to the interpretation of the results concerning the ratio sweep $r = \psi^{\mathrm{cort}}_{\mathrm{ref}} / \psi^{\mathrm{trab}}_{\mathrm{ref}}$ (see, e.g., doi: 10.1016/j.bone.2020.115348).
+\item In Section `Femur' (Dataset) and Introduction, Authors should address to the relevance of patient-specific CT-based FE approach for femur mechanics with subject-level material heterogeneity, for providing methodological context for the HFValid-based population approach used here (see, e.g., doi: 10.1007/s11012-019-01097-x, doi: 10.1016/j.jmbbm.2019.01.014).
+\item In the Discussion (and also in the Introduction), where the remodeling-driven density predictions of the proposed framework are interpreted in terms of mechanical competence of the proximal femur, the relevance of refined CT-based computational approach for femur mechanical assessment, complementary to the remodeling-driven approach of the present paper, should be referred to and emphasized (see, e.g., doi: 10.1007/s11012-024-01850-x).
+\item In Section `Femur' (Comparison strategy and metrics) and Discussion the inter-subject and bilateral variability in proximal femur mechanical strength quantified by multicentric finite element studies, should be underlined as directly relevant to the interpretation of the HFValid population-template $\pm 2\sigma$ variability band used as reference (see, e.g., doi: 10.1007/s00198-015-3404-7).
+\item Referring to `Femur' (Dataset and normalization, see Eq.~43), where the CT calibration and density mapping procedure are focused and described, the strict relationship with the systematic methodological landscape of CT segmentation and density biomarker extraction for hip fracture risk assessment should outlined as relevant (see, e.g., doi: 10.3389/fbioe.2024.1446829).
+\end{itemize}}
+
+\response
+All six sub-points are now addressed with dedicated citations and contextual sentences:
+\begin{enumerate}[nosep]
+\item Model Setup (Femur, Dataset): added citations to Taddei et al.\ (2020) for CT-based FE methodology and Aldieri et al.\ (2024) for CT segmentation, and Schileo et al.\ (2015) for bilateral variability.
+\item Discussion (Limitations): added citation to Falcinelli et al.\ (2020) on cortical bone material assignment, noting its relevance to the compartment-aware reference stimulus.
+\item Introduction and Model Setup (Femur): added citations to Erani et al.\ (2019) and Taddei et al.\ (2019) for patient-specific CT-based FE approaches with subject-level material heterogeneity.
+\item Introduction and Discussion: added citation to Schileo et al.\ (2024) on refined CT-based computational assessment of femoral mechanical competence.
+\item Femur comparison (comparison strategy): added note contextualizing RMSE against $\pm2\sigma$ inter-subject variability.
+\item Model Setup (Dataset): CT segmentation and density biomarker context (Aldieri et al.\ 2024) added.
+\end{enumerate}
+
+\change
+10 new bibliography entries; citations distributed across Introduction, Model Setup, Femur Comparison, and Discussion sections (all highlighted in blue). See the detailed listing in our response to Comment 2.5 above.
+
+% ── Minor concerns ───────────────────────────────────────────────────
+
+\revcomment{The symbol $\rho$ is used both for apparent density and for the Picard contraction ratio (Eq.~32). This collision should be resolved, e.g., by using $r_{\mathrm{contr}}$ for the contraction ratio. A nomenclature table is missing and should be added.}
+
+\response
+The symbol collision is resolved: the contraction ratio formerly denoted $\rho_k$ is now denoted $q_k$ throughout, and the switching thresholds $\rho_{\mathrm{off}}$/$\rho_{\mathrm{on}}$ are now $q_{\mathrm{contr,off}}$/$q_{\mathrm{contr,on}}$, respectively. A comprehensive nomenclature table has been added as a new section before ``Governing equations''. We chose $q$ rather than the reviewer's suggested $r_{\mathrm{contr}}$ to avoid collision with the cortical--trabecular ratio $r$.
+
+\change
+\begin{itemize}[nosep]
+\item ``Fixed-point solver'' section: $\rho_{\mathrm{contr}} \to q_{\mathrm{contr}}$ throughout (6 replacements, highlighted in blue).
+\item ``Anderson performance'' section: $\rho_k \to q_k$, $\rho_{\mathrm{off}} \to q_{\mathrm{off}}$, $\rho_{\mathrm{on}} \to q_{\mathrm{on}}$, $P_\rho \to P_q$ (highlighted in blue).
+\item New ``Nomenclature'' section added (highlighted in blue).
+\end{itemize}
+
+% ----------------------------------------------------------------------
+\revcomment{In Eq.~(6), the expression uses the smoothed clamp of $\ell_i - \bar{\ell}$ (deviatoric log-eigenvalue). The paper should clarify that this is evaluated after eigendecomposition of $\mathrm{sym}(\mathbf{L})$.}
+
+\response
+Clarified. We have added an explicit remark that the eigendecomposition of $\mathrm{sym}(\mathbf{L})$ (yielding eigenvalues $\ell_i$ and eigenprojectors) precedes the application of \texttt{sclamp} to the deviatoric log-eigenvalues.
+
+\change
+``Governing equations'', Direction submodel, after Eq.~(6): added sentence clarifying the eigendecomposition--then--clamp evaluation order (highlighted in blue).
+
+% ----------------------------------------------------------------------
+\revcomment{The block Gauss-Seidel sweep order (mechanics $\Rightarrow$ fabric $\Rightarrow$ stimulus $\Rightarrow$ density) is not justified. A brief discussion of the effect of sweep order on convergence would be helpful.}
+
+\response
+We have added a paragraph justifying the sweep ordering on data-flow grounds: mechanics depends on the current density and fabric; the fabric target depends on the mechanical deviatoric-stress product $\bar{\mathbf{Q}}$; the stimulus is driven by the mechanical index and weakly coupled to density; and density is driven by the stimulus. This ``physics-to-transport'' ordering provides the most up-to-date information to each subsequent block within a single sweep. We note that a rigorous contraction-factor comparison for alternative orderings is beyond the scope of this work but that the chosen sequence produced reliable convergence in all tested parameter regimes.
+
+\change
+``Fixed-point solver'' section: added paragraph after the sweep definition justifying the block ordering (highlighted in blue).
+
+% ----------------------------------------------------------------------
+\revcomment{The adaptive time-stepping scheme is mentioned but not described. The step acceptance/rejection criterion should be stated explicitly.}
+
+\response
+We have added a new paragraph ``Adaptive step-size control'' in the ``Time discretization'' section. It describes the PI (proportional--integral) controller applied to the fixed-point iteration count: a successful step triggers a growth factor toward a target iteration count $K_{\mathrm{target}}$, while a failed step (subiteration cap exceeded) causes rejection, step halving, and re-attempt. The AB2 predictor for the initial guess at each time level is also mentioned.
+
+\change
+``Time discretization'': added ``Adaptive step-size control'' paragraph with PI controller formula, growth/shrink bounds, step acceptance/rejection criterion, and AB2 predictor description (highlighted in blue).
+
+% ----------------------------------------------------------------------
+\revcomment{Table~2 does not provide direct references to the specific entries of the Bergmann et al.\ (2016) standardized dataset from which the loading values were derived.}
+
+\response
+We have expanded the Table~2 caption with a sentence clarifying that force magnitudes and directions are derived from the standardized average-patient data of Bergmann et al.\ (2010, 2016) via the OrthoLoad HIP98 dataset, and that the specific stance-phase instants were selected based on reported peak-force profiles and muscle recruitment patterns. Each table row already cites the relevant references.
+
+\change
+Table~2 caption: added clarification of data provenance (highlighted in blue).
+
+% ----------------------------------------------------------------------
+\revcomment{The Gaussian patch width $\sigma_{\mathrm{deg}}$ (Eq.~C.12) is a free parameter whose sensitivity is not discussed.}
+
+\response
+We have added a note in Appendix~C (femur load model) acknowledging that $\sigma_{\mathrm{deg}}$ directly affects the traction gradient under the femoral head and that the subchondral density predictions are sensitive to this choice, recommending a dedicated sensitivity study as part of subject-specific calibration.
+
+\change
+Appendix~C (Femur load model): added sensitivity remark for $\sigma_{\mathrm{deg}}$ after Eq.~(C.12) (highlighted in blue).
+
+% ----------------------------------------------------------------------
+\revcomment{The manuscript should state the specific FEniCS/FEniCSx version used, and the hardware specifications for the scaling benchmark (Fig.~16).}
+
+\response
+Both have been added.
+
+\change
+\begin{itemize}[nosep]
+\item ``Reproducibility'' section: added software versions paragraph (DOLFINx 0.10.0, PETSc 3.22, Python 3.10, Basix 0.10.0, mpi4py; highlighted in blue).
+\item Figure~16 caption: added hardware specifications (AMD Ryzen 9 7950X, 16 cores / 32 threads, 128\,GB DDR5, Ubuntu 22.04; highlighted in blue).
+\end{itemize}
+
+% ── Closing remark from Reviewer 2 ──────────────────────────────────
+
+\bigskip
+\noindent{\color{reviewerblue}\itshape Therefore, the manuscript addresses an important problem and the methodological contributions (particularly the Sylvester-projector treatment and the Anderson-accelerated block solver) are technically sound and potentially publishable in CMAME. However, the paper cannot be accepted in its current form because the previously listed aspects. Accordingly, a major revision is recommended.}
+
+\bigskip
+\noindent\textbf{Response:} We thank Reviewer~2 for the thorough and constructive evaluation. All points have been addressed as detailed above. The manuscript has been revised with all changes highlighted in {\color{blue}blue}. We believe the revisions substantially strengthen the paper's literature coverage, transparency of modelling assumptions, and contextualization of the femur case study results.
+
+\end{document}

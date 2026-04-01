@@ -64,7 +64,8 @@ The traction distribution is
 \mathbf{t}_h(\mathbf{x})=\lambda_h\,\exp\!\left(-\frac{d_h(\mathbf{x})^2}{2\sigma_h^2}\right)\,\hat{\mathbf{f}}_h^w,
 \label{eq:hip_traction_continuous}
 \end{equation}
-where $\sigma_h = R_h\,(\sigma_{\deg}\pi/180)$ converts the prescribed angular width $\sigma_{\deg}$ to a length scale using the fitted head radius $R_h$. The normalisation constant $\lambda_h$ is chosen such that the resultant force is recovered,
+where $\sigma_h = R_h\,(\sigma_{\deg}\pi/180)$ converts the prescribed angular width $\sigma_{\deg}$ to a length scale using the fitted head radius $R_h$.
+\rev{The parameter $\sigma_{\deg}$ controls the spatial extent of the hip contact patch and is set to a default of $30^\circ$, broadly consistent with Hertzian contact estimates for cartilage-on-cartilage articulation. Because $\sigma_{\deg}$ directly affects the traction gradient under the femoral head, the local density predictions in the subchondral region are sensitive to this choice; a dedicated sensitivity study of $\sigma_{\deg}$ (and the analogous muscle-attachment widths $\sigma_k$) is therefore recommended as part of any subject-specific calibration workflow.} The normalisation constant $\lambda_h$ is chosen such that the resultant force is recovered,
 \begin{equation}
 \int_{\Gamma_{\mathrm{load}}}\mathbf{t}_h(\mathbf{x})\,\mathrm{d}A = \mathbf{F}_h^w.
 \label{eq:hip_resultant_condition}

@@ -44,6 +44,7 @@ All integrals are evaluated with sixth-order quadrature on $\mathcal{T}_h$.
 For a sequence of refinement pairs we obtain $\{(h_H,e_{H\to h}^{X,\bullet})\}$, where the error is evaluated on the fine mesh and associated with the coarser mesh-size estimate $h_H$.
 Temporal errors are computed analogously on a fixed mesh by comparing consecutive timesteps and associating each pair error with the coarser step $\Delta t_H$.
 The annotated slopes $p$ in \cref{fig:individual_convergence} are obtained from a log--log linear regression on the available refinement pairs.
+\rev{Because only 3--4 refinement levels are available, the regression slopes carry substantial uncertainty; accordingly, the reported values should be interpreted as consistent with first- or second-order convergence behavior rather than as precise rate estimates.}
 
 \begin{figure}[htbp]
   \centering

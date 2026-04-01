@@ -10,6 +10,7 @@
 \usepackage{titlesec}
 
 \usepackage{booktabs}
+\usepackage{longtable}
 \usepackage{tabularx}
 \usepackage{pgfplotstable}
 \pgfplotsset{compat=1.18}
@@ -42,6 +43,10 @@
 }
 
 \usepackage{cleveref} % volitelně pro \cref
+
+% ── Revision highlighting ────────────────────────────────────────────
+\newcommand{\rev}[1]{{\color{blue}#1}}
+\newcommand{\revcite}[1]{{\color{blue}\cite{#1}}}
 
 % Robust figure inclusion: works both when compiling from `manuscript/` and
 % from the repository root (e.g., when TEXINPUTS is used).
@@ -94,10 +99,12 @@ Bone remodeling \sep finite element method \sep Backward--Euler \sep Anderson ac
 \end{frontmatter}
 
 %% following line to enable line numbers
-%\linenumbers
+\linenumbers
 \input{sections/introduction}
 
 \input{sections/novelty_and_contribution}
+
+\input{sections/nomenclature}
 
 \input{sections/governing_equations}
 

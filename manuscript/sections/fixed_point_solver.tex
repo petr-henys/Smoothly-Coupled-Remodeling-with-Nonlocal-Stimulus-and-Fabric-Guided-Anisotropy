@@ -57,6 +57,8 @@ S^{(k+1)} &:= \mathsf{S}\big(\psi,\rho^{(k)}\big),\\
 \end{equation}
 The sweep \eqref{eq:gs-sweep} defines the raw fixed-point image $x_{\mathrm{raw}}^{(k+1)}:=\mathcal{G}(\mathbf{x}^{(k)})$ and the (unscaled) fixed-point residual $r^{(k+1)}:=x_{\mathrm{raw}}^{(k+1)}-\mathbf{x}^{(k)}$.
 
+\rev{The particular sweep order (mechanics $\to$ fabric $\to$ stimulus $\to$ density) in \eqref{eq:gs-sweep} is motivated by a data-flow argument: the mechanics driver depends on the current density and fabric, the fabric target depends only on the mechanical deviatoric-stress product $\bar{\mathbf{Q}}$, the stimulus is driven by the mechanical index $\psi_{\mathrm{day}}$ and is weakly coupled to density through the reference field, and the density update is driven by the stimulus. Hence the ordering provides the most up-to-date information to each subsequent block within a single sweep. While a rigorous contraction-factor analysis for a different ordering is beyond the scope of this work, the chosen sequence follows the standard ``physics-to-transport'' convention used in staggered multiphysics FE solvers and produced reliable convergence in all tested parameter regimes.}
+
 All convergence and switching decisions use the scaled vectors $\widetilde{\mathbf{x}}^{(k)}$ and $\widetilde{\mathbf{x}}_{\mathrm{raw}}^{(k+1)}$ constructed from \eqref{eq:fp-scales}. Let
 \[
 \Delta^{(k+1)} := \widetilde{\mathbf{x}}_{\mathrm{raw}}^{(k+1)}-\widetilde{\mathbf{x}}^{(k)}.
@@ -74,20 +76,20 @@ r_{\mathrm{Pic}}^{(k+1)} \;:=\;
 We consider two update modes: a damped Picard step \eqref{eq:picard-damped} and an Anderson-accelerated update (Pulay/DIIS, described below). We optionally switch between them adaptively based on the observed Picard contraction ratio.
 Let the contraction ratio be defined (only when numerically meaningful) as
 \begin{equation}\label{eq:fp-contraction}
-r_{\mathrm{contr}}^{(k+1)} \;:=\; \frac{r_{\mathrm{Pic}}^{(k+1)}}{r_{\mathrm{Pic}}^{(k)}},
+\rev{q}_{\mathrm{contr}}^{(k+1)} \;:=\; \frac{r_{\mathrm{Pic}}^{(k+1)}}{r_{\mathrm{Pic}}^{(k)}},
 \end{equation}
-provided that a previous residual exists and $r_{\mathrm{Pic}}^{(k)}>\varepsilon_{\mathrm{FP}}$; otherwise $r_{\mathrm{contr}}^{(k+1)}$ is treated as undefined and any ``contraction streak'' counter is reset.
+provided that a previous residual exists and $r_{\mathrm{Pic}}^{(k)}>\varepsilon_{\mathrm{FP}}$; otherwise $\rev{q}_{\mathrm{contr}}^{(k+1)}$ is treated as undefined and any ``contraction streak'' counter is reset.
 
-Let $r_{\mathrm{contr,off}}$, $r_{\mathrm{contr,on}}$, and $p_{\mathrm{off}}\in\mathbb{N}$ be user-chosen parameters. Define the streak counter $c^{(k+1)}$ by
+Let $\rev{q}_{\mathrm{contr,off}}$, $\rev{q}_{\mathrm{contr,on}}$, and $p_{\mathrm{off}}\in\mathbb{N}$ be user-chosen parameters. Define the streak counter $c^{(k+1)}$ by
 \[
 c^{(k+1)} :=
 \begin{cases}
-c^{(k)}+1, & r_{\mathrm{contr}}^{(k+1)}\ \text{defined and}\ r_{\mathrm{contr}}^{(k+1)}<r_{\mathrm{contr,off}},\\
+c^{(k)}+1, & \rev{q}_{\mathrm{contr}}^{(k+1)}\ \text{defined and}\ \rev{q}_{\mathrm{contr}}^{(k+1)}<\rev{q}_{\mathrm{contr,off}},\\
 0, & \text{otherwise}.
 \end{cases}
 \]
 If Anderson is currently active, it remains active as long as $c^{(k+1)}<p_{\mathrm{off}}$; it is switched off (to damped Picard) when $c^{(k+1)}\ge p_{\mathrm{off}}$.
-If Anderson is currently inactive (Picard mode), it is switched on only when $r_{\mathrm{contr}}^{(k+1)}$ is defined and $r_{\mathrm{contr}}^{(k+1)}\ge r_{\mathrm{contr,on}}$; when switching on, the Anderson history is reset \emph{immediately} before forming the new iterate.
+If Anderson is currently inactive (Picard mode), it is switched on only when $\rev{q}_{\mathrm{contr}}^{(k+1)}$ is defined and $\rev{q}_{\mathrm{contr}}^{(k+1)}\ge \rev{q}_{\mathrm{contr,on}}$; when switching on, the Anderson history is reset \emph{immediately} before forming the new iterate.
 
 Whenever Anderson is inactive, the update is the damped Picard step in scaled coordinates,
 \begin{equation}\label{eq:picard-damped}
@@ -231,7 +233,7 @@ If $r_{\mathrm{first}}$ and $r_{\mathrm{best}}$ are finite and $r_{\mathrm{first
 \]
 otherwise the outer-stall counter is reset to $0$. If $\Delta_{\mathrm{rel}}<\delta$, the counter is incremented; otherwise it is reset to $0$. The iteration is terminated early once the counter reaches $P$.
 
-For diagnostics, we monitor the Picard residual $r_{\mathrm{Pic}}^{(k+1)}$, the contraction ratio $r_{\mathrm{contr}}^{(k+1)}$ when defined, and (when Anderson is active) the conditioning $\mathrm{cond}(H+\lambda_{\mathrm{eff}}I)$ and whether step limiting/restarts were triggered.
+For diagnostics, we monitor the Picard residual $r_{\mathrm{Pic}}^{(k+1)}$, the contraction ratio $\rev{q}_{\mathrm{contr}}^{(k+1)}$ when defined, and (when Anderson is active) the conditioning $\mathrm{cond}(H+\lambda_{\mathrm{eff}}I)$ and whether step limiting/restarts were triggered.
 
 The Gauss--Seidel iteration is linearly convergent in the Picard metric \eqref{eq:fp-picard-res}. The Pulay/DIIS update \eqref{eq:aa-update} acts as a multisecant extrapolation and can reduce the number of subiterations in practice. Robustness is promoted by the step limiter \eqref{eq:aa-step-limit} and by adaptive history restarts triggered by stall or ill-conditioning of the regularized Gram system.
 
@@ -243,7 +245,7 @@ The Gauss--Seidel iteration is linearly convergent in the Picard metric \eqref{e
     \item Compute the raw Gauss--Seidel image $\mathbf{x}_{\mathrm{raw}}^{(k+1)}=\mathcal{G}(\mathbf{x}^{(k)})$ by performing one sweep of all blocks in the configured order.
     \item If the per-field scales $s_i$ are not yet initialized, compute them from $\mathbf{x}^{(0)}$ and $\mathbf{x}_{\mathrm{raw}}^{(1)}$ using \eqref{eq:fp-scales}. Construct $\widetilde{\mathbf{x}}^{(k)}$ and $\widetilde{\mathbf{x}}_{\mathrm{raw}}^{(k+1)}$ by applying the scaling.
     \item Compute the Picard residual $r_{\mathrm{Pic}}^{(k+1)}$ from \eqref{eq:fp-picard-res}. If $r_{\mathrm{Pic}}^{(k+1)}\le \mathrm{tol}$, set $\widetilde{\mathbf{x}}^{(k+1)}:=\widetilde{\mathbf{x}}_{\mathrm{raw}}^{(k+1)}$ and stop (converged).
-    \item If a previous residual exists with $r_{\mathrm{Pic}}^{(k)}>\varepsilon_{\mathrm{FP}}$, compute $r_{\mathrm{contr}}^{(k+1)}$ by \eqref{eq:fp-contraction}; otherwise treat $r_{\mathrm{contr}}^{(k+1)}$ as undefined.
+    \item If a previous residual exists with $r_{\mathrm{Pic}}^{(k)}>\varepsilon_{\mathrm{FP}}$, compute $\rev{q}_{\mathrm{contr}}^{(k+1)}$ by \eqref{eq:fp-contraction}; otherwise treat $\rev{q}_{\mathrm{contr}}^{(k+1)}$ as undefined.
     \item Decide whether Anderson is active for this update using the hysteretic switching logic in the paragraph ``Adaptive acceleration (Pulay--Picard switching)''. If switching from Picard to Anderson, reset the Anderson history immediately.
     \item Update the scaled state:
     \begin{itemize}

@@ -59,7 +59,7 @@ with $\mathbf{P}_i:=\mathbf{a}_i\otimes\mathbf{a}_i$ in the fully anisotropic ca
 This construction ensures that the resulting constitutive operator is \emph{conservative} (minor and major symmetries) and admits a standard strain energy density $U=\tfrac12\boldsymbol{\sigma}:\boldsymbol{\varepsilon}$.
 We ensure \emph{strong ellipticity} through admissible parameter ranges and bounded anisotropy (via eigenvalue-ratio bounds), and the law reduces smoothly to the isotropic baseline as $\widehat{\mathbf{A}}\to\mathbf{I}$.
 
-For later use (e.g.\ fabric-guided constitutive evaluation) we remove isotropic scaling in log space and bound the resulting eigenvalue ratios. Let $\mathrm{sym}(\mathbf{L})=\sum_{i=1}^3 \ell_i\,\mathbf{P}_i$ with $\bar\ell:=\tfrac13\sum_i \ell_i$ and define
+For later use (e.g.\ fabric-guided constitutive evaluation) we remove isotropic scaling in log space and bound the resulting eigenvalue ratios. Let $\mathrm{sym}(\mathbf{L})=\sum_{i=1}^3 \ell_i\,\mathbf{P}_i$ with $\bar\ell:=\tfrac13\sum_i \ell_i$ \rev{(where $\{\ell_i,\mathbf{P}_i\}$ denote the eigenvalues and spectral projectors obtained from the eigendecomposition of $\mathrm{sym}(\mathbf{L})$)} and define
 \begin{equation}\label{eq:Ahat-blend-nd}
 \widehat{\mathbf{A}} \;:=\; \sum_{i=1}^3 m_i\,\mathbf{P}_i,\qquad
 m_i \;:=\; \exp\!\Big(\operatorname{sclamp}(\ell_i-\bar\ell, -d_{\max}, d_{\max}; \varepsilon)\Big),\qquad
@@ -81,7 +81,7 @@ Figure \ref{fig:constitutive_law} illustrates the behavior of the density-elasti
 \end{figure}
 
 \subsection*{Stimulus submodel}\label{subsec:stim-nd}
-We represent the mechanotransductive drive by a scalar field $S:\Omega\times(0,T]\to\mathbb{R}$ that is \emph{generated} by mechanical activity and \emph{transported} through osteocytic/vascular pathways. Positive values correspond to net formation drive and negative values to net resorption drive.
+We represent the mechanotransductive drive by a scalar field $S:\Omega\times(0,T]\to\mathbb{R}$ that is \emph{generated} by mechanical activity and \emph{transported} through osteocytic/vascular pathways. \rev{By convention, positive values of $S$ correspond to net formation drive and negative values to net resorption drive; we note explicitly that this sign convention is a modelling assumption that directly maps the biological stimulus to the net remodeling outcome, thereby conflating the complex multi-cellular signalling cascade into a single scalar quantity.}
 
 The stimulus obeys a diffusion--reaction balance with a smooth saturating (lazy-zone) mechanostat drive computed from a daily mechanical stimulus $\psi_{\mathrm{day}}$:
 \begin{equation}\label{eq:stim-strong-nd}
@@ -127,6 +127,7 @@ Equation \eqref{eq:stim-strong-nd} acts as a spatio-temporal low-pass filter of 
 t_S=\tau_S
 \).
 The time constant $\tau_S$ thus sets the inertia with respect to temporal fluctuations in the drive, while $D_S$ controls spatial spread via gap-junction/vascular pathways. The homogeneous Neumann condition corresponds to zero normal flux of $S$ at $\partial\Omega$.
+\rev{We emphasize that the diffusion length $\ell_S = \sqrt{\tau_S D_S}$ is set in practice by a mesh-based prescription $\ell = \alpha h$ (\S\ref{sec:parameter-governance}), yielding $\ell_S$ on the order of $10^{-1}$--$10^{0}$\,mm. This is substantially larger than the osteocyte spacing in the lacuno-canalicular network (${\sim}20$--$50\,\mu$m); accordingly, $D_S$ should be understood as a phenomenological regularization parameter that controls the effective signal reach at the continuum (FE) scale, rather than as a direct representation of LCN-scale diffusion. The saturation width $\kappa_S$ and the lazy-zone threshold $\delta_0$ are likewise phenomenological calibration parameters; their sensitivity is explored indirectly through the parameter sets in \S\ref{sec:parameter-governance} (Table~\ref{tab:param_setup}), but a full stand-alone sensitivity study is deferred to future work.}
 
 \subsection*{Density submodel}\label{subsec:density-nd}
 The apparent density $\rho=\rho(x,t)$ evolves under diffusive regularization and bounded formation/resorption kinetics driven by the stimulus $S$. The strong form is supplemented with homogeneous no-flux boundary conditions and an admissible initial state,
