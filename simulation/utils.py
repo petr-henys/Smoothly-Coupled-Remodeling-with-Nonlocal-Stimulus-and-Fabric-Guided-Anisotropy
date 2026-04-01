@@ -226,7 +226,7 @@ def eigenvalues_sym3(X, *, eps_p: float = 1e-18, eps_r: float = 1e-12, tol: floa
     return l1, l2, l3
 
 
-def projectors_sylvester(X, l1, l2, l3, *, eps_d: float = 1e-12, tol: float = 1e-14, tol_deg: float = 1e-8):
+def projectors_sylvester(X, l1, l2, l3, *, eps_d: float = 1e-12, tol: float = 1e-14, tol_deg: float = 1e-6):
     """
     Computes spectral projectors for 3x3 symmetric tensor using Sylvester's formula.
     

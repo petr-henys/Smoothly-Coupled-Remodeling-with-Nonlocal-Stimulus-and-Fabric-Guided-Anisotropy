@@ -12,8 +12,8 @@ Within each coupling subiteration we apply a block Gauss--Seidel sweep in the or
 Mechanics field(s) (e.g.\ displacements) and derived drivers are treated as internal quantities of the mechanics block and are not part of the fixed-point iterate.
 Coupling convergence is measured by the scaled relative Picard residual $r_{\mathrm{Pic}}$ in \eqref{eq:fp-picard-res}, i.e.\ on the coefficient vectors of $(\mathbf{L},S,\rho)$ only.
 
-Performance metrics are recorded per time-step attempt (accepted or rejected) and per coupling subiteration.
-For the convergence study we aggregate, over accepted steps, the linear-solver times and iteration counts for the four blocks (mechanics, fabric, stimulus, density), together with peak memory.
+Performance metrics are recorded per time step and per coupling subiteration.
+For the convergence study we aggregate, over all time steps, the linear-solver times and iteration counts for the four blocks (mechanics, fabric, stimulus, density), together with peak memory.
 
 \subsection*{Spatio-temporal discretization convergence}
 
@@ -45,6 +45,7 @@ For a sequence of refinement pairs we obtain $\{(h_H,e_{H\to h}^{X,\bullet})\}$,
 Temporal errors are computed analogously on a fixed mesh by comparing consecutive timesteps and associating each pair error with the coarser step $\Delta t_H$.
 The annotated slopes $p$ in \cref{fig:individual_convergence} are obtained from a log--log linear regression on the available refinement pairs.
 \rev{Because only 3--4 refinement levels are available, the regression slopes carry substantial uncertainty; accordingly, the reported values should be interpreted as consistent with first- or second-order convergence behavior rather than as precise rate estimates.}
+\rev{To complement this pair-error study with a manufactured reference, we additionally verified the \emph{linear} scalar stimulus transport operator on the unit cube with homogeneous Neumann boundary conditions using the exact solution $S^\star(x,t)=\cos(\pi x)\cos(\pi y)\cos(\pi z)\exp(-0.7t)$. In this benchmark, the density-dependent mechanostat drive is replaced by a manufactured source term $f^\star=\tau\,\partial_t S^\star-\tau D\,\Delta S^\star+S^\star$, so the test isolates the Backward--Euler diffusion--decay operator rather than the full coupled stimulus update. For the spatial study, the forcing is chosen so that one Backward--Euler step is satisfied exactly, isolating the FE discretization error; for the temporal study, the continuous manufactured source term is integrated on a fixed $N=24$ mesh. The observed spatial slopes are $p_{L^2}=1.93$ and $p_{H^1}=0.94$, while the temporal $L^2$ slope is $p=1.25$, i.e.\ consistent with first-order Backward--Euler behavior within the short four-level timestep sequence and the remaining spatial error floor (\cref{fig:manufactured_stimulus}).}
 
 \begin{figure}[htbp]
   \centering
@@ -55,4 +56,11 @@ The annotated slopes $p$ in \cref{fig:individual_convergence} are obtained from 
   (c,d) Aggregated linear-solver time (solid) and iteration counts (dotted) for the four blocks (mechanics, fabric, stimulus, density) versus $h$ and $\Delta t$.
   Reference lines indicate $O(h)$, $O(h^2)$, and $O(\Delta t)$.}
   \label{fig:individual_convergence}
+\end{figure}
+
+\begin{figure}[htbp]
+  \centering
+  \safeincludegraphics[width=0.8\linewidth]{manufactured_stimulus.png}
+  \caption{\rev{Manufactured-solution verification for the scalar stimulus subproblem on the unit cube with homogeneous Neumann boundary conditions. (a) Spatial convergence for a one-step Backward--Euler solve with discrete manufactured forcing, showing the expected CG1 behavior: approximately second order in $L^2$ and first order in $H^1$. (b) Temporal $L^2$ convergence on a fixed $N=24$ mesh for the continuous manufactured source term, consistent with first-order Backward--Euler time integration.}}
+  \label{fig:manufactured_stimulus}
 \end{figure}

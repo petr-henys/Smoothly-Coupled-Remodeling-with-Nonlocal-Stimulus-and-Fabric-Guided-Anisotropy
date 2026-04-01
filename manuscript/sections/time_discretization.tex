@@ -1,13 +1,13 @@
 \section*{Time discretization}
 \label{sec:be-time}
 
-Let $0=t^0<t^1<\dots<t^N=T$ be a (possibly non-uniform) partition of the time interval, and define the step sizes
+Let $0=t^0<t^1<\dots<t^N=T$ be a uniform partition of the time interval, and define the fixed step size
 \[
-\Delta t^n := t^{n}-t^{n-1}>0,\qquad n=1,\dots,N.
+\Delta t := t^{n}-t^{n-1}=T/N>0,\qquad n=1,\dots,N.
 \]
 For any time-dependent field $X$ we write $X^n \approx X(\cdot,t^n)$.
 At each time level we seek the coupled remodeling state $\mathbf{x}^n:=(\mathbf{L}^n,S^n,\rho^n)$.
-Mechanics is quasi-static (no time derivative); the evolution equations for $S$, $\rho$, and $\mathbf{L}$ are advanced by Backward--Euler steps of size $\Delta t^n$.
+Mechanics is quasi-static (no time derivative); the evolution equations for $S$, $\rho$, and $\mathbf{L}$ are advanced by Backward--Euler steps of size $\Delta t$.
 
 \paragraph{Mechanics (quasi-static).}
 Given $(\rho^n,\mathbf{L}^n)$ we solve the equilibrium problem \eqref{eq:mech-strong-nd} to obtain the displacement field $\mathbf{u}^n$ and the mechanical drivers $\psi_{\mathrm{day}}^n$ and $\bar{\mathbf{Q}}^n$ defined in \eqref{eq:stim-psi-nd} and \eqref{eq:M-def-nd}.
@@ -15,7 +15,7 @@ Given $(\rho^n,\mathbf{L}^n)$ we solve the equilibrium problem \eqref{eq:mech-st
 \paragraph{Stimulus (Backward--Euler).}
 Discretizing \eqref{eq:stim-strong-nd} by Backward--Euler gives the linear update: find $S^n$ such that
 \begin{equation}\label{eq:be-stim}
-\tau_S\frac{S^{n}-S^{n-1}}{\Delta t^n}\;-\;\tau_S D_S\,\Delta S^{n}\;+\;S^{n}
+\tau_S\frac{S^{n}-S^{n-1}}{\Delta t}\;-\;\tau_S D_S\,\Delta S^{n}\;+\;S^{n}
 \;=\; S_{\max}\,\tanh\!\Big(\delta_{\mathrm{eff}}(\psi_{\mathrm{day}}^{n},\rho^{n})/\kappa_S\Big)\quad\text{in }\Omega,
 \end{equation}
 with boundary and initial conditions from \eqref{eq:stim-bc-ic-nd}. For $D_S=0$ the Laplacian term is absent.
@@ -23,7 +23,7 @@ with boundary and initial conditions from \eqref{eq:stim-bc-ic-nd}. For $D_S=0$ 
 \paragraph{Density (Backward--Euler).}
 Let $S_+^n:=S_+(S^n)$ and $S_-^n:=S_-(S^n)$, where $S_\pm$ are defined in \eqref{eq:smooth-splits-nd}. Discretizing \eqref{eq:density-strong-nd} by Backward--Euler and evaluating the surface-availability factor $\alpha_{\mathrm{surf}}$ from \eqref{eq:Asurf-nd} explicitly as $\alpha_{\mathrm{surf}}(\rho)\approx \alpha_{\mathrm{surf}}(\rho^{n-1})$ yields
 \begin{equation}\label{eq:be-rho}
-\frac{\rho^{n}-\rho^{n-1}}{\Delta t^n}\;-\;\nabla\!\cdot\!\big(\mathbf{D}_\rho\nabla\rho^{n}\big)
+\frac{\rho^{n}-\rho^{n-1}}{\Delta t}\;-\;\nabla\!\cdot\!\big(\mathbf{D}_\rho\nabla\rho^{n}\big)
 =\;\alpha_{\mathrm{surf}}(\rho^{n-1})\Big(
 k_{\mathrm{form}}\,S_+^{n}\Big(1-\frac{\rho^{n}}{\rho_{\max}}\Big)
 +k_{\mathrm{res}}\,S_-^{n}\Big(1-\frac{\rho^{n}}{\rho_{\min}}\Big)
@@ -34,24 +34,10 @@ with boundary and initial conditions from \eqref{eq:density-bc-ic-nd}.
 \paragraph{Direction/fabric (Backward--Euler).}
 Discretizing \eqref{eq:L-strong-nd} by Backward--Euler yields the linear relaxation--diffusion update: find $\mathbf{L}^n$ such that
 \begin{equation}\label{eq:be-A}
-\frac{\mathbf{L}^{n}-\mathbf{L}^{n-1}}{\Delta t^n}\;-\;D_A\,\Delta \mathbf{L}^{n}\;+\;\frac{a(\bar{\mathbf{Q}}^{n})}{\tau_A}\,\mathbf{L}^{n}
+\frac{\mathbf{L}^{n}-\mathbf{L}^{n-1}}{\Delta t}\;-\;D_A\,\Delta \mathbf{L}^{n}\;+\;\frac{a(\bar{\mathbf{Q}}^{n})}{\tau_A}\,\mathbf{L}^{n}
 \;=\;\frac{a(\bar{\mathbf{Q}}^{n})}{\tau_A}\,\mathbf{L}_M(\bar{\mathbf{Q}}^{n})\quad\text{in }\Omega,
 \end{equation}
 with boundary and initial conditions from \eqref{eq:L-bc-ic-nd}. The Laplacian acts componentwise on $\mathbf{L}$, and for $D_A=0$ the diffusion term is absent.
 
 \paragraph{Coupled solve at time level $t^n$.}
 The submodels are coupled through the mechanics drivers $(\psi_{\mathrm{day}}^n,\bar{\mathbf{Q}}^n)$ and through the density dependence in the stimulus. We obtain $\mathbf{x}^n$ by the block Gauss--Seidel fixed-point scheme described in \S\ref{sec:fp-aa}.
-
-\rev{%
-\paragraph{Adaptive step-size control.}
-The partition $\{t^n\}$ may be non-uniform and is optionally controlled by a PI (proportional--integral) step-size controller applied to the fixed-point iteration count.
-After a successful time step (i.e.\ the coupling solver converges within the prescribed subiteration cap), the next step size is increased toward a target iteration count $K_{\mathrm{target}}$; if the step fails (subiteration cap exceeded), the step is rejected, $\Delta t$ is halved, and the step is re-attempted from the same $t^{n-1}$.
-Specifically, we use an AB2 (Adams--Bashforth 2) predictor for the initial guess at each time level, and a PI controller of the form
-\[
-  \Delta t^{n+1} = \Delta t^{n}\,\min\!\Big(\sigma_{\max},\;\max\!\Big(\sigma_{\min},\;
-  \big(K_{\mathrm{target}} / K^{n}\big)^{k_P}\,
-  \big(K_{\mathrm{target}} / K^{n-1}\big)^{k_I}\Big)\Big),
-\]
-where $K^{n}$ is the number of coupling subiterations at step $n$, and $k_P$, $k_I$ are proportional and integral gains, while $\sigma_{\min}$, $\sigma_{\max}$ are safety bounds on the growth/shrink factor.
-This controller allows aggressive time steps in benign parameter regimes while automatically reducing $\Delta t$ when the coupling becomes stiff, improving overall robustness without user intervention.
-}

@@ -3,7 +3,7 @@
 
 \paragraph{Benchmark design and metrics.}
 We assess robustness and computational efficiency of the nonlinear coupling solver (block Gauss--Seidel with optional Anderson acceleration; \S\ref{sec:fp-aa}) on the box benchmark under a parabolic compression load.
-To isolate coupling behavior, we disable adaptive time stepping and fix $\Delta t=25~\mathrm{d}$ and $T=500~\mathrm{d}$ (20 steps).
+To isolate coupling behavior, we fix $\Delta t=25~\mathrm{d}$ and $T=500~\mathrm{d}$ (20 steps).
 This intentionally large $\Delta t$ is used as a stress test: it is not aimed at resolving stimulus transients ($\tau_S\approx 10~\mathrm{d}$), but at probing the nonlinear contractivity of the coupled map.
 
 We compare two parameter regimes:
@@ -46,7 +46,7 @@ Performance is reported as the cumulative linear-solver time and iteration count
   \centering
   \safeincludegraphics[width=1\linewidth]{anderson_comparison.png}
   \caption{Physio vs.\ stiff coupling in the box benchmark: Anderson acceleration vs.\ pure damped Picard iteration.
-  (a) Final coupling residual $r_{\mathrm{Pic}}$ per accepted step (log scale; values below $10^{-14}$ are floored for visibility), with the dashed line marking $\mathrm{tol}=10^{-6}$.
+  (a) Final coupling residual $r_{\mathrm{Pic}}$ per time step (log scale; values below $10^{-14}$ are floored for visibility), with the dashed line marking $\mathrm{tol}=10^{-6}$.
   (b) Total linear-solver time over the full run, stacked by fixed-point termination reason (converged to tolerance, reached the subiteration limit, insufficient progress).
   (c) Representative residual histories: for each configuration we plot the step that required the most subiterations.}
   \label{fig:anderson_comparison}

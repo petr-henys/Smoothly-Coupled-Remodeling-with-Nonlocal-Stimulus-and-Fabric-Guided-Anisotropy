@@ -113,3 +113,11 @@ w_{\mathrm{full}}\,\mathbf{P}_i^{\mathrm{full}}
 By construction, $\sum_i \mathbf{P}_i=\mathbf{I}$ and $\mathbf{P}_i=\mathbf{P}_i^{\mathsf T}$ hold in all regimes,
 and the TI and isotropic limits avoid non-uniqueness of eigenvectors while preserving rotational invariance of the
 degenerate subspaces.
+\rev{To quantify the constitutive impact of this blending rule, we added a near-degenerate stress benchmark in which a fixed transversely isotropic log-fabric state is perturbed by symmetric noise of amplitude $\varepsilon_{\mathrm{noise}}$ and the resulting stress is compared with the exact TI limit. Using the constitutive law of \S\ref{subsec:mech-nd}, the naive rank-one eigendecomposition projectors, the raw Sylvester formula, and the denominator-regularized Sylvester formula all retain a finite relative stress error of approximately $1.3\times 10^{-1}$ at $\varepsilon_{\mathrm{noise}}=10^{-8}$, whereas the fully blended construction reduces the median error to $3.2\times 10^{-8}$ (\cref{fig:sylvester_stress_benchmark}). A separate sweep over the blending tolerance shows a broad low-error plateau for $\mathrm{tol}_{\mathrm{deg}}\in[10^{-6},10^{-5}]$; based on this benchmark, the default value used in the solver is set to $\mathrm{tol}_{\mathrm{deg}}=10^{-6}$. Smaller values fail to collapse reliably to the TI limit, while substantially larger values over-blend away from the genuinely anisotropic regime.}
+
+\begin{figure}[htbp]
+    \centering
+    \safeincludegraphics[width=0.8\linewidth]{sylvester_stress_benchmark.png}
+    \caption{\rev{Near-transverse-isotropy constitutive benchmark for projector robustness. (a) Relative stress error with respect to the exact TI limit versus perturbation amplitude $\varepsilon_{\mathrm{noise}}$ for eigendecomposition projectors, raw Sylvester projectors, denominator-regularized Sylvester projectors, and the fully robust blended construction. The robust method collapses to the TI limit as the perturbation vanishes, while the other variants retain a finite stress error. (b) Sensitivity of the robust method to the blending tolerance $\mathrm{tol}_{\mathrm{deg}}$ at $\varepsilon_{\mathrm{noise}}=10^{-8}$, showing a broad low-error plateau around $10^{-6}$--$10^{-5}$.}}
+    \label{fig:sylvester_stress_benchmark}
+\end{figure}

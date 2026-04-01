@@ -39,8 +39,11 @@ If the model is robust with respect to loading-direction uncertainty, similarity
 
 \rev{%
 \paragraph{Comparison with inter-subject variability.}
-To put the direction-induced density variation in context, the spread of total RMSE across the sweep ($\approx 0.555$--$0.62$~g/cm$^3$) is comparable in magnitude to the inter-subject variability ($\pm 2\sigma$) of the mapped HFValid CT densities, which reaches 0.3--0.8~g/cm$^3$ depending on compartment and axial position.
-In other words, the density changes caused by a $40^\circ$ frontal-angle sweep are of the same order as the natural morphological variability across the 101-subject cohort, suggesting that load-direction uncertainty is a relevant but not dominant source of model--data mismatch when assessed against population-level scatter.
+Using linear interpolation of the discrete sweep metrics, the interpolated baseline at $\Delta\alpha_{\mathrm{front}}=0^\circ$ is $\mathrm{RMSE}=0.575$~g/cm$^3$ and $\mathrm{corr}=0.627$.
+Over a physiologic frontal-angle uncertainty band of $\pm 7^\circ$, the total RMSE varies only from 0.572 to 0.578~g/cm$^3$ (spread 0.006~g/cm$^3$) and the Pearson correlation from 0.611 to 0.643 (spread 0.032).
+Over the more permissive $\pm 13^\circ$ band, the RMSE range is 0.563--0.581~g/cm$^3$ (spread 0.018~g/cm$^3$) and the correlation range is 0.602--0.654 (spread 0.052).
+These shifts remain small relative to the HFValid inter-subject density variability band ($\pm 2\sigma$), which reaches 0.3--0.8~g/cm$^3$ depending on compartment and axial position, and they are also markedly smaller than the full $40^\circ$ sweep spread in RMSE (0.050~g/cm$^3$).
+Accordingly, load-direction uncertainty is quantitatively relevant but not dominant when compared with the population-level scatter of the mapped CT reference. 
 }
 
 \begin{figure}[htbp]

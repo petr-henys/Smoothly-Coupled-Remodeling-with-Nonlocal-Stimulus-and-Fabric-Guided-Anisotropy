@@ -195,7 +195,7 @@ We agree with all three points and have revised the manuscript accordingly:
 
 \begin{enumerate}[nosep]
 \item We have added explicit context comparing the RMSE values to the HFValid inter-subject $\pm 2\sigma$ band. In the Discussion, we now state that the RMSE of 0.55--0.61\,g/cm$^{3}$ is of a magnitude comparable to the inter-subject variability (0.3--0.5\,g/cm$^{3}$ in trabecular regions, up to 0.8\,g/cm$^{3}$ in the cortical shell), so that the predictions lie within the population envelope. In the Femur comparison section, a note clarifies that the $\pm2\sigma$ band is of comparable magnitude to the reported RMSE.
-\item In the frontal-angle sweep section, we have added a paragraph formally comparing the RMSE spread over the $40^\circ$ sweep range against the HFValid inter-subject variability band, concluding that load-direction uncertainty is a relevant but not dominant source of mismatch.
+\item We have now made this comparison quantitative rather than only qualitative. Using linear interpolation of the discrete frontal-angle sweep metrics, the interpolated baseline at $\Delta\alpha_{\mathrm{front}}=0^\circ$ is $\mathrm{RMSE}=0.575$\,g/cm$^{3}$ and $\mathrm{corr}=0.627$. Over a physiologic inter-subject variability band of $\pm 7^\circ$, the total RMSE varies from 0.572 to 0.578\,g/cm$^{3}$ (spread 0.006\,g/cm$^{3}$) and the Pearson correlation from 0.611 to 0.643 (spread 0.032). Over the wider $\pm 13^\circ$ band, the RMSE range is 0.563--0.581\,g/cm$^{3}$ (spread 0.018\,g/cm$^{3}$) and the correlation range is 0.602--0.654 (spread 0.052). These shifts are small compared with the HFValid $\pm2\sigma$ density variability band (0.3--0.8\,g/cm$^{3}$ depending on location), so the manuscript now supports the conclusion that load-direction uncertainty is relevant but not dominant.
 \item The language around $r\approx 3$ has been moderated. We now state that this value is specific to the current population template, load ensemble, and parameter set and should not be interpreted as a universal optimum. The coarse discrete sweep does not resolve the sensitivity surface finely enough to claim a sharp optimum; the qualitative point is that $r>1$ is needed for cortical shell maintenance.
 \end{enumerate}
 
@@ -203,7 +203,7 @@ We agree with all three points and have revised the manuscript accordingly:
 \begin{itemize}[nosep]
 \item Discussion, ``Interpretation of femur case study'': added RMSE vs.\ $\pm2\sigma$ context paragraph (blue); moderated $r\approx 3$ language (blue).
 \item ``Femur case study'', comparison strategy: added note on $\pm2\sigma$ magnitude relative to RMSE (blue).
-\item ``Sensitivity to hip force direction'': added ``Comparison with inter-subject variability'' paragraph (blue).
+\item ``Sensitivity to hip force direction'': replaced the qualitative ``Comparison with inter-subject variability'' paragraph by a quantitative comparison for the $\pm7^\circ$ and $\pm13^\circ$ loading-variability bands (blue).
 \end{itemize}
 
 % ── Convergence analysis ─────────────────────────────────────────────
@@ -216,12 +216,12 @@ We agree with all three points and have revised the manuscript accordingly:
 
 \response
 \begin{enumerate}[nosep]
-\item We have added an explicit caveat in the convergence section: ``Because only 3--4 refinement levels are available, the regression slopes carry substantial uncertainty; accordingly, the reported values should be interpreted as consistent with first- or second-order convergence behavior rather than as precise rate measurements.'' Adding formal confidence intervals for a 2--3 degree-of-freedom regression would produce wide bands of limited utility; we believe the softened language adequately conveys the uncertainty.
-\item A manufactured-solution test for the fully coupled system is a valuable suggestion but requires careful construction (analytic source terms, coupled boundary data) that is beyond the scope of this revision. The individual subproblems (linear elasticity, reaction--diffusion) use standard CG1 elements for which textbook convergence is well established; the pair-error study verifies that the \emph{coupled} system preserves this behavior under refinement. We have added this rationale to the text and note the manufactured-solution approach as a direction for future work.
+\item We have added an explicit caveat in the convergence section: ``Because only 3--4 refinement levels are available, the regression slopes carry substantial uncertainty; accordingly, the reported values should be interpreted as consistent with first- or second-order convergence behavior rather than as precise rate measurements.'' Adding formal confidence intervals for a 2--3 degree-of-freedom regression would produce wide bands of limited utility; we therefore retained the softened interpretation.
+\item We have now added a manufactured-solution verification for the \emph{linear} scalar stimulus transport operator. On the unit cube with homogeneous Neumann boundary conditions, we use the exact solution $S^\star(x,t)=\cos(\pi x)\cos(\pi y)\cos(\pi z)\exp(-0.7t)$ and define the manufactured source as $f^\star=\tau\,\partial_t S^\star-\tau D\,\Delta S^\star+S^\star$. In this benchmark, the density-dependent mechanostat drive is replaced by this source term, so the test verifies the Backward--Euler diffusion--decay operator and FE assembly in isolation rather than the full coupled stimulus update. For the spatial study, the forcing is constructed so that one Backward--Euler step is satisfied exactly, isolating the FE discretization error; the observed slopes are $p_{L^2}=1.93$ and $p_{H^1}=0.94$. For the temporal study, the continuous manufactured source term is integrated on a fixed $N=24$ mesh, giving an observed $L^2$ slope of $p=1.25$, i.e.\ consistent with first-order Backward--Euler behavior within the short four-level timestep sequence. This complements the pair-error study of the coupled benchmark without claiming a full manufactured solution for all coupled fields.
 \end{enumerate}
 
 \change
-``Convergence and performance analysis'': added uncertainty caveat for regression slopes (highlighted in blue). Discussion, ``Limitations and outlook'': manufactured-solution verification noted as future work direction.
+``Convergence and performance analysis'': added uncertainty caveat for regression slopes, new paragraph describing the manufactured-solution benchmark, and new Figure ``Manufactured-solution verification for the scalar stimulus subproblem'' (all highlighted in blue).
 
 % ── Sylvester-projector robustness ───────────────────────────────────
 
@@ -232,14 +232,14 @@ We agree with all three points and have revised the manuscript accordingly:
 \end{itemize}}
 
 \response
-We acknowledge that a head-to-head numerical comparison (robust vs.\ na\"ive eigensolver) approaching transverse isotropy would strengthen the Sylvester-projector discussion. However, conducting such an experiment requires a controlled benchmark in which the fabric tensor is driven through near-degenerate regimes while monitoring the coupled residual, which constitutes substantial additional work. In the current manuscript, the Sylvester-projector plot (Figure in Appendix~A) already demonstrates smooth, continuous projector fields across the full anisotropy spectrum including the isotropic and TI limits; and the box benchmark results in the ``Regularization analysis'' section show stable convergence under parameter regimes that produce near-isotropic fabric states.
+We have now added the requested near-degenerate constitutive benchmark. The test perturbs a fixed transversely isotropic log-fabric state by symmetric noise of amplitude $\varepsilon_{\mathrm{noise}}$ and compares the resulting constitutive stress to the exact TI limit. For $\varepsilon_{\mathrm{noise}}=10^{-8}$, the median relative stress error is $1.29\times 10^{-1}$ for rank-one eigendecomposition projectors, $1.29\times 10^{-1}$ for the raw Sylvester formula, $1.29\times 10^{-1}$ for the denominator-regularized Sylvester formula, and $3.15\times 10^{-8}$ for the fully robust blended construction. This directly demonstrates that the robust projector treatment removes the finite stress defect that persists for the na\"ive or only partially regularized variants near transverse isotropy.
 
-We accept the reviewer's point that a more targeted ablation study would be valuable and have added a note in the Discussion (Limitations and outlook) acknowledging that a quantitative comparison of projector strategies near degeneracy is deferred to future work.
+For $\mathrm{tol}_{\mathrm{deg}}$, we added a dedicated sweep at $\varepsilon_{\mathrm{noise}}=10^{-8}$. The benchmark shows a broad low-error plateau for $\mathrm{tol}_{\mathrm{deg}}\in[10^{-6},10^{-5}]$; accordingly, the solver default is now set to $\mathrm{tol}_{\mathrm{deg}}=10^{-6}$. Smaller values do not collapse reliably to the TI limit, whereas substantially larger values over-blend away from the anisotropic regime.
 
-For $\mathrm{tol}_{\mathrm{deg}}$: the transition tolerance controls the blending width between the distinct-eigenvalue Sylvester formula and the TI/isotropic fallbacks. At the default value ($10^{-4}$), the blending zone is narrow enough to be invisible in the stress response yet wide enough to avoid eigenvector-flip discontinuities. We have added a brief remark on this in the appendix.
+Because this new experiment isolates the constitutive degeneracy mechanism rather than the full FE-level coupled residual, we also state explicitly in the Discussion that a complete robust-vs.-na\"ive ablation inside the full box benchmark remains future work.
 
 \change
-This comment requires new computations (ablation benchmark) for a complete resolution; the current revision adds a brief remark in the Sylvester-projector appendix on $\mathrm{tol}_{\mathrm{deg}}$ and acknowledges the ablation study as future work in the Discussion.
+Appendix ``Robust Sylvester projectors'': added quantitative near-TI stress benchmark, new Figure ``Near-transverse-isotropy constitutive benchmark for projector robustness'', and paragraph justifying the updated default $\mathrm{tol}_{\mathrm{deg}}=10^{-6}$ (all highlighted in blue). Discussion: the stability paragraph now cites the new benchmark and the limitations paragraph clarifies that a full FE-level ablation remains future work.
 
 % ── Literature review completeness ───────────────────────────────────
 
@@ -335,17 +335,8 @@ We have added a paragraph justifying the sweep ordering on data-flow grounds: me
 \change
 ``Fixed-point solver'' section: added paragraph after the sweep definition justifying the block ordering (highlighted in blue).
 
-% ----------------------------------------------------------------------
-\revcomment{The adaptive time-stepping scheme is mentioned but not described. The step acceptance/rejection criterion should be stated explicitly.}
-
-\response
-We have added a new paragraph ``Adaptive step-size control'' in the ``Time discretization'' section. It describes the PI (proportional--integral) controller applied to the fixed-point iteration count: a successful step triggers a growth factor toward a target iteration count $K_{\mathrm{target}}$, while a failed step (subiteration cap exceeded) causes rejection, step halving, and re-attempt. The AB2 predictor for the initial guess at each time level is also mentioned.
-
-\change
-``Time discretization'': added ``Adaptive step-size control'' paragraph with PI controller formula, growth/shrink bounds, step acceptance/rejection criterion, and AB2 predictor description (highlighted in blue).
-
-% ----------------------------------------------------------------------
-\revcomment{Table~2 does not provide direct references to the specific entries of the Bergmann et al.\ (2016) standardized dataset from which the loading values were derived.}
+	% ----------------------------------------------------------------------
+	\revcomment{Table~2 does not provide direct references to the specific entries of the Bergmann et al.\ (2016) standardized dataset from which the loading values were derived.}
 
 \response
 We have expanded the Table~2 caption with a sentence clarifying that force magnitudes and directions are derived from the standardized average-patient data of Bergmann et al.\ (2010, 2016) via the OrthoLoad HIP98 dataset, and that the specific stance-phase instants were selected based on reported peak-force profiles and muscle recruitment patterns. Each table row already cites the relevant references.

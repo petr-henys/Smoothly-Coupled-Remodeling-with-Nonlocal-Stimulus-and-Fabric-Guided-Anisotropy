@@ -121,7 +121,7 @@ def _projectors_sylvester_impl(
     *,
     eps_d: float = 1e-12,
     tol: float = 1e-14,
-    tol_deg: float = 3e-6,
+    tol_deg: float = 1e-6,
 ) -> tuple[tuple[np.ndarray, np.ndarray, np.ndarray], dict[str, float]]:
     """NumPy mirror of `simulation/utils.py:projectors_sylvester`.
 
@@ -194,7 +194,7 @@ def projectors_sylvester(
     *,
     eps_d: float = 1e-12,
     tol: float = 1e-14,
-    tol_deg: float = 3e-6,
+    tol_deg: float = 1e-6,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Spectral projectors via stabilized Sylvester construction (solver behavior)."""
     (P1, P2, P3), _ = _projectors_sylvester_impl(X, l1, l2, l3, eps_d=eps_d, tol=tol, tol_deg=tol_deg)
@@ -209,7 +209,7 @@ def projectors_sylvester_with_weights(
     *,
     eps_d: float = 1e-12,
     tol: float = 1e-14,
-    tol_deg: float = 3e-6,
+    tol_deg: float = 1e-6,
 ) -> tuple[tuple[np.ndarray, np.ndarray, np.ndarray], dict[str, float]]:
     return _projectors_sylvester_impl(X, l1, l2, l3, eps_d=eps_d, tol=tol, tol_deg=tol_deg)
 
