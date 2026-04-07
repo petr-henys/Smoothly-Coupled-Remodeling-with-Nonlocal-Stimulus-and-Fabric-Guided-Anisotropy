@@ -35,6 +35,7 @@ Under quasi-static conditions the balance of linear momentum reads
 
 \paragraph{Constitutive structure.}
 We adopt the Zysset-Curnier orthotropic material model \cite{Zysset1995_AlternativeModelAnisotropic}, which defines the stiffness tensor $\mathbb{C}$ based on the apparent density $\rho$ and the fabric eigenvalue ratios $m_1, m_2, m_3$ obtained from the log-fabric field $\mathbf{L}$. The fabric tensor is recovered from $\mathbf{L}$ via the matrix exponential $\mathbf{A} = \exp(\mathbf{L})$.
+\rev{The law is used here as an apparent-level constitutive closure: unlike bottom-up osteon-scale elasto-damage models \revcite{Gizzi2022_OsteonMechanics}, it does not resolve explicit microstructural damage mechanisms, but instead encodes anisotropy through the evolving fabric field.}
 The orthotropic engineering constants are given by:
 \begin{equation}\label{eq:zysset-curnier}
 \begin{aligned}
@@ -158,6 +159,7 @@ k_{\mathrm{form}}\,S_+(S)\Big(1-\frac{\rho}{\rho_{\max}}\Big)
 \Big).
 \end{equation}
 Here $k_{\mathrm{form}},k_{\mathrm{res}}\ge 0$ are formation/resorption gains. The bracketed terms are soft bounds: as $\rho\to\rho_{\max}$ (formation) or $\rho\to\rho_{\min}$ (resorption) the corresponding rate vanishes, so $\rho$ remains naturally attracted to $[\rho_{\min},\rho_{\max}]$ without hard constraints. The optional surface-availability factor $\alpha_{\mathrm{surf}}\in[\alpha_{\min},1]$ scales activity based on a porosity/specific-surface proxy.
+\rev{We stress that this closure is not an explicit damage model: in contrast to damage-based constitutive formulations for femur mechanics \revcite{Gizzi2022_DamageBone}, the present framework does not evolve a separate damage internal variable, and the density floor $\rho_{\min}$ merely prevents complete loss of mass and stiffness in the apparent-scale update.}
 
 \paragraph{Surface-availability factor.}
 To mimic reduced active remodeling surface in dense bone, we use a smooth factor $\alpha_{\mathrm{surf}}(\rho)\in[\alpha_{\min},1]$ based on a porosity proxy. Let $\rho_t>0$ be the tissue density and define the (dimensionless) porosity-like variable
@@ -208,6 +210,7 @@ supplemented with homogeneous no-flux boundary conditions and an admissible init
 \mathbf{L}(\cdot,0)=\ln(\mathbf{A}_0)\ \ \text{in }\Omega.
 \end{equation}
 Here $D_A\ge 0$ is a diffusion coefficient and $\tau_A>0$ a relaxation time constant. The activity factor $a(\bar{\mathbf{Q}})\in[0,1]$ suppresses updates under near-isotropic loading; the Laplacian and normal derivative act componentwise on $\mathbf{L}$.
+\rev{At the modelling level, \eqref{eq:L-strong-nd} should be read as an apparent-scale relaxation law. Complementary homogenized constrained-mixture approaches evolve fiber distributions from lower-scale constituent turnover and reorientation \revcite{Vasta2023_ConstrainedMixtureFabric}; here those mechanisms are collapsed into the phenomenological target $\mathbf{L}_M(\bar{\mathbf{Q}})$ and its relaxation rate.}
 
 \paragraph{Target construction from mechanics.}
 For each loading case $i$, the mechanics solve provides $\boldsymbol{\sigma}_i$ and $\boldsymbol{\varepsilon}_i$. To extract \emph{directional} information and remove the hydrostatic contribution we form the symmetric deviatoric-stress outer-product

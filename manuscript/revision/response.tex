@@ -73,10 +73,10 @@ Added new section ``Nomenclature'' with a \texttt{longtable} of all key symbols 
 \revcomment{The links provided to the source code do not work. Can these please be fixed prior to publication?}
 
 \response
-We apologise for the broken links. The repository was private during review; it has now been made public and the URLs have been verified. We will ensure the final accepted version contains working links.
+We apologise for the broken links. The review copy still pointed to private or unreleased records, so the public-facing URLs indeed did not resolve. We have therefore revised the Reproducibility section to avoid claiming active public access at this stage, and we will activate and re-check the GitHub and Zenodo links before the final accepted version is delivered.
 
 \change
-Repository links updated and tested (Reproducibility section).
+Reproducibility section rewritten to clarify that the public GitHub and Zenodo records will be activated and verified for the final accepted version.
 
 % ----------------------------------------------------------------------
 \revcomment{Line numbering would help reviewing. Furthermore, the style used makes it hard to differentiate sections and subsections.}
@@ -250,10 +250,10 @@ We thank the reviewer for identifying these gaps. We have substantially expanded
 
 \change
 \begin{itemize}[nosep]
-\item Bibliography: 10 new entries added (Vasta et al.\ 2023, Gizzi et al.\ 2022a, 2022b, Taddei et al.\ 2020, Falcinelli et al.\ 2020, Erani et al.\ 2019, Taddei et al.\ 2019, Schileo et al.\ 2024, Schileo et al.\ 2015, Aldieri et al.\ 2024).
-\item Introduction: added paragraph contextualizing the present approach with respect to osteon-level constitutive hierarchies, damage-based constitutive models, constrained-mixture fabric evolution, patient-specific CT-based FE approaches, and refined CT-based assessment of femoral mechanical competence (all citations in blue).
-\item Model Setup (Femur, Dataset): added references to CT-based FE methodology, CT segmentation benchmarks, and bilateral variability studies (blue).
-\item Discussion (Limitations): added references to cortical assignment and refined CT-based assessment (blue).
+\item Bibliography: 10 DOI-verified entries added across the three reviewer-requested themes.
+\item Introduction and Governing Equations: added contextual sentences linking the present apparent-scale formulation to osteon-scale elasto-damage mechanics, damage-based femur constitutive modelling, and homogenized constrained-mixture fiber-evolution approaches (all citations in blue).
+\item Model Setup (Femur, Dataset and CT calibration): added references to image-based femur FE methodology, CT segmentation / biomarker workflows, and bilateral variability studies (blue).
+\item Femur case study and Discussion: added references on cortical mapping / assignment and refined CT-based assessment of femoral mechanical competence (blue).
 \end{itemize}
 
 % ── (i) & (ii) Constitutive hierarchies and fabric evolution ────────
@@ -269,13 +269,13 @@ We thank the reviewer for identifying these gaps. We have substantially expanded
 All three points are now addressed:
 
 \begin{enumerate}[nosep]
-\item \textbf{Osteon-level constitutive hierarchies:} In the Introduction, we now acknowledge that the present apparent-level constitutive model does not resolve osteonal microstructure, and cite hierarchical elasto-damage models of cortical bone (Gizzi et al., JMPS 2022) as providing the theoretical underpinning for the fabric-elasticity relationships used here.
-\item \textbf{Damage-based approaches:} We cite the continuum damage formulation for femoral mechanics (Gizzi et al., EJMS-A 2022) as motivating the bounded resorption kinetics and density floor $\rho_{\min}$.
-\item \textbf{Constrained-mixture fabric evolution:} We cite constrained-mixture and homogenization-based approaches (Vasta et al., JMPS 2023) as a complementary micro-to-macro perspective relevant to the phenomenological log-fabric evolution law.
+\item \textbf{Osteon-level constitutive hierarchies:} In the Introduction, Mechanical submodel, and Discussion, we now acknowledge that the present apparent-level constitutive model does not resolve osteonal microstructure, and cite the osteon-scale elasto-damage study associated with doi:\,10.1016/j.jmps.2022.104962 as complementary microstructural context for the fabric-sensitive orthotropic law used here.
+\item \textbf{Damage-based approaches:} In the Introduction and Density submodel, we now state explicitly that the bounded resorption kinetics and density floor $\rho_{\min}$ are not an explicit damage formulation, and contrast them with damage-based femur mechanics models such as the study associated with doi:\,10.1016/j.euromechsol.2022.104538.
+\item \textbf{Constrained-mixture fabric evolution:} In the Direction submodel and Discussion, we now cite the homogenized constrained-mixture study associated with doi:\,10.1016/j.jmps.2023.105491 as a complementary micro-to-macro perspective relative to the phenomenological log-fabric evolution law adopted here.
 \end{enumerate}
 
 \change
-Introduction: added paragraph citing Gizzi et al.\ (2022a, 2022b) and Vasta et al.\ (2023) with contextual sentences explaining the relevance of each to the present framework (highlighted in blue).
+Introduction, Governing Equations (Mechanical / Density / Direction submodels), and Discussion: added contextual sentences tied to the three DOI-specified literature themes above (highlighted in blue).
 
 % ── (iii) CT-based FE modeling of the proximal femur ─────────────────
 
@@ -292,12 +292,12 @@ Introduction: added paragraph citing Gizzi et al.\ (2022a, 2022b) and Vasta et a
 \response
 All six sub-points are now addressed with dedicated citations and contextual sentences:
 \begin{enumerate}[nosep]
-\item Model Setup (Femur, Dataset): added citations to Taddei et al.\ (2020) for CT-based FE methodology and Aldieri et al.\ (2024) for CT segmentation, and Schileo et al.\ (2015) for bilateral variability.
-\item Discussion (Limitations): added citation to Falcinelli et al.\ (2020) on cortical bone material assignment, noting its relevance to the compartment-aware reference stimulus.
-\item Introduction and Model Setup (Femur): added citations to Erani et al.\ (2019) and Taddei et al.\ (2019) for patient-specific CT-based FE approaches with subject-level material heterogeneity.
-\item Introduction and Discussion: added citation to Schileo et al.\ (2024) on refined CT-based computational assessment of femoral mechanical competence.
+\item Model Setup (Femur, Dataset): added citations to the image-based femur FE methodology associated with doi:\,10.1080/10255842.2020.1789863, to the CT segmentation / biomarker review associated with doi:\,10.3389/fbioe.2024.1446829, and to the bilateral-variability study associated with doi:\,10.1007/s00198-015-3404-7.
+\item Femur case study and Discussion: added citation to the cortical bone mapping study associated with doi:\,10.1016/j.bone.2020.115348, explicitly linking cortical-shell representation to the interpretation of the ratio sweep.
+\item Introduction and Model Setup (Femur): added citations to patient-specific CT-based FE studies associated with doi:\,10.1007/s11012-019-01097-x and doi:\,10.1016/j.jmbbm.2019.01.014 as methodological context for heterogeneous femur mechanics.
+\item Introduction and Discussion: added citation to the refined CT-based femur assessment study associated with doi:\,10.1007/s11012-024-01850-x as complementary context for interpreting femoral mechanical competence.
 \item Femur comparison (comparison strategy): added note contextualizing RMSE against $\pm2\sigma$ inter-subject variability.
-\item Model Setup (Dataset): CT segmentation and density biomarker context (Aldieri et al.\ 2024) added.
+\item Model Setup (CT calibration): added an explicit sentence placing the density-calibration workflow in the broader CT biomarker / segmentation context requested by the reviewer.
 \end{enumerate}
 
 \change

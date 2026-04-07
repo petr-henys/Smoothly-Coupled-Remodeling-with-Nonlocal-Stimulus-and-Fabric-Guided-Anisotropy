@@ -16,8 +16,8 @@
 $\mathbf{u}$ & Displacement field [mm] \\
 $\rho$ & Apparent bone density [g/cm$^3$] \\
 $S$ & Remodeling stimulus (dimensionless) \\
-$\mathbf{A}$ & Fabric tensor (symmetric, positive-definite, $\det=1$) \\
-$\mathbf{L}$ & Log-fabric tensor, $\mathbf{L}=\ln\mathbf{A}$, trace-free \\
+$\mathbf{A}$ & Fabric tensor (symmetric positive-definite) \\
+$\mathbf{L}$ & Log-fabric tensor with $\mathbf{A}=\exp(\mathbf{L})$ \\
 %% --- Mechanical quantities ---
 $\boldsymbol{\varepsilon}$ & Linearized strain tensor \\
 $\boldsymbol{\sigma}$ & Cauchy stress tensor [MPa] \\
@@ -27,26 +27,34 @@ $\psi_{\mathrm{day}}$ & Daily SED stimulus (cycle-weighted) [MPa] \\
 $\bar{\mathbf{Q}}$ & Cycle-averaged deviatoric-stress outer-product \\
 %% --- Constitutive / fabric ---
 $E_0$, $\nu_0$ & Reference Young's modulus [MPa] and Poisson's ratio \\
-$p$, $q$ & Stiffness exponents (trabecular / cortical) \\
-$k_0$, $l_0$, $\mu_0$ & Zysset--Curnier fabric-elasticity parameters \\
-$\lambda_i$ & Eigenvalue of $\mathbf{A}$ ($i=1,2,3$) \\
-$\mathbf{P}_i$ & Eigenprojector of $\mathbf{A}$ (Sylvester construction) \\
+$p_E$, $p_G$ & Fabric stiffness exponents for axial and shear moduli \\
+$n_{\mathrm{trab}}$, $n_{\mathrm{cort}}$ & Trabecular and cortical density exponents in $k(\widetilde\rho)$ \\
+$\rho_{\mathrm{ref}}$ & Reference density in the constitutive law [g/cm$^3$] \\
+$\lambda_i$ & Eigenvalue of the regularized mechanics tensor $\mathbf{Q}$ or a spectral tensor under discussion \\
+$m_i$ & Bounded fabric anisotropy factors (eigenvalue ratios) \\
+$m_{\min}$, $m_{\max}$ & Lower and upper bounds for fabric anisotropy factors \\
+$\mathbf{P}_i$ & Spectral projector (robust Sylvester construction) \\
 %% --- Stimulus submodel ---
 $\psi_{\mathrm{ref}}$ & Reference stimulus (mechanostat set-point) \\
 $\psi_{\mathrm{ref}}^{\mathrm{trab}}$, $\psi_{\mathrm{ref}}^{\mathrm{cort}}$ & Trabecular and cortical reference stimuli \\
+$\hat{\psi}$, $\hat{\psi}_{\mathrm{ref}}$ & Density-normalized stimulus and its reference value \\
 $r$ & Cortical-to-trabecular reference ratio, $r=\psi_{\mathrm{ref}}^{\mathrm{cort}}/\psi_{\mathrm{ref}}^{\mathrm{trab}}$ \\
 $\tau_S$ & Stimulus time constant [day] \\
 $D_S$ & Stimulus diffusivity [mm$^2$/day] \\
+$\delta_0$ & Lazy-zone threshold scale \\
 $\kappa_S$ & Stimulus saturation gain \\
 $S_{\max}$ & Stimulus saturation level \\
 %% --- Density submodel ---
 $k_{\mathrm{form}}$, $k_{\mathrm{res}}$ & Formation and resorption rate constants [g/cm$^3$/day] \\
 $\rho_{\min}$, $\rho_{\max}$ & Density bounds [g/cm$^3$] \\
 $\alpha_{\mathrm{surf}}(\rho)$ & Surface-availability factor \\
+$\alpha_{\min}$ & Minimum remodeling-surface activity factor \\
 $D_\rho$ & Density diffusivity [mm$^2$/day] \\
 %% --- Fabric submodel ---
 $\tau_A$ & Fabric relaxation time [day] \\
 $D_A$ & Fabric diffusivity [mm$^2$/day] \\
+$\gamma_F$ & Fabric eigenvalue-sharpening exponent in the target law \\
+$\varepsilon_Q$ & Regularization of the mechanics tensor $\mathbf{Q}$ [MPa$^2$] \\
 $a(\bar{\mathbf{Q}})$ & Fabric activity function \\
 %% --- Solver and time integration ---
 $\Delta t$ & Time step size [day] \\

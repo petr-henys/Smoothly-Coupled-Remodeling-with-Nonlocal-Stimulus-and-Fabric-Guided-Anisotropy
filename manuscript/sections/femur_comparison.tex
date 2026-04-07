@@ -6,6 +6,7 @@ The proximal femur provides a challenging anatomical setting for coupled mechani
 In a standard mechanostat formulation a single reference stimulus $\psi_{\mathrm{ref}}$ is used throughout the domain \cite{Weinans1992_BehaviorAdaptiveBoneRemodeling,MartinezReina2016_UniquenessBRM}.
 However, experimental and conceptual work suggests that ``set points'' and adaptation thresholds are not universal constants: they may shift with loading history (mechanical usage set-point concept) \cite{Frost1992_SetPointsOsteoporosis}, depend on cellular set-point distributions \cite{Mullender1998_SetPointTrabecularArchitecture}, and can differ between cortical and cancellous compartments \cite{Yang2021_CancellousGreaterThreshold,Schulte2013_LocalMechanicalStimuli}.
 This motivates our compartment-aware reference stimulus $\hat{\psi}_{\mathrm{ref}}(\widetilde\rho)$ in \S\ref{subsec:stim-nd}, which blends trabecular and cortical reference values using the same density-dependent transition $w(\widetilde\rho)$ as the stiffness exponent blend.
+\rev{The interpretation of this ratio is also inseparable from how the cortical shell is represented in the image-based model: CT-based FE studies of the proximal femur show that improved cortical mapping materially affects strain prediction in the thin shell \revcite{Falcinelli2020_CorticalAssignment}.}
 
 \paragraph{Ratio sweep definition.}
 We parameterize the two reference values by their ratio
@@ -32,7 +33,7 @@ First, we compute the discrete nodal RMSE and MAE over all CG1 degrees of freedo
 \mathrm{MAE}(r)=\frac{1}{N}\sum_{j=1}^N\big|\rho_r(x_j,T)-\rho_{\mathrm{CT}}(x_j)\big|,
 \]
 supplemented by a Pearson correlation to assess spatial pattern matching independent of absolute scale.
-\rev{Note that the population-template density field is derived from $N=101$ subjects whose inter-individual variability ($\pm 2\sigma$ band) is of comparable magnitude to the RMSE values reported below; the metrics therefore characterize proximity to the population mean rather than prediction error in a strict sense.}
+\rev{Note that the population-template density field is derived from $N=101$ subjects whose inter-individual variability ($\pm 2\sigma$ band) reaches roughly 0.3--0.5~g/cm$^3$ in trabecular regions and up to 0.8~g/cm$^3$ in the cortical shell, i.e.\ of comparable magnitude to the RMSE values reported below; the metrics therefore characterize proximity to the population mean rather than prediction error in a strict sense.}
 Second, to quantify performance in distinct anatomical zones, we evaluate the same metrics restricted to CT-defined trabecular and cortical masks,
 \[
 \Omega_{\mathrm{trab}}:=\{x:\rho_{\mathrm{CT}}(x)\le \rho_{\mathrm{trab}}^{\max}\},\qquad
