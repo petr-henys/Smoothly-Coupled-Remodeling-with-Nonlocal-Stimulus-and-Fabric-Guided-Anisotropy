@@ -12,7 +12,6 @@
 % ── Colours ──────────────────────────────────────────────────────────
 \definecolor{reviewerblue}{RGB}{0,51,153}
 \definecolor{responseblack}{RGB}{0,0,0}
-\definecolor{changegreen}{RGB}{0,100,0}
 
 % ── Environments ─────────────────────────────────────────────────────
 \newcounter{reviewer}
@@ -38,7 +37,7 @@
 }
 
 \newcommand{\change}{%
-  \par\noindent{\color{changegreen}\textbf{Change in manuscript:}}\par\noindent\color{changegreen}%
+  \par\noindent{\color{blue}\textbf{Change in manuscript:}}\par\noindent\color{blue}%
 }
 
 % ══════════════════════════════════════════════════════════════════════
@@ -53,7 +52,7 @@
 
 \bigskip
 \noindent
-We thank the reviewers for their careful reading and constructive comments. Below we address each point individually. Reviewer comments are typeset in {\color{reviewerblue}\textit{blue italics}}; our responses follow in black text and changes to the manuscript are indicated in {\color{changegreen}green}.
+We thank the reviewers for their careful reading and constructive comments. Below we address each point individually. Reviewer comments are typeset in {\color{reviewerblue}\textit{blue italics}}; our responses follow in black text; and changes to the manuscript are summarized in {\color{blue}blue}, matching the blue revision highlighting in the manuscript itself.
 
 % ======================================================================
 %                         REVIEWER 1
@@ -73,10 +72,12 @@ Added new section ``Nomenclature'' with a \texttt{longtable} of all key symbols 
 \revcomment{The links provided to the source code do not work. Can these please be fixed prior to publication?}
 
 \response
-We apologise for the broken links. The review copy still pointed to private or unreleased records, so the public-facing URLs indeed did not resolve. We have therefore revised the Reproducibility section to avoid claiming active public access at this stage, and we will activate and re-check the GitHub and Zenodo links before the final accepted version is delivered.
+We apologise for the earlier broken link. The GitHub repository is now public and the Reproducibility section has been updated to include the verified public repository link:
+\href{https://github.com/petr-henys/Smoothly-Coupled-Remodeling-with-Nonlocal-Stimulus-and-Fabric-Guided-Anisotropy}{public GitHub repository}.
+We re-checked that the repository landing page resolves correctly.
 
 \change
-Reproducibility section rewritten to clarify that the public GitHub and Zenodo records will be activated and verified for the final accepted version.
+Reproducibility section updated to include the verified public GitHub repository URL and to remove the outdated Zenodo wording.
 
 % ----------------------------------------------------------------------
 \revcomment{Line numbering would help reviewing. Furthermore, the style used makes it hard to differentiate sections and subsections.}
