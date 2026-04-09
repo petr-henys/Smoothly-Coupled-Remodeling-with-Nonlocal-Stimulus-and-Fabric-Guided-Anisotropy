@@ -1,0 +1,31 @@
+\section*{\rev{Sensitivity to mechanostat smoothing parameters}}
+\label{sec:mechanostat-sensitivity}
+
+\paragraph{\rev{Sweep setup.}}
+\rev{To complement the qualitative discussion in \S\ref{subsec:stim-nd}, we performed a compact full-factorial femur sweep over the two phenomenological mechanostat parameters
+\[
+\delta_0 \in \{0.05,\,0.10,\,0.20\},
+\qquad
+\kappa_S \in \{0.2,\,0.4,\,0.8\}.
+\]
+The sweep uses the accelerated femur benchmark (\textbf{StiffSetup}; Appendix Table~\ref{tab:param_setup_femur}) with the same loading cases as in \S\ref{sec:femur-comparison}, but over a shortened diagnostic horizon $T=150$~days to keep the cost comparable to the other sensitivity studies. For each run we compare the final density field to the mapped CT template as in \S\ref{sec:femur-comparison}, but the plotted quantities are reported as deviations relative to the default pair $(\delta_0,\kappa_S)=(0.1,0.4)$ so that the figure reflects local parameter sensitivity rather than the absolute agreement level of the shortened run.}
+
+\paragraph{\rev{Observed trends.}}
+\rev{Figure~\ref{fig:mechanostat_sensitivity} shows that, in this range, the outcome is markedly more sensitive to the saturation width $\kappa_S$ than to the lazy-zone threshold $\delta_0$.
+At the default $\kappa_S=0.4$, varying $\delta_0$ from $0.05$ to $0.20$ changes the CT-based RMSE by only $0.0019$~g/cm$^3$, the Pearson correlation by $0.0029$, and the final mean density by $0.0033$~g/cm$^3$.
+At the default $\delta_0=0.1$, varying $\kappa_S$ from $0.2$ to $0.8$ changes the same quantities by $0.0128$~g/cm$^3$, $0.0219$, and $0.0212$~g/cm$^3$, respectively.
+Within this compact diagnostic sweep, $\kappa_S$ is therefore the dominant local calibration lever, whereas $\delta_0$ has only a weak first-order effect around the chosen default.
+Equally importantly, the default pair does not sit on a sharp cliff in the response surface.
+Because the horizon is intentionally shortened, we interpret this only as a local robustness study and not as a full calibration of mechanostat thresholds.}
+
+\begin{figure}[htbp]
+  \centering
+  \safeincludegraphics[width=1\linewidth]{mechanostat_sensitivity.png}
+  \caption{\rev{Compact femur sensitivity sweep over the mechanostat parameters $\delta_0$ and $\kappa_S$.
+  Each cell shows the change in a CT-based metric relative to the default pair $(\delta_0,\kappa_S)=(0.1,0.4)$ after the shortened $T=150$~day diagnostic run.
+  Left: change in CT-RMSE.
+  Middle: change in Pearson correlation to the mapped CT template.
+  Right: change in final domain-mean density.
+  The black square marks the default parameter pair.}}
+  \label{fig:mechanostat_sensitivity}
+\end{figure}

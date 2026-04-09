@@ -171,7 +171,7 @@ We thank the reviewer for this important point. We have revised the stimulus des
 
 \begin{enumerate}[nosep]
 \item We now state explicitly that $D_S$ is a phenomenological regularization parameter whose mesh-based prescription $\ell_S=\alpha h$ provides mesh-insensitive predictions but does not directly represent LCN-scale transport. The paragraph also acknowledges that the mesh-based length scale ($\sim$1\,mm) is orders of magnitude larger than osteocyte spacing ($\sim$20--50\,$\mu$m) and that relating $\ell_S$ to microstructural length scales remains an open problem.
-\item We have added a remark that $\kappa_S$ and $\delta_0$ are calibration/sensitivity parameters whose experimental constraints are currently lacking, and that a dedicated sensitivity analysis is deferred to future work.
+\item We have now added a dedicated compact sensitivity analysis for $\kappa_S$ and $\delta_0$ on the accelerated femur benchmark. Specifically, we run a full-factorial sweep over $\delta_0\in\{0.05,0.10,0.20\}$ and $\kappa_S\in\{0.2,0.4,0.8\}$ on a shortened $T=150$\,day diagnostic horizon and report the change in CT-based metrics relative to the default pair $(0.1,0.4)$. At fixed $\kappa_S=0.4$, varying $\delta_0$ changes the CT-RMSE by only $0.0019$\,g/cm$^3$, the Pearson correlation by $0.0029$, and the final mean density by $0.0033$\,g/cm$^3$. At fixed $\delta_0=0.1$, varying $\kappa_S$ changes the same quantities by $0.0128$\,g/cm$^3$, $0.0219$, and $0.0212$\,g/cm$^3$, respectively. We therefore moderate the interpretation accordingly: in the explored range, $\kappa_S$ is the more influential local calibration lever, while the default pair does not lie on a sharp optimum or instability boundary.
 \item We now explicitly state the sign convention of $S$ as a modelling assumption that maps the biological stimulus onto a signed remodeling drive, and acknowledge that this conflates the mechanotransductive signal with the net formation/resorption outcome.
 \end{enumerate}
 
@@ -179,7 +179,8 @@ We thank the reviewer for this important point. We have revised the stimulus des
 ``Governing equations'', Stimulus submodel:
 \begin{itemize}[nosep]
 \item Added sign-convention disclaimer paragraph (highlighted in blue).
-\item After the stimulus quantitative analysis: added paragraph acknowledging $D_S$ as a phenomenological parameter, discussing the mesh-based prescription of $\ell_S$, and noting the sensitivity caveat for $\kappa_S$ and $\delta_0$ (highlighted in blue).
+\item After the stimulus quantitative analysis: added paragraph acknowledging $D_S$ as a phenomenological parameter, discussing the mesh-based prescription of $\ell_S$, and cross-referencing the new compact $\delta_0$--$\kappa_S$ sensitivity study (highlighted in blue).
+\item Added new section ``Sensitivity to mechanostat smoothing parameters'' with a compact full-factorial femur sweep and new Figure~\verb|\ref{fig:mechanostat_sensitivity}| (highlighted in blue).
 \end{itemize}
 
 % ── Validation strategy ──────────────────────────────────────────────
