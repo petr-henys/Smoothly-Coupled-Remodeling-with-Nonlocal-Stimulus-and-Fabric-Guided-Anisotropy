@@ -1,0 +1,58 @@
+\section*{Femur case study: robustness on anatomical geometry}
+\label{sec:femur-comparison}
+
+\paragraph{Motivation.}
+The proximal femur provides a challenging anatomical setting for coupled mechanics--stimulus--density remodeling: the model should simultaneously yield (i) a thin, high-density cortical shell and (ii) a spatially heterogeneous trabecular core under a small set of representative daily loading cases.
+In a standard mechanostat formulation a single reference stimulus $\psi_{\mathrm{ref}}$ is used throughout the domain \cite{Weinans1992_BehaviorAdaptiveBoneRemodeling,MartinezReina2016_UniquenessBRM}.
+However, experimental and conceptual work suggests that ``set points'' and adaptation thresholds are not universal constants: they may shift with loading history (mechanical usage set-point concept) \cite{Frost1992_SetPointsOsteoporosis}, depend on cellular set-point distributions \cite{Mullender1998_SetPointTrabecularArchitecture}, and can differ between cortical and cancellous compartments \cite{Yang2021_CancellousGreaterThreshold,Schulte2013_LocalMechanicalStimuli}.
+This motivates our compartment-aware reference stimulus $\hat{\psi}_{\mathrm{ref}}(\widetilde\rho)$ in \S\ref{subsec:stim-nd}, which blends trabecular and cortical reference values using the same density-dependent transition $w(\widetilde\rho)$ as the stiffness exponent blend.
+\rev{The interpretation of this ratio is also inseparable from how the cortical shell is represented in the image-based model: CT-based FE studies of the proximal femur show that improved cortical mapping materially affects strain prediction in the thin shell \revcite{Falcinelli2020_CorticalAssignment}.}
+
+\paragraph{Ratio sweep definition.}
+We parameterize the two reference values by their ratio
+\[
+r:=\psi_{\mathrm{ref}}^{\mathrm{cort}}/\psi_{\mathrm{ref}}^{\mathrm{trab}},
+\]
+and, to decouple ``overall'' mechanostat scaling from the cortical--trabecular contrast, we hold the geometric mean $\psi_0:=\sqrt{\psi_{\mathrm{ref}}^{\mathrm{trab}}\psi_{\mathrm{ref}}^{\mathrm{cort}}}$ fixed while sweeping $r$:
+\[
+\psi_{\mathrm{ref}}^{\mathrm{trab}}(r)=\psi_0/\sqrt{r},\qquad
+\psi_{\mathrm{ref}}^{\mathrm{cort}}(r)=\psi_0\sqrt{r}.
+\]
+All runs use the accelerated \textbf{StiffSetup} femur parameter set (Appendix Table~\ref{tab:param_setup_femur}) over $T=500$ days, with identical loading cases and all other parameters fixed.
+
+\paragraph{Reference density and mapping.}
+As a diagnostic population reference we use the HFValid-derived template femur density (population average), represented as a volumetric CT image and mapped onto the FE mesh using inverse-distance weighting (IDW) interpolation.
+For a consistent comparison with the bounded density model, the mapped CT field is linearly rescaled to $[\rho_{\min},\rho_{\max}]$.
+Because the reference is a population template mapped and rescaled to the FE mesh (not subject-specific longitudinal ground truth), the comparisons below are used as diagnostic similarity measures for robustness and relative trends across model variants rather than as clinical validation.
+
+\paragraph{Comparison strategy and metrics.}
+We compare the final simulated density fields $\rho_r(\cdot,T)$ to the mapped CT reference $\rho_{\mathrm{CT}}$ using both global and compartment-restricted similarity measures.
+First, we compute the discrete nodal RMSE and MAE over all CG1 degrees of freedom,
+\[
+\mathrm{RMSE}(r)=\sqrt{\frac{1}{N}\sum_{j=1}^N\big(\rho_r(x_j,T)-\rho_{\mathrm{CT}}(x_j)\big)^2},\qquad
+\mathrm{MAE}(r)=\frac{1}{N}\sum_{j=1}^N\big|\rho_r(x_j,T)-\rho_{\mathrm{CT}}(x_j)\big|,
+\]
+supplemented by a Pearson correlation to assess spatial pattern matching independent of absolute scale.
+\rev{Note that the population-template density field is derived from $N=101$ subjects whose inter-individual variability ($\pm 2\sigma$ band) reaches roughly 0.3--0.5~g/cm$^3$ in trabecular regions and up to 0.8~g/cm$^3$ in the cortical shell, i.e.\ of comparable magnitude to the RMSE values reported below; the metrics therefore characterize proximity to the population mean rather than prediction error in a strict sense.}
+Second, to quantify performance in distinct anatomical zones, we evaluate the same metrics restricted to CT-defined trabecular and cortical masks,
+\[
+\Omega_{\mathrm{trab}}:=\{x:\rho_{\mathrm{CT}}(x)\le \rho_{\mathrm{trab}}^{\max}\},\qquad
+\Omega_{\mathrm{cort}}:=\{x:\rho_{\mathrm{CT}}(x)\ge \rho_{\mathrm{cort}}^{\min}\},
+\]
+where the thresholds follow the transition densities defined in \S\ref{sec:strong-forms-nd}.
+In addition, we track the global density evolution via the domain-mean density $\bar\rho(t)$ reconstructed from the conserved mass integral, which provides a coarse check of transient behavior and settling time.
+
+\paragraph{Hypothesis and test.}
+We already observe qualitatively that the special case $\psi_{\mathrm{ref}}^{\mathrm{trab}}=\psi_{\mathrm{ref}}^{\mathrm{cort}}$ (i.e.\ $r=1$) suppresses key spatial features in the simulated density distribution.
+We therefore hypothesize that a non-unity ratio $r\neq 1$ is required to recover anatomically plausible density distributions and to improve similarity to the population-template reference under the same loads.
+We test this hypothesis by sweeping $r$ at fixed $\psi_0$, ranking runs by similarity-to-template metrics, and visually confirming differences via distribution plots and spatial residuum fields.
+
+\begin{figure}[htbp]
+  \centering
+  \safeincludegraphics[width=1\linewidth]{psi_ref_ratio_analysis.png}
+  \caption{Effect of the cortical--trabecular reference-stimulus ratio $r=\psi_{\mathrm{ref}}^{\mathrm{cort}}/\psi_{\mathrm{ref}}^{\mathrm{trab}}$ on similarity to the CT-derived population template.
+  Left: Spatial agreement (RMSE) for the whole domain, cortical, and trabecular masks.
+  Right: Global density evolution (domain-mean $\bar\rho$) relative to the CT mean (dashed) and variability ($\pm 2\sigma$ band).
+  }
+  \label{fig:psi_ref_ratio_analysis}
+\end{figure}

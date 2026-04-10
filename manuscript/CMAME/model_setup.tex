@@ -1,0 +1,164 @@
+\section*{Models and datasets}
+\subsection*{Box Model}
+To verify the remodeling algorithms and study fundamental adaptive responses in a controlled environment, we employ an idealized geometric model representing a bone specimen.
+\subsubsection*{Geometry and Mesh}
+The domain $\Omega$ is defined as a rectangular parallelepiped with dimensions $L_x \times L_y \times L_z$.
+Unless stated otherwise, the default dimensions are set to $L_x = L_y = 10$\,mm and $L_z = 30$\,mm, mimicking a typical bone core biopsy or a cortical strut.
+The domain is discretized using a tetrahedral mesh.
+We define the boundaries $\partial\Omega$ as follows:
+\begin{itemize}
+    \item $\Gamma_{\mathrm{bottom}}$: The bottom surface at $z=0$.
+    \item $\Gamma_{\mathrm{top}}$: The top surface at $z=L_z$.
+    \item $\Gamma_{\mathrm{side}}$: The remaining lateral surfaces ($x\in\{0, L_x\}, y\in\{0, L_y\}$).
+\end{itemize}
+\subsubsection*{Boundary Conditions}
+The mechanical boundary conditions simulate a uniaxial compression test. The bottom surface is fully constrained (Dirichlet boundary condition) to prevent rigid body motion and provide a reaction base:
+\begin{equation}
+\mathbf{u}(\mathbf{x}) = \mathbf{0}, \qquad \forall \mathbf{x} \in \Gamma_{\mathrm{bottom}}.
+\end{equation}
+\paragraph{Loading}
+Loads are applied exclusively as Neumann boundary conditions on the top surface $\Gamma_{\mathrm{top}}$. The lateral sides $\Gamma_{\mathrm{side}}$ remain traction-free.
+The traction vector $\mathbf{t}(\mathbf{x})$ on $\Gamma_{\mathrm{top}}$ is defined by a pressure field $p(\mathbf{x})$ acting in the negative $z$-direction (compression):
+\begin{equation}
+\mathbf{t}(\mathbf{x}) = -p(\mathbf{x})\,\mathbf{e}_z, \qquad \forall \mathbf{x} \in \Gamma_{\mathrm{top}}.
+\end{equation}
+The pressure magnitude $p(\mathbf{x})$ is defined in MPa ($\mathrm{N/mm^2}$). The spatial variation of pressure is parameterised by a normalized coordinate $\xi \in [0, 1]$ along the gradient axis (typically the $x$-axis, where $\xi = x/L_x$). The pressure follows a bell-shaped curve with the peak at the center ($\xi=0.5$) and minima at the edges:
+\begin{equation}
+p(\xi) = P_{\mathrm{ref}} \left[ k_{\mathrm{edge}} + (k_{\mathrm{center}} - k_{\mathrm{edge}})\, 4\xi(1-\xi) \right].
+\end{equation}
+\subsection*{Femur}
+\subsubsection*{Dataset and normalization}
+We used the \emph{HFValid collection} \cite{Aldieri2025_HFValidCollection} (Hip-Fracture validation collection; \url{https://amsacta.unibo.it/id/eprint/8431/}), which provides $N=101$ anonymized whole-femur CT scans, corresponding segmentations, and anatomical landmarks.
+\rev{Image-based finite element modelling of the proximal femur is well established \revcite{Taddei2020_CTbasedFE}, and patient-specific studies further highlight the importance of subject- or lesion-specific heterogeneous material assignment \revcite{Erani2019_PatientSpecificFE, Taddei2019_FemurMaterialHet}. Recent methodological reviews have also emphasized the importance of accurate CT segmentation \revcite{Aldieri2024_CTSegmentation} and bilateral variability \revcite{Schileo2015_BilateralVariability} when deriving population-level references.} The scans were acquired at IRCCS Istituto Ortopedico Rizzoli (Bologna) between 1999 and 2016 for surgical planning of hip arthroplasty at the contralateral femur. Besides the volumetric images, the dataset provides (i) surface segmentations and (ii) landmark coordinates (including the femoral head centre and distal landmarks), which we use for defining local reference systems and for quality control.
+
+\paragraph{CT calibration to density.}
+HFValid provides subject-specific calibration coefficients based on European Spine Phantom (ESP) acquisitions. The calibrated volumetric bone mineral density (vBMD) field is obtained from the CT intensity field (in HU) as a linear mapping,
+\begin{equation}
+\rho_i(\mathbf{x}) = a_i + b_i\, HU_i(\mathbf{x}),
+\qquad \rho_i \ \text{in}\ \mathrm{mg/cm^3},
+\label{eq:hfvalid_calibration}
+\end{equation}
+with coefficients $(a_i,b_i)$ provided for each subject $i$.
+\rev{This calibration-and-mapping step should be viewed within the broader workflow of CT-derived biomarker extraction for hip-fracture risk assessment, where segmentation robustness and density calibration condition downstream FE estimates \revcite{Aldieri2024_CTSegmentation}.}
+
+\paragraph{Population (template) femur.}
+From the HFValid cohort we derived a population-average femur geometry and density distribution (``population femur'') by spatial normalization and unbiased template estimation. Additionally, we mapped the densities of all patients to the template and determined the mean value and $\pm 2\sigma$ range for the density field, ensuring reasonable statistics for further comparison. The processing followed the methodology described by Heny\v{s} and Kucha\v{r} \cite{Henys2025_BoneDatDatabase}, which combines global alignment (rigid + affine) with a diffeomorphic deformable registration (SyN, ANTs) \cite{Avants2008_SymmetricDiffeomorphicRegistration,Avants2011_ANTsSimilarityMetrics}.
+
+Let $I_i:\Omega_i\rightarrow\mathbb{R}$ denote the subject CT image (HU) and let $\Omega$ denote the current template domain. For each subject we estimate a composite transformation
+\begin{equation}
+T_i(\mathbf{x}) = T_i^{\mathrm{SyN}}\circ T_i^{\mathrm{aff}}\circ T_i^{\mathrm{rig}}(\mathbf{x}),
+\qquad \mathbf{x}\in\Omega,
+\label{eq:composite_transform}
+\end{equation}
+where the nonlinear SyN component is represented through a displacement field $\mathbf{u}_i$,
+\begin{equation}
+T_i^{\mathrm{SyN}}(\mathbf{x}) = \mathbf{x} + \mathbf{u}_i(\mathbf{x}).
+\label{eq:syn_displacement}
+\end{equation}
+The displacement field is obtained by optimizing an image similarity metric between the fixed template image $I_f$ and the moving image $I_i\circ T_i$, subject to regularization constraints that enforce smoothness and invertibility (diffeomorphism). Following Heny\v{s} and Kucha\v{r}, the similarity metric is mutual information (MI) \cite{Maes1997_MutualInformationRegistration},
+\begin{equation}
+\mathrm{MI}(I_f,I_i) = \sum_{p}\sum_{q} p_{f,i}(p,q)\,\log\frac{p_{f,i}(p,q)}{p_f(p)\,p_i(q)},
+\label{eq:mutual_information}
+\end{equation}
+where $p_{f,i}(p,q)$ is the joint probability of intensity levels $(p,q)$ in $(I_f,I_i)$ and $p_f$, $p_i$ are the corresponding marginal distributions.
+
+\paragraph{Unbiased template estimation.}
+A population template $I_{\mathrm{pop}}$ is estimated iteratively so that the total deformation required to align all subjects is minimized. In particular, the target template minimizes the sum of squared displacement magnitudes over the template domain,
+\begin{equation}
+I_{\mathrm{pop}} = \arg\min_{I_{\mathrm{template}}}\sum_{i=1}^{N}\int_{\Omega}\left\lVert T_i(\mathbf{x})-\mathbf{x}\right\rVert^2\,\mathrm{d}\mathbf{x},
+\label{eq:template_energy}
+\end{equation}
+where $T_i$ denotes the subject-to-template mapping for subject $i$. In practice, starting from an initial template (randomly selected subject), at iteration $k$ we compute displacement fields $\mathbf{u}_i^{(k)}$ registering each $I_i$ to the current template $I_{\mathrm{template}}^{(k)}$, then average the displacement fields,
+\begin{equation}
+\mathbf{u}_{\mathrm{avg}}^{(k)}(\mathbf{x}) = \frac{1}{N}\sum_{i=1}^{N}\mathbf{u}_i^{(k)}(\mathbf{x}),
+\label{eq:avg_displacement}
+\end{equation}
+and update the template towards the population mean. One equivalent update form is to average the warped images,
+\begin{equation}
+I_{\mathrm{template}}^{(k+1)}(\mathbf{x}) = \frac{1}{N}\sum_{i=1}^{N}\left(I_i\circ T_i^{(k)}\right)(\mathbf{x}),
+\label{eq:template_update}
+\end{equation}
+with iterations continued until convergence of the mean deformation field (relative change below a chosen tolerance).
+
+\paragraph{Population density field.}
+Using the calibration in Eq.~\eqref{eq:hfvalid_calibration}, the calibrated density fields are mapped to the population template space by the same transformations. The population-average density is then defined pointwise as
+\begin{equation}
+\rho_{\mathrm{pop}}(\mathbf{x}) = \frac{1}{N}\sum_{i=1}^{N}\left(\rho_i\circ T_i\right)(\mathbf{x}),
+\qquad \mathbf{x}\in\Omega.
+\label{eq:rho_pop}
+\end{equation}
+The resulting pair $\left(I_{\mathrm{pop}},\rho_{\mathrm{pop}}\right)$ represents the average femur morphology and density distribution of the HFValid cohort and is used as the reference (population) femur model in the remainder of this work; see \S\ref{sec:femur-comparison} for how it is used in FE comparisons.
+
+\subsubsection*{Femur Coordinate System (FCS)}
+We define a right-handed femur coordinate system (FCS) that is consistent with the OrthoLoad convention \cite{OrthoLoadDatabase} and can be constructed robustly from three anatomical landmarks: the femoral head, the lateral epicondyle (LE) and the medial epicondyle (ME). All vectors and points are expressed either in the global (world) coordinate system (superscript $w$) or in the FCS (superscript $\mathrm{FCS}$). The detailed construction procedure is described in the following paragraphs and illustrated in Fig.~\ref{fig:femur_css} and consists of (i) fitting a sphere to the femoral head to determine its centre, (ii) defining orthonormal axes based on the head and distal landmarks, and (iii) providing transformation formulas between world and FCS representations (see \rev{Appendix~}\ref{sec:femur_loading}).
+
+\begin{figure*}
+    \centering
+    \safeincludegraphics[width=0.8\textwidth]{femur_css.png}
+    \caption{Femur coordinate system (FCS) used for load definition and post-processing. The origin is the femoral head centre, the $Y$-axis points from the epicondylar midpoint towards the femoral head, the $Z$-axis follows the projected epicondylar line, and $X$ completes a right-handed system ($X=Y\times Z$).}
+    \label{fig:femur_css}
+\end{figure*}
+
+\subsubsection*{Boundary conditions and loading}
+The proximal femur is loaded through surface tractions that represent the hip joint reaction and major muscle forces. Distally, the cut section of the femur is constrained (Dirichlet boundary condition) to eliminate rigid-body motion. All remaining external loads are applied as Neumann boundary conditions on a proximal surface subset $\Gamma_{\mathrm{load}}\subset\partial\Omega$ (Fig.~\ref{fig:femur_loads}). Geometry is expressed in millimetres and forces in Newtons, therefore the resulting traction values are in $\mathrm{N/mm^2}=\mathrm{MPa}$.
+
+Each loading case $i$ consists of (i) a hip joint resultant force $\mathbf{F}_{h,i}$ and (ii) a set of muscle resultants $\{\mathbf{F}_{k,i}\}_{k\in\mathcal{M}_i}$. In the FE model, these resultants are converted to distributed tractions such that the surface integral of each traction field reproduces the corresponding resultant force, see the details in \rev{Appendix~}\ref{sec:femur_loading}.
+
+
+\paragraph*{Choice of loading cases and parameter values.}
+The proximal femur is subjected to a highly variable, yet structured, set of loads during activities of daily living.
+In vivo measurements with instrumented hip implants show that (i) level walking and (ii) stair climbing are both among the most frequent activities and among the most decisive for strength and fixation assessments; realistic ``standard'' load scenarios for these activities have therefore been proposed based on the HIP98 data collection \cite{Bergmann2010_RealisticLoadsHipImplants,Bergmann2016_StandardizedLoadsHipImplants,OrthoLoadDatabase}.
+During level walking, the hip contact force profile exhibits distinct load maxima within stance and is accompanied by phase-dependent muscle recruitment.
+To capture these dominant mechanical configurations without simulating the full time series, we represent walking by three discrete instants: heel strike (early stance / weight acceptance), mid-stance (single-leg support with high abductor demand), and toe-off (late stance / push-off).
+We additionally include stair ascent as a higher-demand activity, which is known to induce higher torsional moments and different mean force directions compared with level walking \cite{Bergmann2010_RealisticLoadsHipImplants,Bergmann2016_StandardizedLoadsHipImplants}.
+
+The magnitudes and directions used here are chosen to be consistent with reported realistic in vivo loads.
+For example, standardized ``average'' peak hip contact forces are on the order of 1800~N for walking and 1900~N for stair ascent, with substantially higher peaks observed for active patients and high-impact events \cite{Bergmann2010_RealisticLoadsHipImplants,OrthoLoadDatabase}.
+Furthermore, when only walking is simulated, peak forces of about 2880~N and mean force directions around $\alpha_{\mathrm{front}}\approx 17^\circ$ and $\alpha_{\mathrm{sag}}\approx 11^\circ$ have been reported, while stair climbing yields slightly different mean directions \cite{Bergmann2016_StandardizedLoadsHipImplants}.
+Note that reported angle signs depend on the chosen anatomical coordinate system; here we follow the FCS convention in Eq.~\eqref{eq:force_from_angles} (hence sign differences are possible even if the physical direction is comparable).
+
+Because muscle forces strongly influence femoral deformation, we include a reduced set of major muscles per case; prior work shows that reduced muscle sets built from major contributors can recover physiological strain distributions with only modest error compared with fully balanced load regimes \cite{Duda1998_MuscleForcesFemoralStrain,Bergmann2016_StandardizedLoadsHipImplants}.
+
+Finally, the case weights $w_i$ (``day cycles'') are set to reflect relative activity frequencies, i.e., walking dominates daily cycles (order $10^3$) while stair climbing is an order of magnitude less frequent (order $10^2$), but remains mechanically more demanding \cite{Bergmann2016_StandardizedLoadsHipImplants}.
+The values used in the simulations are summarised in Table~\ref{tab:loading_cases}.
+
+\begin{table*}[!htbp]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.2}
+\caption{Discrete loading cases used in the FE simulations. Hip resultant forces are parameterised in the femur coordinate system (FCS) by their magnitude $F_h$ and direction angles $(\alpha_{\mathrm{sag}},\alpha_{\mathrm{front}})$ as defined in Eq.~\eqref{eq:force_from_angles}. Muscle entries list magnitude [N] and direction angles [deg] in the same convention. The weight $w_i$ denotes the relative day-cycle frequency used when aggregating multi-case results. \rev{Force magnitudes and directions are derived from the standardized average-patient data of Bergmann et al.\ \revcite{Bergmann2010_RealisticLoadsHipImplants, Bergmann2016_StandardizedLoadsHipImplants} (OrthoLoad HIP98 dataset \revcite{OrthoLoadDatabase}); the specific stance-phase instants (heel strike, mid-stance, toe-off) and the stair-ascent case were selected based on reported peak-force profiles and muscle recruitment patterns.}}
+\label{tab:loading_cases}
+\begin{tabularx}{\textwidth}{@{} l l >{\raggedright\arraybackslash}X r r r >{\raggedright\arraybackslash}X r l @{}}
+\toprule
+Case & Activity & Why selected & $F_h$ [N] & $\alpha_{\mathrm{sag}}$ [deg] & $\alpha_{\mathrm{front}}$ [deg] & Major muscle forces & $w_i$ & Sources \\
+\midrule
+Heel strike & Walking & Early stance / weight acceptance; captures the first walking peak load and extensor-driven stabilisation. & 1900 & -10 & -5 &
+glmax 900 @ (-50,20)\newline
+vastus lateralis 800 @ (0,10)\newline
+glmed 500 @ (-10,30)
+& 1.00 & \cite{Bergmann2010_RealisticLoadsHipImplants,Bergmann2016_StandardizedLoadsHipImplants} \\
+Mid-stance & Walking & Single-leg support; high hip abductor demand and representative bending/torsion configuration. & 2400 & 0 & -5 &
+glmed 1300 @ (-5,15)\newline
+glmin 500 @ (10,10)\newline
+vastus lateralis 200 @ (0,5)
+& 1.00 & \cite{Bergmann2010_RealisticLoadsHipImplants,Bergmann2016_StandardizedLoadsHipImplants} \\
+Toe-off & Walking & Late stance / push-off; captures the second walking peak and increased hip flexor contribution. & 2100 & 10 & -5 &
+psoas 800 @ (35,15)\newline
+vastus lateralis 300 @ (0,5)\newline
+glmed 300 @ (0,15)
+& 1.00 & \cite{Bergmann2010_RealisticLoadsHipImplants,Bergmann2016_StandardizedLoadsHipImplants} \\
+Stair ascent & Stair ascent & Higher-demand ADL; altered force direction and elevated torsional/bending demand compared with level walking. & 2500 & -30 & 30 &
+glmax 1200 @ (-60,20)\newline
+vastus lateralis 1000 @ (0,10)
+& 0.10 & \cite{Bergmann2010_RealisticLoadsHipImplants,Bergmann2016_StandardizedLoadsHipImplants} \\
+\bottomrule
+\end{tabularx}
+\end{table*}
+
+\begin{figure*}
+    \centering
+    \safeincludegraphics[width=0.8\textwidth]{femur_loads.png}
+    \caption{Applied boundary conditions and loading on the proximal femur. Distal constraints eliminate rigid-body motion, while the hip joint reaction and muscle forces are imposed as distributed surface tractions on $\Gamma_{\mathrm{load}}$ according to Eqs.~\eqref{eq:hip_traction_continuous}--\eqref{eq:traction_superposition}.}
+    \label{fig:femur_loads}
+\end{figure*}
