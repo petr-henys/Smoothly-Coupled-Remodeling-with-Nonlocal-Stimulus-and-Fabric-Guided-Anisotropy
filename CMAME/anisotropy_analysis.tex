@@ -1,0 +1,40 @@
+\section*{Anisotropy analysis}
+\label{sec:anisotropy-analysis}
+
+\paragraph{Motivation.}
+The fabric state enters the constitutive law through bounded eigenvalue ratios and principal directions (\S\ref{subsec:direction-nd}): the eigenvectors of $\mathbf{L}$ define the orthotropic material frame, while its eigenvalues determine the stiffness contrast.
+To verify that the anisotropy submodel behaves as intended and to quantify parameter sensitivity, we perform a compact sweep over the key fabric parameters $(\tau_A,\gamma_F)$ in \eqref{eq:L-strong-nd}--\eqref{eq:M-hat-nd}.
+Here ``reorientation'' refers to changes of the structural tensor field driven by remodeling (formation/resorption), not to a rigid rotation of material points.
+
+\paragraph{Sweep setup (box benchmark).}
+We reuse the box benchmark setup of \S\ref{sec:regularization-analysis}, but run with fixed time step $\Delta t=1~\mathrm{d}$ and a short horizon $T=30~\mathrm{d}$.
+All parameters other than $\tau_A$ and $\gamma_F$ are held fixed.
+To probe alignment dynamics, the initial $\mathbf{L}(\cdot,0)$ is chosen as a reproducible random symmetric, trace-free field, ensuring it is not trivially aligned with the mechanically induced target.
+We sweep $\tau_A\in\{30,120,480\}$~days (baseline: $120$~days) and $\gamma_F\in\{0.5,1,2\}$ (baseline: $1$), yielding $3\times 3=9$ runs.
+
+\paragraph{Anisotropy metrics.}
+Let $\mathrm{sym}(\mathbf{L})=\sum_{i=1}^3 \ell_i\,\mathbf{P}_i$ and define fabric eigenvalues $m_i:=\exp(\ell_i)$ (for the trace-free log-fabric target, $\prod_i m_i=1$).
+We summarize anisotropy magnitude by the scale-invariant anisotropy index computed pointwise from $\{m_i\}$ and then averaged over the domain:
+\[
+A \;:=\; \sqrt{\frac{3}{2}}\,\frac{\|\mathrm{dev}(\mathbf{m})\|_2}{\|\mathbf{m}\|_2}\in[0,1],
+\qquad
+\mathbf{m}:=(m_1,m_2,m_3).
+\]
+Here $\mathrm{dev}(\mathbf{m}):=\mathbf{m}-\bar m\,\mathbf{1}$ with $\bar m:=\tfrac13(m_1+m_2+m_3)$.
+Unlike the raw principal directions $(\mathbf{n}_1,\mathbf{n}_2,\mathbf{n}_3)$, these scalars provide a well-defined ``strength'' of anisotropy even when eigenvectors become ill-conditioned near isotropy.
+For completeness we also monitor eigenvalue ratios (e.g.\ $m_{\max}/m_{\min}$), but under the trace-free normalization they provide the same parameter ranking as $A$ and are therefore omitted from the main figure.
+
+\begin{figure}[htbp]
+  \centering
+  \safeincludegraphics[width=1\linewidth]{fabric_diagnostic.png}
+  \caption{Sensitivity of fabric anisotropy to the key evolution parameters in the stiff box benchmark (fabric sweep).
+  We vary the relaxation time $\tau_A$ and the eigenvalue-sharpening exponent $\gamma_F$ in \eqref{eq:L-strong-nd}--\eqref{eq:M-hat-nd} and report the domain-averaged anisotropy index $A$ of the final log-fabric state $\mathbf{L}(\cdot,T)$ ($A=0$ isotropic).
+  The horizontal axis reports parameter value relative to the baseline (dashed line).}
+  \label{fig:fabric_diagnostic}
+\end{figure}
+
+\paragraph{Observed trends.}
+Figure~\ref{fig:fabric_diagnostic} shows the expected and physically interpretable sensitivities.
+Decreasing $\tau_A$ increases $A$ because the relaxation term in \eqref{eq:L-strong-nd} drives $\mathbf{L}$ closer to the mechanically informed target within the fixed horizon $T$; conversely, for $\tau_A\gg T$ the fabric remains close to its initial state and anisotropy growth is weak.
+Increasing $\gamma_F$ strengthens anisotropy through \eqref{eq:M-hat-nd} by amplifying the eigenvalue contrast of the target and thereby of the relaxed state.
+In this benchmark the mechanically induced $\bar{\mathbf{Q}}$ is strongly directional under compression, so changes in the fabric response are dominated by anisotropy magnitude rather than by spatially varying reorientation.

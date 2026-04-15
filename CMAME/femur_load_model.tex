@@ -1,0 +1,105 @@
+\section{Modelling of femur loading}
+\label{sec:femur_loading}
+\paragraph{Femoral head centre.}
+Let $\mathcal{S}$ be the triangulated femoral surface. The femoral head centre $\mathbf{O}\in\mathbb{R}^3$ and head radius $R_h$ are obtained by a least-squares sphere fit to the subset of surface points in a region of interest around a user-defined head line:
+\begin{equation}
+(\mathbf{O}, R_h)=\arg\min_{\mathbf{c},r}\sum_{k\in\mathcal{I}}\left(\lVert \mathbf{x}_k^w-\mathbf{c}\rVert - r\right)^2,
+\label{eq:head_sphere_fit}
+\end{equation}
+where $\{\mathbf{x}_k^w\}_{k\in\mathcal{I}}\subset\mathcal{S}$ are surface points selected within a neighbourhood of the initial head-line estimate.
+
+\paragraph{Axes.}
+The knee reference point is defined as the midpoint of the epicondylar landmarks, $\mathbf{K}=\tfrac{1}{2}(\mathbf{x}_{LE}^w+\mathbf{x}_{ME}^w)$. The FCS axes are then constructed as
+\begin{align}
+\mathbf{e}_y &= \frac{\mathbf{O}-\mathbf{K}}{\lVert \mathbf{O}-\mathbf{K}\rVert}, \\
+\tilde{\mathbf{e}}_z &= (\mathbf{x}_{ME}^w-\mathbf{x}_{LE}^w) - \big((\mathbf{x}_{ME}^w-\mathbf{x}_{LE}^w)\cdot \mathbf{e}_y\big)\,\mathbf{e}_y, \\
+\mathbf{e}_z &= \frac{\tilde{\mathbf{e}}_z}{\lVert \tilde{\mathbf{e}}_z\rVert}, \\
+\mathbf{e}_x &= \mathbf{e}_y \times \mathbf{e}_z,
+\label{eq:fcs_axes}
+\end{align}
+which guarantees an orthonormal, right-handed basis ($\det(\mathbf{Q})=+1$). Here, $\mathbf{e}_y$ approximates the mechanical axis (knee-to-head), $\mathbf{e}_z$ approximates the mediolateral axis (epicondylar line projected orthogonal to $\mathbf{e}_y$), and $\mathbf{e}_x$ completes the system.
+
+\paragraph{Transformations.}
+We define the rotation matrix with FCS unit vectors as rows,
+\begin{equation}
+\mathbf{Q}=\begin{bmatrix}\mathbf{e}_x^{\top}\\ \mathbf{e}_y^{\top}\\ \mathbf{e}_z^{\top}\end{bmatrix}.
+\end{equation}
+A point $\mathbf{x}^w$ and a vector $\mathbf{v}^w$ transform as
+\begin{align}
+\mathbf{x}^{\mathrm{FCS}} &= \mathbf{Q}\,(\mathbf{x}^w-\mathbf{O}), &
+\mathbf{x}^w &= \mathbf{Q}^{\top}\mathbf{x}^{\mathrm{FCS}}+\mathbf{O}, \label{eq:fcs_point_transform}\\
+\mathbf{v}^{\mathrm{FCS}} &= \mathbf{Q}\,\mathbf{v}^w, &
+\mathbf{v}^w &= \mathbf{Q}^{\top}\mathbf{v}^{\mathrm{FCS}}. \label{eq:fcs_vector_transform}
+\end{align}
+
+\paragraph{Force parameterisation in the FCS.}
+A resultant load is specified by its magnitude $F$ and two angles $(\alpha_{\mathrm{sag}},\alpha_{\mathrm{front}})$. In the FCS, the vector is constructed by prescribing the ratios of the $X$ and $Z$ components to the $Y$ component,
+\begin{equation}
+\tan(\alpha_{\mathrm{sag}})=\frac{F_x}{F_y},
+\qquad
+\tan(\alpha_{\mathrm{front}})=\frac{F_z}{F_y},
+\end{equation}
+and enforcing $\lVert\mathbf{F}^{\mathrm{FCS}}\rVert=F$, which yields
+\begin{equation}
+\mathbf{F}^{\mathrm{FCS}}=
+\frac{F}{\sqrt{1+\tan^2(\alpha_{\mathrm{sag}})+\tan^2(\alpha_{\mathrm{front}})}}
+\begin{bmatrix}
+\tan(\alpha_{\mathrm{sag}})\\[2pt]
+1\\[2pt]
+\tan(\alpha_{\mathrm{front}})
+\end{bmatrix}.
+\label{eq:force_from_angles}
+\end{equation}
+The corresponding world-space vector is obtained by Eq.~\eqref{eq:fcs_vector_transform}. A sign flag is used to enforce the intended physical direction (e.g., compressive hip joint reaction acting \emph{into} the femoral head versus tensile muscle pull).
+
+\paragraph{Hip joint traction on the femoral head.}
+The hip joint reaction is modelled as a Gaussian traction patch on the femoral head. Let $\hat{\mathbf{f}}_h^w=\mathbf{F}_h^w/\lVert\mathbf{F}_h^w\rVert$ be the unit direction and $\mathbf{O}$ the head centre. The patch centre is determined by tracing a ray from $\mathbf{O}$ along $\hat{\mathbf{f}}_h^w$ until it intersects the femoral surface; the first hit defines the contact point $\mathbf{x}_{c,h}^w$ (approximated by the nearest surface-element centre).
+
+Denoting the contact point in the FCS by $\mathbf{x}_{c,h}^{\mathrm{FCS}}$ and a generic surface point by $\mathbf{x}$, we define the distance to the patch centre as
+\begin{equation}
+d_h(\mathbf{x})=\left\lVert \mathbf{x}^{\mathrm{FCS}}-\mathbf{x}_{c,h}^{\mathrm{FCS}}\right\rVert.
+\end{equation}
+The traction distribution is
+\begin{equation}
+\mathbf{t}_h(\mathbf{x})=\lambda_h\,\exp\!\left(-\frac{d_h(\mathbf{x})^2}{2\sigma_h^2}\right)\,\hat{\mathbf{f}}_h^w,
+\label{eq:hip_traction_continuous}
+\end{equation}
+where $\sigma_h = R_h\,(\sigma_{\deg}\pi/180)$ converts the prescribed angular width $\sigma_{\deg}$ to a length scale using the fitted head radius $R_h$.
+\rev{The parameter $\sigma_{\deg}$ controls the spatial extent of the hip contact patch and is set to a default of $30^\circ$, broadly consistent with Hertzian contact estimates for cartilage-on-cartilage articulation. Because $\sigma_{\deg}$ directly affects the traction gradient under the femoral head, the local density predictions in the subchondral region are sensitive to this choice; a dedicated sensitivity study of $\sigma_{\deg}$ (and the analogous muscle-attachment widths $\sigma_k$) is therefore recommended as part of any subject-specific calibration workflow.} The normalisation constant $\lambda_h$ is chosen such that the resultant force is recovered,
+\begin{equation}
+\int_{\Gamma_{\mathrm{load}}}\mathbf{t}_h(\mathbf{x})\,\mathrm{d}A = \mathbf{F}_h^w.
+\label{eq:hip_resultant_condition}
+\end{equation}
+
+In the discrete setting on the triangulated surface, Eq.~\eqref{eq:hip_resultant_condition} is enforced via area-weighted normalisation. For surface elements (cells) $e$ with areas $\mathrm{Area}_e$ and centres $\mathbf{x}_e$, we compute weights
+\begin{equation}
+\omega_e=\exp\!\left(-\frac{\lVert \mathbf{x}_e^{\mathrm{FCS}}-\mathbf{x}_{c,h}^{\mathrm{FCS}}\rVert^2}{2\sigma_h^2}\right),
+\end{equation}
+and set the (cell-wise) traction vectors to
+\begin{equation}
+\mathbf{t}_{h,e} = s_h\,\frac{F_h\,\omega_e}{\sum_{e'} \omega_{e'}\,\mathrm{Area}_{e'}}\,\hat{\mathbf{f}}_h^w,
+\label{eq:hip_discrete_traction}
+\end{equation}
+where $s_h\in\{-1,+1\}$ encodes this sign convention. By construction, $\sum_e \mathbf{t}_{h,e}\,\mathrm{Area}_e=s_h\,\mathbf{F}_h^w$.
+
+\paragraph{Muscle tractions around attachment curves.}
+Each muscle $k$ is represented by an attachment curve $\mathcal{C}_k$ on the proximal femur, reconstructed from user-defined points and smoothed by a B-spline curve fit. The muscle resultant direction $\hat{\mathbf{f}}_k^w$ is defined from Eq.~\eqref{eq:force_from_angles}. The distance of a surface point to the attachment curve is
+\begin{equation}
+d_k(\mathbf{x})=\min_{\mathbf{y}\in\mathcal{C}_k}\lVert \mathbf{x}^w-\mathbf{y}\rVert.
+\end{equation}
+The corresponding (continuous) traction field is
+\begin{equation}
+\mathbf{t}_k(\mathbf{x})=\lambda_k\,\exp\!\left(-\frac{d_k(\mathbf{x})^2}{2\sigma_k^2}\right)\,\hat{\mathbf{f}}_k^w,
+\label{eq:muscle_traction_continuous}
+\end{equation}
+with prescribed width $\sigma_k$ (mm) and normalisation $\lambda_k$ such that $\int_{\Gamma_{\mathrm{load}}}\mathbf{t}_k\,\mathrm{d}A=\mathbf{F}_k^w$ (up to the sign convention). In the discrete setting, $d_k$ is evaluated by nearest-neighbour queries to a dense sampling of the B-spline curve; weights are additionally scaled by local curve segment lengths to avoid sensitivity to the sampling density.
+
+\paragraph{Superposition and mapping to the FE boundary.}
+For a given loading case, the total applied traction is the linear superposition
+\begin{equation}
+\mathbf{t}(\mathbf{x})=\mathbf{t}_h(\mathbf{x}) + \sum_{k\in\mathcal{M}_i}\mathbf{t}_k(\mathbf{x})
+\quad \text{on } \Gamma_{\mathrm{load}},
+\label{eq:traction_superposition}
+\end{equation}
+and $\mathbf{t}(\mathbf{x})=\mathbf{0}$ on $\partial\Omega\setminus\Gamma_{\mathrm{load}}$.
+The traction is first computed on the surface triangulation, transferred from surface elements to surface nodes, and then evaluated at FE boundary degrees of freedom on $\Gamma_{\mathrm{load}}$ through nearest-neighbour interpolation based on the surface-node tractions. Finally, the contributions of the hip joint and all muscles are summed into a single vector-valued traction field used in the variational formulation.

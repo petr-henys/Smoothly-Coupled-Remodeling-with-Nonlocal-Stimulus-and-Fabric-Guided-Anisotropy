@@ -1,0 +1,69 @@
+\section*{Sensitivity to hip force direction (frontal-plane angle sweep)}
+\label{sec:alpha-front-sweep}
+
+\paragraph{Motivation.}
+The hip contact force is a dominant driver of proximal femur loading and is therefore central to mechanostat-based remodeling simulations.
+Instrumented hip implants provide in vivo contact force components, but their directions are time-dependent and vary across subjects and activities \cite{Bergmann2016_StandardizedLoadsHipImplants,OrthoLoadDatabase}.
+Even for a fixed activity (walking), inter-individual peak-force directions vary on the order of $\sim 7^\circ$--$13^\circ$ in the frontal plane and $\sim 6^\circ$--$21^\circ$ in the sagittal plane \cite{Bergmann2016_StandardizedLoadsHipImplants}.
+In addition, translating measured or musculoskeletal-modelled joint contact forces into a specific femur coordinate system introduces further uncertainty due to landmark identification and model parameter estimation \cite{Valente2014_MSKUncertainty}.
+Because density adaptation integrates loading over long time horizons, it is important to quantify how such directional uncertainty propagates to spatial density features.
+
+\paragraph{Sweep definition and objective.}
+We probe directional sensitivity by applying a constant offset $\Delta\alpha_{\mathrm{front}}$ (in degrees) to the hip contact force frontal-plane angle $\alpha_{\mathrm{front}}$ in \emph{all} femur loading cases (heel strike, mid-stance, toe-off, stair climb), while leaving force magnitudes and muscle forces unchanged.
+This isolates the effect of the hip force line-of-action in the frontal plane from other modelling choices.
+We sweep $\Delta\alpha_{\mathrm{front}}\in[-15^\circ,\,25^\circ]$ (10 values), which spans the in vivo walking mean direction reported by Bergmann et al.\ ($\alpha_{\mathrm{front}}\approx 17^\circ$) as well as the ISO test direction mismatch (in vivo $\approx 15^\circ$--$24^\circ$ vs ISO $\approx 10^\circ$ in the frontal plane) \cite{Bergmann2016_StandardizedLoadsHipImplants}.
+All runs use the accelerated femur benchmark parameter set (\textbf{StiffSetup}; Appendix Table~\ref{tab:param_setup_femur}) over $T=500$ days with identical numerical parameters.
+
+\paragraph{Metrics for directional effects.}
+Directional changes primarily redistribute bending/compression between medial and lateral cortices; we therefore use both (i) similarity-to-template metrics and (ii) medial--lateral redistribution metrics:
+\begin{enumerate}
+  \item \textbf{Similarity to CT template (population reference).}
+  As in \S\ref{sec:femur-comparison}, we map the population-template CT density to the FE mesh (IDW interpolation) and rescale it to $[\rho_{\min},\rho_{\max}]$.
+  We report nodal RMSE/MAE and Pearson correlation between $\rho_{\Delta\alpha}(\cdot,T)$ and $\rho_{\mathrm{CT}}$.
+  These metrics are used diagnostically to compare sweep outcomes relative to the mapped population-template reference rather than as a claim of clinical accuracy.
+  \item \textbf{Medial--lateral center-of-density.}
+  Let $z(\mathbf{x})$ denote the medial axis coordinate in the femur coordinate system (FCS; Fig.~\ref{fig:femur_css}).
+  We quantify redistribution by the mass-weighted first moment
+  \[
+  \bar z_{\rho}(\Delta\alpha)\;:=\;\frac{\int_\Omega \rho_{\Delta\alpha}(\mathbf{x},T)\,z(\mathbf{x})\,\mathrm{d}V}{\int_\Omega \rho_{\Delta\alpha}(\mathbf{x},T)\,\mathrm{d}V},
+  \]
+  and compare it against the corresponding CT value $\bar z_{\mathrm{CT}}$ computed on the same FE mesh.
+  We additionally report the mass-weighted spread (standard deviation) $\sigma_z$ computed from the second moment to distinguish rigid shifts from broadening/narrowing of the density distribution.
+  \item \textbf{Spatial sensitivity map.}
+  To localize where density is most sensitive to the assumed hip direction, we compute a pointwise regression slope $\partial\rho/\partial\alpha_{\mathrm{front}}$ across the sweep and export it as a field for visualization.
+\end{enumerate}
+
+\paragraph{Hypothesis.}
+We expect that increasing $\Delta\alpha_{\mathrm{front}}$ shifts remodeling stimulus toward the medial cortex (higher compressive load share) and thus increases medial density features, while decreasing $\Delta\alpha_{\mathrm{front}}$ shifts features laterally.
+If the model is robust with respect to loading-direction uncertainty, similarity-to-template metrics should remain comparatively stable over a plausible range of $\Delta\alpha_{\mathrm{front}}$; conversely, strong variation would indicate that load direction is a sensitive modeling assumption that should be accounted for in robustness and uncertainty analyses.
+
+\rev{%
+\paragraph{Comparison with inter-subject variability.}
+Using linear interpolation of the discrete sweep metrics, the interpolated baseline at $\Delta\alpha_{\mathrm{front}}=0^\circ$ is $\mathrm{RMSE}=0.575$~g/cm$^3$ and $\mathrm{corr}=0.627$.
+Over a physiologic frontal-angle uncertainty band of $\pm 7^\circ$, the total RMSE varies only from 0.572 to 0.578~g/cm$^3$ (spread 0.006~g/cm$^3$) and the Pearson correlation from 0.611 to 0.643 (spread 0.032).
+Over the more permissive $\pm 13^\circ$ band, the RMSE range is 0.563--0.581~g/cm$^3$ (spread 0.018~g/cm$^3$) and the correlation range is 0.602--0.654 (spread 0.052).
+These shifts remain small relative to the HFValid inter-subject density variability band ($\pm 2\sigma$), which reaches 0.3--0.8~g/cm$^3$ depending on compartment and axial position, and they are also markedly smaller than the full $40^\circ$ sweep spread in RMSE (0.050~g/cm$^3$).
+Accordingly, load-direction uncertainty is quantitatively relevant but not dominant when compared with the population-level scatter of the mapped CT reference. 
+}
+
+\begin{figure}[htbp]
+  \centering
+  \safeincludegraphics[width=1\linewidth]{alpha_front_summary.png}
+  \caption{Sensitivity to hip force frontal-plane angle offset $\Delta\alpha_{\mathrm{front}}$.
+  (a) CT agreement (RMSE) versus angle offset.
+  (b) Pattern agreement (Pearson correlation).
+  (c) Medial--lateral redistribution (shift in center-of-density $\bar z_\rho - \bar z_{\mathrm{CT}}$).
+  (d) Global density evolution over time.
+  Shaded bands indicate the CT reference variability ($\pm 2\sigma$).
+  }
+  \label{fig:alpha_front_summary}
+\end{figure}
+
+\begin{figure}[htbp]
+  \centering
+  \safeincludegraphics[width=1\linewidth]{alpha_front_rho.png}
+  \caption{Frontal-plane density distributions for varying hip force angles.
+  The series illustrates the medial redistribution of bone density as the contact force angle shifts (left to right).
+  Composite view from ParaView screenshots.}
+  \label{fig:alpha_front_rho}
+\end{figure}
