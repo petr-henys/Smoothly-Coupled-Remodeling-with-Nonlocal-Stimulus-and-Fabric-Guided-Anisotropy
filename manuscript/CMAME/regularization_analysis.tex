@@ -1,0 +1,55 @@
+\section*{Regularization Analysis}
+\label{sec:regularization-analysis}
+
+Diffusive regularization is introduced in the stimulus, density, and log-fabric submodels to suppress mesh-scale oscillations (``checkerboarding'') and to provide a controllable nonlocality length scale.
+We study the impact of the three diffusion coefficients $(D_S,D_\rho,D_A)$ on (i) spatial smoothness of the density field and (ii) nonlinear coupling cost.
+
+\paragraph{Sweep setup (box benchmark).}
+We use the StiffSetup box configuration with a parabolic compression load (mesh $10\times 10\times 30$~mm, $n_x=n_y=10$, $n_z=30$).
+The diffusion sweep is executed over a shortened horizon $T=100~\mathrm{d}$ with fixed $\Delta t=25~\mathrm{d}$.
+All other parameters (including Anderson-accelerated fixed-point coupling) are held fixed; only the diffusion coefficients are varied.
+
+\paragraph{Reference diffusivities.}
+Following the mesh-based prescription in \S\ref{sec:parameter-governance}, we define a target regularization length $\ell=\alpha h$ with $\alpha=1.5$ and $h\approx L_x/n_x\approx 1~\mathrm{mm}$, hence $\ell\approx 1.5~\mathrm{mm}$.
+For the StiffSetup rates ($k_{\mathrm{form}}=0.05$, $k_{\mathrm{res}}=0.01$, $\rho_{\min}=0.2$, $\rho_{\max}=2$) the characteristic reaction estimate is $r_{\mathrm{char}}=\max(k_{\mathrm{form}}/\rho_{\max},\,k_{\mathrm{res}}/\rho_{\min})=0.05~\mathrm{d^{-1}}$, so the reference diffusion values are
+\[
+D_S^{\mathrm{ref}}=\ell^2/\tau_S=0.225,\qquad
+D_A^{\mathrm{ref}}=\ell^2/\tau_A\approx 0.0188,\qquad
+D_\rho^{\mathrm{ref}}=\ell^2(\Delta t^{-1}+r_{\mathrm{char}})=0.2025,
+\]
+in units mm$^2$/day.
+We then sweep each coefficient by a factor of $10$ around its reference value: $D\in\{0.1,1,10\}\,D^{\mathrm{ref}}$ (full factorial $3^3=27$ runs).
+
+\paragraph{Smoothness and solver-cost metrics.}
+For each run, we load the final density $\rho(\cdot,T)$ from the checkpoint and compute gradient-based roughness measures (UFL-integrated norms):
+\[
+\mathrm{TV}(\rho)=\int_\Omega \|\nabla\rho\|\,\mathrm{d}x,\qquad
+\|\nabla\rho\|_{L^2}=\Big(\int_\Omega \|\nabla\rho\|^2\,\mathrm{d}x\Big)^{1/2},\qquad
+\mathcal{R}_\rho=\frac{\|\nabla\rho\|_{L^2}}{\bar{\rho}\sqrt{|\Omega|}},
+\]
+where $\bar{\rho}$ is the domain mean.
+Coupling cost is quantified by the number of fixed-point subiterations per time step.
+To visualize the marginal effect of each coefficient, we plot the median and interquartile range (IQR) across all runs that share the same $D/D_{\mathrm{ref}}$ for the coefficient in question.
+
+\begin{figure}[htbp]
+  \centering
+  \safeincludegraphics[width=1.\linewidth]{diffusion_diagnostic.png}
+  \caption{Effect of diffusion regularization on density-field smoothness and coupling cost in the StiffSetup box benchmark (diffusion sweep).
+  Each panel varies one diffusion coefficient by a factor $D/D_{\mathrm{ref}}\in\{0.1,1,10\}$ while marginalizing over the other two coefficients.
+  Solid colored lines show the median roughness measure $\mathcal{R}_\rho$ (shaded: IQR) of the final density field; black dashed lines show the median coupling subiterations per step (shaded: IQR).
+  Scatter points show all runs. The vertical dashed line marks the reference value $D=D_{\mathrm{ref}}$ derived from $\ell=1.5h$.}
+  \label{fig:diffusion_diagnostic}
+\end{figure}
+
+\paragraph{Observed trends.}
+Figure~\ref{fig:diffusion_diagnostic} indicates that density diffusion $D_\rho$ is the dominant lever controlling the smoothness of $\rho$, with stimulus diffusion $D_S$ providing weaker additional smoothing through the mechanostat drive and fabric diffusion $D_A$ having little effect on $\rho$ roughness in this benchmark.
+For the density-roughness metric in this benchmark, this suggests a hierarchy of influence $D_\rho$ (primary) $>$ $D_S$ (secondary) $>$ $D_A$ (tertiary); note that $D_S$ is introduced to model nonlocal mechanotransduction (signal reach) and can be selected on mechanobiological grounds even when its marginal effect on $\rho$ smoothness is weaker than directly regularizing $\rho$ via $D_\rho$ (\S\ref{sec:discussion}).
+Across the explored range, diffusion regularization does not increase the coupling subiteration count; a quantitative interpretation is given in \S\ref{sec:discussion}.
+
+\begin{figure}[htbp]
+  \centering
+  \safeincludegraphics[width=0.5\linewidth]{diffusion_effect.png}
+  \caption{Representative final-density fields from the diffusion sweep (ParaView screenshots).
+  The sequence illustrates the qualitative smoothing effect of stronger regularization: localized high-density ridges are progressively broadened and the overall density field becomes less patchy across the box domain.}
+  \label{fig:diffusion_effects}
+\end{figure}
